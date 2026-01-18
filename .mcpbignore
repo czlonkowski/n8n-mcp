@@ -1,0 +1,65 @@
+# Exclude everything for npx-based bundle
+# Only manifest.json and icon.png are needed
+
+# Source code
+*.ts
+*.js
+*.json
+!manifest.json
+src/
+dist/
+types/
+
+# Dependencies
+node_modules/
+package-lock.json
+
+# Tests
+tests/
+*.test.*
+*.spec.*
+coverage.json
+vitest.config.*
+
+# Documentation (bundled via npx)
+*.md
+docs/
+
+# Build and config
+*.yml
+*.yaml
+!manifest.json
+tsconfig*.json
+.eslintrc*
+.prettierrc*
+
+# Docker
+Dockerfile*
+docker/
+docker-compose*
+deploy/
+
+# Development
+.git/
+.github/
+.vscode/
+.claude/
+examples/
+scripts/
+
+# Data and logs
+*.db
+*.log
+*.txt
+data/
+
+# Environment
+.env*
+
+# Other
+thumbnail.png
+*.sh
+railway.json
+codecov.yml
+renovate.json
+_config.yml

@@ -1,0 +1,80 @@
+{
+  "manifest_version": "0.3",
+  "name": "n8n-mcp",
+  "version": "2.33.2",
+  "description": "MCP server providing AI assistants with comprehensive access to n8n node documentation (1,084 nodes) and workflow management capabilities",
+  "author": {
+    "name": "Bartek Czlonkowski",
+    "url": "https://github.com/czlonkowski"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/czlonkowski/n8n-mcp"
+  },
+  "homepage": "https://www.n8n-mcp.com/",
+  "documentation": "https://github.com/czlonkowski/n8n-mcp#readme",
+  "support": "https://github.com/czlonkowski/n8n-mcp/issues",
+  "privacy_policies": [
+    "https://n8n.io/legal/privacy/"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/mcp/index.js",
+    "mcp_config": {
+      "command": "npx",
+      "args": ["-y", "n8n-mcp"],
+      "env": {
+        "MCP_MODE": "stdio",
+        "LOG_LEVEL": "error",
+        "DISABLE_CONSOLE_OUTPUT": "true",
+        "N8N_API_URL": "${user_config.n8n_api_url}",
+        "N8N_API_KEY": "${user_config.n8n_api_key}",
+        "N8N_MCP_TELEMETRY_DISABLED": "${user_config.n8n_mcp_telemetry_disabled}"
+      }
+    }
+  },
+  "user_config": {
+    "n8n_api_url": {
+      "type": "string",
+      "title": "n8n Instance URL",
+      "description": "URL of your n8n instance (e.g., https://your-n8n.com or http://localhost:5678). Leave empty for documentation-only mode.",
+      "required": false
+    },
+    "n8n_api_key": {
+      "type": "string",
+      "title": "n8n API Key",
+      "description": "API key from your n8n instance Settings > API. Required for workflow management features.",
+      "required": false,
+      "sensitive": true
+    },
+    "n8n_mcp_telemetry_disabled": {
+      "type": "string",
+      "title": "Disable Telemetry",
+      "description": "Set to 'true' to disable telemetry. Leave empty to allow telemetry.",
+      "required": false,
+      "default": ""
+    }
+  },
+  "tools": [
+    {"name": "tools_documentation", "description": "Get documentation for n8n MCP tools with quick start guide and topic-specific help"},
+    {"name": "search_nodes", "description": "Search n8n nodes by keyword with optional real-world examples from templates"},
+    {"name": "get_node", "description": "Get node info with progressive detail levels (minimal/standard/full) and multiple modes"},
+    {"name": "validate_node", "description": "Validate n8n node configuration with full or minimal validation modes"},
+    {"name": "get_template", "description": "Get workflow template by ID with nodes_only, structure, or full response modes"},
+    {"name": "search_templates", "description": "Search templates by keyword, nodes, task, or metadata filters"},
+    {"name": "validate_workflow", "description": "Full workflow validation: structure, connections, expressions, AI tools"},
+    {"name": "n8n_create_workflow", "description": "Create a new workflow with nodes and connections (created inactive)"},
+    {"name": "n8n_get_workflow", "description": "Get workflow by ID with full, details, structure, or minimal detail levels"},
+    {"name": "n8n_update_full_workflow", "description": "Full workflow update requiring complete nodes and connections"},
+    {"name": "n8n_update_partial_workflow", "description": "Update workflow incrementally with diff operations (add/remove/update nodes)"},
+    {"name": "n8n_delete_workflow", "description": "Permanently delete a workflow (cannot be undone)"},
+    {"name": "n8n_list_workflows", "description": "List workflows with minimal metadata, pagination support"},
+    {"name": "n8n_validate_workflow", "description": "Validate workflow by ID checking nodes, connections, expressions"},
+    {"name": "n8n_autofix_workflow", "description": "Automatically fix common workflow validation errors"},
+    {"name": "n8n_test_workflow", "description": "Test/trigger workflow execution with auto-detected trigger type"},
+    {"name": "n8n_executions", "description": "Manage workflow executions: get details, list, or delete"},
+    {"name": "n8n_health_check", "description": "Check n8n instance health and API connectivity"},
+    {"name": "n8n_workflow_versions", "description": "Manage workflow version history, rollback, and cleanup"},
+    {"name": "n8n_deploy_template", "description": "Deploy a workflow template from n8n.io directly to your instance"}
+  ]
+}
