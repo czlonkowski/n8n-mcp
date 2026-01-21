@@ -8,7 +8,8 @@ import {
   WebhookRequest,
   McpToolResponse,
   ExecutionFilterOptions,
-  ExecutionMode
+  ExecutionMode,
+  Credential
 } from '../types/n8n-api';
 import type { TriggerType, TestWorkflowInput } from '../triggers/types';
 import {
@@ -2623,6 +2624,403 @@ export async function handleTriggerWebhookWorkflow(args: unknown, context?: Inst
         };
       }
 
+      return {
+        success: false,
+        error: getUserFriendlyErrorMessage(error),
+        code: error.code,
+        details: error.details as Record<string, unknown> | undefined
+      };
+    }
+
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
+// ========================================================================
+// Credential Management Handlers
+// ========================================================================
+
+/**
+ * SECURITY CRITICAL: Remove sensitive data from credentials before returning.
+ * The `data` field contains secrets (API keys, passwords, tokens) and must NEVER
+ * be returned to the user through the MCP interface.
+ */
+function sanitizeCredential(credential: Credential): Omit<Credential, 'data'> {
+  // Destructure to remove the data field
+  const { data, ...safeCredential } = credential;
+  return safeCredential;
+}
+
+// Zod schemas for credential operations
+const listCredentialsSchema = z.object({
+  limit: z.number().min(1).max(100).optional(),
+  cursor: z.string().optional(),
+  type: z.string().optional(),
+});
+
+const getCredentialSchema = z.object({
+  id: z.string(),
+});
+
+const getCredentialSchemaSchema = z.object({
+  credentialType: z.string(),
+});
+
+const testCredentialSchema = z.object({
+  id: z.string(),
+});
+
+const assignCredentialSchema = z.object({
+  workflowId: z.string(),
+  nodeName: z.string(),
+  credentialId: z.string(),
+  credentialType: z.string(),
+});
+
+/**
+ * List all credentials (metadata only, NEVER secrets)
+ */
+export async function handleListCredentials(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = listCredentialsSchema.parse(args || {});
+
+    const response = await client.listCredentials({
+      limit: input.limit || 100,
+      cursor: input.cursor,
+    });
+
+    // CRITICAL: Sanitize all credentials to remove secret data
+    const safeCredentials = response.data.map(sanitizeCredential);
+
+    // Apply type filter if specified
+    const filteredCredentials = input.type
+      ? safeCredentials.filter(c => c.type === input.type)
+      : safeCredentials;
+
+    return {
+      success: true,
+      data: {
+        credentials: filteredCredentials,
+        returned: filteredCredentials.length,
+        nextCursor: response.nextCursor,
+        hasMore: !!response.nextCursor,
+      }
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: 'Invalid input',
+        details: { errors: error.errors }
+      };
+    }
+
+    if (error instanceof N8nApiError) {
+      return {
+        success: false,
+        error: getUserFriendlyErrorMessage(error),
+        code: error.code
+      };
+    }
+
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
+/**
+ * Get credential metadata by ID (NEVER returns secrets)
+ */
+export async function handleGetCredential(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = getCredentialSchema.parse(args);
+
+    const credential = await client.getCredential(input.id);
+
+    // CRITICAL: Sanitize to remove secret data
+    const safeCredential = sanitizeCredential(credential);
+
+    return {
+      success: true,
+      data: safeCredential
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: 'Invalid input',
+        details: { errors: error.errors }
+      };
+    }
+
+    if (error instanceof N8nApiError) {
+      return {
+        success: false,
+        error: getUserFriendlyErrorMessage(error),
+        code: error.code
+      };
+    }
+
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
+/**
+ * Get the schema for a credential type from the node repository
+ */
+export async function handleGetCredentialSchema(
+  args: unknown,
+  repository: NodeRepository,
+  context?: InstanceContext
+): Promise<McpToolResponse> {
+  try {
+    const input = getCredentialSchemaSchema.parse(args);
+
+    // Query the repository for credential type information
+    // Note: The repository may not have direct credential schemas, so we look for
+    // nodes that use this credential type to infer the schema
+    const nodesUsingCredential = repository.searchNodes(input.credentialType, 'OR', 10);
+
+    // Check if we can find credential info in the node metadata
+    const credentialInfo: any = {
+      credentialType: input.credentialType,
+      description: `Credential type: ${input.credentialType}`,
+      usedByNodes: nodesUsingCredential.map(n => ({
+        nodeType: n.type,
+        displayName: n.display_name
+      }))
+    };
+
+    // Common credential types and their typical fields
+    const commonCredentialSchemas: Record<string, { fields: string[], description: string }> = {
+      'openAiApi': {
+        fields: ['apiKey'],
+        description: 'OpenAI API credentials'
+      },
+      'googlePalmApi': {
+        fields: ['apiKey'],
+        description: 'Google AI (Gemini/PaLM) API credentials'
+      },
+      'slackApi': {
+        fields: ['accessToken'],
+        description: 'Slack Bot Token or User Token'
+      },
+      'httpBasicAuth': {
+        fields: ['user', 'password'],
+        description: 'HTTP Basic Authentication'
+      },
+      'httpHeaderAuth': {
+        fields: ['name', 'value'],
+        description: 'HTTP Header Authentication'
+      },
+      'oAuth2Api': {
+        fields: ['clientId', 'clientSecret', 'accessToken', 'refreshToken'],
+        description: 'OAuth2 credentials'
+      },
+      'postgresApi': {
+        fields: ['host', 'database', 'user', 'password', 'port', 'ssl'],
+        description: 'PostgreSQL database credentials'
+      },
+      'mysqlApi': {
+        fields: ['host', 'database', 'user', 'password', 'port'],
+        description: 'MySQL database credentials'
+      },
+      'awsApi': {
+        fields: ['accessKeyId', 'secretAccessKey', 'region'],
+        description: 'AWS API credentials'
+      },
+      'anthropicApi': {
+        fields: ['apiKey'],
+        description: 'Anthropic API credentials'
+      }
+    };
+
+    const knownSchema = commonCredentialSchemas[input.credentialType];
+    if (knownSchema) {
+      credentialInfo.schema = knownSchema;
+    } else {
+      credentialInfo.note = 'Schema details not available for this credential type. Check n8n documentation for required fields.';
+    }
+
+    return {
+      success: true,
+      data: credentialInfo
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: 'Invalid input',
+        details: { errors: error.errors }
+      };
+    }
+
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
+/**
+ * Test if a credential is valid and working
+ * Note: n8n's public API doesn't have a direct credential test endpoint,
+ * so we verify the credential exists and return its metadata
+ */
+export async function handleTestCredential(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = testCredentialSchema.parse(args);
+
+    // Attempt to fetch the credential to verify it exists
+    const credential = await client.getCredential(input.id);
+
+    // CRITICAL: Sanitize to remove secret data
+    const safeCredential = sanitizeCredential(credential);
+
+    // Note: n8n's public API doesn't expose credential testing
+    // A real test would require using the credential in a workflow execution
+    return {
+      success: true,
+      data: {
+        credential: safeCredential,
+        status: 'exists',
+        message: 'Credential exists and is accessible. Note: To fully test the credential, use it in a workflow execution.',
+        hint: 'The n8n API does not expose a direct credential testing endpoint. The credential\'s actual validity depends on the external service it authenticates with.'
+      }
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: 'Invalid input',
+        details: { errors: error.errors }
+      };
+    }
+
+    if (error instanceof N8nApiError) {
+      if (error.code === 'NOT_FOUND') {
+        return {
+          success: false,
+          error: 'Credential not found',
+          details: {
+            status: 'not_found',
+            hint: 'The credential ID does not exist. Use n8n_list_credentials to find valid credential IDs.'
+          }
+        };
+      }
+      return {
+        success: false,
+        error: getUserFriendlyErrorMessage(error),
+        code: error.code
+      };
+    }
+
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
+/**
+ * Assign a credential to a workflow node
+ * Uses the partial update workflow handler to update node credentials
+ */
+export async function handleAssignCredential(
+  args: unknown,
+  repository: NodeRepository,
+  context?: InstanceContext
+): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = assignCredentialSchema.parse(args);
+
+    // First, verify the credential exists
+    const credential = await client.getCredential(input.credentialId);
+
+    // Verify the credential type matches
+    if (credential.type !== input.credentialType) {
+      return {
+        success: false,
+        error: 'Credential type mismatch',
+        details: {
+          expected: input.credentialType,
+          actual: credential.type,
+          hint: `The credential "${credential.name}" is of type "${credential.type}", not "${input.credentialType}". Use the correct credential type.`
+        }
+      };
+    }
+
+    // Use the partial workflow update to assign the credential
+    const updateResult = await handleUpdatePartialWorkflow(
+      {
+        id: input.workflowId,
+        operations: [
+          {
+            type: 'updateNode',
+            nodeName: input.nodeName,
+            updates: {
+              credentials: {
+                [input.credentialType]: {
+                  id: input.credentialId,
+                  name: credential.name
+                }
+              }
+            }
+          }
+        ]
+      },
+      repository,
+      context
+    );
+
+    if (!updateResult.success) {
+      return {
+        success: false,
+        error: 'Failed to assign credential to node',
+        details: {
+          workflowId: input.workflowId,
+          nodeName: input.nodeName,
+          credentialId: input.credentialId,
+          updateError: updateResult.error
+        }
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        workflowId: input.workflowId,
+        nodeName: input.nodeName,
+        credential: {
+          id: input.credentialId,
+          name: credential.name,
+          type: credential.type
+        }
+      },
+      message: `Successfully assigned credential "${credential.name}" to node "${input.nodeName}" in workflow ${input.workflowId}`
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: 'Invalid input',
+        details: { errors: error.errors }
+      };
+    }
+
+    if (error instanceof N8nApiError) {
       return {
         success: false,
         error: getUserFriendlyErrorMessage(error),

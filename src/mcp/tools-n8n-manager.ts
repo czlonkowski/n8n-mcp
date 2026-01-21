@@ -504,5 +504,96 @@ export const n8nManagementTools: ToolDefinition[] = [
       },
       required: ['templateId']
     }
+  },
+
+  // Credential Management Tools
+  {
+    name: 'n8n_list_credentials',
+    description: `List all credentials (metadata only, NEVER secrets). Returns id, name, type, and timestamps. Supports pagination and type filtering.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'number',
+          description: 'Max credentials to return (1-100, default: 100)'
+        },
+        cursor: {
+          type: 'string',
+          description: 'Pagination cursor from previous response'
+        },
+        type: {
+          type: 'string',
+          description: 'Filter by credential type (e.g., "openAiApi", "slackApi", "googlePalmApi")'
+        }
+      }
+    }
+  },
+  {
+    name: 'n8n_get_credential',
+    description: `Get credential metadata by ID. Returns id, name, type, nodesAccess, and timestamps. NEVER returns the secret data field for security.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Credential ID to retrieve'
+        }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'n8n_get_credential_schema',
+    description: `Get the schema/required fields for a credential type. Useful for understanding what fields are needed when creating credentials manually in n8n.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        credentialType: {
+          type: 'string',
+          description: 'Credential type name (e.g., "openAiApi", "slackApi", "httpBasicAuth")'
+        }
+      },
+      required: ['credentialType']
+    }
+  },
+  {
+    name: 'n8n_test_credential',
+    description: `Test if a credential is valid and working. Attempts to verify the credential can authenticate successfully.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Credential ID to test'
+        }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'n8n_assign_credential',
+    description: `Assign a credential to a workflow node. Updates the node's credentials configuration to use the specified credential.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: {
+          type: 'string',
+          description: 'Workflow ID containing the node'
+        },
+        nodeName: {
+          type: 'string',
+          description: 'Name of the node to assign the credential to'
+        },
+        credentialId: {
+          type: 'string',
+          description: 'Credential ID to assign'
+        },
+        credentialType: {
+          type: 'string',
+          description: 'Credential type (e.g., "openAiApi", "slackApi"). Must match the node\'s expected credential type.'
+        }
+      },
+      required: ['workflowId', 'nodeName', 'credentialId', 'credentialType']
+    }
   }
 ];

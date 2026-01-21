@@ -901,6 +901,34 @@ export class N8NDocumentationMCPServer {
           ? { valid: true, errors: [] }
           : { valid: false, errors: [{ field: 'templateId', message: 'templateId is required' }] };
         break;
+      case 'n8n_list_credentials':
+        // No required parameters
+        validationResult = { valid: true, errors: [] };
+        break;
+      case 'n8n_get_credential':
+      case 'n8n_test_credential':
+        // Requires id parameter
+        validationResult = args.id
+          ? { valid: true, errors: [] }
+          : { valid: false, errors: [{ field: 'id', message: 'id is required' }] };
+        break;
+      case 'n8n_get_credential_schema':
+        // Requires credentialType parameter
+        validationResult = args.credentialType
+          ? { valid: true, errors: [] }
+          : { valid: false, errors: [{ field: 'credentialType', message: 'credentialType is required' }] };
+        break;
+      case 'n8n_assign_credential':
+        // Requires workflowId, nodeName, credentialId, credentialType
+        const assignErrors: Array<{field: string, message: string}> = [];
+        if (!args.workflowId) assignErrors.push({ field: 'workflowId', message: 'workflowId is required' });
+        if (!args.nodeName) assignErrors.push({ field: 'nodeName', message: 'nodeName is required' });
+        if (!args.credentialId) assignErrors.push({ field: 'credentialId', message: 'credentialId is required' });
+        if (!args.credentialType) assignErrors.push({ field: 'credentialType', message: 'credentialType is required' });
+        validationResult = assignErrors.length === 0
+          ? { valid: true, errors: [] }
+          : { valid: false, errors: assignErrors };
+        break;
       default:
         // For tools not yet migrated to schema validation, use basic validation
         return this.validateToolParamsBasic(toolName, args, legacyRequiredParams || []);
@@ -1254,6 +1282,27 @@ export class N8NDocumentationMCPServer {
         if (!this.templateService) throw new Error('Template service not initialized');
         if (!this.repository) throw new Error('Repository not initialized');
         return n8nHandlers.handleDeployTemplate(args, this.templateService, this.repository, this.instanceContext);
+
+      // Credential Management Tools
+      case 'n8n_list_credentials':
+        // No required parameters
+        return n8nHandlers.handleListCredentials(args, this.instanceContext);
+      case 'n8n_get_credential':
+        this.validateToolParams(name, args, ['id']);
+        return n8nHandlers.handleGetCredential(args, this.instanceContext);
+      case 'n8n_get_credential_schema':
+        this.validateToolParams(name, args, ['credentialType']);
+        await this.ensureInitialized();
+        if (!this.repository) throw new Error('Repository not initialized');
+        return n8nHandlers.handleGetCredentialSchema(args, this.repository, this.instanceContext);
+      case 'n8n_test_credential':
+        this.validateToolParams(name, args, ['id']);
+        return n8nHandlers.handleTestCredential(args, this.instanceContext);
+      case 'n8n_assign_credential':
+        this.validateToolParams(name, args, ['workflowId', 'nodeName', 'credentialId', 'credentialType']);
+        await this.ensureInitialized();
+        if (!this.repository) throw new Error('Repository not initialized');
+        return n8nHandlers.handleAssignCredential(args, this.repository, this.instanceContext);
 
       default:
         throw new Error(`Unknown tool: ${name}`);
