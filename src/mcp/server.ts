@@ -14,7 +14,7 @@ import { getWorkflowExampleString } from './workflow-examples';
 import { logger } from '../utils/logger';
 import { NodeRepository } from '../database/node-repository';
 import { DatabaseAdapter, createDatabaseAdapter } from '../database/database-adapter';
-import { getSharedDatabase, releaseSharedDatabase } from '../database/shared-database';
+import { getSharedDatabase, releaseSharedDatabase, SharedDatabaseState } from '../database/shared-database';
 import { PropertyFilter } from '../services/property-filter';
 import { TaskTemplates } from '../services/task-templates';
 import { ConfigValidator } from '../services/config-validator';
@@ -152,7 +152,8 @@ export class N8NDocumentationMCPServer {
   private earlyLogger: EarlyErrorLogger | null = null;
   private disabledToolsCache: Set<string> | null = null;
   private useSharedDatabase: boolean = false;  // Track if using shared DB for cleanup
-  private sharedDbState: any = null;  // Reference to shared DB state for release
+  private sharedDbState: SharedDatabaseState | null = null;  // Reference to shared DB state for release
+  private isShutdown: boolean = false;  // Prevent double-shutdown
 
   constructor(instanceContext?: InstanceContext, earlyLogger?: EarlyErrorLogger) {
     this.instanceContext = instanceContext;
@@ -256,6 +257,17 @@ export class N8NDocumentationMCPServer {
    * For in-memory databases (tests), we close the dedicated connection.
    */
   async close(): Promise<void> {
+    // Wait for initialization to complete (or fail) before cleanup
+    // This prevents race conditions where close runs while init is in progress
+    try {
+      await this.initialized;
+    } catch (error) {
+      // Initialization failed - that's OK, we still need to clean up
+      logger.debug('Initialization had failed, proceeding with cleanup', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
     try {
       await this.server.close();
 
@@ -3933,8 +3945,33 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
   }
   
   async shutdown(): Promise<void> {
+    // Prevent double-shutdown
+    if (this.isShutdown) {
+      logger.debug('Shutdown already called, skipping');
+      return;
+    }
+    this.isShutdown = true;
+
     logger.info('Shutting down MCP server...');
-    
+
+    // Wait for initialization to complete (or fail) before cleanup
+    // This prevents race conditions where shutdown runs while init is in progress
+    try {
+      await this.initialized;
+    } catch (error) {
+      // Initialization failed - that's OK, we still need to clean up
+      logger.debug('Initialization had failed, proceeding with cleanup', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    // Close MCP server connection (for consistency with close() method)
+    try {
+      await this.server.close();
+    } catch (error) {
+      logger.error('Error closing MCP server:', error);
+    }
+
     // Clean up cache timers to prevent memory leaks
     if (this.cache) {
       try {
@@ -3944,15 +3981,31 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         logger.error('Error cleaning up cache:', error);
       }
     }
-    
-    // Close database connection if it exists
-    if (this.db) {
+
+    // Handle database cleanup based on whether it's shared or dedicated
+    // For shared databases, we only release the reference (decrement refCount)
+    // For dedicated databases (in-memory for tests), we close the connection
+    if (this.useSharedDatabase && this.sharedDbState) {
       try {
-        await this.db.close();
+        releaseSharedDatabase(this.sharedDbState);
+        logger.info('Released shared database reference');
+      } catch (error) {
+        logger.error('Error releasing shared database:', error);
+      }
+    } else if (this.db) {
+      try {
+        this.db.close();
         logger.info('Database connection closed');
       } catch (error) {
         logger.error('Error closing database:', error);
       }
     }
+
+    // Null out references to help garbage collection
+    this.db = null;
+    this.repository = null;
+    this.templateService = null;
+    this.earlyLogger = null;
+    this.sharedDbState = null;
   }
 }

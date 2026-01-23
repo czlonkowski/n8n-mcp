@@ -20,7 +20,7 @@ import { logger } from '../utils/logger';
 /**
  * Shared database state - holds the singleton connection and services
  */
-interface SharedDatabaseState {
+export interface SharedDatabaseState {
   db: DatabaseAdapter;
   repository: NodeRepository;
   templateService: TemplateService;
