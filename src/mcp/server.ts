@@ -14,6 +14,7 @@ import { getWorkflowExampleString } from './workflow-examples';
 import { logger } from '../utils/logger';
 import { NodeRepository } from '../database/node-repository';
 import { DatabaseAdapter, createDatabaseAdapter } from '../database/database-adapter';
+import { getSharedDatabase, releaseSharedDatabase } from '../database/shared-database';
 import { PropertyFilter } from '../services/property-filter';
 import { TaskTemplates } from '../services/task-templates';
 import { ConfigValidator } from '../services/config-validator';
@@ -150,6 +151,8 @@ export class N8NDocumentationMCPServer {
   private previousToolTimestamp: number = Date.now();
   private earlyLogger: EarlyErrorLogger | null = null;
   private disabledToolsCache: Set<string> | null = null;
+  private useSharedDatabase: boolean = false;  // Track if using shared DB for cleanup
+  private sharedDbState: any = null;  // Reference to shared DB state for release
 
   constructor(instanceContext?: InstanceContext, earlyLogger?: EarlyErrorLogger) {
     this.instanceContext = instanceContext;
@@ -245,8 +248,12 @@ export class N8NDocumentationMCPServer {
    * Order of cleanup:
    * 1. Close MCP server connection
    * 2. Destroy cache (clears entries AND stops cleanup timer)
-   * 3. Close database connection
+   * 3. Release shared database OR close dedicated connection
    * 4. Null out references to help GC
+   *
+   * IMPORTANT: For shared databases, we only release the reference (decrement refCount),
+   * NOT close the database. The database stays open for other sessions.
+   * For in-memory databases (tests), we close the dedicated connection.
    */
   async close(): Promise<void> {
     try {
@@ -255,8 +262,14 @@ export class N8NDocumentationMCPServer {
       // Use destroy() not clear() - also stops the cleanup timer
       this.cache.destroy();
 
-      // Close database connection before nullifying reference
-      if (this.db) {
+      // Handle database cleanup based on whether it's shared or dedicated
+      if (this.useSharedDatabase && this.sharedDbState) {
+        // Shared database: release reference, don't close
+        // The database stays open for other sessions
+        releaseSharedDatabase(this.sharedDbState);
+        logger.debug('Released shared database reference');
+      } else if (this.db) {
+        // Dedicated database (in-memory for tests): close it
         try {
           this.db.close();
         } catch (dbError) {
@@ -271,6 +284,7 @@ export class N8NDocumentationMCPServer {
       this.repository = null;
       this.templateService = null;
       this.earlyLogger = null;
+      this.sharedDbState = null;
     } catch (error) {
       // Log but don't throw - cleanup should be best-effort
       logger.warn('Error closing MCP server', { error: error instanceof Error ? error.message : String(error) });
@@ -286,23 +300,32 @@ export class N8NDocumentationMCPServer {
 
       logger.debug('Database initialization starting...', { dbPath });
 
-      this.db = await createDatabaseAdapter(dbPath);
-      logger.debug('Database adapter created');
-
-      // If using in-memory database for tests, initialize schema
+      // For in-memory databases (tests), create a dedicated connection
+      // For regular databases, use the shared connection to prevent memory leaks
       if (dbPath === ':memory:') {
+        this.db = await createDatabaseAdapter(dbPath);
+        logger.debug('Database adapter created (in-memory mode)');
         await this.initializeInMemorySchema();
         logger.debug('In-memory schema initialized');
+        this.repository = new NodeRepository(this.db);
+        this.templateService = new TemplateService(this.db);
+        // Initialize similarity services for enhanced validation
+        EnhancedConfigValidator.initializeSimilarityServices(this.repository);
+        this.useSharedDatabase = false;
+      } else {
+        // Use shared database connection to prevent ~900MB memory leak per session
+        // See: Memory leak fix - database was being duplicated per session
+        const sharedState = await getSharedDatabase(dbPath);
+        this.db = sharedState.db;
+        this.repository = sharedState.repository;
+        this.templateService = sharedState.templateService;
+        this.sharedDbState = sharedState;
+        this.useSharedDatabase = true;
+        logger.debug('Using shared database connection');
       }
 
-      this.repository = new NodeRepository(this.db);
       logger.debug('Node repository initialized');
-
-      this.templateService = new TemplateService(this.db);
       logger.debug('Template service initialized');
-
-      // Initialize similarity services for enhanced validation
-      EnhancedConfigValidator.initializeSimilarityServices(this.repository);
       logger.debug('Similarity services initialized');
 
       // Checkpoint: Database connected (v2.18.3)

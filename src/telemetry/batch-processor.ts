@@ -58,6 +58,13 @@ export class TelemetryBatchProcessor {
   private flushTimes: number[] = [];
   private deadLetterQueue: (TelemetryEvent | WorkflowTelemetry | WorkflowMutationRecord)[] = [];
   private readonly maxDeadLetterSize = 100;
+  // Track event listeners for proper cleanup to prevent memory leaks
+  private eventListeners: {
+    beforeExit?: () => void;
+    sigint?: () => void;
+    sigterm?: () => void;
+  } = {};
+  private started: boolean = false;
 
   constructor(
     private supabase: SupabaseClient | null,
@@ -72,6 +79,12 @@ export class TelemetryBatchProcessor {
   start(): void {
     if (!this.isEnabled() || !this.supabase) return;
 
+    // Guard against multiple starts (prevents event listener accumulation)
+    if (this.started) {
+      logger.debug('Telemetry batch processor already started, skipping');
+      return;
+    }
+
     // Set up periodic flushing
     this.flushTimer = setInterval(() => {
       this.flush();
@@ -83,17 +96,22 @@ export class TelemetryBatchProcessor {
       this.flushTimer.unref();
     }
 
-    // Set up process exit handlers
-    process.on('beforeExit', () => this.flush());
-    process.on('SIGINT', () => {
+    // Set up process exit handlers with stored references for cleanup
+    this.eventListeners.beforeExit = () => this.flush();
+    this.eventListeners.sigint = () => {
       this.flush();
       process.exit(0);
-    });
-    process.on('SIGTERM', () => {
+    };
+    this.eventListeners.sigterm = () => {
       this.flush();
       process.exit(0);
-    });
+    };
 
+    process.on('beforeExit', this.eventListeners.beforeExit);
+    process.on('SIGINT', this.eventListeners.sigint);
+    process.on('SIGTERM', this.eventListeners.sigterm);
+
+    this.started = true;
     logger.debug('Telemetry batch processor started');
   }
 
@@ -105,6 +123,20 @@ export class TelemetryBatchProcessor {
       clearInterval(this.flushTimer);
       this.flushTimer = undefined;
     }
+
+    // Remove event listeners to prevent memory leaks
+    if (this.eventListeners.beforeExit) {
+      process.removeListener('beforeExit', this.eventListeners.beforeExit);
+    }
+    if (this.eventListeners.sigint) {
+      process.removeListener('SIGINT', this.eventListeners.sigint);
+    }
+    if (this.eventListeners.sigterm) {
+      process.removeListener('SIGTERM', this.eventListeners.sigterm);
+    }
+    this.eventListeners = {};
+    this.started = false;
+
     logger.debug('Telemetry batch processor stopped');
   }
 

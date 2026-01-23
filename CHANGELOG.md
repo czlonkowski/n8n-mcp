@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.33.5] - 2026-01-23
+
+### Fixed
+
+- **Critical memory leak: per-session database connections** (Issue #542): Fixed severe memory leak where each MCP session created its own database connection (~900MB per session)
+  - Root cause: `N8NDocumentationMCPServer` called `createDatabaseAdapter()` for every new session, duplicating the entire 68MB database in memory
+  - With 3-4 sessions, memory would exceed 4GB causing OOM kills every ~20 minutes
+  - Fix: Implemented singleton `SharedDatabase` pattern - all sessions now share ONE database connection
+  - Memory impact: Reduced from ~900MB per session to ~68MB total (shared) + ~5MB per session overhead
+  - Added `getSharedDatabase()` and `releaseSharedDatabase()` for thread-safe connection management
+  - Added reference counting to track active sessions using the shared connection
+
+- **Session timeout optimization**: Reduced default session timeout from 30 minutes to 5 minutes
+  - Faster cleanup of stale sessions reduces memory buildup
+  - Configurable via `SESSION_TIMEOUT_MINUTES` environment variable
+
+- **Eager instance cleanup**: When a client reconnects, previous sessions for the same instanceId are now immediately cleaned up
+  - Prevents memory accumulation from reconnecting clients in multi-tenant deployments
+
+- **Telemetry event listener leak**: Fixed event listeners in `TelemetryBatchProcessor` that were never removed
+  - Added proper cleanup in `stop()` method
+  - Added guard against multiple `start()` calls
+
+### Added
+
+- **New module: `src/database/shared-database.ts`** - Singleton database manager
+  - `getSharedDatabase(dbPath)`: Thread-safe initialization with promise lock pattern
+  - `releaseSharedDatabase(state)`: Reference counting for cleanup
+  - `closeSharedDatabase()`: Graceful shutdown for process termination
+  - `isSharedDatabaseInitialized()` and `getSharedDatabaseRefCount()`: Monitoring helpers
+
+### Changed
+
+- **`N8NDocumentationMCPServer.close()`**: Now releases shared database reference instead of closing the connection
+- **`SingleSessionHTTPServer.shutdown()`**: Calls `closeSharedDatabase()` during graceful shutdown
+
 ## [2.33.4] - 2026-01-21
 
 ### Fixed

@@ -26,6 +26,7 @@ import {
 } from './utils/protocol-version';
 import { InstanceContext, validateInstanceContext } from './types/instance-context';
 import { SessionState } from './types/session-state';
+import { closeSharedDatabase } from './database/shared-database';
 
 dotenv.config();
 
@@ -106,7 +107,12 @@ export class SingleSessionHTTPServer {
   private session: Session | null = null;  // Keep for SSE compatibility
   private consoleManager = new ConsoleManager();
   private expressServer: any;
-  private sessionTimeout = 30 * 60 * 1000; // 30 minutes
+  // Session timeout reduced from 30 minutes to 5 minutes for faster cleanup
+  // Configurable via SESSION_TIMEOUT_MINUTES environment variable
+  // This prevents memory buildup from stale sessions
+  private sessionTimeout = parseInt(
+    process.env.SESSION_TIMEOUT_MINUTES || '5', 10
+  ) * 60 * 1000;
   private authToken: string | null = null;
   private cleanupTimer: NodeJS.Timeout | null = null;
   
@@ -491,6 +497,29 @@ export class SingleSessionHTTPServer {
           
           // For initialize requests: always create new transport and server
           logger.info('handleRequest: Creating new transport for initialize request');
+
+          // EAGER CLEANUP: Remove existing sessions for the same instance
+          // This prevents memory buildup when clients reconnect without proper cleanup
+          if (instanceContext?.instanceId) {
+            const sessionsToRemove: string[] = [];
+            for (const [existingSessionId, context] of Object.entries(this.sessionContexts)) {
+              if (context?.instanceId === instanceContext.instanceId) {
+                sessionsToRemove.push(existingSessionId);
+              }
+            }
+            for (const oldSessionId of sessionsToRemove) {
+              // Double-check session still exists (may have been cleaned by concurrent request)
+              if (!this.transports[oldSessionId]) {
+                continue;
+              }
+              logger.info('Cleaning up previous session for instance', {
+                instanceId: instanceContext.instanceId,
+                oldSession: oldSessionId,
+                reason: 'instance_reconnect'
+              });
+              await this.removeSession(oldSessionId, 'instance_reconnect');
+            }
+          }
 
           // Generate session ID based on multi-tenant configuration
           let sessionIdToUse: string;
@@ -1422,7 +1451,16 @@ export class SingleSessionHTTPServer {
         });
       });
     }
-    
+
+    // Close the shared database connection (only during process shutdown)
+    // This must happen after all sessions are closed
+    try {
+      await closeSharedDatabase();
+      logger.info('Shared database closed');
+    } catch (error) {
+      logger.warn('Error closing shared database:', error);
+    }
+
     logger.info('Single-Session HTTP server shutdown completed');
   }
   

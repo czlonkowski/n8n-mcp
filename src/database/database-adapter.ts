@@ -419,12 +419,36 @@ class BetterSQLiteStatement implements PreparedStatement {
 
 /**
  * Statement wrapper for sql.js
+ *
+ * IMPORTANT: sql.js requires explicit memory management via Statement.free().
+ * This wrapper automatically frees statement memory after each operation
+ * to prevent memory leaks during sustained traffic.
+ *
+ * See: https://sql.js.org/documentation/Statement.html
+ * "After calling db.prepare() you must manually free the assigned memory
+ *  by calling Statement.free()."
  */
 class SQLJSStatement implements PreparedStatement {
   private boundParams: any = null;
-  
+  private freed: boolean = false;
+
   constructor(private stmt: any, private onModify: () => void) {}
-  
+
+  /**
+   * Free the underlying sql.js statement memory.
+   * Safe to call multiple times - subsequent calls are no-ops.
+   */
+  private freeStatement(): void {
+    if (!this.freed && this.stmt) {
+      try {
+        this.stmt.free();
+        this.freed = true;
+      } catch (e) {
+        // Statement may already be freed or invalid - ignore
+      }
+    }
+  }
+
   run(...params: any[]): RunResult {
     try {
       if (params.length > 0) {
@@ -433,10 +457,10 @@ class SQLJSStatement implements PreparedStatement {
           this.stmt.bind(this.boundParams);
         }
       }
-      
+
       this.stmt.run();
       this.onModify();
-      
+
       // sql.js doesn't provide changes/lastInsertRowid easily
       return {
         changes: 1, // Assume success means 1 change
@@ -445,9 +469,12 @@ class SQLJSStatement implements PreparedStatement {
     } catch (error) {
       this.stmt.reset();
       throw error;
+    } finally {
+      // Free statement memory after write operation completes
+      this.freeStatement();
     }
   }
-  
+
   get(...params: any[]): any {
     try {
       if (params.length > 0) {
@@ -456,21 +483,24 @@ class SQLJSStatement implements PreparedStatement {
           this.stmt.bind(this.boundParams);
         }
       }
-      
+
       if (this.stmt.step()) {
         const result = this.stmt.getAsObject();
         this.stmt.reset();
         return this.convertIntegerColumns(result);
       }
-      
+
       this.stmt.reset();
       return undefined;
     } catch (error) {
       this.stmt.reset();
       throw error;
+    } finally {
+      // Free statement memory after read operation completes
+      this.freeStatement();
     }
   }
-  
+
   all(...params: any[]): any[] {
     try {
       if (params.length > 0) {
@@ -479,17 +509,20 @@ class SQLJSStatement implements PreparedStatement {
           this.stmt.bind(this.boundParams);
         }
       }
-      
+
       const results: any[] = [];
       while (this.stmt.step()) {
         results.push(this.convertIntegerColumns(this.stmt.getAsObject()));
       }
-      
+
       this.stmt.reset();
       return results;
     } catch (error) {
       this.stmt.reset();
       throw error;
+    } finally {
+      // Free statement memory after read operation completes
+      this.freeStatement();
     }
   }
   
