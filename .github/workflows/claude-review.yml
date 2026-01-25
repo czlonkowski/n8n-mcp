@@ -1,0 +1,12 @@
+name: Claude Code Review
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  claude-review:
+    uses: 1215-Labs/.github/.github/workflows/claude-review.yml@main
+    secrets: inherit
