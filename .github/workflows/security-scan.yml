@@ -1,0 +1,16 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Mondays
+
+jobs:
+  security:
+    uses: 1215-Labs/.github/.github/workflows/reusable-security-scan.yml@main
+    with:
+      language: javascript
+    secrets: inherit
