@@ -169,7 +169,7 @@
   "optionalDependencies": {
     "@rollup/rollup-darwin-arm64": "^4.50.0",
     "@rollup/rollup-linux-x64-gnu": "^4.50.0",
-    "better-sqlite3": "^11.10.0"
+    "better-sqlite3": "11.10.0"
   },
   "overrides": {
     "pyodide": "0.26.4"

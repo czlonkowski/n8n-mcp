@@ -13,6 +13,9 @@ export declare class N8NDocumentationMCPServer {
     private previousToolTimestamp;
     private earlyLogger;
     private disabledToolsCache;
+    private useSharedDatabase;
+    private sharedDbState;
+    private isShutdown;
     constructor(instanceContext?: InstanceContext, earlyLogger?: EarlyErrorLogger);
     close(): Promise<void>;
     private initializeDatabase;

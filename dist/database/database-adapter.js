@@ -311,6 +311,17 @@ class SQLJSStatement {
         this.stmt = stmt;
         this.onModify = onModify;
         this.boundParams = null;
+        this.freed = false;
+    }
+    freeStatement() {
+        if (!this.freed && this.stmt) {
+            try {
+                this.stmt.free();
+                this.freed = true;
+            }
+            catch (e) {
+            }
+        }
     }
     run(...params) {
         try {
@@ -330,6 +341,9 @@ class SQLJSStatement {
         catch (error) {
             this.stmt.reset();
             throw error;
+        }
+        finally {
+            this.freeStatement();
         }
     }
     get(...params) {
@@ -352,6 +366,9 @@ class SQLJSStatement {
             this.stmt.reset();
             throw error;
         }
+        finally {
+            this.freeStatement();
+        }
     }
     all(...params) {
         try {
@@ -371,6 +388,9 @@ class SQLJSStatement {
         catch (error) {
             this.stmt.reset();
             throw error;
+        }
+        finally {
+            this.freeStatement();
         }
     }
     iterate(...params) {
