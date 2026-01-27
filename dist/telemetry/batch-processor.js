@@ -33,26 +33,36 @@ class TelemetryBatchProcessor {
         this.flushTimes = [];
         this.deadLetterQueue = [];
         this.maxDeadLetterSize = 100;
+        this.eventListeners = {};
+        this.started = false;
         this.circuitBreaker = new telemetry_error_1.TelemetryCircuitBreaker();
     }
     start() {
         if (!this.isEnabled() || !this.supabase)
             return;
+        if (this.started) {
+            logger_1.logger.debug('Telemetry batch processor already started, skipping');
+            return;
+        }
         this.flushTimer = setInterval(() => {
             this.flush();
         }, telemetry_types_1.TELEMETRY_CONFIG.BATCH_FLUSH_INTERVAL);
         if (typeof this.flushTimer === 'object' && 'unref' in this.flushTimer) {
             this.flushTimer.unref();
         }
-        process.on('beforeExit', () => this.flush());
-        process.on('SIGINT', () => {
+        this.eventListeners.beforeExit = () => this.flush();
+        this.eventListeners.sigint = () => {
             this.flush();
             process.exit(0);
-        });
-        process.on('SIGTERM', () => {
+        };
+        this.eventListeners.sigterm = () => {
             this.flush();
             process.exit(0);
-        });
+        };
+        process.on('beforeExit', this.eventListeners.beforeExit);
+        process.on('SIGINT', this.eventListeners.sigint);
+        process.on('SIGTERM', this.eventListeners.sigterm);
+        this.started = true;
         logger_1.logger.debug('Telemetry batch processor started');
     }
     stop() {
@@ -60,6 +70,17 @@ class TelemetryBatchProcessor {
             clearInterval(this.flushTimer);
             this.flushTimer = undefined;
         }
+        if (this.eventListeners.beforeExit) {
+            process.removeListener('beforeExit', this.eventListeners.beforeExit);
+        }
+        if (this.eventListeners.sigint) {
+            process.removeListener('SIGINT', this.eventListeners.sigint);
+        }
+        if (this.eventListeners.sigterm) {
+            process.removeListener('SIGTERM', this.eventListeners.sigterm);
+        }
+        this.eventListeners = {};
+        this.started = false;
         logger_1.logger.debug('Telemetry batch processor stopped');
     }
     async flush(events, workflows, mutations) {

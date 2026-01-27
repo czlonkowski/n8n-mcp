@@ -26,10 +26,10 @@ export declare const workflowNodeSchema: z.ZodObject<{
     parameters: Record<string, unknown>;
     credentials?: Record<string, unknown> | undefined;
     retryOnFail?: boolean | undefined;
+    continueOnFail?: boolean | undefined;
     maxTries?: number | undefined;
     waitBetweenTries?: number | undefined;
     alwaysOutputData?: boolean | undefined;
-    continueOnFail?: boolean | undefined;
     executeOnce?: boolean | undefined;
     disabled?: boolean | undefined;
     notes?: string | undefined;
@@ -43,10 +43,10 @@ export declare const workflowNodeSchema: z.ZodObject<{
     parameters: Record<string, unknown>;
     credentials?: Record<string, unknown> | undefined;
     retryOnFail?: boolean | undefined;
+    continueOnFail?: boolean | undefined;
     maxTries?: number | undefined;
     waitBetweenTries?: number | undefined;
     alwaysOutputData?: boolean | undefined;
-    continueOnFail?: boolean | undefined;
     executeOnce?: boolean | undefined;
     disabled?: boolean | undefined;
     notes?: string | undefined;
