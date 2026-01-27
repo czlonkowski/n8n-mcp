@@ -52,8 +52,67 @@ async function rebuild() {
     const mapper = new docs_mapper_1.DocsMapper();
     const repository = new node_repository_1.NodeRepository(db);
     const toolVariantGenerator = new tool_variant_generator_1.ToolVariantGenerator();
-    const schema = fs.readFileSync(path.join(__dirname, '../../src/database/schema.sql'), 'utf8');
-    db.exec(schema);
+    let schema = fs.readFileSync(path.join(__dirname, '../../src/database/schema.sql'), 'utf8');
+    const fts5Supported = db.checkFTS5Support();
+    if (!fts5Supported) {
+        console.log('⚠️  FTS5 not supported (using sql.js fallback), skipping FTS5 tables and triggers');
+        const lines = schema.split('\n');
+        const filteredLines = [];
+        let skipBlock = false;
+        let blockType = '';
+        for (const line of lines) {
+            const lower = line.toLowerCase().trim();
+            if (lower.includes('create virtual table') && lower.includes('fts5')) {
+                skipBlock = true;
+                blockType = 'virtual';
+                continue;
+            }
+            if (lower.includes('create trigger') && lower.includes('nodes_fts')) {
+                skipBlock = true;
+                blockType = 'trigger';
+                continue;
+            }
+            if (skipBlock && blockType === 'virtual' && lower.endsWith(');')) {
+                skipBlock = false;
+                blockType = '';
+                continue;
+            }
+            if (skipBlock && blockType === 'trigger' && lower === 'end;') {
+                skipBlock = false;
+                blockType = '';
+                continue;
+            }
+            if (lower.startsWith('--') && lower.includes('fts5')) {
+                continue;
+            }
+            if (!skipBlock) {
+                filteredLines.push(line);
+            }
+        }
+        schema = filteredLines.join('\n');
+    }
+    try {
+        db.exec(schema);
+    }
+    catch (err) {
+        const errMsg = err.message;
+        console.warn(`Schema execution error: ${errMsg}, trying statement-by-statement...`);
+        const statements = schema.split(/;(?=\s*(?:--|CREATE|DROP|INSERT|UPDATE|DELETE|ALTER|$))/i);
+        for (const stmt of statements) {
+            const trimmed = stmt.trim();
+            if (trimmed && !trimmed.startsWith('--')) {
+                try {
+                    db.exec(trimmed + ';');
+                }
+                catch (stmtErr) {
+                    const stmtErrMsg = stmtErr.message;
+                    if (!stmtErrMsg.includes('already exists')) {
+                        console.warn(`Warning: Failed to execute statement: ${stmtErrMsg}`);
+                    }
+                }
+            }
+        }
+    }
     db.exec('DELETE FROM nodes');
     console.log('🗑️  Cleared existing data\n');
     const nodes = await loader.loadAllNodes();
@@ -216,31 +275,37 @@ function validateDatabase(repository) {
         else if (toolVariantCount < MIN_EXPECTED_TOOL_VARIANTS) {
             issues.push(`Only ${toolVariantCount} Tool variants found - expected at least ${MIN_EXPECTED_TOOL_VARIANTS}`);
         }
-        const ftsTableCheck = db.prepare(`
-      SELECT name FROM sqlite_master
-      WHERE type='table' AND name='nodes_fts'
-    `).get();
-        if (!ftsTableCheck) {
-            issues.push('CRITICAL: FTS5 table (nodes_fts) does not exist - searches will fail or be very slow');
-        }
-        else {
-            const ftsCount = db.prepare('SELECT COUNT(*) as count FROM nodes_fts').get();
-            if (ftsCount.count === 0) {
-                issues.push('CRITICAL: FTS5 index is empty - searches will return zero results');
+        const fts5Supported = db.checkFTS5Support ? db.checkFTS5Support() : false;
+        if (fts5Supported) {
+            const ftsTableCheck = db.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name='nodes_fts'
+      `).get();
+            if (!ftsTableCheck) {
+                issues.push('WARNING: FTS5 table (nodes_fts) does not exist - full-text searches will be slower');
             }
-            else if (nodeCount.count !== ftsCount.count) {
-                issues.push(`FTS5 index out of sync: ${nodeCount.count} nodes but ${ftsCount.count} FTS5 entries`);
-            }
-            const searchableNodes = ['webhook', 'merge', 'split'];
-            for (const searchTerm of searchableNodes) {
-                const searchResult = db.prepare(`
-          SELECT COUNT(*) as count FROM nodes_fts
-          WHERE nodes_fts MATCH ?
-        `).get(searchTerm);
-                if (searchResult.count === 0) {
-                    issues.push(`CRITICAL: Search for "${searchTerm}" returns zero results in FTS5 index`);
+            else {
+                const ftsCount = db.prepare('SELECT COUNT(*) as count FROM nodes_fts').get();
+                if (ftsCount.count === 0) {
+                    issues.push('WARNING: FTS5 index is empty - full-text searches will fall back to LIKE queries');
+                }
+                else if (nodeCount.count !== ftsCount.count) {
+                    issues.push(`FTS5 index out of sync: ${nodeCount.count} nodes but ${ftsCount.count} FTS5 entries`);
+                }
+                const searchableNodes = ['webhook', 'merge', 'split'];
+                for (const searchTerm of searchableNodes) {
+                    const searchResult = db.prepare(`
+            SELECT COUNT(*) as count FROM nodes_fts
+            WHERE nodes_fts MATCH ?
+          `).get(searchTerm);
+                    if (searchResult.count === 0) {
+                        issues.push(`WARNING: Search for "${searchTerm}" returns zero results in FTS5 index`);
+                    }
                 }
             }
+        }
+        else {
+            console.log('ℹ️  FTS5 not supported - skipping FTS5 validation (searches will use LIKE queries)');
         }
     }
     catch (error) {

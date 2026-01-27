@@ -25,8 +25,86 @@ async function rebuild() {
   const toolVariantGenerator = new ToolVariantGenerator();
   
   // Initialize database
-  const schema = fs.readFileSync(path.join(__dirname, '../../src/database/schema.sql'), 'utf8');
-  db.exec(schema);
+  let schema = fs.readFileSync(path.join(__dirname, '../../src/database/schema.sql'), 'utf8');
+
+  // Check if FTS5 is supported
+  const fts5Supported = db.checkFTS5Support();
+  if (!fts5Supported) {
+    console.log('⚠️  FTS5 not supported (using sql.js fallback), skipping FTS5 tables and triggers');
+    // Remove FTS5-related statements line by line
+    const lines = schema.split('\n');
+    const filteredLines: string[] = [];
+    let skipBlock = false;
+    let blockType = '';
+
+    for (const line of lines) {
+      const lower = line.toLowerCase().trim();
+
+      // Detect start of FTS5 virtual table
+      if (lower.includes('create virtual table') && lower.includes('fts5')) {
+        skipBlock = true;
+        blockType = 'virtual';
+        continue;
+      }
+
+      // Detect start of FTS5 trigger
+      if (lower.includes('create trigger') && lower.includes('nodes_fts')) {
+        skipBlock = true;
+        blockType = 'trigger';
+        continue;
+      }
+
+      // End of virtual table block (ends with );)
+      if (skipBlock && blockType === 'virtual' && lower.endsWith(');')) {
+        skipBlock = false;
+        blockType = '';
+        continue;
+      }
+
+      // End of trigger block (ends with end;)
+      if (skipBlock && blockType === 'trigger' && lower === 'end;') {
+        skipBlock = false;
+        blockType = '';
+        continue;
+      }
+
+      // Skip FTS5-related comment lines
+      if (lower.startsWith('--') && lower.includes('fts5')) {
+        continue;
+      }
+
+      // Include line if not in a skip block
+      if (!skipBlock) {
+        filteredLines.push(line);
+      }
+    }
+
+    schema = filteredLines.join('\n');
+  }
+
+  // Execute schema
+  try {
+    db.exec(schema);
+  } catch (err) {
+    // If the exec fails, try executing statement by statement
+    const errMsg = (err as Error).message;
+    console.warn(`Schema execution error: ${errMsg}, trying statement-by-statement...`);
+
+    const statements = schema.split(/;(?=\s*(?:--|CREATE|DROP|INSERT|UPDATE|DELETE|ALTER|$))/i);
+    for (const stmt of statements) {
+      const trimmed = stmt.trim();
+      if (trimmed && !trimmed.startsWith('--')) {
+        try {
+          db.exec(trimmed + ';');
+        } catch (stmtErr) {
+          const stmtErrMsg = (stmtErr as Error).message;
+          if (!stmtErrMsg.includes('already exists')) {
+            console.warn(`Warning: Failed to execute statement: ${stmtErrMsg}`);
+          }
+        }
+      }
+    }
+  }
   
   // Clear existing data
   db.exec('DELETE FROM nodes');
@@ -237,36 +315,42 @@ function validateDatabase(repository: NodeRepository): { passed: boolean; issues
       issues.push(`Only ${toolVariantCount} Tool variants found - expected at least ${MIN_EXPECTED_TOOL_VARIANTS}`);
     }
 
-    // Check FTS5 table existence and population
-    const ftsTableCheck = db.prepare(`
-      SELECT name FROM sqlite_master
-      WHERE type='table' AND name='nodes_fts'
-    `).get();
+    // Check FTS5 table existence and population (only if FTS5 is supported)
+    const fts5Supported = db.checkFTS5Support ? db.checkFTS5Support() : false;
 
-    if (!ftsTableCheck) {
-      issues.push('CRITICAL: FTS5 table (nodes_fts) does not exist - searches will fail or be very slow');
-    } else {
-      // Check if FTS5 table is properly populated
-      const ftsCount = db.prepare('SELECT COUNT(*) as count FROM nodes_fts').get() as { count: number };
+    if (fts5Supported) {
+      const ftsTableCheck = db.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name='nodes_fts'
+      `).get();
 
-      if (ftsCount.count === 0) {
-        issues.push('CRITICAL: FTS5 index is empty - searches will return zero results');
-      } else if (nodeCount.count !== ftsCount.count) {
-        issues.push(`FTS5 index out of sync: ${nodeCount.count} nodes but ${ftsCount.count} FTS5 entries`);
-      }
+      if (!ftsTableCheck) {
+        issues.push('WARNING: FTS5 table (nodes_fts) does not exist - full-text searches will be slower');
+      } else {
+        // Check if FTS5 table is properly populated
+        const ftsCount = db.prepare('SELECT COUNT(*) as count FROM nodes_fts').get() as { count: number };
 
-      // Verify critical nodes are searchable via FTS5
-      const searchableNodes = ['webhook', 'merge', 'split'];
-      for (const searchTerm of searchableNodes) {
-        const searchResult = db.prepare(`
-          SELECT COUNT(*) as count FROM nodes_fts
-          WHERE nodes_fts MATCH ?
-        `).get(searchTerm);
+        if (ftsCount.count === 0) {
+          issues.push('WARNING: FTS5 index is empty - full-text searches will fall back to LIKE queries');
+        } else if (nodeCount.count !== ftsCount.count) {
+          issues.push(`FTS5 index out of sync: ${nodeCount.count} nodes but ${ftsCount.count} FTS5 entries`);
+        }
 
-        if (searchResult.count === 0) {
-          issues.push(`CRITICAL: Search for "${searchTerm}" returns zero results in FTS5 index`);
+        // Verify critical nodes are searchable via FTS5
+        const searchableNodes = ['webhook', 'merge', 'split'];
+        for (const searchTerm of searchableNodes) {
+          const searchResult = db.prepare(`
+            SELECT COUNT(*) as count FROM nodes_fts
+            WHERE nodes_fts MATCH ?
+          `).get(searchTerm);
+
+          if (searchResult.count === 0) {
+            issues.push(`WARNING: Search for "${searchTerm}" returns zero results in FTS5 index`);
+          }
         }
       }
+    } else {
+      console.log('ℹ️  FTS5 not supported - skipping FTS5 validation (searches will use LIKE queries)');
     }
   } catch (error) {
     // Catch any validation errors
