@@ -60,6 +60,21 @@ export class UIAppRegistry {
     return Array.from(this.entries.values());
   }
 
+  /**
+   * Enrich tool definitions with _meta.ui.resourceUri for tools that have
+   * a matching UI app. Per MCP ext-apps spec, this goes on the tool
+   * definition (tools/list), not the tool call response.
+   */
+  static injectToolMeta(tools: Array<{ name: string; [key: string]: any }>): void {
+    if (!this.loaded) return;
+    for (const tool of tools) {
+      const entry = this.toolIndex.get(tool.name);
+      if (entry && entry.html) {
+        tool._meta = { ui: { resourceUri: entry.config.uri } };
+      }
+    }
+  }
+
   /** Reset registry state. Intended for testing only. */
   static reset(): void {
     this.entries.clear();

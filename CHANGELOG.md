@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.34.1] - 2026-02-07
+
+### Changed
+
+- **MCP Apps: Align with official ext-apps spec** for Claude Desktop/web compatibility
+  - URI scheme changed from `n8n-mcp://ui/{id}` to `ui://n8n-mcp/{id}` per MCP ext-apps spec
+  - `_meta.ui.resourceUri` now set on tool definitions (`tools/list`) instead of tool call responses
+  - `UIMetadata.ui.app` renamed to `UIMetadata.ui.resourceUri`
+  - Added `_meta` field to `ToolDefinition` type
+  - Added `UIAppRegistry.injectToolMeta()` method for enriching tool definitions
+  - UI apps now use `@modelcontextprotocol/ext-apps` `App` class instead of `window.__MCP_DATA__`
+  - Updated `ReadResource` URI parser to match new `ui://` scheme
+
+Conceived by Romuald Czlonkowski - https://www.aiadvisors.pl/en
+
 ## [2.34.0] - 2026-02-07
 
 ### Added

@@ -27,9 +27,9 @@ describe('UI_APP_CONFIGS', () => {
     }
   });
 
-  it('should have URIs following n8n-mcp://ui/{id} pattern', () => {
+  it('should have URIs following ui://n8n-mcp/{id} pattern', () => {
     for (const config of UI_APP_CONFIGS) {
-      expect(config.uri).toBe(`n8n-mcp://ui/${config.id}`);
+      expect(config.uri).toBe(`ui://n8n-mcp/${config.id}`);
     }
   });
 
@@ -71,9 +71,9 @@ describe('UI_APP_CONFIGS', () => {
     }
   });
 
-  it('should have URIs that start with the n8n-mcp://ui/ scheme', () => {
+  it('should have URIs that start with the ui://n8n-mcp/ scheme', () => {
     for (const config of UI_APP_CONFIGS) {
-      expect(config.uri).toMatch(/^n8n-mcp:\/\/ui\//);
+      expect(config.uri).toMatch(/^ui:\/\/n8n-mcp\//);
     }
   });
 

@@ -44,6 +44,11 @@ export interface ToolDefinition {
   };
   /** Tool behavior hints for AI assistants */
   annotations?: ToolAnnotations;
+  _meta?: {
+    ui?: {
+      resourceUri?: string;
+    };
+  };
 }
 
 export interface ResourceDefinition {

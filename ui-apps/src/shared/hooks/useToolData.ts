@@ -1,30 +1,34 @@
 import { useState, useEffect } from 'react';
-
-declare global {
-  interface Window {
-    __MCP_DATA__?: unknown;
-  }
-}
+import { App } from '@modelcontextprotocol/ext-apps';
 
 export function useToolData<T>(): T | null {
   const [data, setData] = useState<T | null>(null);
 
   useEffect(() => {
-    // Try window.__MCP_DATA__ first (injected by host)
-    if (window.__MCP_DATA__) {
-      setData(window.__MCP_DATA__ as T);
-      return;
-    }
+    const app = new App();
 
-    // Try embedded script tag
-    const scriptEl = document.getElementById('mcp-data');
-    if (scriptEl?.textContent) {
-      try {
-        setData(JSON.parse(scriptEl.textContent) as T);
-      } catch {
-        // Ignore parse errors
+    app.ontoolresult = (result: any) => {
+      // The host pushes tool result content; parse the first text item as JSON
+      if (result?.content) {
+        const textItem = Array.isArray(result.content)
+          ? result.content.find((c: any) => c.type === 'text')
+          : null;
+        if (textItem?.text) {
+          try {
+            setData(JSON.parse(textItem.text) as T);
+          } catch {
+            // Not JSON — use raw text as-is
+            setData(textItem.text as unknown as T);
+          }
+        }
       }
-    }
+    };
+
+    app.connect();
+
+    return () => {
+      app.close();
+    };
   }, []);
 
   return data;

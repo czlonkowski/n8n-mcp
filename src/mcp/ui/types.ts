@@ -13,7 +13,7 @@ export interface UIAppConfig {
 
 export interface UIMetadata {
   ui: {
-    app: string;
+    resourceUri: string;
   };
 }
 

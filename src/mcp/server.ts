@@ -651,6 +651,7 @@ export class N8NDocumentationMCPServer {
         });
       });
       
+      UIAppRegistry.injectToolMeta(tools);
       return { tools };
     });
 
@@ -781,12 +782,6 @@ export class N8NDocumentationMCPServer {
           mcpResponse.structuredContent = structuredContent;
         }
 
-        // Inject UI app metadata if available
-        const uiApp = UIAppRegistry.getAppForTool(name);
-        if (uiApp && uiApp.html) {
-          mcpResponse._meta = { ui: { app: uiApp.config.uri } };
-        }
-
         return mcpResponse;
       } catch (error) {
         logger.error(`Error executing tool ${name}`, error);
@@ -857,8 +852,8 @@ export class N8NDocumentationMCPServer {
     // Handle ReadResource for UI apps
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       const uri = request.params.uri;
-      // Parse n8n-mcp://ui/{id} pattern
-      const match = uri.match(/^n8n-mcp:\/\/ui\/(.+)$/);
+      // Parse ui://n8n-mcp/{id} pattern
+      const match = uri.match(/^ui:\/\/n8n-mcp\/(.+)$/);
       if (!match) {
         throw new Error(`Unknown resource URI: ${uri}`);
       }

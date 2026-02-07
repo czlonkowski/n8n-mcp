@@ -287,6 +287,75 @@ describe('UIAppRegistry', () => {
     });
   });
 
+  describe('injectToolMeta()', () => {
+    it('should not modify tools before load() is called', () => {
+      const tools: any[] = [
+        { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
+      ];
+      UIAppRegistry.injectToolMeta(tools);
+      expect(tools[0]._meta).toBeUndefined();
+    });
+
+    describe('after loading with HTML', () => {
+      beforeEach(() => {
+        mockExistsSync.mockReturnValue(true);
+        mockReadFileSync.mockReturnValue('<html>loaded</html>');
+        UIAppRegistry.load();
+      });
+
+      it('should set _meta.ui.resourceUri on matching operation tools', () => {
+        const tools: any[] = [
+          { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
+        ];
+        UIAppRegistry.injectToolMeta(tools);
+        expect(tools[0]._meta).toEqual({ ui: { resourceUri: 'ui://n8n-mcp/operation-result' } });
+      });
+
+      it('should set _meta.ui.resourceUri on matching validation tools', () => {
+        const tools: any[] = [
+          { name: 'validate_node', description: 'Validate', inputSchema: { type: 'object', properties: {} } },
+        ];
+        UIAppRegistry.injectToolMeta(tools);
+        expect(tools[0]._meta).toEqual({ ui: { resourceUri: 'ui://n8n-mcp/validation-summary' } });
+      });
+
+      it('should not set _meta on tools without a matching UI app', () => {
+        const tools: any[] = [
+          { name: 'search_nodes', description: 'Search', inputSchema: { type: 'object', properties: {} } },
+        ];
+        UIAppRegistry.injectToolMeta(tools);
+        expect(tools[0]._meta).toBeUndefined();
+      });
+
+      it('should handle a mix of matching and non-matching tools', () => {
+        const tools: any[] = [
+          { name: 'n8n_delete_workflow', description: 'Delete', inputSchema: { type: 'object', properties: {} } },
+          { name: 'get_node_essentials', description: 'Essentials', inputSchema: { type: 'object', properties: {} } },
+          { name: 'validate_workflow', description: 'Validate', inputSchema: { type: 'object', properties: {} } },
+        ];
+        UIAppRegistry.injectToolMeta(tools);
+        expect(tools[0]._meta?.ui?.resourceUri).toBe('ui://n8n-mcp/operation-result');
+        expect(tools[1]._meta).toBeUndefined();
+        expect(tools[2]._meta?.ui?.resourceUri).toBe('ui://n8n-mcp/validation-summary');
+      });
+    });
+
+    describe('after loading without HTML', () => {
+      beforeEach(() => {
+        mockExistsSync.mockReturnValue(false);
+        UIAppRegistry.load();
+      });
+
+      it('should not set _meta when HTML is not available', () => {
+        const tools: any[] = [
+          { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
+        ];
+        UIAppRegistry.injectToolMeta(tools);
+        expect(tools[0]._meta).toBeUndefined();
+      });
+    });
+  });
+
   describe('reset()', () => {
     it('should clear loaded state so getters return defaults', () => {
       mockExistsSync.mockReturnValue(true);
