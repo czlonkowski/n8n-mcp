@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.34.2] - 2026-02-07
+
+### Fixed
+
+- **CI: UI apps missing from npm package**: Release pipeline only ran `npm run build` (TypeScript), so `ui-apps/dist/` was never built and excluded from published packages
+  - Changed build step to `npm run build:all` in `build-and-verify` and `publish-npm` jobs
+  - Added `ui-apps/dist/` to npm publish staging directory
+  - Added `ui-apps/dist/**/*` to published package files list
+
+Conceived by Romuald Czlonkowski - https://www.aiadvisors.pl/en
+
 ## [2.34.1] - 2026-02-07
 
 ### Changed

@@ -283,8 +283,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
-      - name: Build project
-        run: npm run build
+      - name: Build project (server + UI apps)
+        run: npm run build:all
 
       # Database is already built and committed during development
       # Rebuilding here causes segfault due to memory pressure (exit code 139)
@@ -322,8 +322,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
       
-      - name: Build project
-        run: npm run build
+      - name: Build project (server + UI apps)
+        run: npm run build:all
 
       # Database is already built and committed during development
       - name: Verify database exists
@@ -347,6 +347,8 @@ jobs:
           # Copy necessary files
           cp -r dist $PUBLISH_DIR/
           cp -r data $PUBLISH_DIR/
+          mkdir -p $PUBLISH_DIR/ui-apps
+          cp -r ui-apps/dist $PUBLISH_DIR/ui-apps/
           cp README.md $PUBLISH_DIR/
           cp LICENSE $PUBLISH_DIR/
           cp .env.example $PUBLISH_DIR/
@@ -377,7 +379,7 @@ jobs:
           pkg.license = 'MIT';
           pkg.bugs = { url: 'https://github.com/czlonkowski/n8n-mcp/issues' };
           pkg.homepage = 'https://github.com/czlonkowski/n8n-mcp#readme';
-          pkg.files = ['dist/**/*', 'data/nodes.db', '.env.example', 'README.md', 'LICENSE'];
+          pkg.files = ['dist/**/*', 'ui-apps/dist/**/*', 'data/nodes.db', '.env.example', 'README.md', 'LICENSE'];
           delete pkg.private;
           require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2));
           "
