@@ -72,7 +72,7 @@ describe('UI Meta Injection on Tool Definitions', () => {
       expect(tools[2]._meta.ui.resourceUri).toBe('ui://n8n-mcp/validation-summary');
     });
 
-    it('should produce _meta with exact shape { ui: { resourceUri: string } }', () => {
+    it('should produce _meta with both nested and flat resourceUri keys', () => {
       const tools: any[] = [
         { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
       ];
@@ -83,10 +83,10 @@ describe('UI Meta Injection on Tool Definitions', () => {
         ui: {
           resourceUri: 'ui://n8n-mcp/operation-result',
         },
+        'ui/resourceUri': 'ui://n8n-mcp/operation-result',
       });
-      expect(Object.keys(tools[0]._meta)).toEqual(['ui']);
-      expect(Object.keys(tools[0]._meta.ui)).toEqual(['resourceUri']);
-      expect(typeof tools[0]._meta.ui.resourceUri).toBe('string');
+      expect(tools[0]._meta.ui.resourceUri).toBe('ui://n8n-mcp/operation-result');
+      expect(tools[0]._meta['ui/resourceUri']).toBe('ui://n8n-mcp/operation-result');
     });
   });
 

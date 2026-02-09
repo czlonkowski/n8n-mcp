@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.35.1] - 2026-02-09
+
+### Fixed
+
+- **MCP Apps: Fix UI not rendering for some tools in Claude**: Added legacy flat `_meta["ui/resourceUri"]` key alongside the nested `_meta.ui.resourceUri` in tool definitions. Claude.ai reads the flat key format; without it, tools like `n8n_health_check` and `n8n_list_workflows` showed as collapsed accordions instead of rendering their rich UI apps. Both key formats are now set by `injectToolMeta()`, matching the behavior of the official `registerAppTool` helper from `@modelcontextprotocol/ext-apps/server`.
+
+Conceived by Romuald Czlonkowski - https://www.aiadvisors.pl/en
+
 ## [2.35.0] - 2026-02-09
 
 ### Added

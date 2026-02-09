@@ -308,7 +308,7 @@ describe('UIAppRegistry', () => {
           { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
         ];
         UIAppRegistry.injectToolMeta(tools);
-        expect(tools[0]._meta).toEqual({ ui: { resourceUri: 'ui://n8n-mcp/operation-result' } });
+        expect(tools[0]._meta).toEqual({ ui: { resourceUri: 'ui://n8n-mcp/operation-result' }, 'ui/resourceUri': 'ui://n8n-mcp/operation-result' });
       });
 
       it('should set _meta.ui.resourceUri on matching validation tools', () => {
@@ -316,7 +316,7 @@ describe('UIAppRegistry', () => {
           { name: 'validate_node', description: 'Validate', inputSchema: { type: 'object', properties: {} } },
         ];
         UIAppRegistry.injectToolMeta(tools);
-        expect(tools[0]._meta).toEqual({ ui: { resourceUri: 'ui://n8n-mcp/validation-summary' } });
+        expect(tools[0]._meta).toEqual({ ui: { resourceUri: 'ui://n8n-mcp/validation-summary' }, 'ui/resourceUri': 'ui://n8n-mcp/validation-summary' });
       });
 
       it('should not set _meta on tools without a matching UI app', () => {
