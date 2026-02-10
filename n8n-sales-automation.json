@@ -1,0 +1,528 @@
+{
+  "name": "Sales Lead Automation",
+  "nodes": [
+    {
+      "id": "webhook-1",
+      "name": "New Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "set-1",
+      "name": "Format Lead Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [450, 300],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-name",
+              "name": "fullName",
+              "value": "={{ $json.body.firstName }} {{ $json.body.lastName }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-email",
+              "name": "email",
+              "value": "={{ $json.body.email }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-company",
+              "name": "company",
+              "value": "={{ $json.body.company }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-source",
+              "name": "leadSource",
+              "value": "={{ $json.body.source ?? 'website' }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-score",
+              "name": "leadScore",
+              "value": "={{ $json.body.score ?? 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "assign-date",
+              "name": "createdAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "if-1",
+      "name": "Check Lead Score",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-score",
+              "leftValue": "={{ $json.leadScore }}",
+              "rightValue": 50,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "http-enrich",
+      "name": "Enrich Lead Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [850, 200],
+      "parameters": {
+        "url": "={{ 'https://api.clearbit.com/v2/companies/find?domain=' + $json.email.split('@')[1] }}",
+        "method": "GET",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "clearbit-auth",
+          "name": "Clearbit API Key"
+        }
+      },
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "set-enrich",
+      "name": "Merge Enriched Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1050, 200],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-industry",
+              "name": "industry",
+              "value": "={{ $json.category?.industry ?? 'Unknown' }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-employees",
+              "name": "employeeCount",
+              "value": "={{ $json.metrics?.employees ?? 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "assign-priority",
+              "name": "priority",
+              "value": "high",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "includeBinary": false
+        }
+      }
+    },
+    {
+      "id": "http-crm",
+      "name": "Create CRM Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 200],
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "properties",
+              "value": "={{ JSON.stringify({ email: $('Format Lead Data').item.json.email, firstname: $('Format Lead Data').item.json.fullName.split(' ')[0], lastname: $('Format Lead Data').item.json.fullName.split(' ').slice(1).join(' '), company: $('Format Lead Data').item.json.company, lead_source: $('Format Lead Data').item.json.leadSource, lifecyclestage: 'lead', hs_lead_status: 'NEW' }) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hubspot-auth",
+          "name": "HubSpot API Key"
+        }
+      },
+      "continueOnFail": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "http-slack-high",
+      "name": "Notify Sales Team",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1450, 200],
+      "parameters": {
+        "url": "https://hooks.slack.com/services/PLACEHOLDER/WEBHOOK/URL",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: ':fire: High-priority lead!', blocks: [{ type: 'section', text: { type: 'mrkdwn', text: '*New High-Priority Lead*\\n:bust_in_silhouette: ' + $('Format Lead Data').item.json.fullName + '\\n:office: ' + $('Format Lead Data').item.json.company + '\\n:email: ' + $('Format Lead Data').item.json.email + '\\n:chart_with_upwards_trend: Score: ' + $('Format Lead Data').item.json.leadScore + '\\n:factory: Industry: ' + $('Merge Enriched Data').item.json.industry }}] }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      }
+    },
+    {
+      "id": "set-low",
+      "name": "Tag Low-Priority Lead",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 420],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-priority-low",
+              "name": "priority",
+              "value": "low",
+              "type": "string"
+            },
+            {
+              "id": "assign-followup",
+              "name": "followUpDate",
+              "value": "={{ $now.plus({ days: 7 }).toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "http-crm-low",
+      "name": "Create CRM Contact Low",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1050, 420],
+      "parameters": {
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "properties",
+              "value": "={{ JSON.stringify({ email: $('Format Lead Data').item.json.email, firstname: $('Format Lead Data').item.json.fullName.split(' ')[0], lastname: $('Format Lead Data').item.json.fullName.split(' ').slice(1).join(' '), company: $('Format Lead Data').item.json.company, lead_source: $('Format Lead Data').item.json.leadSource, lifecyclestage: 'subscriber', hs_lead_status: 'OPEN' }) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hubspot-auth",
+          "name": "HubSpot API Key"
+        }
+      },
+      "continueOnFail": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "http-email-nurture",
+      "name": "Send Nurture Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 420],
+      "parameters": {
+        "url": "https://api.sendgrid.com/v3/mail/send",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ personalizations: [{ to: [{ email: $('Format Lead Data').item.json.email }] }], from: { email: 'sales@example.com', name: 'Sales Team' }, subject: 'Thanks for your interest, ' + $('Format Lead Data').item.json.fullName.split(' ')[0] + '!', content: [{ type: 'text/html', value: '<h2>Welcome!</h2><p>Thank you for reaching out. We\\'d love to learn more about your needs at ' + $('Format Lead Data').item.json.company + '.</p><p>Our team will follow up with you shortly.</p>' }] }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "sendgrid-auth",
+          "name": "SendGrid API Key"
+        }
+      },
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "merge-1",
+      "name": "Merge Outcomes",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1650, 300],
+      "parameters": {
+        "mode": "append",
+        "options": {}
+      }
+    },
+    {
+      "id": "respond-1",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1850, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Lead processed successfully', leadId: $json.id ?? 'pending', priority: $json.priority ?? 'processed' }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "error-handler",
+      "name": "Handle CRM Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1450, 550],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-error-flag",
+              "name": "crmSyncFailed",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "assign-error-msg",
+              "name": "errorMessage",
+              "value": "={{ $json.error?.message ?? 'CRM sync failed - will retry' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "http-slack-error",
+      "name": "Notify CRM Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1650, 550],
+      "parameters": {
+        "url": "https://hooks.slack.com/services/PLACEHOLDER/WEBHOOK/URL",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: ':warning: CRM sync failed for lead: ' + $('Format Lead Data').item.json.email + '. Error: ' + $json.errorMessage }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "New Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Format Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Check Lead Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Lead Score": {
+      "main": [
+        [
+          {
+            "node": "Enrich Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tag Low-Priority Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Merge Enriched Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Enriched Data": {
+      "main": [
+        [
+          {
+            "node": "Create CRM Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create CRM Contact": {
+      "main": [
+        [
+          {
+            "node": "Notify Sales Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "error": [
+        [
+          {
+            "node": "Handle CRM Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Sales Team": {
+      "main": [
+        [
+          {
+            "node": "Merge Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Low-Priority Lead": {
+      "main": [
+        [
+          {
+            "node": "Create CRM Contact Low",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create CRM Contact Low": {
+      "main": [
+        [
+          {
+            "node": "Send Nurture Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "error": [
+        [
+          {
+            "node": "Handle CRM Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Nurture Email": {
+      "main": [
+        [
+          {
+            "node": "Merge Outcomes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Outcomes": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle CRM Error": {
+      "main": [
+        [
+          {
+            "node": "Notify CRM Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "timezone": "America/New_York"
+  }
+}
