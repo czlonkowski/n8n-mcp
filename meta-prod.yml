@@ -1,12 +1,5 @@
 names:
-  service: n8n-mcp-server
-  github: n8n-mcp-server
-
-build:
-  allow_vulnerable_image: true
-  allow_vulnerable_code: true
-  allow_secret_plaintext: true
-  use_vault_ha: true
+  service: n8n-mcp-server-oci
 
 project:
   squad: ai.integrations.squad
@@ -15,48 +8,7 @@ project:
   public_api: false
   private_api: true
 
-autoscaling:
-  minInstances: 1
-  maxInstances: 1
-  averageMemory: 250
-  averageCpu: 100
-
-deploy:
-  cpu: 200
-  cpu_limit: 400
-  memory: 250
-  memory_limit: 500
-  k8s_clusters: ["backend-ch1-prod"]
-  node_profile: generic
-  secrets_from: file
-  instances: 1
-  service:
-    - name: n8n-mcp-server
-      port: 3000
-      tags: ["metrics"]
-
-alerts:
-  HostInstanceDown:
-    description: "The number of available instances is less than the expected amount."
-    destination: "opsgenie"
-    prometheus_expression: 'sum(kube_deployment_status_replicas_unavailable{job="kube-state-metrics",deployment="n8n-mcp-server"}) > 0'
-    prometheus_for: "5m"
-    resolution_document: "https://app.getguru.com/card/cp45qLbi/N8N-MCP-Server-Alerts"
-  HostMemoryHalf:
-    description: "Host has reached 60% memory capacity."
-    destination: "opsgenie"
-    prometheus_expression: max(container_memory_usage_bytes{pod=~"n8n-mcp-server(-.{1,10}-.{1,10})$",container!="",container!="POD",container=~".*n8n-mcp-server.*"}) / max(kube_pod_container_resource_limits{resource="memory",unit="byte",job="kube-state-metrics",container=~"n8n-mcp-server",pod=~"n8n-mcp-server-.*"}) > 0.60
-    prometheus_for: "5m"
-    resolution_document: "https://app.getguru.com/card/cp45qLbi/N8N-MCP-Server-Alerts"
-  HostOutOfMemory:
-    description: "Host has reached 80% memory capacity. Less than 20% available."
-    destination: "opsgenie"
-    prometheus_expression: max(container_memory_usage_bytes{pod=~"n8n-mcp-server(-.{1,10}-.{1,10})$",container!="",container!="POD",container=~".*n8n-mcp-server.*"}) / max(kube_pod_container_resource_limits{resource="memory",unit="byte",job="kube-state-metrics",container=~"n8n-mcp-server",pod=~"n8n-mcp-server-.*"}) > 0.80
-    prometheus_for: "5m"
-    resolution_document: "https://app.getguru.com/card/cp45qLbi/N8N-MCP-Server-Alerts"
-  HostOutOfCPU:
-    description: "Host has reached 80% CPU usage. Less than 20% available."
-    destination: "opsgenie"
-    prometheus_expression: (sum(kube_metrics_server_pods_cpu{pod_name=~"n8n-mcp-server(-.{1,10}-.{1,10})$",pod_container_name=~"n8n-mcp-server"}) by (pod_name,pod_container_name) / 1000000) > 80
-    prometheus_for: "5m"
-    resolution_document: "https://app.getguru.com/card/cp45qLbi/N8N-MCP-Server-Alerts"
+build:
+  allow_vulnerable_image: true
+  allow_vulnerable_code: true
+  allow_secret_plaintext: true
