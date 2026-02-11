@@ -8,5 +8,5 @@ on:
 
 jobs:
   docker-image:
-    uses: team-telnyx/infra-ci-gha-workflows/.github/workflows/dockerImage.yml@main
+    uses: team-telnyx/infra-ci-gha-workflows/.github/workflows/dockerImage.yml@latest
     secrets: inherit
