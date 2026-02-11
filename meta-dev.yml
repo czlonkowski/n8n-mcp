@@ -1,12 +1,5 @@
 names:
-  service: n8n-mcp-server
-  github: n8n-mcp-server
-
-build:
-  allow_vulnerable_image: true
-  allow_vulnerable_code: true
-  allow_secret_plaintext: true
-  use_vault_ha: true
+  service: n8n-mcp-server-oci
 
 project:
   squad: ai.integrations.squad
@@ -15,32 +8,7 @@ project:
   public_api: false
   private_api: true
 
-deploy:
-  cpu: 50
-  cpu_limit: 100
-  memory: 150
-  memory_limit: 300
-  k8s_clusters: ["backend-ch1-dev"]
-  node_profile: generic-preemptible
-  secrets_from: file
-  instances: 1
-  service:
-    - name: n8n-mcp-server
-      port: 3000
-      tags: ["metrics"]
-
-  env:
-    secret:
-      - AUTH_TOKEN
-      - DISABLE_CONSOLE_OUTPUT
-      - LOG_LEVEL
-      - MCP_MODE
-      - N8N_API_KEY
-      - N8N_API_MAX_RETRIES
-      - N8N_API_TIMEOUT
-      - N8N_API_URL
-      - NODE_DB_PATH
-      - NODE_ENV
-      - PORT
-      - REBUILD_ON_START
-      - N8N_API_HEADERS_ONLY
+build:
+  allow_vulnerable_image: true
+  allow_vulnerable_code: true
+  allow_secret_plaintext: true

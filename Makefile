@@ -1,5 +1,5 @@
 tag := red
-service := n8n-mcp-server
+service := n8n-mcp-server-oci
 port := 3000
 
 main_image := registry.internal.telnyx.com/jenkins/$(service):$(tag)

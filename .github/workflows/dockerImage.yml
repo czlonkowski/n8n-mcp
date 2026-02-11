@@ -1,0 +1,12 @@
+name: Docker Image Workflow
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  docker-image:
+    uses: team-telnyx/infra-ci-gha-workflows/.github/workflows/dockerImage.yml@latest
+    secrets: inherit
