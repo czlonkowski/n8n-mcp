@@ -601,7 +601,7 @@ export function validateOperatorStructure(operator: any, path: string): string[]
 
   // Check singleValue based on operator type
   if (operator.operation) {
-    const unaryOperators = ['isEmpty', 'isNotEmpty', 'true', 'false', 'isNumeric'];
+    const unaryOperators = ['isEmpty', 'isNotEmpty', 'empty', 'notEmpty', 'exists', 'notExists', 'true', 'false', 'isNumeric'];
     const isUnary = unaryOperators.includes(operator.operation);
 
     if (isUnary) {

@@ -237,6 +237,10 @@ function isUnaryOperator(operation: string): boolean {
   const unaryOps = [
     'isEmpty',
     'isNotEmpty',
+    'empty',
+    'notEmpty',
+    'exists',
+    'notExists',
     'true',
     'false',
     'isNumeric'

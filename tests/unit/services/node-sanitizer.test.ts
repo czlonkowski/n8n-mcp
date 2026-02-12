@@ -220,6 +220,71 @@ describe('Node Sanitizer', () => {
       expect(sanitized).toEqual(node);
     });
 
+    it('should add singleValue for object type unary operators', () => {
+      const node: WorkflowNode = {
+        id: 'test-if-object-unary',
+        name: 'IF Object Empty',
+        type: 'n8n-nodes-base.if',
+        typeVersion: 2.2,
+        position: [0, 0],
+        parameters: {
+          conditions: {
+            conditions: [
+              {
+                id: 'condition1',
+                leftValue: '={{ $json.value }}',
+                rightValue: '',
+                operator: {
+                  type: 'object',
+                  operation: 'empty'
+                  // Missing singleValue
+                }
+              }
+            ]
+          }
+        }
+      };
+
+      const sanitized = sanitizeNode(node);
+      const condition = (sanitized.parameters.conditions as any).conditions[0];
+
+      expect(condition.operator.singleValue).toBe(true);
+    });
+
+    it('should preserve singleValue on object/empty operator', () => {
+      const node: WorkflowNode = {
+        id: 'test-if-object-preserve',
+        name: 'IF Object Preserve',
+        type: 'n8n-nodes-base.if',
+        typeVersion: 2.2,
+        position: [0, 0],
+        parameters: {
+          conditions: {
+            conditions: [
+              {
+                id: 'condition1',
+                leftValue: '={{ $json.value }}',
+                rightValue: '',
+                operator: {
+                  type: 'object',
+                  operation: 'empty',
+                  singleValue: true
+                }
+              }
+            ]
+          }
+        }
+      };
+
+      const sanitized = sanitizeNode(node);
+      const condition = (sanitized.parameters.conditions as any).conditions[0];
+
+      // Must NOT strip singleValue from object/empty (it's unary, not binary)
+      expect(condition.operator.singleValue).toBe(true);
+      expect(condition.operator.type).toBe('object');
+      expect(condition.operator.operation).toBe('empty');
+    });
+
     it('should remove singleValue from binary operators like "equals"', () => {
       const node: WorkflowNode = {
         id: 'test-if-binary',
@@ -457,5 +522,6 @@ describe('Node Sanitizer', () => {
 
       expect(issues).toEqual([]);
     });
+
   });
 });
