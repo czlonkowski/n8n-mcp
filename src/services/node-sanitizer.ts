@@ -209,13 +209,13 @@ function isOperationName(value: string): boolean {
  */
 function inferDataType(operation: string): string {
   // Boolean operations
-  const booleanOps = ['true', 'false', 'isEmpty', 'isNotEmpty'];
+  const booleanOps = ['true', 'false', 'exists', 'notExists', 'empty', 'notEmpty'];
   if (booleanOps.includes(operation)) {
     return 'boolean';
   }
 
   // Number operations
-  const numberOps = ['isNumeric', 'gt', 'gte', 'lt', 'lte'];
+  const numberOps = ['gt', 'gte', 'lt', 'lte'];
   if (numberOps.some(op => operation.includes(op))) {
     return 'number';
   }
@@ -235,11 +235,12 @@ function inferDataType(operation: string): string {
  */
 function isUnaryOperator(operation: string): boolean {
   const unaryOps = [
-    'isEmpty',
-    'isNotEmpty',
+    'exists',
+    'notExists',
+    'empty',
+    'notEmpty',
     'true',
-    'false',
-    'isNumeric'
+    'false'
   ];
   return unaryOps.includes(operation);
 }

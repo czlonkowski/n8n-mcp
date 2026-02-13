@@ -115,8 +115,8 @@ When ANY workflow update is made, ALL nodes in the workflow are automatically sa
 
 1. **Operator Structure Fixes**:
    - Binary operators (equals, contains, greaterThan, etc.) automatically have \`singleValue\` removed
-   - Unary operators (isEmpty, isNotEmpty, true, false) automatically get \`singleValue: true\` added
-   - Invalid operator structures (e.g., \`{type: "isNotEmpty"}\`) are corrected to \`{type: "boolean", operation: "isNotEmpty"}\`
+   - Unary operators (exists, notExists, empty, notEmpty, true, false) automatically get \`singleValue: true\` added
+   - Invalid operator structures (e.g., \`{type: "notEmpty"}\`) are corrected to \`{type: "boolean", operation: "notEmpty"}\`
 
 2. **Missing Metadata Added**:
    - IF nodes with conditions get complete \`conditions.options\` structure if missing
@@ -403,7 +403,7 @@ n8n_update_partial_workflow({
       '**CRITICAL**: For Switch nodes, ALWAYS use case=N instead of sourceIndex. Using same sourceIndex for multiple connections will put them on the same case output.',
       'cleanStaleConnections removes ALL broken connections - cannot be selective',
       'replaceConnections overwrites entire connections object - all previous connections lost',
-      '**Auto-sanitization behavior**: Binary operators (equals, contains) automatically have singleValue removed; unary operators (isEmpty, isNotEmpty) automatically get singleValue:true added',
+      '**Auto-sanitization behavior**: Binary operators (equals, contains) automatically have singleValue removed; unary operators (exists, notExists, empty, notEmpty, true, false) automatically get singleValue:true added',
       '**Auto-sanitization runs on ALL nodes**: When ANY update is made, ALL nodes in the workflow are sanitized (not just modified ones)',
       '**Auto-sanitization cannot fix everything**: It fixes operator structures and missing metadata, but cannot fix broken connections or branch mismatches',
       '**Corrupted workflows beyond repair**: Workflows in paradoxical states (API returns corrupt, API rejects updates) cannot be fixed via API - must be recreated',

@@ -25,7 +25,7 @@ describe('Node Sanitizer', () => {
                 rightValue: '',
                 operator: {
                   type: 'string',
-                  operation: 'isNotEmpty'
+                  operation: 'notEmpty'
                 }
               }
             ]
@@ -91,7 +91,7 @@ describe('Node Sanitizer', () => {
                 leftValue: '={{ $json.value }}',
                 rightValue: '',
                 operator: {
-                  type: 'isNotEmpty' // WRONG: type should be data type, not operation
+                  type: 'notEmpty' // WRONG: type should be data type, not operation
                 }
               }
             ]
@@ -103,39 +103,50 @@ describe('Node Sanitizer', () => {
       const condition = (sanitized.parameters.conditions as any).conditions[0];
 
       // Should fix operator structure
-      expect(condition.operator.type).toBe('boolean'); // Inferred data type (isEmpty/isNotEmpty are boolean ops)
-      expect(condition.operator.operation).toBe('isNotEmpty'); // Moved to operation field
+      expect(condition.operator.type).toBe('boolean'); // Inferred data type (empty/notEmpty are boolean ops)
+      expect(condition.operator.operation).toBe('notEmpty'); // Moved to operation field
     });
 
     it('should add singleValue for unary operators', () => {
-      const node: WorkflowNode = {
-        id: 'test-if-unary',
-        name: 'IF Unary',
-        type: 'n8n-nodes-base.if',
-        typeVersion: 2.2,
-        position: [0, 0],
-        parameters: {
-          conditions: {
-            conditions: [
-              {
-                id: 'condition1',
-                leftValue: '={{ $json.value }}',
-                rightValue: '',
-                operator: {
-                  type: 'string',
-                  operation: 'isNotEmpty'
-                  // Missing singleValue
+      const unaryOps = [
+        { type: 'string', operation: 'notEmpty' },
+        { type: 'string', operation: 'empty' },
+        { type: 'string', operation: 'exists' },
+        { type: 'string', operation: 'notExists' },
+        { type: 'boolean', operation: 'true' },
+        { type: 'boolean', operation: 'false' },
+      ];
+
+      for (const op of unaryOps) {
+        const node: WorkflowNode = {
+          id: 'test-if-unary',
+          name: 'IF Unary',
+          type: 'n8n-nodes-base.if',
+          typeVersion: 2.2,
+          position: [0, 0],
+          parameters: {
+            conditions: {
+              conditions: [
+                {
+                  id: 'condition1',
+                  leftValue: '={{ $json.value }}',
+                  rightValue: '',
+                  operator: {
+                    type: op.type,
+                    operation: op.operation
+                    // Missing singleValue
+                  }
                 }
-              }
-            ]
+              ]
+            }
           }
-        }
-      };
+        };
 
-      const sanitized = sanitizeNode(node);
-      const condition = (sanitized.parameters.conditions as any).conditions[0];
+        const sanitized = sanitizeNode(node);
+        const condition = (sanitized.parameters.conditions as any).conditions[0];
 
-      expect(condition.operator.singleValue).toBe(true);
+        expect(condition.operator.singleValue).toBe(true);
+      }
     });
 
     it('should sanitize Switch v3.2 node rules', () => {
@@ -334,8 +345,8 @@ describe('Node Sanitizer', () => {
                 leftValue: '={{ $json.value }}',
                 rightValue: '',
                 operator: {
-                  type: 'isNotEmpty', // WRONG: operation name, not data type
-                  operation: 'isNotEmpty'
+                  type: 'notEmpty', // WRONG: operation name, not data type
+                  operation: 'notEmpty'
                 }
               }
             ]
@@ -345,7 +356,7 @@ describe('Node Sanitizer', () => {
 
       const issues = validateNodeMetadata(node);
 
-      expect(issues.some(issue => issue.includes('invalid type "isNotEmpty"'))).toBe(true);
+      expect(issues.some(issue => issue.includes('invalid type "notEmpty"'))).toBe(true);
     });
 
     it('should detect missing singleValue for unary operators', () => {
@@ -370,7 +381,7 @@ describe('Node Sanitizer', () => {
                 rightValue: '',
                 operator: {
                   type: 'string',
-                  operation: 'isNotEmpty'
+                  operation: 'notEmpty'
                   // Missing singleValue: true
                 }
               }
@@ -444,7 +455,7 @@ describe('Node Sanitizer', () => {
                 rightValue: '',
                 operator: {
                   type: 'string',
-                  operation: 'isNotEmpty',
+                  operation: 'notEmpty',
                   singleValue: true
                 }
               }
