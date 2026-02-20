@@ -31,10 +31,21 @@ function getValidator(repository: NodeRepository): WorkflowValidator {
   return cachedValidator;
 }
 
+/**
+ * Preprocess helper: some MCP clients serialize arrays as JSON strings.
+ * This ensures proper parsing before Zod validation.
+ */
+const jsonArrayPreprocess = (val: unknown): unknown => {
+  if (typeof val === 'string') {
+    try { const parsed = JSON.parse(val); if (Array.isArray(parsed)) return parsed; } catch { /* not JSON */ }
+  }
+  return val;
+};
+
 // Zod schema for the diff request
 const workflowDiffSchema = z.object({
   id: z.string(),
-  operations: z.array(z.object({
+  operations: z.preprocess(jsonArrayPreprocess, z.array(z.object({
     type: z.string(),
     description: z.string().optional(),
     // Node operations
@@ -63,7 +74,7 @@ const workflowDiffSchema = z.object({
     settings: z.any().optional(),
     name: z.string().optional(),
     tag: z.string().optional(),
-  })),
+  }))),
   validateOnly: z.boolean().optional(),
   continueOnError: z.boolean().optional(),
   createBackup: z.boolean().optional(),

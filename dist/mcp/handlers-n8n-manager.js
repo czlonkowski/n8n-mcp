@@ -161,10 +161,32 @@ function ensureApiConfigured(context) {
     }
     return client;
 }
+const jsonArrayPreprocess = (val) => {
+    if (typeof val === 'string') {
+        try {
+            const parsed = JSON.parse(val);
+            if (Array.isArray(parsed))
+                return parsed;
+        }
+        catch { }
+    }
+    return val;
+};
+const jsonObjectPreprocess = (val) => {
+    if (typeof val === 'string') {
+        try {
+            const parsed = JSON.parse(val);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+                return parsed;
+        }
+        catch { }
+    }
+    return val;
+};
 const createWorkflowSchema = zod_1.z.object({
     name: zod_1.z.string(),
-    nodes: zod_1.z.array(zod_1.z.any()),
-    connections: zod_1.z.record(zod_1.z.any()),
+    nodes: zod_1.z.preprocess(jsonArrayPreprocess, zod_1.z.array(zod_1.z.any())),
+    connections: zod_1.z.preprocess(jsonObjectPreprocess, zod_1.z.record(zod_1.z.any())),
     settings: zod_1.z.object({
         executionOrder: zod_1.z.enum(['v0', 'v1']).optional(),
         timezone: zod_1.z.string().optional(),
@@ -179,9 +201,9 @@ const createWorkflowSchema = zod_1.z.object({
 const updateWorkflowSchema = zod_1.z.object({
     id: zod_1.z.string(),
     name: zod_1.z.string().optional(),
-    nodes: zod_1.z.array(zod_1.z.any()).optional(),
-    connections: zod_1.z.record(zod_1.z.any()).optional(),
-    settings: zod_1.z.any().optional(),
+    nodes: zod_1.z.preprocess(jsonArrayPreprocess, zod_1.z.array(zod_1.z.any()).optional()),
+    connections: zod_1.z.preprocess(jsonObjectPreprocess, zod_1.z.record(zod_1.z.any()).optional()),
+    settings: zod_1.z.preprocess(jsonObjectPreprocess, zod_1.z.any().optional()),
     createBackup: zod_1.z.boolean().optional(),
     intent: zod_1.z.string().optional(),
 });

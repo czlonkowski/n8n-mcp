@@ -368,11 +368,28 @@ function ensureApiConfigured(context?: InstanceContext): N8nApiClient {
   return client;
 }
 
+/**
+ * Preprocess helpers: some MCP clients serialize arrays/objects as JSON strings.
+ * These ensure proper parsing before Zod validation.
+ */
+const jsonArrayPreprocess = (val: unknown): unknown => {
+  if (typeof val === 'string') {
+    try { const parsed = JSON.parse(val); if (Array.isArray(parsed)) return parsed; } catch { /* not JSON */ }
+  }
+  return val;
+};
+const jsonObjectPreprocess = (val: unknown): unknown => {
+  if (typeof val === 'string') {
+    try { const parsed = JSON.parse(val); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed; } catch { /* not JSON */ }
+  }
+  return val;
+};
+
 // Zod schemas for input validation
 const createWorkflowSchema = z.object({
   name: z.string(),
-  nodes: z.array(z.any()),
-  connections: z.record(z.any()),
+  nodes: z.preprocess(jsonArrayPreprocess, z.array(z.any())),
+  connections: z.preprocess(jsonObjectPreprocess, z.record(z.any())),
   settings: z.object({
     executionOrder: z.enum(['v0', 'v1']).optional(),
     timezone: z.string().optional(),
@@ -388,9 +405,9 @@ const createWorkflowSchema = z.object({
 const updateWorkflowSchema = z.object({
   id: z.string(),
   name: z.string().optional(),
-  nodes: z.array(z.any()).optional(),
-  connections: z.record(z.any()).optional(),
-  settings: z.any().optional(),
+  nodes: z.preprocess(jsonArrayPreprocess, z.array(z.any()).optional()),
+  connections: z.preprocess(jsonObjectPreprocess, z.record(z.any()).optional()),
+  settings: z.preprocess(jsonObjectPreprocess, z.any().optional()),
   createBackup: z.boolean().optional(),
   intent: z.string().optional(),
 });
