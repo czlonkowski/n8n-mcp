@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.35.4] - 2026-02-20
+
+### Fixed
+
+- **Defensive JSON.parse for stringified object/array parameters** (Issue #605): Claude Desktop 1.1.3189 serializes JSON object/array MCP parameters as strings, causing ZodError failures for ~60% of tools that accept nested parameters
+  - Added schema-driven `coerceStringifiedJsonParams()` in the central `CallToolRequestSchema` handler
+  - Automatically detects string values where the tool's `inputSchema` expects `object` or `array`, and parses them back
+  - Safe: prefix check before parsing, type verification after, try/catch preserves original on failure
+  - No-op for correct clients: native objects pass through unchanged
+  - Affects 9 tools with object/array params: `validate_node`, `validate_workflow`, `n8n_create_workflow`, `n8n_update_full_workflow`, `n8n_update_partial_workflow`, `n8n_validate_workflow`, `n8n_autofix_workflow`, `n8n_test_workflow`, `n8n_executions`
+  - Added 15 unit tests covering coercion, no-op, safety, and end-to-end scenarios
+
+Conceived by Romuald Czlonkowski - https://www.aiadvisors.pl/en
+
 ## [2.35.3] - 2026-02-19
 
 ### Changed

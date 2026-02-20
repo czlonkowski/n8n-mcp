@@ -720,7 +720,12 @@ export class N8NDocumentationMCPServer {
           });
         }
       }
-      
+
+      // Workaround for Claude Desktop 1.1.3189 string serialization bug.
+      // The MCP client serializes object/array parameters as JSON strings.
+      // Use the tool's inputSchema to detect and parse them back.
+      processedArgs = this.coerceStringifiedJsonParams(name, processedArgs);
+
       try {
         logger.debug(`Executing tool: ${name}`, { args: processedArgs });
         const startTime = Date.now();
@@ -1123,6 +1128,50 @@ export class N8NDocumentationMCPServer {
     }
 
     return true;
+  }
+
+  /**
+   * Coerce stringified JSON parameters back to objects/arrays.
+   * Workaround for Claude Desktop 1.1.3189 which serializes object/array
+   * params as JSON strings before sending them to MCP servers.
+   */
+  private coerceStringifiedJsonParams(
+    toolName: string,
+    args: Record<string, any> | undefined
+  ): Record<string, any> | undefined {
+    if (!args || typeof args !== 'object') return args;
+
+    const allTools = [...n8nDocumentationToolsFinal, ...n8nManagementTools];
+    const tool = allTools.find(t => t.name === toolName);
+    if (!tool?.inputSchema?.properties) return args;
+
+    const properties = tool.inputSchema.properties;
+    const coerced = { ...args };
+
+    for (const [key, value] of Object.entries(coerced)) {
+      if (typeof value !== 'string') continue;
+      const expectedType = (properties as any)[key]?.type;
+      if (expectedType !== 'object' && expectedType !== 'array') continue;
+
+      const trimmed = value.trim();
+      const validPrefix = (expectedType === 'object' && trimmed.startsWith('{'))
+                       || (expectedType === 'array'  && trimmed.startsWith('['));
+      if (!validPrefix) continue;
+
+      try {
+        const parsed = JSON.parse(trimmed);
+        const isArray = Array.isArray(parsed);
+        if ((expectedType === 'object' && typeof parsed === 'object' && !isArray)
+         || (expectedType === 'array'  && isArray)) {
+          coerced[key] = parsed;
+          logger.warn(`Coerced stringified ${expectedType} param "${key}" for tool "${toolName}"`);
+        }
+      } catch {
+        // Not valid JSON — keep original string, downstream validation will report the error
+      }
+    }
+
+    return coerced;
   }
 
   async executeTool(name: string, args: any): Promise<any> {
