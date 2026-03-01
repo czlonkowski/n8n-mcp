@@ -115,6 +115,7 @@ export class SingleSessionHTTPServer {
   ) * 60 * 1000;
   private authToken: string | null = null;
   private cleanupTimer: NodeJS.Timeout | null = null;
+  private warningTimer: NodeJS.Timeout | null = null;
   
   constructor() {
     // Validate environment on construction
@@ -304,9 +305,12 @@ export class SingleSessionHTTPServer {
     // Check if there's already a switch in progress for this session
     const existingLock = this.contextSwitchLocks.get(sessionId);
     if (existingLock) {
-      // Wait for the existing switch to complete
+      // Wait for the existing switch to complete, then re-enter
+      // to perform our own switch (the previous switch may have been
+      // for a different context than what we need)
       await existingLock;
-      return;
+      // Re-enter instead of returning — our context may differ from what was just set
+      return this.switchSessionContext(sessionId, newContext);
     }
 
     // Create a promise for this switch operation
@@ -1376,7 +1380,7 @@ export class SingleSessionHTTPServer {
       
       // Start periodic warning timer if using default token
       if (isDefaultToken && !isProduction) {
-        setInterval(() => {
+        this.warningTimer = setInterval(() => {
           logger.warn('⚠️ Still using default AUTH_TOKEN - security risk!');
           if (process.env.MCP_MODE === 'http') {
             console.warn('⚠️ REMINDER: Still using default AUTH_TOKEN - please change it!');
@@ -1416,6 +1420,12 @@ export class SingleSessionHTTPServer {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
       logger.info('Session cleanup timer stopped');
+    }
+    
+    // Stop default token warning timer
+    if (this.warningTimer) {
+      clearInterval(this.warningTimer);
+      this.warningTimer = null;
     }
     
     // Close all active transports (SDK pattern)
