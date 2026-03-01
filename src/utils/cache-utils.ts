@@ -349,7 +349,7 @@ export async function withRetry<T>(
   config: RetryConfig = DEFAULT_RETRY_CONFIG,
   context?: string
 ): Promise<T> {
-  let lastError: Error;
+  let lastError: Error = new Error('No retry attempts were made');
 
   for (let attempt = 0; attempt < config.maxAttempts; attempt++) {
     try {

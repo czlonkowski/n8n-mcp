@@ -200,7 +200,14 @@ export class TelemetryConfigManager {
 
     try {
       const rawConfig = readFileSync(this.configPath, 'utf-8');
-      this.config = JSON.parse(rawConfig);
+      const parsed = JSON.parse(rawConfig);
+
+      // Guard against malformed config (e.g. null is valid JSON)
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('Telemetry config is not a valid object');
+      }
+
+      this.config = parsed;
 
       // Ensure userId exists (for upgrades from older versions)
       if (!this.config!.userId) {
