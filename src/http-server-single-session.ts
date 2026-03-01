@@ -147,7 +147,7 @@ export class SingleSessionHTTPServer {
   /**
    * Clean up expired sessions based on last access time
    */
-  private cleanupExpiredSessions(): void {
+  private async cleanupExpiredSessions(): Promise<void> {
     const now = Date.now();
     const expiredSessions: string[] = [];
 
@@ -170,7 +170,7 @@ export class SingleSessionHTTPServer {
 
     // Remove expired sessions
     for (const sessionId of expiredSessions) {
-      this.removeSession(sessionId, 'expired');
+      await this.removeSession(sessionId, 'expired');
     }
 
     if (expiredSessions.length > 0) {
