@@ -3145,7 +3145,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
       // Handle array notation like parameters[0]
       const arrayMatch = part.match(/^(\w+)\[(\d+)\]$/);
       if (arrayMatch) {
-        value = value?.[arrayMatch[1]]?.[parseInt(arrayMatch[2])];
+        value = value?.[arrayMatch[1]]?.[parseInt(arrayMatch[2], 10)];
       } else {
         value = value?.[part];
       }

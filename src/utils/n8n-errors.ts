@@ -75,7 +75,7 @@ export function handleN8nApiError(error: unknown): N8nApiError {
           return new N8nValidationError(message, data);
         case 429:
           const retryAfter = axiosError.response.headers['retry-after'];
-          return new N8nRateLimitError(retryAfter ? parseInt(retryAfter) : undefined);
+          return new N8nRateLimitError(retryAfter ? parseInt(retryAfter, 10) : undefined);
         default:
           if (status >= 500) {
             return new N8nServerError(message, status);

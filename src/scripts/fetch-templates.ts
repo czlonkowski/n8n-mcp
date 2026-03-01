@@ -375,7 +375,7 @@ async function generateTemplateMetadata(db: any, service: TemplateService) {
     const repository = (service as any).repository;
     
     // Get templates without metadata (0 = no limit)
-    const limit = parseInt(process.env.METADATA_LIMIT || '0');
+    const limit = parseInt(process.env.METADATA_LIMIT || '0', 10);
     const templatesWithoutMetadata = limit > 0 
       ? repository.getTemplatesWithoutMetadata(limit)
       : repository.getTemplatesWithoutMetadata(999999); // Get all
@@ -388,7 +388,7 @@ async function generateTemplateMetadata(db: any, service: TemplateService) {
     console.log(`Found ${templatesWithoutMetadata.length} templates without metadata`);
     
     // Create batch processor
-    const batchSize = parseInt(process.env.OPENAI_BATCH_SIZE || '50');
+    const batchSize = parseInt(process.env.OPENAI_BATCH_SIZE || '50', 10);
     console.log(`Processing in batches of ${batchSize} templates each`);
     
     // Warn if batch size is very large

@@ -352,7 +352,7 @@ export class BatchProcessor {
           if (!line) continue;
           try {
             const errorResult = JSON.parse(line);
-            const templateId = parseInt(errorResult.custom_id?.replace('template-', '') || '0');
+            const templateId = parseInt(errorResult.custom_id?.replace('template-', '') || '0', 10);
 
             if (templateId > 0) {
               const errorMessage = errorResult.response?.body?.error?.message ||

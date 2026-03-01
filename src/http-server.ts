@@ -197,7 +197,7 @@ export async function startFixedHTTPServer() {
 
   // Root endpoint with API information
   app.get('/', (req, res) => {
-    const port = parseInt(process.env.PORT || '3000');
+    const port = parseInt(process.env.PORT || '3000', 10);
     const host = process.env.HOST || '0.0.0.0';
     const baseUrl = detectBaseUrl(req, host, port);
     const endpoints = formatEndpointUrls(baseUrl);
@@ -561,7 +561,7 @@ export async function startFixedHTTPServer() {
     }
   });
   
-  const port = parseInt(process.env.PORT || '3000');
+  const port = parseInt(process.env.PORT || '3000', 10);
   const host = process.env.HOST || '0.0.0.0';
   
   expressServer = app.listen(port, host, () => {

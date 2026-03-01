@@ -837,10 +837,7 @@ export class SingleSessionHTTPServer {
     
     // Root endpoint with API information
     app.get('/', (req, res) => {
-      const port = parseInt(process.env.PORT || '3000');
-      const host = process.env.HOST || '0.0.0.0';
-      const baseUrl = detectBaseUrl(req, host, port);
-      const endpoints = formatEndpointUrls(baseUrl);
+      const port = parseInt(process.env.PORT || '3000', 10);
       
       res.json({
         name: 'n8n Documentation MCP Server',
@@ -1103,8 +1100,8 @@ export class SingleSessionHTTPServer {
     // Prevents brute force attacks and DoS
     // See: https://github.com/czlonkowski/n8n-mcp/issues/265 (HIGH-02)
     const authLimiter = rateLimit({
-      windowMs: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW || '900000'), // 15 minutes
-      max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '20'), // 20 authentication attempts per IP
+      windowMs: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW || '900000', 10), // 15 minutes
+      max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '20', 10), // 20 authentication attempts per IP
       message: {
         jsonrpc: '2.0',
         error: {
@@ -1339,7 +1336,7 @@ export class SingleSessionHTTPServer {
       }
     });
     
-    const port = parseInt(process.env.PORT || '3000');
+    const port = parseInt(process.env.PORT || '3000', 10);
     const host = process.env.HOST || '0.0.0.0';
     
     this.expressServer = app.listen(port, host, () => {

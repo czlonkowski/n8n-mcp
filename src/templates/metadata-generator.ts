@@ -235,7 +235,7 @@ export class MetadataGenerator {
     try {
       if (result.error) {
         return {
-          templateId: parseInt(result.custom_id.replace('template-', '')),
+          templateId: parseInt(result.custom_id.replace('template-', ''), 10),
           metadata: this.getDefaultMetadata(),
           error: result.error.message
         };
@@ -253,13 +253,13 @@ export class MetadataGenerator {
       const validated = TemplateMetadataSchema.parse(metadata);
       
       return {
-        templateId: parseInt(result.custom_id.replace('template-', '')),
+        templateId: parseInt(result.custom_id.replace('template-', ''), 10),
         metadata: validated
       };
     } catch (error) {
       logger.error(`Error parsing result for ${result.custom_id}:`, error);
       return {
-        templateId: parseInt(result.custom_id.replace('template-', '')),
+        templateId: parseInt(result.custom_id.replace('template-', ''), 10),
         metadata: this.getDefaultMetadata(),
         error: error instanceof Error ? error.message : 'Unknown error'
       };
