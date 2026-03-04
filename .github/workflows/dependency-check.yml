@@ -59,7 +59,9 @@ jobs:
         run: |
           npm init -y
           # Install from tarball WITHOUT lockfile (simulates npm install n8n-mcp)
-          npm install ./n8n-mcp-*.tgz
+          # Use --ignore-scripts to skip native compilation of transitive deps like isolated-vm
+          # (n8n-mcp only reads node metadata, it doesn't execute n8n nodes at runtime)
+          npm install --ignore-scripts ./n8n-mcp-*.tgz
 
       - name: Verify critical dependency versions
         working-directory: /tmp/fresh-install-test
