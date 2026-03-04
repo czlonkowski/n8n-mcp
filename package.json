@@ -175,6 +175,7 @@
     "better-sqlite3": "^11.10.0"
   },
   "overrides": {
-    "pyodide": "0.26.4"
+    "pyodide": "0.26.4",
+    "isolated-vm": "npm:empty-npm-package@1.0.0"
   }
 }
