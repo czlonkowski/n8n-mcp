@@ -11,6 +11,7 @@
  * Issue: https://github.com/czlonkowski/n8n-mcp/issues/XXX
  */
 
+import path from 'path';
 import { DatabaseAdapter, createDatabaseAdapter } from './database-adapter';
 import { NodeRepository } from './node-repository';
 import { TemplateService } from '../templates/template-service';
@@ -43,21 +44,26 @@ let initializationPromise: Promise<SharedDatabaseState> | null = null;
  * @returns Shared database state with connection and services
  */
 export async function getSharedDatabase(dbPath: string): Promise<SharedDatabaseState> {
+  // Normalize to a canonical absolute path so that callers using different
+  // relative or join-based paths (e.g. "./data/nodes.db" vs an absolute path)
+  // resolve to the same string and do not trigger a false "different path" error.
+  const normalizedPath = dbPath === ':memory:' ? dbPath : path.resolve(dbPath);
+
   // If already initialized with the same path, increment ref count and return
-  if (sharedState && sharedState.initialized && sharedState.dbPath === dbPath) {
+  if (sharedState && sharedState.initialized && sharedState.dbPath === normalizedPath) {
     sharedState.refCount++;
     logger.debug('Reusing shared database connection', {
       refCount: sharedState.refCount,
-      dbPath
+      dbPath: normalizedPath
     });
     return sharedState;
   }
 
   // If already initialized with a DIFFERENT path, this is a configuration error
-  if (sharedState && sharedState.initialized && sharedState.dbPath !== dbPath) {
+  if (sharedState && sharedState.initialized && sharedState.dbPath !== normalizedPath) {
     logger.error('Attempted to initialize shared database with different path', {
       existingPath: sharedState.dbPath,
-      requestedPath: dbPath
+      requestedPath: normalizedPath
     });
     throw new Error(`Shared database already initialized with different path: ${sharedState.dbPath}`);
   }
@@ -69,7 +75,7 @@ export async function getSharedDatabase(dbPath: string): Promise<SharedDatabaseS
       state.refCount++;
       logger.debug('Reusing shared database (waited for init)', {
         refCount: state.refCount,
-        dbPath
+        dbPath: normalizedPath
       });
       return state;
     } catch (error) {
@@ -80,7 +86,7 @@ export async function getSharedDatabase(dbPath: string): Promise<SharedDatabaseS
   }
 
   // Start new initialization
-  initializationPromise = initializeSharedDatabase(dbPath);
+  initializationPromise = initializeSharedDatabase(normalizedPath);
 
   try {
     const state = await initializationPromise;

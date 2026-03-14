@@ -341,9 +341,9 @@ describe('MCP Session Management', { timeout: 15000 }, () => {
     it('should handle different client versions', async () => {
       const mcpServer = new TestableN8NMCPServer();
       await mcpServer.initialize();
-      
-      const clients = [];
 
+      // MCP SDK 1.27+ enforces single-connection per Server instance,
+      // so we test each version sequentially rather than concurrently.
       for (const version of ['1.0.0', '1.1.0', '2.0.0']) {
         const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
         await mcpServer.connectToTransport(serverTransport);
@@ -354,21 +354,14 @@ describe('MCP Session Management', { timeout: 15000 }, () => {
         }, {});
 
         await client.connect(clientTransport);
-        clients.push(client);
+
+        const info = await client.getServerVersion();
+        expect(info!.name).toBe('n8n-documentation-mcp');
+
+        await client.close();
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
 
-      // All versions should work
-      const responses = await Promise.all(
-        clients.map(client => client.getServerVersion())
-      );
-
-      responses.forEach(info => {
-        expect(info!.name).toBe('n8n-documentation-mcp');
-      });
-      
-      // Clean up
-      await Promise.all(clients.map(client => client.close()));
-      await new Promise(resolve => setTimeout(resolve, 100)); // Give time for all clients to fully close
       await mcpServer.close();
     });
   });

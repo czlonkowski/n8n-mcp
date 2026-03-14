@@ -105,21 +105,14 @@ describe('MCP Protocol Compliance', () => {
 
   describe('Message Format Validation', () => {
     it('should reject messages without method', async () => {
-      // Test by sending raw message through transport
-      const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
-      const testClient = new Client({ name: 'test', version: '1.0.0' }, {});
-      
-      await mcpServer.connectToTransport(serverTransport);
-      await testClient.connect(clientTransport);
-
+      // MCP SDK 1.27+ enforces single-connection per Server instance,
+      // so use the existing client from beforeEach instead of a new one.
       try {
         // This should fail as MCP SDK validates method
-        await (testClient as any).request({ method: '', params: {} });
+        await (client as any).request({ method: '', params: {} });
         expect.fail('Should have thrown an error');
       } catch (error) {
         expect(error).toBeDefined();
-      } finally {
-        await testClient.close();
       }
     });
 
@@ -250,10 +243,15 @@ describe('MCP Protocol Compliance', () => {
 
   describe('Transport Layer', () => {
     it('should handle transport disconnection gracefully', async () => {
-      const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
-      const testClient = new Client({ name: 'test', version: '1.0.0' }, {});
+      // Use a dedicated server instance so we don't conflict with the
+      // shared mcpServer that beforeEach already connected a transport to.
+      const dedicatedServer = new TestableN8NMCPServer();
+      await dedicatedServer.initialize();
 
-      await mcpServer.connectToTransport(serverTransport);
+      const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+      await dedicatedServer.connectToTransport(serverTransport);
+
+      const testClient = new Client({ name: 'test', version: '1.0.0' }, {});
       await testClient.connect(clientTransport);
 
       // Make a request
@@ -270,6 +268,8 @@ describe('MCP Protocol Compliance', () => {
       } catch (error) {
         expect(error).toBeDefined();
       }
+
+      await dedicatedServer.close();
     });
 
     it('should handle multiple sequential connections', async () => {

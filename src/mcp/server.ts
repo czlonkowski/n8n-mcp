@@ -210,6 +210,13 @@ export class N8NDocumentationMCPServer {
       }
     });
 
+    // Attach a no-op catch handler to prevent Node.js from flagging this as an
+    // unhandled rejection in the interval between construction and the first
+    // await of this.initialized (via ensureInitialized). This does NOT suppress
+    // the error: the original this.initialized promise still rejects, and
+    // ensureInitialized() will re-throw it when awaited.
+    this.initialized.catch(() => {});
+
     logger.info('Initializing n8n Documentation MCP server');
     
     this.server = new Server(
