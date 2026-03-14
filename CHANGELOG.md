@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.37.0] - 2026-03-14
+
+### Fixed
+
+- **Unary operator sanitization** (Issue #592): Added missing `empty`, `notEmpty`, `exists`, `notExists` operators to the sanitizer's unary operator list, preventing IF/Switch node corruption during partial updates
+- **Positional connection array preservation** (Issue #610): `removeNode` and `cleanStaleConnections` now trim only trailing empty arrays, preserving intermediate positional indices for IF/Switch multi-output nodes
+- **Scoped sanitization**: Auto-sanitization now only runs on nodes that were actually added or updated, preventing unrelated nodes (e.g., HTTP Request parameters) from being silently modified
+- **Activate/deactivate 415 errors** (Issue #633): Added empty body `{}` to POST calls for workflow activation/deactivation endpoints
+- **Zod error readability** (Issue #630): Validation errors now return human-readable `"path: message"` strings instead of raw Zod error objects
+- **updateNode error hints** (Issue #623): Improved error message when `updates` parameter is missing, showing correct structure with `nodeId`/`nodeName` and `updates` fields
+- **removeConnection after removeNode** (Issue #624): When a node was already removed by a prior `removeNode` operation, the error message now explains that connections were automatically cleaned up
+- **Connection type coercion** (Issue #629): `sourceOutput` and `targetInput` are now coerced to strings, handling numeric values (0, 1) passed by MCP clients
+
+### Added
+
+- **`saved` field in responses** (Issue #625): All `n8n_update_partial_workflow` responses now include `saved: true/false` to distinguish whether the workflow was persisted to n8n
+- **Tag operations via dedicated API** (Issue #599): `addTag`/`removeTag` now use the n8n tag API (`PUT /workflows/{id}/tags`) instead of embedding tags in the workflow body, fixing silent tag failures. Includes automatic tag creation, case-insensitive name resolution, and last-operation-wins reconciliation for conflicting add/remove
+- **`updateWorkflowTags` API client method**: New method on `N8nApiClient` for managing workflow tag associations via the dedicated endpoint
+- **`operationsApplied` in top-level response**: Promoted from nested `details` to top-level for easier consumption by MCP clients
+
+Conceived by Romuald Czlonkowski - https://www.aiadvisors.pl/en
+
 ## [2.36.2] - 2026-03-14
 
 ### Changed
