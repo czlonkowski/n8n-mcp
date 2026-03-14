@@ -73,6 +73,9 @@ describe('handlers-workflow-diff', () => {
     mockApiClient = {
       getWorkflow: vi.fn(),
       updateWorkflow: vi.fn(),
+      listTags: vi.fn().mockResolvedValue({ data: [] }),
+      createTag: vi.fn(),
+      updateWorkflowTags: vi.fn().mockResolvedValue([]),
     };
 
     // Setup mock diff engine
@@ -150,6 +153,7 @@ describe('handlers-workflow-diff', () => {
 
       expect(result).toEqual({
         success: true,
+        saved: true,
         data: {
           id: 'test-workflow-id',
           name: 'Test Workflow',
@@ -309,10 +313,12 @@ describe('handlers-workflow-diff', () => {
 
       expect(result).toEqual({
         success: false,
+        saved: false,
+        operationsApplied: 0,
         error: 'Failed to apply diff operations',
         details: {
           errors: ['Node "non-existent-node" not found'],
-          operationsApplied: 0,
+          warnings: undefined,
           applied: [],
           failed: [0],
         },
@@ -630,10 +636,14 @@ describe('handlers-workflow-diff', () => {
 
       expect(result).toEqual({
         success: false,
+        saved: false,
+        operationsApplied: 1,
         error: 'Failed to apply diff operations',
         details: {
           errors: ['Operation 2 failed: Node "invalid-node" not found'],
-          operationsApplied: 1,
+          warnings: undefined,
+          applied: undefined,
+          failed: undefined,
         },
       });
     });
@@ -853,6 +863,142 @@ describe('handlers-workflow-diff', () => {
           workflowUpdated: true,
           deactivationError: 'Unknown error',
         });
+      });
+    });
+
+    describe('Tag Operations via Dedicated API', () => {
+      it('should create a new tag and associate it with the workflow', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+          tagsToAdd: ['new-tag'],
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+        mockApiClient.listTags.mockResolvedValue({ data: [] });
+        mockApiClient.createTag.mockResolvedValue({ id: 'tag-123', name: 'new-tag' });
+
+        const result = await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{ type: 'addTag', tag: 'new-tag' }],
+        }, mockRepository);
+
+        expect(result.success).toBe(true);
+        expect(mockApiClient.createTag).toHaveBeenCalledWith({ name: 'new-tag' });
+        expect(mockApiClient.updateWorkflowTags).toHaveBeenCalledWith('test-workflow-id', ['tag-123']);
+      });
+
+      it('should use existing tag ID when tag already exists', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+          tagsToAdd: ['existing-tag'],
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+        mockApiClient.listTags.mockResolvedValue({ data: [{ id: 'tag-456', name: 'existing-tag' }] });
+
+        const result = await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{ type: 'addTag', tag: 'existing-tag' }],
+        }, mockRepository);
+
+        expect(result.success).toBe(true);
+        expect(mockApiClient.createTag).not.toHaveBeenCalled();
+        expect(mockApiClient.updateWorkflowTags).toHaveBeenCalledWith('test-workflow-id', ['tag-456']);
+      });
+
+      it('should remove a tag from the workflow', async () => {
+        const testWorkflow = createTestWorkflow({
+          tags: [{ id: 'tag-789', name: 'old-tag' }],
+        });
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+          tagsToRemove: ['old-tag'],
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+        mockApiClient.listTags.mockResolvedValue({ data: [{ id: 'tag-789', name: 'old-tag' }] });
+
+        const result = await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{ type: 'removeTag', tag: 'old-tag' }],
+        }, mockRepository);
+
+        expect(result.success).toBe(true);
+        expect(mockApiClient.updateWorkflowTags).toHaveBeenCalledWith('test-workflow-id', []);
+      });
+
+      it('should produce warning on tag creation failure without failing the operation', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+          tagsToAdd: ['fail-tag'],
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+        mockApiClient.listTags.mockResolvedValue({ data: [] });
+        mockApiClient.createTag.mockRejectedValue(new Error('Tag creation failed'));
+
+        const result = await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{ type: 'addTag', tag: 'fail-tag' }],
+        }, mockRepository);
+
+        expect(result.success).toBe(true);
+        expect(result.saved).toBe(true);
+        // Tag creation failure should produce a warning, not block the update
+        const warnings = (result.details as any)?.warnings;
+        expect(warnings).toBeDefined();
+        expect(warnings.some((w: any) => w.message.includes('Failed to create tag'))).toBe(true);
+      });
+
+      it('should not call tag APIs when no tag operations are present', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+
+        await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{ type: 'updateName', name: 'New Name' }],
+        }, mockRepository);
+
+        expect(mockApiClient.listTags).not.toHaveBeenCalled();
+        expect(mockApiClient.createTag).not.toHaveBeenCalled();
+        expect(mockApiClient.updateWorkflowTags).not.toHaveBeenCalled();
       });
     });
   });

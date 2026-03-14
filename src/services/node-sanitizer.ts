@@ -41,7 +41,7 @@ export function sanitizeWorkflowNodes(workflow: any): any {
 
   return {
     ...workflow,
-    nodes: workflow.nodes.map((node: any) => sanitizeNode(node))
+    nodes: workflow.nodes.map(sanitizeNode)
   };
 }
 
@@ -121,9 +121,7 @@ function sanitizeFilterConditions(conditions: any): any {
 
   // Sanitize conditions array
   if (sanitized.conditions && Array.isArray(sanitized.conditions)) {
-    sanitized.conditions = sanitized.conditions.map((condition: any) =>
-      sanitizeCondition(condition)
-    );
+    sanitized.conditions = sanitized.conditions.map(sanitizeCondition);
   }
 
   return sanitized;
@@ -214,16 +212,23 @@ function inferDataType(operation: string): string {
     return 'boolean';
   }
 
-  // Number operations
+  // Number operations (partial match to catch variants like "greaterThan" containing "gt")
   const numberOps = ['isNumeric', 'gt', 'gte', 'lt', 'lte'];
   if (numberOps.some(op => operation.includes(op))) {
     return 'number';
   }
 
-  // Date operations
+  // Date operations (partial match to catch variants like "isAfter" containing "after")
   const dateOps = ['after', 'before', 'afterDate', 'beforeDate'];
   if (dateOps.some(op => operation.includes(op))) {
     return 'dateTime';
+  }
+
+  // Object operations: empty/notEmpty/exists/notExists are generic object-level checks
+  // (distinct from isEmpty/isNotEmpty which are boolean-typed operations)
+  const objectOps = ['empty', 'notEmpty', 'exists', 'notExists'];
+  if (objectOps.includes(operation)) {
+    return 'object';
   }
 
   // Default to string
@@ -239,7 +244,11 @@ function isUnaryOperator(operation: string): boolean {
     'isNotEmpty',
     'true',
     'false',
-    'isNumeric'
+    'isNumeric',
+    'empty',
+    'notEmpty',
+    'exists',
+    'notExists'
   ];
   return unaryOps.includes(operation);
 }

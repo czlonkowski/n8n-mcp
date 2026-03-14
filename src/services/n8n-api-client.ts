@@ -254,7 +254,7 @@ export class N8nApiClient {
 
   async activateWorkflow(id: string): Promise<Workflow> {
     try {
-      const response = await this.client.post(`/workflows/${id}/activate`);
+      const response = await this.client.post(`/workflows/${id}/activate`, {});
       return response.data;
     } catch (error) {
       throw handleN8nApiError(error);
@@ -263,7 +263,7 @@ export class N8nApiClient {
 
   async deactivateWorkflow(id: string): Promise<Workflow> {
     try {
-      const response = await this.client.post(`/workflows/${id}/deactivate`);
+      const response = await this.client.post(`/workflows/${id}/deactivate`, {});
       return response.data;
     } catch (error) {
       throw handleN8nApiError(error);
@@ -488,6 +488,15 @@ export class N8nApiClient {
   async deleteTag(id: string): Promise<void> {
     try {
       await this.client.delete(`/tags/${id}`);
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async updateWorkflowTags(workflowId: string, tagIds: string[]): Promise<Tag[]> {
+    try {
+      const response = await this.client.put(`/workflows/${workflowId}/tags`, tagIds.filter(id => id).map(id => ({ id })));
+      return response.data;
     } catch (error) {
       throw handleN8nApiError(error);
     }

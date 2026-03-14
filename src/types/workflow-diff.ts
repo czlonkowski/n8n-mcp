@@ -190,6 +190,8 @@ export interface WorkflowDiffResult {
   staleConnectionsRemoved?: Array<{ from: string; to: string }>; // For cleanStaleConnections operation
   shouldActivate?: boolean; // Flag to activate workflow after update (for activateWorkflow operation)
   shouldDeactivate?: boolean; // Flag to deactivate workflow after update (for deactivateWorkflow operation)
+  tagsToAdd?: string[];
+  tagsToRemove?: string[];
 }
 
 // Helper type for node reference (supports both ID and name)

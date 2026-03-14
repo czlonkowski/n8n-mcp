@@ -398,7 +398,7 @@ describe('N8nApiClient', () => {
 
       const result = await client.activateWorkflow('123');
 
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/workflows/123/activate');
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/workflows/123/activate', {});
       expect(result).toEqual(activatedWorkflow);
       expect(result.active).toBe(true);
     });
@@ -484,7 +484,7 @@ describe('N8nApiClient', () => {
 
       const result = await client.deactivateWorkflow('123');
 
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/workflows/123/deactivate');
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/workflows/123/deactivate', {});
       expect(result).toEqual(deactivatedWorkflow);
       expect(result.active).toBe(false);
     });
