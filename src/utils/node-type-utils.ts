@@ -172,14 +172,14 @@ export function isTriggerNode(nodeType: string): boolean {
     return true;
   }
 
-  // Check for specific trigger types that don't have 'trigger' in their name
-  const specificTriggers = [
-    'nodes-base.start',
-    'nodes-base.manualTrigger',
-    'nodes-base.formTrigger'
-  ];
+  // Check for polling-based triggers that don't have 'trigger' in their name
+  if (lowerType.includes('emailread') || lowerType.includes('emailreadimap')) {
+    return true;
+  }
 
-  return specificTriggers.includes(normalized);
+  // Check for specific trigger types that don't have 'trigger' in their name
+  // (manualTrigger and formTrigger are already caught by the 'trigger' check above)
+  return normalized === 'nodes-base.start';
 }
 
 /**

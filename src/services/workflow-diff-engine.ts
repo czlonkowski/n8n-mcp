@@ -747,6 +747,14 @@ export class WorkflowDiffEngine {
     let sourceOutput = String(operation.sourceOutput ?? 'main');
     let sourceIndex = operation.sourceIndex ?? 0;
 
+    // Remap numeric sourceOutput (e.g., "0", "1") to "main" with sourceIndex (#537)
+    // Skip when smart parameters (branch, case) are present — they take precedence
+    if (/^\d+$/.test(sourceOutput) && operation.sourceIndex === undefined
+        && operation.branch === undefined && operation.case === undefined) {
+      sourceIndex = parseInt(sourceOutput, 10);
+      sourceOutput = 'main';
+    }
+
     // Smart parameter: branch (for IF nodes)
     // IF nodes use 'main' output with index 0 (true) or 1 (false)
     if (operation.branch !== undefined && operation.sourceIndex === undefined) {

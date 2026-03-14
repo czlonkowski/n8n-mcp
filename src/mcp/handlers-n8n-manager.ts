@@ -519,6 +519,17 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
     // Create workflow (n8n API expects node types in FULL form)
     const workflow = await client.createWorkflow(input);
 
+    // Defensive check: ensure the API returned a valid workflow with an ID
+    if (!workflow || !workflow.id) {
+      return {
+        success: false,
+        error: 'Workflow creation failed: n8n API returned an empty or invalid response. Verify your N8N_API_URL points to the correct /api/v1 endpoint and that the n8n instance supports workflow creation.',
+        details: {
+          response: workflow ? { keys: Object.keys(workflow) } : null
+        }
+      };
+    }
+
     // Track successful workflow creation
     telemetry.trackWorkflowCreation(workflow, true);
 

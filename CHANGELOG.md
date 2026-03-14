@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.37.1] - 2026-03-14
+
+### Fixed
+
+- **Numeric sourceOutput remapping** (Issue #537): `addConnection` with numeric `sourceOutput` values like `"0"` or `"1"` now correctly maps to `"main"` with the corresponding `sourceIndex`, preventing malformed connection keys
+- **IMAP Email Trigger activation** (Issue #538): `n8n-nodes-base.emailReadImap` and other IMAP-based polling triggers are now recognized as activatable triggers, allowing workflow activation
+- **AI tool description false positives** (Issue #477): Validators now check `description` and `options.description` in addition to `toolDescription`, fixing false `MISSING_TOOL_DESCRIPTION` errors for toolWorkflow, toolCode, and toolSerpApi nodes
+- **n8n_create_workflow undefined ID** (Issue #602): Added defensive check for missing workflow ID in API response with actionable error message
+- **Flaky CI performance test**: Relaxed bulk insert ratio threshold from 15 to 20 to accommodate CI runner variability
+
+Conceived by Romuald Czlonkowski - https://www.aiadvisors.pl/en
+
 ## [2.37.0] - 2026-03-14
 
 ### Fixed

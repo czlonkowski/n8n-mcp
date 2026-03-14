@@ -28,6 +28,21 @@ export interface WorkflowNode {
   typeVersion?: number;
 }
 
+/**
+ * Get tool description from node, checking all possible property locations.
+ * Different n8n tool types store descriptions in different places:
+ * - toolDescription: HTTP Request Tool, Vector Store Tool
+ * - description: Workflow Tool, Code Tool, AI Agent Tool
+ * - options.description: SerpApi, Wikipedia, SearXNG
+ */
+function getToolDescription(node: WorkflowNode): string | undefined {
+  return (
+    node.parameters.toolDescription ||
+    node.parameters.description ||
+    node.parameters.options?.description
+  );
+}
+
 export interface WorkflowJson {
   name?: string;
   nodes: WorkflowNode[];
@@ -58,7 +73,7 @@ export function validateHTTPRequestTool(node: WorkflowNode): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   // 1. Check toolDescription (REQUIRED)
-  if (!node.parameters.toolDescription) {
+  if (!getToolDescription(node)) {
     issues.push({
       severity: 'error',
       nodeId: node.id,
@@ -66,7 +81,7 @@ export function validateHTTPRequestTool(node: WorkflowNode): ValidationIssue[] {
       message: `HTTP Request Tool "${node.name}" has no toolDescription. Add a clear description to help the LLM know when to use this API.`,
       code: 'MISSING_TOOL_DESCRIPTION'
     });
-  } else if (node.parameters.toolDescription.trim().length < MIN_DESCRIPTION_LENGTH_MEDIUM) {
+  } else if (getToolDescription(node)!.trim().length < MIN_DESCRIPTION_LENGTH_MEDIUM) {
     issues.push({
       severity: 'warning',
       nodeId: node.id,
@@ -214,8 +229,8 @@ export function validateHTTPRequestTool(node: WorkflowNode): ValidationIssue[] {
 export function validateCodeTool(node: WorkflowNode): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // 1. Check toolDescription (REQUIRED)
-  if (!node.parameters.toolDescription) {
+  // 1. Check toolDescription (REQUIRED) - check all possible locations
+  if (!getToolDescription(node)) {
     issues.push({
       severity: 'error',
       nodeId: node.id,
@@ -261,7 +276,7 @@ export function validateVectorStoreTool(
   const issues: ValidationIssue[] = [];
 
   // 1. Check toolDescription (REQUIRED)
-  if (!node.parameters.toolDescription) {
+  if (!getToolDescription(node)) {
     issues.push({
       severity: 'error',
       nodeId: node.id,
@@ -302,7 +317,7 @@ export function validateWorkflowTool(node: WorkflowNode, reverseConnections?: Ma
   const issues: ValidationIssue[] = [];
 
   // 1. Check toolDescription (REQUIRED)
-  if (!node.parameters.toolDescription) {
+  if (!getToolDescription(node)) {
     issues.push({
       severity: 'error',
       nodeId: node.id,
@@ -337,7 +352,7 @@ export function validateAIAgentTool(
   const issues: ValidationIssue[] = [];
 
   // 1. Check toolDescription (REQUIRED)
-  if (!node.parameters.toolDescription) {
+  if (!getToolDescription(node)) {
     issues.push({
       severity: 'error',
       nodeId: node.id,
@@ -378,7 +393,7 @@ export function validateMCPClientTool(node: WorkflowNode): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   // 1. Check toolDescription (REQUIRED)
-  if (!node.parameters.toolDescription) {
+  if (!getToolDescription(node)) {
     issues.push({
       severity: 'error',
       nodeId: node.id,
@@ -406,20 +421,14 @@ export function validateMCPClientTool(node: WorkflowNode): ValidationIssue[] {
  * 7-8. Simple Tools (Calculator, Think) Validators
  * From spec lines 1868-2009
  */
-export function validateCalculatorTool(node: WorkflowNode): ValidationIssue[] {
-  const issues: ValidationIssue[] = [];
-
-  // Calculator Tool has a built-in description and is self-explanatory
-  // toolDescription is optional - no validation needed
-  return issues;
+export function validateCalculatorTool(_node: WorkflowNode): ValidationIssue[] {
+  // Calculator Tool has a built-in description - no validation needed
+  return [];
 }
 
-export function validateThinkTool(node: WorkflowNode): ValidationIssue[] {
-  const issues: ValidationIssue[] = [];
-
-  // Think Tool has a built-in description and is self-explanatory
-  // toolDescription is optional - no validation needed
-  return issues;
+export function validateThinkTool(_node: WorkflowNode): ValidationIssue[] {
+  // Think Tool has a built-in description - no validation needed
+  return [];
 }
 
 /**
@@ -430,7 +439,7 @@ export function validateSerpApiTool(node: WorkflowNode): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   // 1. Check toolDescription (REQUIRED)
-  if (!node.parameters.toolDescription) {
+  if (!getToolDescription(node)) {
     issues.push({
       severity: 'error',
       nodeId: node.id,
@@ -457,7 +466,7 @@ export function validateWikipediaTool(node: WorkflowNode): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   // 1. Check toolDescription (REQUIRED)
-  if (!node.parameters.toolDescription) {
+  if (!getToolDescription(node)) {
     issues.push({
       severity: 'error',
       nodeId: node.id,
@@ -487,7 +496,7 @@ export function validateSearXngTool(node: WorkflowNode): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   // 1. Check toolDescription (REQUIRED)
-  if (!node.parameters.toolDescription) {
+  if (!getToolDescription(node)) {
     issues.push({
       severity: 'error',
       nodeId: node.id,
@@ -526,7 +535,7 @@ export function validateWolframAlphaTool(node: WorkflowNode): ValidationIssue[] 
   }
 
   // 2. Check description (INFO)
-  if (!node.parameters.description && !node.parameters.toolDescription) {
+  if (!getToolDescription(node)) {
     issues.push({
       severity: 'info',
       nodeId: node.id,
