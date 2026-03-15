@@ -1912,6 +1912,55 @@ return [{"json": {"result": result}}]
         });
       });
 
+      it('should not error on primitive return inside helper functions', () => {
+        context.config = {
+          language: 'javaScript',
+          jsCode: 'function isValid(item) { return false; }\nconst items = $input.all();\nreturn items.filter(isValid).map(i => ({json: i.json}));'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        const primitiveErrors = context.errors.filter(e => e.message === 'Cannot return primitive values directly');
+        expect(primitiveErrors).toHaveLength(0);
+      });
+
+      it('should not error on primitive return inside arrow function helpers', () => {
+        context.config = {
+          language: 'javaScript',
+          jsCode: 'const isValid = (item) => { return false; };\nreturn $input.all().filter(isValid).map(i => ({json: i.json}));'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        const primitiveErrors = context.errors.filter(e => e.message === 'Cannot return primitive values directly');
+        expect(primitiveErrors).toHaveLength(0);
+      });
+
+      it('should not error on primitive return inside async function helpers', () => {
+        context.config = {
+          language: 'javaScript',
+          jsCode: 'async function fetchData(url) { return null; }\nconst data = await fetchData("https://api.example.com");\nreturn [{json: {data}}];'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        const primitiveErrors = context.errors.filter(e => e.message === 'Cannot return primitive values directly');
+        expect(primitiveErrors).toHaveLength(0);
+      });
+
+      it('should still error on primitive return without helper functions', () => {
+        context.config = {
+          language: 'javaScript',
+          jsCode: 'return "success";'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        expect(context.errors).toContainEqual(expect.objectContaining({
+          message: 'Cannot return primitive values directly'
+        }));
+      });
+
       it('should error on Python primitive return', () => {
         context.config = {
           language: 'python',
@@ -2036,6 +2085,30 @@ return [{"json": {"result": result}}]
           message: 'Invalid $ usage detected',
           suggestion: 'n8n variables start with $: $json, $input, $node, $workflow, $execution'
         });
+      });
+
+      it('should not warn about $() node reference syntax', () => {
+        context.config = {
+          language: 'javaScript',
+          jsCode: 'const data = $("Previous Node").first().json;\nreturn [{json: data}];'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        const dollarWarnings = context.warnings.filter(w => w.message === 'Invalid $ usage detected');
+        expect(dollarWarnings).toHaveLength(0);
+      });
+
+      it('should not warn about $_ variables', () => {
+        context.config = {
+          language: 'javaScript',
+          jsCode: 'const $_temp = 1;\nreturn [{json: {value: $_temp}}];'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        const dollarWarnings = context.warnings.filter(w => w.message === 'Invalid $ usage detected');
+        expect(dollarWarnings).toHaveLength(0);
       });
 
       it('should correct helpers usage', () => {

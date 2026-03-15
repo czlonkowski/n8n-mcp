@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.37.2] - 2026-03-15
+
+### Fixed
+
+- **Code validator `$()` false positive** (Issue #294): `$('Previous Node').first().json` no longer triggers "Invalid $ usage detected" warning. Added `(` and `_` to the regex negative lookahead to support standard n8n cross-node references and valid JS identifiers like `$_var`
+- **Code validator helper function return false positive** (Issue #293): `function isValid(item) { return false; }` no longer triggers "Cannot return primitive values directly" error. Added helper function detection to skip primitive return checks when named functions or arrow function assignments are present
+- **Null property removal in diff engine** (Issue #611): `{continueOnFail: null}` no longer causes Zod validation error "Expected boolean, received null". The diff engine now treats `null` values as property deletion (`delete` operator), and documentation updated from `undefined` to `null` for property removal
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.37.1] - 2026-03-14
 
 ### Fixed

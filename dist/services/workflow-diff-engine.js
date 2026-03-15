@@ -10,11 +10,19 @@ class WorkflowDiffEngine {
     constructor() {
         this.renameMap = new Map();
         this.warnings = [];
+        this.modifiedNodeIds = new Set();
+        this.removedNodeNames = new Set();
+        this.tagsToAdd = [];
+        this.tagsToRemove = [];
     }
     async applyDiff(workflow, request) {
         try {
             this.renameMap.clear();
             this.warnings = [];
+            this.modifiedNodeIds.clear();
+            this.removedNodeNames.clear();
+            this.tagsToAdd = [];
+            this.tagsToRemove = [];
             const workflowCopy = JSON.parse(JSON.stringify(workflow));
             const nodeOperationTypes = ['addNode', 'removeNode', 'updateNode', 'moveNode', 'enableNode', 'disableNode'];
             const nodeOperations = [];
@@ -82,7 +90,9 @@ class WorkflowDiffEngine {
                     errors: errors.length > 0 ? errors : undefined,
                     warnings: this.warnings.length > 0 ? this.warnings : undefined,
                     applied: appliedIndices,
-                    failed: failedIndices
+                    failed: failedIndices,
+                    tagsToAdd: this.tagsToAdd.length > 0 ? this.tagsToAdd : undefined,
+                    tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined
                 };
             }
             else {
@@ -142,8 +152,15 @@ class WorkflowDiffEngine {
                         };
                     }
                 }
-                workflowCopy.nodes = workflowCopy.nodes.map((node) => (0, node_sanitizer_1.sanitizeNode)(node));
-                logger.debug('Applied full-workflow sanitization to all nodes');
+                if (this.modifiedNodeIds.size > 0) {
+                    workflowCopy.nodes = workflowCopy.nodes.map((node) => {
+                        if (this.modifiedNodeIds.has(node.id)) {
+                            return (0, node_sanitizer_1.sanitizeNode)(node);
+                        }
+                        return node;
+                    });
+                    logger.debug(`Sanitized ${this.modifiedNodeIds.size} modified nodes`);
+                }
                 if (request.validateOnly) {
                     return {
                         success: true,
@@ -162,7 +179,9 @@ class WorkflowDiffEngine {
                     message: `Successfully applied ${operationsApplied} operations (${nodeOperations.length} node ops, ${otherOperations.length} other ops)`,
                     warnings: this.warnings.length > 0 ? this.warnings : undefined,
                     shouldActivate: shouldActivate || undefined,
-                    shouldDeactivate: shouldDeactivate || undefined
+                    shouldDeactivate: shouldDeactivate || undefined,
+                    tagsToAdd: this.tagsToAdd.length > 0 ? this.tagsToAdd : undefined,
+                    tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined
                 };
             }
         }
@@ -302,7 +321,7 @@ class WorkflowDiffEngine {
             return `Invalid parameter 'changes'. The updateNode operation requires 'updates' (not 'changes'). Example: {type: "updateNode", nodeId: "abc", updates: {name: "New Name", "parameters.url": "https://example.com"}}`;
         }
         if (!operation.updates) {
-            return `Missing required parameter 'updates'. The updateNode operation requires an 'updates' object containing properties to modify. Example: {type: "updateNode", nodeId: "abc", updates: {name: "New Name"}}`;
+            return `Missing required parameter 'updates'. The updateNode operation requires an 'updates' object. Correct structure: {type: "updateNode", nodeId: "abc-123" OR nodeName: "My Node", updates: {name: "New Name", "parameters.url": "https://example.com"}}`;
         }
         const node = this.findNode(workflow, operation.nodeId, operation.nodeName);
         if (!node) {
@@ -382,12 +401,18 @@ class WorkflowDiffEngine {
         const sourceNode = this.findNode(workflow, operation.source, operation.source);
         const targetNode = this.findNode(workflow, operation.target, operation.target);
         if (!sourceNode) {
+            if (this.removedNodeNames.has(operation.source)) {
+                return `Source node "${operation.source}" was already removed by a prior removeNode operation. Its connections were automatically cleaned up — no separate removeConnection needed.`;
+            }
             const availableNodes = workflow.nodes
                 .map(n => `"${n.name}" (id: ${n.id.substring(0, 8)}...)`)
                 .join(', ');
             return `Source node not found: "${operation.source}". Available nodes: ${availableNodes}. Tip: Use node ID for names with special characters.`;
         }
         if (!targetNode) {
+            if (this.removedNodeNames.has(operation.target)) {
+                return `Target node "${operation.target}" was already removed by a prior removeNode operation. Its connections were automatically cleaned up — no separate removeConnection needed.`;
+            }
             const availableNodes = workflow.nodes
                 .map(n => `"${n.name}" (id: ${n.id.substring(0, 8)}...)`)
                 .join(', ');
@@ -461,34 +486,40 @@ class WorkflowDiffEngine {
             executeOnce: operation.node.executeOnce
         };
         const sanitizedNode = (0, node_sanitizer_1.sanitizeNode)(newNode);
+        this.modifiedNodeIds.add(sanitizedNode.id);
         workflow.nodes.push(sanitizedNode);
     }
     applyRemoveNode(workflow, operation) {
         const node = this.findNode(workflow, operation.nodeId, operation.nodeName);
         if (!node)
             return;
+        this.removedNodeNames.add(node.name);
         const index = workflow.nodes.findIndex(n => n.id === node.id);
         if (index !== -1) {
             workflow.nodes.splice(index, 1);
         }
         delete workflow.connections[node.name];
-        Object.keys(workflow.connections).forEach(sourceName => {
-            const sourceConnections = workflow.connections[sourceName];
-            Object.keys(sourceConnections).forEach(outputName => {
-                sourceConnections[outputName] = sourceConnections[outputName].map(connections => connections.filter(conn => conn.node !== node.name)).filter(connections => connections.length > 0);
-                if (sourceConnections[outputName].length === 0) {
+        for (const [sourceName, sourceConnections] of Object.entries(workflow.connections)) {
+            for (const [outputName, outputConns] of Object.entries(sourceConnections)) {
+                sourceConnections[outputName] = outputConns.map(connections => connections.filter(conn => conn.node !== node.name));
+                const trimmed = sourceConnections[outputName];
+                while (trimmed.length > 0 && trimmed[trimmed.length - 1].length === 0) {
+                    trimmed.pop();
+                }
+                if (trimmed.length === 0) {
                     delete sourceConnections[outputName];
                 }
-            });
+            }
             if (Object.keys(sourceConnections).length === 0) {
                 delete workflow.connections[sourceName];
             }
-        });
+        }
     }
     applyUpdateNode(workflow, operation) {
         const node = this.findNode(workflow, operation.nodeId, operation.nodeName);
         if (!node)
             return;
+        this.modifiedNodeIds.add(node.id);
         if (operation.updates.name && operation.updates.name !== node.name) {
             const oldName = node.name;
             const newName = operation.updates.name;
@@ -521,8 +552,13 @@ class WorkflowDiffEngine {
     }
     resolveSmartParameters(workflow, operation) {
         const sourceNode = this.findNode(workflow, operation.source, operation.source);
-        let sourceOutput = operation.sourceOutput ?? 'main';
+        let sourceOutput = String(operation.sourceOutput ?? 'main');
         let sourceIndex = operation.sourceIndex ?? 0;
+        if (/^\d+$/.test(sourceOutput) && operation.sourceIndex === undefined
+            && operation.branch === undefined && operation.case === undefined) {
+            sourceIndex = parseInt(sourceOutput, 10);
+            sourceOutput = 'main';
+        }
         if (operation.branch !== undefined && operation.sourceIndex === undefined) {
             if (sourceNode?.type === 'n8n-nodes-base.if') {
                 sourceIndex = operation.branch === 'true' ? 0 : 1;
@@ -556,7 +592,7 @@ class WorkflowDiffEngine {
         if (!sourceNode || !targetNode)
             return;
         const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation);
-        const targetInput = operation.targetInput ?? sourceOutput;
+        const targetInput = String(operation.targetInput ?? sourceOutput);
         const targetIndex = operation.targetIndex ?? 0;
         if (!workflow.connections[sourceNode.name]) {
             workflow.connections[sourceNode.name] = {};
@@ -581,12 +617,9 @@ class WorkflowDiffEngine {
         const sourceNode = this.findNode(workflow, operation.source, operation.source);
         const targetNode = this.findNode(workflow, operation.target, operation.target);
         if (!sourceNode || !targetNode) {
-            if (operation.ignoreErrors) {
-                return;
-            }
             return;
         }
-        const sourceOutput = operation.sourceOutput || 'main';
+        const sourceOutput = String(operation.sourceOutput ?? 'main');
         const connections = workflow.connections[sourceNode.name]?.[sourceOutput];
         if (!connections)
             return;
@@ -633,19 +666,21 @@ class WorkflowDiffEngine {
         workflow.name = operation.name;
     }
     applyAddTag(workflow, operation) {
-        if (!workflow.tags) {
-            workflow.tags = [];
+        const removeIdx = this.tagsToRemove.indexOf(operation.tag);
+        if (removeIdx !== -1) {
+            this.tagsToRemove.splice(removeIdx, 1);
         }
-        if (!workflow.tags.includes(operation.tag)) {
-            workflow.tags.push(operation.tag);
+        if (!this.tagsToAdd.includes(operation.tag)) {
+            this.tagsToAdd.push(operation.tag);
         }
     }
     applyRemoveTag(workflow, operation) {
-        if (!workflow.tags)
-            return;
-        const index = workflow.tags.indexOf(operation.tag);
-        if (index !== -1) {
-            workflow.tags.splice(index, 1);
+        const addIdx = this.tagsToAdd.indexOf(operation.tag);
+        if (addIdx !== -1) {
+            this.tagsToAdd.splice(addIdx, 1);
+        }
+        if (!this.tagsToRemove.includes(operation.tag)) {
+            this.tagsToRemove.push(operation.tag);
         }
     }
     validateActivateWorkflow(workflow, operation) {
@@ -734,7 +769,10 @@ class WorkflowDiffEngine {
                         return false;
                     }
                     return true;
-                })).filter(conns => conns.length > 0);
+                }));
+                while (filteredConnections.length > 0 && filteredConnections[filteredConnections.length - 1].length === 0) {
+                    filteredConnections.pop();
+                }
                 if (filteredConnections.length === 0) {
                     delete outputs[outputName];
                 }
@@ -818,12 +856,20 @@ class WorkflowDiffEngine {
         let current = obj;
         for (let i = 0; i < keys.length - 1; i++) {
             const key = keys[i];
-            if (!(key in current) || typeof current[key] !== 'object') {
+            if (!(key in current) || typeof current[key] !== 'object' || current[key] === null) {
+                if (value === null)
+                    return;
                 current[key] = {};
             }
             current = current[key];
         }
-        current[keys[keys.length - 1]] = value;
+        const finalKey = keys[keys.length - 1];
+        if (value === null) {
+            delete current[finalKey];
+        }
+        else {
+            current[finalKey] = value;
+        }
     }
 }
 exports.WorkflowDiffEngine = WorkflowDiffEngine;

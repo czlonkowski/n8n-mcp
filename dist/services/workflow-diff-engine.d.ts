@@ -3,6 +3,10 @@ import { Workflow } from '../types/n8n-api';
 export declare class WorkflowDiffEngine {
     private renameMap;
     private warnings;
+    private modifiedNodeIds;
+    private removedNodeNames;
+    private tagsToAdd;
+    private tagsToRemove;
     applyDiff(workflow: Workflow, request: WorkflowDiffRequest): Promise<WorkflowDiffResult>;
     private validateOperation;
     private applyOperation;

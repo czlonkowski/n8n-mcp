@@ -1237,15 +1237,21 @@ export class WorkflowDiffEngine {
   private setNestedProperty(obj: any, path: string, value: any): void {
     const keys = path.split('.');
     let current = obj;
-    
+
     for (let i = 0; i < keys.length - 1; i++) {
       const key = keys[i];
-      if (!(key in current) || typeof current[key] !== 'object') {
+      if (!(key in current) || typeof current[key] !== 'object' || current[key] === null) {
+        if (value === null) return; // parent path doesn't exist, nothing to delete
         current[key] = {};
       }
       current = current[key];
     }
-    
-    current[keys[keys.length - 1]] = value;
+
+    const finalKey = keys[keys.length - 1];
+    if (value === null) {
+      delete current[finalKey];
+    } else {
+      current[finalKey] = value;
+    }
   }
 }

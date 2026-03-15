@@ -1374,8 +1374,11 @@ export class NodeSpecificValidators {
         });
       }
       
-      // Check for primitive return
-      if (/return\s+(true|false|null|undefined|\d+|['"`])/m.test(code)) {
+      // Skip primitive return check when helper functions are present,
+      // since we can't distinguish top-level vs nested returns without AST.
+      // Matches: function name(), const/let/var name = [async] function/arrow
+      const hasHelperFunctions = /(?:function\s+\w+\s*\(|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>|\w+\s*=>))/.test(code);
+      if (!hasHelperFunctions && /return\s+(true|false|null|undefined|\d+|['"`])/m.test(code)) {
         errors.push({
           type: 'invalid_value',
           property: 'jsCode',
@@ -1487,7 +1490,7 @@ export class NodeSpecificValidators {
     // Check for common variable mistakes
     if (language === 'javaScript') {
       // Using $ without proper variable
-      if (/\$(?![a-zA-Z])/.test(code) && !code.includes('${')) {
+      if (/\$(?![a-zA-Z_(])/.test(code) && !code.includes('${')) {
         warnings.push({
           type: 'best_practice',
           message: 'Invalid $ usage detected',

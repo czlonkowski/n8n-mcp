@@ -1067,7 +1067,8 @@ class NodeSpecificValidators {
                     fix: 'Wrap in array: return [{json: yourObject}]'
                 });
             }
-            if (/return\s+(true|false|null|undefined|\d+|['"`])/m.test(code)) {
+            const hasHelperFunctions = /(?:function\s+\w+\s*\(|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>|\w+\s*=>))/.test(code);
+            if (!hasHelperFunctions && /return\s+(true|false|null|undefined|\d+|['"`])/m.test(code)) {
                 errors.push({
                     type: 'invalid_value',
                     property: 'jsCode',
@@ -1149,7 +1150,7 @@ class NodeSpecificValidators {
             }
         });
         if (language === 'javaScript') {
-            if (/\$(?![a-zA-Z])/.test(code) && !code.includes('${')) {
+            if (/\$(?![a-zA-Z_(])/.test(code) && !code.includes('${')) {
                 warnings.push({
                     type: 'best_practice',
                     message: 'Invalid $ usage detected',

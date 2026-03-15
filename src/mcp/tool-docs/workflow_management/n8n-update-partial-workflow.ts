@@ -194,12 +194,12 @@ Please choose a different name.
 - Can rename a node and add/remove connections using the new name in the same batch
 - Use \`validateOnly: true\` to preview effects before applying
 
-## Removing Properties with undefined
+## Removing Properties with null
 
-To remove a property from a node, set its value to \`undefined\` in the updates object. This is essential when migrating from deprecated properties or cleaning up optional configuration fields.
+To remove a property from a node, set its value to \`null\` in the updates object. This is essential when migrating from deprecated properties or cleaning up optional configuration fields.
 
-### Why Use undefined?
-- **Property removal vs. null**: Setting a property to \`undefined\` removes it completely from the node object, while \`null\` sets the property to a null value
+### Why Use null?
+- **Property removal**: Setting a property to \`null\` removes it completely from the node object
 - **Validation constraints**: Some properties are mutually exclusive (e.g., \`continueOnFail\` and \`onError\`). Simply setting one without removing the other will fail validation
 - **Deprecated property migration**: When n8n deprecates properties, you must remove the old property before the new one will work
 
@@ -211,7 +211,7 @@ n8n_update_partial_workflow({
   operations: [{
     type: "updateNode",
     nodeName: "HTTP Request",
-    updates: { onError: undefined }
+    updates: { onError: null }
   }]
 });
 
@@ -221,7 +221,7 @@ n8n_update_partial_workflow({
   operations: [{
     type: "updateNode",
     nodeId: "node_abc",
-    updates: { disabled: undefined }
+    updates: { disabled: null }
   }]
 });
 \`\`\`
@@ -235,7 +235,7 @@ n8n_update_partial_workflow({
   operations: [{
     type: "updateNode",
     nodeName: "API Request",
-    updates: { "parameters.authentication": undefined }
+    updates: { "parameters.authentication": null }
   }]
 });
 
@@ -245,7 +245,7 @@ n8n_update_partial_workflow({
   operations: [{
     type: "updateNode",
     nodeName: "HTTP Request",
-    updates: { "parameters.headers": undefined }
+    updates: { "parameters.headers": null }
   }]
 });
 \`\`\`
@@ -271,7 +271,7 @@ n8n_update_partial_workflow({
     type: "updateNode",
     nodeName: "HTTP Request",
     updates: {
-      continueOnFail: undefined,
+      continueOnFail: null,
       onError: "continueErrorOutput"
     }
   }]
@@ -287,15 +287,15 @@ n8n_update_partial_workflow({
     type: "updateNode",
     nodeName: "Data Processor",
     updates: {
-      continueOnFail: undefined,
-      alwaysOutputData: undefined,
-      "parameters.legacy_option": undefined
+      continueOnFail: null,
+      alwaysOutputData: null,
+      "parameters.legacy_option": null
     }
   }]
 });
 \`\`\`
 
-### When to Use undefined
+### When to Use null
 - Removing deprecated properties during migration
 - Cleaning up optional configuration flags
 - Resolving mutual exclusivity validation errors
@@ -341,11 +341,11 @@ n8n_update_partial_workflow({
       '// Rewire AI Agent to use different language model\nn8n_update_partial_workflow({id: "ai9", operations: [{type: "rewireConnection", source: "AI Agent", from: "OpenAI Chat Model", to: "Anthropic Chat Model", sourceOutput: "ai_languageModel"}]})',
       '// Replace all AI tools for an agent\nn8n_update_partial_workflow({id: "ai10", operations: [\n  {type: "removeConnection", source: "Old Tool 1", target: "AI Agent", sourceOutput: "ai_tool"},\n  {type: "removeConnection", source: "Old Tool 2", target: "AI Agent", sourceOutput: "ai_tool"},\n  {type: "addConnection", source: "New HTTP Tool", target: "AI Agent", sourceOutput: "ai_tool"},\n  {type: "addConnection", source: "New Code Tool", target: "AI Agent", sourceOutput: "ai_tool"}\n]})',
       '\n// ============ REMOVING PROPERTIES EXAMPLES ============',
-      '// Remove a simple property\nn8n_update_partial_workflow({id: "rm1", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {onError: undefined}}]})',
-      '// Migrate from deprecated continueOnFail to onError\nn8n_update_partial_workflow({id: "rm2", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {continueOnFail: undefined, onError: "continueErrorOutput"}}]})',
-      '// Remove nested property\nn8n_update_partial_workflow({id: "rm3", operations: [{type: "updateNode", nodeName: "API Request", updates: {"parameters.authentication": undefined}}]})',
-      '// Remove multiple properties\nn8n_update_partial_workflow({id: "rm4", operations: [{type: "updateNode", nodeName: "Data Processor", updates: {continueOnFail: undefined, alwaysOutputData: undefined, "parameters.legacy_option": undefined}}]})',
-      '// Remove entire array property\nn8n_update_partial_workflow({id: "rm5", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {"parameters.headers": undefined}}]})'
+      '// Remove a simple property\nn8n_update_partial_workflow({id: "rm1", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {onError: null}}]})',
+      '// Migrate from deprecated continueOnFail to onError\nn8n_update_partial_workflow({id: "rm2", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {continueOnFail: null, onError: "continueErrorOutput"}}]})',
+      '// Remove nested property\nn8n_update_partial_workflow({id: "rm3", operations: [{type: "updateNode", nodeName: "API Request", updates: {"parameters.authentication": null}}]})',
+      '// Remove multiple properties\nn8n_update_partial_workflow({id: "rm4", operations: [{type: "updateNode", nodeName: "Data Processor", updates: {continueOnFail: null, alwaysOutputData: null, "parameters.legacy_option": null}}]})',
+      '// Remove entire array property\nn8n_update_partial_workflow({id: "rm5", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {"parameters.headers": null}}]})'
     ],
     useCases: [
       'Rewire connections when replacing nodes',
@@ -383,9 +383,9 @@ n8n_update_partial_workflow({
       'Use targetIndex for fallback models (primary=0, fallback=1)',
       'Batch AI component connections in a single operation for atomicity',
       'Validate AI workflows after connection changes to catch configuration errors',
-      'To remove properties, set them to undefined (not null) in the updates object',
+      'To remove properties, set them to null in the updates object',
       'When migrating from deprecated properties, remove the old property and add the new one in the same operation',
-      'Use undefined to resolve mutual exclusivity validation errors between properties',
+      'Use null to resolve mutual exclusivity validation errors between properties',
       'Batch multiple property removals in a single updateNode operation for efficiency'
     ],
     pitfalls: [
@@ -407,8 +407,8 @@ n8n_update_partial_workflow({
       '**Auto-sanitization runs on ALL nodes**: When ANY update is made, ALL nodes in the workflow are sanitized (not just modified ones)',
       '**Auto-sanitization cannot fix everything**: It fixes operator structures and missing metadata, but cannot fix broken connections or branch mismatches',
       '**Corrupted workflows beyond repair**: Workflows in paradoxical states (API returns corrupt, API rejects updates) cannot be fixed via API - must be recreated',
-      'Setting a property to null does NOT remove it - use undefined instead',
-      'When properties are mutually exclusive (e.g., continueOnFail and onError), setting only the new property will fail - you must remove the old one with undefined',
+      'To remove a property, set it to null in the updates object',
+      'When properties are mutually exclusive (e.g., continueOnFail and onError), setting only the new property will fail - you must remove the old one with null',
       'Removing a required property may cause validation errors - check node documentation first',
       'Nested property removal with dot notation only removes the specific nested field, not the entire parent object',
       'Array index notation (e.g., "parameters.headers[0]") is not supported - remove the entire array property instead'

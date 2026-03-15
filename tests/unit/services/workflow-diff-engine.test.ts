@@ -4882,4 +4882,111 @@ describe('WorkflowDiffEngine', () => {
       expect(result.workflow.connections['Source Node']['main'][0][0].type).toBe('main');
     });
   });
+
+  describe('null value property deletion', () => {
+    it('should delete a property when value is null', async () => {
+      const node = baseWorkflow.nodes.find((n: any) => n.name === 'HTTP Request')!;
+      (node as any).continueOnFail = true;
+
+      const operation: UpdateNodeOperation = {
+        type: 'updateNode',
+        nodeName: 'HTTP Request',
+        updates: { continueOnFail: null }
+      };
+
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [operation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      const updatedNode = result.workflow.nodes.find((n: any) => n.name === 'HTTP Request')!;
+      expect('continueOnFail' in updatedNode).toBe(false);
+    });
+
+    it('should delete a nested property when value is null', async () => {
+      const node = baseWorkflow.nodes.find((n: any) => n.name === 'HTTP Request')!;
+      (node as any).parameters = { url: 'https://example.com', authentication: 'basic' };
+
+      const operation: UpdateNodeOperation = {
+        type: 'updateNode',
+        nodeName: 'HTTP Request',
+        updates: { 'parameters.authentication': null }
+      };
+
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [operation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      const updatedNode = result.workflow.nodes.find((n: any) => n.name === 'HTTP Request')!;
+      expect((updatedNode as any).parameters.url).toBe('https://example.com');
+      expect('authentication' in (updatedNode as any).parameters).toBe(false);
+    });
+
+    it('should set property normally when value is not null', async () => {
+      const operation: UpdateNodeOperation = {
+        type: 'updateNode',
+        nodeName: 'HTTP Request',
+        updates: { continueOnFail: true }
+      };
+
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [operation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      const updatedNode = result.workflow.nodes.find((n: any) => n.name === 'HTTP Request')!;
+      expect((updatedNode as any).continueOnFail).toBe(true);
+    });
+
+    it('should be a no-op when deleting a non-existent property', async () => {
+      const node = baseWorkflow.nodes.find((n: any) => n.name === 'HTTP Request')!;
+      const originalKeys = Object.keys(node).sort();
+
+      const operation: UpdateNodeOperation = {
+        type: 'updateNode',
+        nodeName: 'HTTP Request',
+        updates: { nonExistentProp: null }
+      };
+
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [operation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      const updatedNode = result.workflow.nodes.find((n: any) => n.name === 'HTTP Request')!;
+      expect('nonExistentProp' in updatedNode).toBe(false);
+    });
+
+    it('should skip intermediate object creation when deleting from non-existent parent path', async () => {
+      const operation: UpdateNodeOperation = {
+        type: 'updateNode',
+        nodeName: 'HTTP Request',
+        updates: { 'nonExistent.deeply.nested.prop': null }
+      };
+
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [operation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      const updatedNode = result.workflow.nodes.find((n: any) => n.name === 'HTTP Request')!;
+      expect('nonExistent' in updatedNode).toBe(false);
+    });
+  });
 });
