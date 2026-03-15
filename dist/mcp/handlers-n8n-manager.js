@@ -288,6 +288,15 @@ async function handleCreateWorkflow(args, context) {
             };
         }
         const workflow = await client.createWorkflow(input);
+        if (!workflow || !workflow.id) {
+            return {
+                success: false,
+                error: 'Workflow creation failed: n8n API returned an empty or invalid response. Verify your N8N_API_URL points to the correct /api/v1 endpoint and that the n8n instance supports workflow creation.',
+                details: {
+                    response: workflow ? { keys: Object.keys(workflow) } : null
+                }
+            };
+        }
         telemetry_1.telemetry.trackWorkflowCreation(workflow, true);
         return {
             success: true,

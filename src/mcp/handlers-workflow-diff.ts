@@ -31,6 +31,11 @@ function getValidator(repository: NodeRepository): WorkflowValidator {
   return cachedValidator;
 }
 
+// Operation types that identify nodes by nodeId/nodeName
+const NODE_TARGETING_OPERATIONS = new Set([
+  'updateNode', 'removeNode', 'moveNode', 'enableNode', 'disableNode'
+]);
+
 // Zod schema for the diff request
 const workflowDiffSchema = z.object({
   id: z.string(),
@@ -63,6 +68,23 @@ const workflowDiffSchema = z.object({
     settings: z.any().optional(),
     name: z.string().optional(),
     tag: z.string().optional(),
+    // Aliases: LLMs often use "id" instead of "nodeId" — accept both
+    id: z.string().optional(),
+  }).transform((op) => {
+    // Normalize common field aliases for node-targeting operations:
+    // - "name" → "nodeName" (LLMs confuse the updateName "name" field with node identification)
+    // - "id" → "nodeId" (natural alias)
+    if (NODE_TARGETING_OPERATIONS.has(op.type)) {
+      if (!op.nodeName && !op.nodeId && op.name) {
+        op.nodeName = op.name;
+        op.name = undefined;
+      }
+      if (!op.nodeId && op.id) {
+        op.nodeId = op.id;
+        op.id = undefined;
+      }
+    }
+    return op;
   })),
   validateOnly: z.boolean().optional(),
   continueOnError: z.boolean().optional(),

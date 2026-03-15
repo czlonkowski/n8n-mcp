@@ -405,7 +405,7 @@ class WorkflowAutoFixer {
         const hasConnectionFixes = filteredFixes.some(f => exports.CONNECTION_FIX_TYPES.includes(f.type));
         return operations.filter(op => {
             if (op.type === 'updateNode') {
-                return fixedNodes.has(op.nodeId || '');
+                return fixedNodes.has(op.nodeName || '') || fixedNodes.has(op.nodeId || '');
             }
             if (op.type === 'replaceConnections') {
                 return hasConnectionFixes;
@@ -794,6 +794,7 @@ class WorkflowAutoFixer {
                 const operation = {
                     type: 'updateNode',
                     nodeId: node.id,
+                    nodeName: node.name,
                     updates: {
                         typeVersion: parseFloat(latestVersion),
                         parameters: migrationResult.updatedNode.parameters,

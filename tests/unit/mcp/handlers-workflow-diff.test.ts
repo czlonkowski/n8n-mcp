@@ -1001,5 +1001,122 @@ describe('handlers-workflow-diff', () => {
         expect(mockApiClient.updateWorkflowTags).not.toHaveBeenCalled();
       });
     });
+
+    describe('field name normalization', () => {
+      it('should normalize "name" to "nodeName" for updateNode operations', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+
+        await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{
+            type: 'updateNode',
+            name: 'HTTP Request',  // LLMs often use "name" instead of "nodeName"
+            updates: { 'parameters.url': 'https://new-url.com' },
+          }],
+        }, mockRepository);
+
+        // Verify the diff engine received nodeName (normalized from name)
+        expect(mockDiffEngine.applyDiff).toHaveBeenCalled();
+        const diffArgs = mockDiffEngine.applyDiff.mock.calls[0][1];
+        expect(diffArgs.operations[0].nodeName).toBe('HTTP Request');
+      });
+
+      it('should normalize "id" to "nodeId" for removeNode operations', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+
+        await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{
+            type: 'removeNode',
+            id: 'node2',  // LLMs may use "id" instead of "nodeId"
+          }],
+        }, mockRepository);
+
+        // Verify the diff engine received nodeId (normalized from id)
+        expect(mockDiffEngine.applyDiff).toHaveBeenCalled();
+        const diffArgs = mockDiffEngine.applyDiff.mock.calls[0][1];
+        expect(diffArgs.operations[0].nodeId).toBe('node2');
+      });
+
+      it('should NOT normalize "name" for updateName operations', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+
+        await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{
+            type: 'updateName',
+            name: 'New Workflow Name',  // This is the correct field for updateName
+          }],
+        }, mockRepository);
+
+        // Verify "name" stays as "name" (not moved to nodeName) for updateName
+        expect(mockDiffEngine.applyDiff).toHaveBeenCalled();
+        const diffArgs = mockDiffEngine.applyDiff.mock.calls[0][1];
+        expect(diffArgs.operations[0].name).toBe('New Workflow Name');
+        expect(diffArgs.operations[0].nodeName).toBeUndefined();
+      });
+
+      it('should prefer explicit "nodeName" over "name" alias', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+
+        await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{
+            type: 'updateNode',
+            nodeName: 'HTTP Request',  // Explicit nodeName provided
+            name: 'Should Be Ignored',  // Should NOT override nodeName
+            updates: { 'parameters.url': 'https://new-url.com' },
+          }],
+        }, mockRepository);
+
+        expect(mockDiffEngine.applyDiff).toHaveBeenCalled();
+        const diffArgs = mockDiffEngine.applyDiff.mock.calls[0][1];
+        expect(diffArgs.operations[0].nodeName).toBe('HTTP Request');
+      });
+    });
   });
 });

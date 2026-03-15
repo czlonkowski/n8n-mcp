@@ -671,11 +671,13 @@ export class WorkflowAutoFixer {
     filteredFixes: FixOperation[],
     allFixes: FixOperation[]
   ): WorkflowDiffOperation[] {
+    // fixedNodes contains node names (FixOperation.node = node.name)
     const fixedNodes = new Set(filteredFixes.map(f => f.node));
     const hasConnectionFixes = filteredFixes.some(f => CONNECTION_FIX_TYPES.includes(f.type));
     return operations.filter(op => {
       if (op.type === 'updateNode') {
-        return fixedNodes.has(op.nodeId || '');
+        // Check both nodeName and nodeId — operations may use either
+        return fixedNodes.has(op.nodeName || '') || fixedNodes.has(op.nodeId || '');
       }
       if (op.type === 'replaceConnections') {
         return hasConnectionFixes;
@@ -1186,10 +1188,11 @@ export class WorkflowAutoFixer {
           description: `Upgrade ${node.name} from v${currentVersion} to v${latestVersion}. ${analysis.reason}`
         });
 
-        // Create update operation
+        // Create update operation — both nodeId and nodeName needed for fix filtering
         const operation: UpdateNodeOperation = {
           type: 'updateNode',
           nodeId: node.id,
+          nodeName: node.name,
           updates: {
             typeVersion: parseFloat(latestVersion),
             parameters: migrationResult.updatedNode.parameters,

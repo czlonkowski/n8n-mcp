@@ -144,79 +144,227 @@ export declare const workflowConnectionSchema: z.ZodRecord<z.ZodString, z.ZodObj
         node: string;
         index: number;
     }>, "many">, "many">>;
+}, "strip", z.ZodArray<z.ZodArray<z.ZodObject<{
+    node: z.ZodString;
+    type: z.ZodString;
+    index: z.ZodNumber;
 }, "strip", z.ZodTypeAny, {
-    error?: {
-        type: string;
-        node: string;
-        index: number;
-    }[][] | undefined;
-    main?: {
-        type: string;
-        node: string;
-        index: number;
-    }[][] | undefined;
-    ai_tool?: {
-        type: string;
-        node: string;
-        index: number;
-    }[][] | undefined;
-    ai_languageModel?: {
-        type: string;
-        node: string;
-        index: number;
-    }[][] | undefined;
-    ai_memory?: {
-        type: string;
-        node: string;
-        index: number;
-    }[][] | undefined;
-    ai_embedding?: {
-        type: string;
-        node: string;
-        index: number;
-    }[][] | undefined;
-    ai_vectorStore?: {
-        type: string;
-        node: string;
-        index: number;
-    }[][] | undefined;
+    type: string;
+    node: string;
+    index: number;
 }, {
-    error?: {
+    type: string;
+    node: string;
+    index: number;
+}>, "many">, "many">, z.objectOutputType<{
+    main: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
         type: string;
         node: string;
         index: number;
-    }[][] | undefined;
-    main?: {
+    }, {
         type: string;
         node: string;
         index: number;
-    }[][] | undefined;
-    ai_tool?: {
+    }>, "many">, "many">>;
+    error: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
         type: string;
         node: string;
         index: number;
-    }[][] | undefined;
-    ai_languageModel?: {
+    }, {
         type: string;
         node: string;
         index: number;
-    }[][] | undefined;
-    ai_memory?: {
+    }>, "many">, "many">>;
+    ai_tool: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
         type: string;
         node: string;
         index: number;
-    }[][] | undefined;
-    ai_embedding?: {
+    }, {
         type: string;
         node: string;
         index: number;
-    }[][] | undefined;
-    ai_vectorStore?: {
+    }>, "many">, "many">>;
+    ai_languageModel: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
         type: string;
         node: string;
         index: number;
-    }[][] | undefined;
-}>>;
+    }, {
+        type: string;
+        node: string;
+        index: number;
+    }>, "many">, "many">>;
+    ai_memory: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
+        type: string;
+        node: string;
+        index: number;
+    }, {
+        type: string;
+        node: string;
+        index: number;
+    }>, "many">, "many">>;
+    ai_embedding: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
+        type: string;
+        node: string;
+        index: number;
+    }, {
+        type: string;
+        node: string;
+        index: number;
+    }>, "many">, "many">>;
+    ai_vectorStore: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
+        type: string;
+        node: string;
+        index: number;
+    }, {
+        type: string;
+        node: string;
+        index: number;
+    }>, "many">, "many">>;
+}, z.ZodArray<z.ZodArray<z.ZodObject<{
+    node: z.ZodString;
+    type: z.ZodString;
+    index: z.ZodNumber;
+}, "strip", z.ZodTypeAny, {
+    type: string;
+    node: string;
+    index: number;
+}, {
+    type: string;
+    node: string;
+    index: number;
+}>, "many">, "many">, "strip">, z.objectInputType<{
+    main: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
+        type: string;
+        node: string;
+        index: number;
+    }, {
+        type: string;
+        node: string;
+        index: number;
+    }>, "many">, "many">>;
+    error: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
+        type: string;
+        node: string;
+        index: number;
+    }, {
+        type: string;
+        node: string;
+        index: number;
+    }>, "many">, "many">>;
+    ai_tool: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
+        type: string;
+        node: string;
+        index: number;
+    }, {
+        type: string;
+        node: string;
+        index: number;
+    }>, "many">, "many">>;
+    ai_languageModel: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
+        type: string;
+        node: string;
+        index: number;
+    }, {
+        type: string;
+        node: string;
+        index: number;
+    }>, "many">, "many">>;
+    ai_memory: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
+        type: string;
+        node: string;
+        index: number;
+    }, {
+        type: string;
+        node: string;
+        index: number;
+    }>, "many">, "many">>;
+    ai_embedding: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
+        type: string;
+        node: string;
+        index: number;
+    }, {
+        type: string;
+        node: string;
+        index: number;
+    }>, "many">, "many">>;
+    ai_vectorStore: z.ZodOptional<z.ZodArray<z.ZodArray<z.ZodObject<{
+        node: z.ZodString;
+        type: z.ZodString;
+        index: z.ZodNumber;
+    }, "strip", z.ZodTypeAny, {
+        type: string;
+        node: string;
+        index: number;
+    }, {
+        type: string;
+        node: string;
+        index: number;
+    }>, "many">, "many">>;
+}, z.ZodArray<z.ZodArray<z.ZodObject<{
+    node: z.ZodString;
+    type: z.ZodString;
+    index: z.ZodNumber;
+}, "strip", z.ZodTypeAny, {
+    type: string;
+    node: string;
+    index: number;
+}, {
+    type: string;
+    node: string;
+    index: number;
+}>, "many">, "many">, "strip">>>;
 export declare const workflowSettingsSchema: z.ZodObject<{
     executionOrder: z.ZodDefault<z.ZodEnum<["v0", "v1"]>>;
     timezone: z.ZodOptional<z.ZodString>;

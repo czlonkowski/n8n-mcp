@@ -17,7 +17,7 @@ function sanitizeWorkflowNodes(workflow) {
     }
     return {
         ...workflow,
-        nodes: workflow.nodes.map((node) => sanitizeNode(node))
+        nodes: workflow.nodes.map(sanitizeNode)
     };
 }
 function isFilterBasedNode(nodeType, typeVersion) {
@@ -66,7 +66,7 @@ function sanitizeFilterConditions(conditions) {
         ...sanitized.options
     };
     if (sanitized.conditions && Array.isArray(sanitized.conditions)) {
-        sanitized.conditions = sanitized.conditions.map((condition) => sanitizeCondition(condition));
+        sanitized.conditions = sanitized.conditions.map(sanitizeCondition);
     }
     return sanitized;
 }
@@ -124,6 +124,10 @@ function inferDataType(operation) {
     if (dateOps.some(op => operation.includes(op))) {
         return 'dateTime';
     }
+    const objectOps = ['empty', 'notEmpty', 'exists', 'notExists'];
+    if (objectOps.includes(operation)) {
+        return 'object';
+    }
     return 'string';
 }
 function isUnaryOperator(operation) {
@@ -132,7 +136,11 @@ function isUnaryOperator(operation) {
         'isNotEmpty',
         'true',
         'false',
-        'isNumeric'
+        'isNumeric',
+        'empty',
+        'notEmpty',
+        'exists',
+        'notExists'
     ];
     return unaryOps.includes(operation);
 }

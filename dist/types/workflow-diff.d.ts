@@ -137,6 +137,8 @@ export interface WorkflowDiffResult {
     }>;
     shouldActivate?: boolean;
     shouldDeactivate?: boolean;
+    tagsToAdd?: string[];
+    tagsToRemove?: string[];
 }
 export interface NodeReference {
     id?: string;

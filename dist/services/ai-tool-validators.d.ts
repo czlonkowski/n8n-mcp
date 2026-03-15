@@ -33,8 +33,8 @@ export declare function validateVectorStoreTool(node: WorkflowNode, reverseConne
 export declare function validateWorkflowTool(node: WorkflowNode, reverseConnections?: Map<string, ReverseConnection[]>): ValidationIssue[];
 export declare function validateAIAgentTool(node: WorkflowNode, reverseConnections: Map<string, ReverseConnection[]>): ValidationIssue[];
 export declare function validateMCPClientTool(node: WorkflowNode): ValidationIssue[];
-export declare function validateCalculatorTool(node: WorkflowNode): ValidationIssue[];
-export declare function validateThinkTool(node: WorkflowNode): ValidationIssue[];
+export declare function validateCalculatorTool(_node: WorkflowNode): ValidationIssue[];
+export declare function validateThinkTool(_node: WorkflowNode): ValidationIssue[];
 export declare function validateSerpApiTool(node: WorkflowNode): ValidationIssue[];
 export declare function validateWikipediaTool(node: WorkflowNode): ValidationIssue[];
 export declare function validateSearXngTool(node: WorkflowNode): ValidationIssue[];

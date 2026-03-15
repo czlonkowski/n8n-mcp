@@ -196,7 +196,7 @@ class N8nApiClient {
     }
     async activateWorkflow(id) {
         try {
-            const response = await this.client.post(`/workflows/${id}/activate`);
+            const response = await this.client.post(`/workflows/${id}/activate`, {});
             return response.data;
         }
         catch (error) {
@@ -205,7 +205,7 @@ class N8nApiClient {
     }
     async deactivateWorkflow(id) {
         try {
-            const response = await this.client.post(`/workflows/${id}/deactivate`);
+            const response = await this.client.post(`/workflows/${id}/deactivate`, {});
             return response.data;
         }
         catch (error) {
@@ -360,6 +360,15 @@ class N8nApiClient {
     async deleteTag(id) {
         try {
             await this.client.delete(`/tags/${id}`);
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async updateWorkflowTags(workflowId, tagIds) {
+        try {
+            const response = await this.client.put(`/workflows/${workflowId}/tags`, tagIds.filter(id => id).map(id => ({ id })));
+            return response.data;
         }
         catch (error) {
             throw (0, n8n_errors_1.handleN8nApiError)(error);

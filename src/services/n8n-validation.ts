@@ -49,7 +49,7 @@ export const workflowConnectionSchema = z.record(
     ai_memory: connectionArraySchema.optional(),
     ai_embedding: connectionArraySchema.optional(),
     ai_vectorStore: connectionArraySchema.optional(),
-  })
+  }).catchall(connectionArraySchema) // Allow additional AI connection types (ai_outputParser, ai_document, ai_textSplitter, etc.)
 );
 
 export const workflowSettingsSchema = z.object({
@@ -248,15 +248,15 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
       const connectedNodes = new Set<string>();
 
       // Collect all nodes that appear in connections (as source or target)
-      // Check ALL connection types, not just 'main' - AI workflows use ai_tool, ai_languageModel, etc.
-      const ALL_CONNECTION_TYPES = ['main', 'error', 'ai_tool', 'ai_languageModel', 'ai_memory', 'ai_embedding', 'ai_vectorStore'] as const;
-
+      // Iterate over ALL connection types present in the data — not a hardcoded list —
+      // so that every AI connection type (ai_outputParser, ai_document, ai_textSplitter,
+      // ai_agent, ai_chain, ai_retriever, etc.) is covered automatically.
       Object.entries(workflow.connections).forEach(([sourceName, connection]) => {
         connectedNodes.add(sourceName); // Node has outgoing connection
 
-        // Check all connection types for target nodes
-        ALL_CONNECTION_TYPES.forEach(connType => {
-          const connData = (connection as Record<string, unknown>)[connType];
+        // Check every connection type key present on this source node
+        const connectionRecord = connection as Record<string, unknown>;
+        Object.values(connectionRecord).forEach((connData) => {
           if (connData && Array.isArray(connData)) {
             connData.forEach((outputs) => {
               if (Array.isArray(outputs)) {
@@ -429,24 +429,29 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
         }
       }
       
-      if (connection.main && Array.isArray(connection.main)) {
-        connection.main.forEach((outputs, outputIndex) => {
-          if (Array.isArray(outputs)) {
-            outputs.forEach((target, targetIndex) => {
-              // Check if target exists by name (correct)
-              if (!nodeNames.has(target.node)) {
-                // Check if they're using an ID instead of name
-                if (nodeIds.has(target.node)) {
-                  const correctName = nodeIdToName.get(target.node);
-                  errors.push(`Connection target uses node ID '${target.node}' but must use node name '${correctName}' (from ${sourceName}[${outputIndex}][${targetIndex}])`);
-                } else {
-                  errors.push(`Connection references non-existent target node: ${target.node} (from ${sourceName}[${outputIndex}][${targetIndex}])`);
+      // Check all connection types (main, error, ai_tool, ai_languageModel, etc.)
+      const connectionRecord = connection as Record<string, unknown>;
+      Object.values(connectionRecord).forEach((connData) => {
+        if (connData && Array.isArray(connData)) {
+          connData.forEach((outputs: any, outputIndex: number) => {
+            if (Array.isArray(outputs)) {
+              outputs.forEach((target: any, targetIndex: number) => {
+                if (!target?.node) return;
+                // Check if target exists by name (correct)
+                if (!nodeNames.has(target.node)) {
+                  // Check if they're using an ID instead of name
+                  if (nodeIds.has(target.node)) {
+                    const correctName = nodeIdToName.get(target.node);
+                    errors.push(`Connection target uses node ID '${target.node}' but must use node name '${correctName}' (from ${sourceName}[${outputIndex}][${targetIndex}])`);
+                  } else {
+                    errors.push(`Connection references non-existent target node: ${target.node} (from ${sourceName}[${outputIndex}][${targetIndex}])`);
+                  }
                 }
-              }
-            });
-          }
-        });
-      }
+              });
+            }
+          });
+        }
+      });
     });
   }
 

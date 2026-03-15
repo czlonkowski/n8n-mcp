@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.37.3] - 2026-03-15
+
+### Fixed
+
+- **updateNode `name`/`id` field normalization**: LLMs sending `{type: "updateNode", name: "Code", ...}` instead of `nodeName` no longer get "Node not found" errors. The Zod schema now normalizes `name` → `nodeName` and `id` → `nodeId` for node-targeting operations (updateNode, removeNode, moveNode, enableNode, disableNode)
+- **AI connection types in disconnected-node detection** (Issue #581): Replaced hardcoded 7-type list with dynamic iteration over all connection types present in workflow data. Nodes connected via `ai_outputParser`, `ai_document`, `ai_textSplitter`, `ai_agent`, `ai_chain`, `ai_retriever` are no longer falsely flagged as disconnected during save
+- **Connection schema and reference validation** (Issue #581): Added `.catchall()` to `workflowConnectionSchema` for unknown AI connection types, and extended connection reference validation to check all connection types (not just `main`)
+- **autofix `filterOperationsByFixes` ID-vs-name mismatch**: Typeversion-upgrade operations now include `nodeName` alongside `nodeId`, and the filter checks both fields. Previously, `applyFixes=true` silently dropped all typeversion fixes because `fixedNodes` contained names but the filter only checked `nodeId` (UUID)
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.37.2] - 2026-03-15
 
 ### Fixed

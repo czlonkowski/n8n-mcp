@@ -47,7 +47,7 @@ exports.workflowConnectionSchema = zod_1.z.record(zod_1.z.object({
     ai_memory: connectionArraySchema.optional(),
     ai_embedding: connectionArraySchema.optional(),
     ai_vectorStore: connectionArraySchema.optional(),
-}));
+}).catchall(connectionArraySchema));
 exports.workflowSettingsSchema = zod_1.z.object({
     executionOrder: zod_1.z.enum(['v0', 'v1']).default('v1'),
     timezone: zod_1.z.string().optional(),
@@ -152,11 +152,10 @@ function validateWorkflowStructure(workflow) {
         }
         else if (connectionCount > 0 || executableNodes.length > 1) {
             const connectedNodes = new Set();
-            const ALL_CONNECTION_TYPES = ['main', 'error', 'ai_tool', 'ai_languageModel', 'ai_memory', 'ai_embedding', 'ai_vectorStore'];
             Object.entries(workflow.connections).forEach(([sourceName, connection]) => {
                 connectedNodes.add(sourceName);
-                ALL_CONNECTION_TYPES.forEach(connType => {
-                    const connData = connection[connType];
+                const connectionRecord = connection;
+                Object.values(connectionRecord).forEach((connData) => {
                     if (connData && Array.isArray(connData)) {
                         connData.forEach((outputs) => {
                             if (Array.isArray(outputs)) {
@@ -282,23 +281,28 @@ function validateWorkflowStructure(workflow) {
                     errors.push(`Connection references non-existent node: ${sourceName}`);
                 }
             }
-            if (connection.main && Array.isArray(connection.main)) {
-                connection.main.forEach((outputs, outputIndex) => {
-                    if (Array.isArray(outputs)) {
-                        outputs.forEach((target, targetIndex) => {
-                            if (!nodeNames.has(target.node)) {
-                                if (nodeIds.has(target.node)) {
-                                    const correctName = nodeIdToName.get(target.node);
-                                    errors.push(`Connection target uses node ID '${target.node}' but must use node name '${correctName}' (from ${sourceName}[${outputIndex}][${targetIndex}])`);
+            const connectionRecord = connection;
+            Object.values(connectionRecord).forEach((connData) => {
+                if (connData && Array.isArray(connData)) {
+                    connData.forEach((outputs, outputIndex) => {
+                        if (Array.isArray(outputs)) {
+                            outputs.forEach((target, targetIndex) => {
+                                if (!target?.node)
+                                    return;
+                                if (!nodeNames.has(target.node)) {
+                                    if (nodeIds.has(target.node)) {
+                                        const correctName = nodeIdToName.get(target.node);
+                                        errors.push(`Connection target uses node ID '${target.node}' but must use node name '${correctName}' (from ${sourceName}[${outputIndex}][${targetIndex}])`);
+                                    }
+                                    else {
+                                        errors.push(`Connection references non-existent target node: ${target.node} (from ${sourceName}[${outputIndex}][${targetIndex}])`);
+                                    }
                                 }
-                                else {
-                                    errors.push(`Connection references non-existent target node: ${target.node} (from ${sourceName}[${outputIndex}][${targetIndex}])`);
-                                }
-                            }
-                        });
-                    }
-                });
-            }
+                            });
+                        }
+                    });
+                }
+            });
         });
     }
     return errors;

@@ -1096,6 +1096,83 @@ describe('n8n-validation', () => {
         expect(disconnectedErrors).toHaveLength(0);
       });
 
+      it('should NOT flag nodes as disconnected when connected via ai_outputParser', () => {
+        const workflow = {
+          name: 'AI Output Parser Workflow',
+          nodes: [
+            {
+              id: 'agent-1',
+              name: 'AI Agent',
+              type: '@n8n/n8n-nodes-langchain.agent',
+              typeVersion: 1.6,
+              position: [500, 300] as [number, number],
+              parameters: {},
+            },
+            {
+              id: 'parser-1',
+              name: 'Structured Output Parser',
+              type: '@n8n/n8n-nodes-langchain.outputParserStructured',
+              typeVersion: 1,
+              position: [300, 400] as [number, number],
+              parameters: {},
+            },
+          ],
+          connections: {
+            'Structured Output Parser': {
+              ai_outputParser: [[{ node: 'AI Agent', type: 'ai_outputParser', index: 0 }]],
+            },
+          },
+        };
+
+        const errors = validateWorkflowStructure(workflow);
+        const disconnectedErrors = errors.filter(e => e.includes('Disconnected'));
+        expect(disconnectedErrors).toHaveLength(0);
+      });
+
+      it('should NOT flag nodes as disconnected when connected via ai_document or ai_textSplitter', () => {
+        const workflow = {
+          name: 'Document Processing Workflow',
+          nodes: [
+            {
+              id: 'vs-1',
+              name: 'Pinecone Vector Store',
+              type: '@n8n/n8n-nodes-langchain.vectorStorePinecone',
+              typeVersion: 1,
+              position: [500, 300] as [number, number],
+              parameters: {},
+            },
+            {
+              id: 'doc-1',
+              name: 'Default Data Loader',
+              type: '@n8n/n8n-nodes-langchain.documentDefaultDataLoader',
+              typeVersion: 1,
+              position: [300, 400] as [number, number],
+              parameters: {},
+            },
+            {
+              id: 'splitter-1',
+              name: 'Text Splitter',
+              type: '@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter',
+              typeVersion: 1,
+              position: [100, 400] as [number, number],
+              parameters: {},
+            },
+          ],
+          connections: {
+            'Default Data Loader': {
+              ai_document: [[{ node: 'Pinecone Vector Store', type: 'ai_document', index: 0 }]],
+            },
+            'Text Splitter': {
+              ai_textSplitter: [[{ node: 'Default Data Loader', type: 'ai_textSplitter', index: 0 }]],
+            },
+          },
+        };
+
+        const errors = validateWorkflowStructure(workflow);
+        const disconnectedErrors = errors.filter(e => e.includes('Disconnected'));
+        expect(disconnectedErrors).toHaveLength(0);
+      });
+
       it('should still flag truly disconnected nodes in AI workflows', () => {
         const workflow = {
           name: 'AI Workflow with Disconnected Node',

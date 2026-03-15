@@ -36,6 +36,7 @@ export declare class N8nApiClient {
     createTag(tag: Partial<Tag>): Promise<Tag>;
     updateTag(id: string, tag: Partial<Tag>): Promise<Tag>;
     deleteTag(id: string): Promise<void>;
+    updateWorkflowTags(workflowId: string, tagIds: string[]): Promise<Tag[]>;
     getSourceControlStatus(): Promise<SourceControlStatus>;
     pullSourceControl(force?: boolean): Promise<SourceControlPullResult>;
     pushSourceControl(message: string, fileNames?: string[]): Promise<SourceControlPushResult>;

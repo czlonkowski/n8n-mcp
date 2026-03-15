@@ -259,6 +259,7 @@ export interface WebhookRequest {
 }
 export interface McpToolResponse {
     success: boolean;
+    saved?: boolean;
     data?: unknown;
     error?: string;
     message?: string;
@@ -266,6 +267,7 @@ export interface McpToolResponse {
     details?: Record<string, unknown>;
     executionId?: string;
     workflowId?: string;
+    operationsApplied?: number;
 }
 export type ExecutionMode = 'preview' | 'summary' | 'filtered' | 'full' | 'error';
 export interface ExecutionPreview {

@@ -87,12 +87,10 @@ function isTriggerNode(nodeType) {
     if (lowerType.includes('webhook') && !lowerType.includes('respond')) {
         return true;
     }
-    const specificTriggers = [
-        'nodes-base.start',
-        'nodes-base.manualTrigger',
-        'nodes-base.formTrigger'
-    ];
-    return specificTriggers.includes(normalized);
+    if (lowerType.includes('emailread') || lowerType.includes('emailreadimap')) {
+        return true;
+    }
+    return normalized === 'nodes-base.start';
 }
 function isActivatableTrigger(nodeType) {
     return isTriggerNode(nodeType);

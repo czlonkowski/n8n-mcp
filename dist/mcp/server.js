@@ -124,6 +124,7 @@ class N8NDocumentationMCPServer {
                 this.earlyLogger.logCheckpoint(startup_checkpoints_1.STARTUP_CHECKPOINTS.N8N_API_READY);
             }
         });
+        this.initialized.catch(() => { });
         logger_1.logger.info('Initializing n8n Documentation MCP server');
         this.server = new index_js_1.Server({
             name: 'n8n-documentation-mcp',
