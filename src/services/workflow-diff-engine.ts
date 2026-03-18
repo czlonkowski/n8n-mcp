@@ -376,7 +376,7 @@ export class WorkflowDiffEngine {
         this.applyReplaceConnections(workflow, operation);
         break;
       case 'transferWorkflow':
-        this.applyTransferWorkflow(operation as TransferWorkflowOperation);
+        this.applyTransferWorkflow(workflow, operation as TransferWorkflowOperation);
         break;
     }
   }
@@ -987,13 +987,13 @@ export class WorkflowDiffEngine {
   }
 
   private validateTransferWorkflow(operation: TransferWorkflowOperation): string | null {
-    if (!operation.destinationProjectId || typeof operation.destinationProjectId !== 'string') {
+    if (!operation.destinationProjectId) {
       return 'transferWorkflow requires a non-empty destinationProjectId string';
     }
     return null;
   }
 
-  private applyTransferWorkflow(operation: TransferWorkflowOperation): void {
+  private applyTransferWorkflow(_workflow: Workflow, operation: TransferWorkflowOperation): void {
     this.transferToProjectId = operation.destinationProjectId;
   }
 
