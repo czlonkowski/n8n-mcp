@@ -28,7 +28,8 @@ import {
   ActivateWorkflowOperation,
   DeactivateWorkflowOperation,
   CleanStaleConnectionsOperation,
-  ReplaceConnectionsOperation
+  ReplaceConnectionsOperation,
+  TransferWorkflowOperation
 } from '../types/workflow-diff';
 import { Workflow, WorkflowNode, WorkflowConnection } from '../types/n8n-api';
 import { Logger } from '../utils/logger';
@@ -54,6 +55,8 @@ export class WorkflowDiffEngine {
   // Track tag operations for dedicated API calls
   private tagsToAdd: string[] = [];
   private tagsToRemove: string[] = [];
+  // Track transfer operation for dedicated API call
+  private transferToProjectId: string | undefined = undefined;
 
   /**
    * Apply diff operations to a workflow
@@ -70,6 +73,7 @@ export class WorkflowDiffEngine {
       this.removedNodeNames.clear();
       this.tagsToAdd = [];
       this.tagsToRemove = [];
+      this.transferToProjectId = undefined;
 
       // Clone workflow to avoid modifying original
       const workflowCopy = JSON.parse(JSON.stringify(workflow));
@@ -152,7 +156,8 @@ export class WorkflowDiffEngine {
           applied: appliedIndices,
           failed: failedIndices,
           tagsToAdd: this.tagsToAdd.length > 0 ? this.tagsToAdd : undefined,
-          tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined
+          tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined,
+          transferToProjectId: this.transferToProjectId
         };
       } else {
         // Atomic mode: all operations must succeed
@@ -256,7 +261,8 @@ export class WorkflowDiffEngine {
           shouldActivate: shouldActivate || undefined,
           shouldDeactivate: shouldDeactivate || undefined,
           tagsToAdd: this.tagsToAdd.length > 0 ? this.tagsToAdd : undefined,
-          tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined
+          tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined,
+          transferToProjectId: this.transferToProjectId
         };
       }
     } catch (error) {
@@ -298,6 +304,8 @@ export class WorkflowDiffEngine {
       case 'addTag':
       case 'removeTag':
         return null; // These are always valid
+      case 'transferWorkflow':
+        return this.validateTransferWorkflow(operation as TransferWorkflowOperation);
       case 'activateWorkflow':
         return this.validateActivateWorkflow(workflow, operation);
       case 'deactivateWorkflow':
@@ -366,6 +374,9 @@ export class WorkflowDiffEngine {
         break;
       case 'replaceConnections':
         this.applyReplaceConnections(workflow, operation);
+        break;
+      case 'transferWorkflow':
+        this.applyTransferWorkflow(operation as TransferWorkflowOperation);
         break;
     }
   }
@@ -973,6 +984,17 @@ export class WorkflowDiffEngine {
     // Set flag in workflow object to indicate deactivation intent
     // The handler will call the API method after workflow update
     (workflow as any)._shouldDeactivate = true;
+  }
+
+  private validateTransferWorkflow(operation: TransferWorkflowOperation): string | null {
+    if (!operation.destinationProjectId || typeof operation.destinationProjectId !== 'string') {
+      return 'transferWorkflow requires a non-empty destinationProjectId string';
+    }
+    return null;
+  }
+
+  private applyTransferWorkflow(operation: TransferWorkflowOperation): void {
+    this.transferToProjectId = operation.destinationProjectId;
   }
 
   // Connection cleanup operation validators

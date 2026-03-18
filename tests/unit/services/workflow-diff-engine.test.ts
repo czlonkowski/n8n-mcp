@@ -17,7 +17,8 @@ import {
   AddTagOperation,
   RemoveTagOperation,
   CleanStaleConnectionsOperation,
-  ReplaceConnectionsOperation
+  ReplaceConnectionsOperation,
+  TransferWorkflowOperation
 } from '@/types/workflow-diff';
 import { Workflow } from '@/types/n8n-api';
 
@@ -4987,6 +4988,74 @@ describe('WorkflowDiffEngine', () => {
       expect(result.success).toBe(true);
       const updatedNode = result.workflow.nodes.find((n: any) => n.name === 'HTTP Request')!;
       expect('nonExistent' in updatedNode).toBe(false);
+    });
+  });
+
+  describe('transferWorkflow operation', () => {
+    it('should return null from validateOperation for a valid transferWorkflow operation', async () => {
+      const operation: TransferWorkflowOperation = {
+        type: 'transferWorkflow',
+        destinationProjectId: 'proj-123'
+      };
+
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [operation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+    });
+
+    it('should set transferToProjectId in the diff result when applyDiff processes transferWorkflow', async () => {
+      const operation: TransferWorkflowOperation = {
+        type: 'transferWorkflow',
+        destinationProjectId: 'proj-123'
+      };
+
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [operation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      expect(result.transferToProjectId).toBe('proj-123');
+    });
+
+    it('should fail validation when destinationProjectId is missing', async () => {
+      const operation = {
+        type: 'transferWorkflow',
+        destinationProjectId: ''
+      } as TransferWorkflowOperation;
+
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [operation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      const errors = result.errors as any[];
+      expect(errors.some((e: any) => {
+        const msg = typeof e === 'string' ? e : e.message;
+        return msg.includes('destinationProjectId');
+      })).toBe(true);
+    });
+
+    it('should not set transferToProjectId when no transferWorkflow operation is present', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'updateName', name: 'Renamed' } as UpdateNameOperation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      expect(result.transferToProjectId).toBeUndefined();
     });
   });
 });
