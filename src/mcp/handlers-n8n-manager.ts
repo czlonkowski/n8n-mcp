@@ -8,7 +8,8 @@ import {
   WebhookRequest,
   McpToolResponse,
   ExecutionFilterOptions,
-  ExecutionMode
+  ExecutionMode,
+  DataTableColumn,
 } from '../types/n8n-api';
 import type { TriggerType, TestWorkflowInput } from '../triggers/types';
 import {
@@ -383,6 +384,7 @@ const createWorkflowSchema = z.object({
     executionTimeout: z.number().optional(),
     errorWorkflow: z.string().optional(),
   }).optional(),
+  projectId: z.string().optional(),
 });
 
 const updateWorkflowSchema = z.object({
@@ -517,7 +519,11 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
     }
 
     // Create workflow (n8n API expects node types in FULL form)
-    const workflow = await client.createWorkflow(input);
+    const createPayload: any = { ...input };
+    if (input.projectId) {
+      createPayload.projectId = input.projectId;
+    }
+    const workflow = await client.createWorkflow(createPayload);
 
     // Defensive check: ensure the API returned a valid workflow with an ID
     if (!workflow || !workflow.id) {
@@ -2686,5 +2692,34 @@ export async function handleTriggerWebhookWorkflow(args: unknown, context?: Inst
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred'
     };
+  }
+}
+
+const createDataTableSchema = z.object({
+  name: z.string(),
+  columns: z.array(z.object({
+    name: z.string(),
+    type: z.enum(['string', 'number', 'boolean', 'date', 'json']).optional(),
+  })).optional(),
+});
+
+export async function handleCreateDataTable(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = createDataTableSchema.parse(args);
+    const dataTable = await client.createDataTable(input);
+    if (!dataTable || !dataTable.id) {
+      return { success: false, error: 'Data table creation failed: n8n API returned an empty response' };
+    }
+    return {
+      success: true,
+      data: { id: dataTable.id, name: dataTable.name },
+      message: `Data table "${dataTable.name}" created with ID: ${dataTable.id}`,
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return { success: false, error: 'Invalid input', details: { errors: error.errors } };
+    }
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }

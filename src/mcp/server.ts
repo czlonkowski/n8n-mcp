@@ -1496,6 +1496,10 @@ export class N8NDocumentationMCPServer {
         if (!this.repository) throw new Error('Repository not initialized');
         return n8nHandlers.handleDeployTemplate(args, this.templateService, this.repository, this.instanceContext);
 
+      case 'n8n_create_data_table':
+        this.validateToolParams(name, args, ['name']);
+        return n8nHandlers.handleCreateDataTable(args, this.instanceContext);
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }

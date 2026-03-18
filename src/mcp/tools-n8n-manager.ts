@@ -63,6 +63,10 @@ export const n8nManagementTools: ToolDefinition[] = [
             executionTimeout: { type: 'number' },
             errorWorkflow: { type: 'string' }
           }
+        },
+        projectId: {
+          type: 'string',
+          description: 'Optional project ID to create the workflow in (enterprise feature)'
         }
       },
       required: ['name', 'nodes', 'connections']
@@ -143,7 +147,7 @@ export const n8nManagementTools: ToolDefinition[] = [
   },
   {
     name: 'n8n_update_partial_workflow',
-    description: `Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, moveNode, enable/disableNode, addConnection, removeConnection, updateSettings, updateName, add/removeTag. See tools_documentation("n8n_update_partial_workflow", "full") for details.`,
+    description: `Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, moveNode, enable/disableNode, addConnection, removeConnection, updateSettings, updateName, add/removeTag, transferWorkflow. Use transferWorkflow operation with destinationProjectId to move a workflow to another project. See tools_documentation("n8n_update_partial_workflow", "full") for details.`,
     inputSchema: {
       type: 'object',
       additionalProperties: true,  // Allow any extra properties Claude Desktop might add
@@ -602,5 +606,38 @@ export const n8nManagementTools: ToolDefinition[] = [
       destructiveHint: false,
       openWorldHint: true,
     },
-  }
+  },
+  {
+    name: 'n8n_create_data_table',
+    description: 'Create a new data table in n8n. Requires n8n enterprise or cloud with data tables feature.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Name for the data table' },
+        columns: {
+          type: 'array',
+          description: 'Column definitions',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Column name' },
+              type: {
+                type: 'string',
+                enum: ['string', 'number', 'boolean', 'date', 'json'],
+                description: 'Column data type',
+              },
+            },
+            required: ['name'],
+          },
+        },
+      },
+      required: ['name'],
+    },
+    annotations: {
+      title: 'Create Data Table',
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: true,
+    },
+  },
 ];

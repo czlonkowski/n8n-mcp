@@ -455,3 +455,26 @@ export interface ErrorSuggestion {
   description: string;
   confidence: 'high' | 'medium' | 'low';
 }
+
+// Column type for creating a data table (input)
+export interface DataTableColumn {
+  name: string;
+  type?: 'string' | 'number' | 'boolean' | 'date' | 'json';
+}
+
+// Column type as returned by the n8n API (response)
+export interface DataTableColumnResponse {
+  id: string;
+  name: string;
+  type: 'string' | 'number' | 'boolean' | 'date';
+  index: number;
+}
+
+export interface DataTable {
+  id: string;
+  name: string;
+  columns?: DataTableColumnResponse[];
+  projectId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
