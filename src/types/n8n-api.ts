@@ -466,7 +466,7 @@ export interface DataTableColumn {
 export interface DataTableColumnResponse {
   id: string;
   name: string;
-  type: 'string' | 'number' | 'boolean' | 'date';
+  type: 'string' | 'number' | 'boolean' | 'date' | 'json';
   index: number;
 }
 

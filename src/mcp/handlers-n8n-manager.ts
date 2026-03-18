@@ -519,11 +519,7 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
     }
 
     // Create workflow (n8n API expects node types in FULL form)
-    const createPayload: any = { ...input };
-    if (input.projectId) {
-      createPayload.projectId = input.projectId;
-    }
-    const workflow = await client.createWorkflow(createPayload);
+    const workflow = await client.createWorkflow(input);
 
     // Defensive check: ensure the API returned a valid workflow with an ID
     if (!workflow || !workflow.id) {
