@@ -10,3 +10,4 @@ export { n8nTestWorkflowDoc } from './n8n-test-workflow';
 export { n8nExecutionsDoc } from './n8n-executions';
 export { n8nWorkflowVersionsDoc } from './n8n-workflow-versions';
 export { n8nDeployTemplateDoc } from './n8n-deploy-template';
+export { n8nCreateDataTableDoc } from './n8n-create-data-table';

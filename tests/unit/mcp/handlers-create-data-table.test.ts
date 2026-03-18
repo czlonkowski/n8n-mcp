@@ -102,11 +102,8 @@ describe('handleCreateDataTable', () => {
   describe('error cases', () => {
     it('returns error when n8n API is not configured', async () => {
       vi.mocked(getN8nApiConfig).mockReturnValue(null);
-      vi.resetModules();
-      vi.mock('@/config/n8n-api', () => ({ getN8nApiConfig: vi.fn().mockReturnValue(null) }));
-      const freshHandlers = await import('@/mcp/handlers-n8n-manager');
 
-      const result = await freshHandlers.handleCreateDataTable({ name: 'Test' }, undefined);
+      const result = await handlers.handleCreateDataTable({ name: 'Test' }, undefined);
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('not configured');

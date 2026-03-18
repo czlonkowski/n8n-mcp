@@ -631,6 +631,23 @@ describe('handlers-n8n-manager', () => {
         expect(result.details.errors[0]).toContain('Webhook');
       });
     });
+
+    it('should pass projectId to API when provided', async () => {
+      const testWorkflow = createTestWorkflow();
+      const input = {
+        name: 'Project Workflow',
+        nodes: testWorkflow.nodes,
+        connections: testWorkflow.connections,
+        projectId: 'project-123',
+      };
+
+      mockApiClient.createWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleCreateWorkflow(input);
+
+      expect(result.success).toBe(true);
+      expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input);
+    });
   });
 
   describe('handleGetWorkflow', () => {
