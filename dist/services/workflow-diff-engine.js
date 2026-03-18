@@ -14,6 +14,7 @@ class WorkflowDiffEngine {
         this.removedNodeNames = new Set();
         this.tagsToAdd = [];
         this.tagsToRemove = [];
+        this.transferToProjectId = undefined;
     }
     async applyDiff(workflow, request) {
         try {
@@ -23,6 +24,7 @@ class WorkflowDiffEngine {
             this.removedNodeNames.clear();
             this.tagsToAdd = [];
             this.tagsToRemove = [];
+            this.transferToProjectId = undefined;
             const workflowCopy = JSON.parse(JSON.stringify(workflow));
             const nodeOperationTypes = ['addNode', 'removeNode', 'updateNode', 'moveNode', 'enableNode', 'disableNode'];
             const nodeOperations = [];
@@ -92,7 +94,8 @@ class WorkflowDiffEngine {
                     applied: appliedIndices,
                     failed: failedIndices,
                     tagsToAdd: this.tagsToAdd.length > 0 ? this.tagsToAdd : undefined,
-                    tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined
+                    tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined,
+                    transferToProjectId: this.transferToProjectId
                 };
             }
             else {
@@ -181,7 +184,8 @@ class WorkflowDiffEngine {
                     shouldActivate: shouldActivate || undefined,
                     shouldDeactivate: shouldDeactivate || undefined,
                     tagsToAdd: this.tagsToAdd.length > 0 ? this.tagsToAdd : undefined,
-                    tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined
+                    tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined,
+                    transferToProjectId: this.transferToProjectId
                 };
             }
         }
@@ -228,6 +232,8 @@ class WorkflowDiffEngine {
                 return this.validateCleanStaleConnections(workflow, operation);
             case 'replaceConnections':
                 return this.validateReplaceConnections(workflow, operation);
+            case 'transferWorkflow':
+                return this.validateTransferWorkflow(operation);
             default:
                 return `Unknown operation type: ${operation.type}`;
         }
@@ -284,6 +290,9 @@ class WorkflowDiffEngine {
                 break;
             case 'replaceConnections':
                 this.applyReplaceConnections(workflow, operation);
+                break;
+            case 'transferWorkflow':
+                this.applyTransferWorkflow(operation);
                 break;
         }
     }
@@ -698,6 +707,15 @@ class WorkflowDiffEngine {
     }
     applyDeactivateWorkflow(workflow, operation) {
         workflow._shouldDeactivate = true;
+    }
+    validateTransferWorkflow(operation) {
+        if (!operation.destinationProjectId || typeof operation.destinationProjectId !== 'string') {
+            return 'transferWorkflow requires a non-empty destinationProjectId string';
+        }
+        return null;
+    }
+    applyTransferWorkflow(operation) {
+        this.transferToProjectId = operation.destinationProjectId;
     }
     validateCleanStaleConnections(workflow, operation) {
         return null;

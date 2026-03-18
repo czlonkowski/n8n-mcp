@@ -374,4 +374,22 @@ export interface ErrorSuggestion {
     description: string;
     confidence: 'high' | 'medium' | 'low';
 }
+export interface DataTableColumn {
+    name: string;
+    type?: 'string' | 'number' | 'boolean' | 'date' | 'json';
+}
+export interface DataTableColumnResponse {
+    id: string;
+    name: string;
+    type: 'string' | 'number' | 'boolean' | 'date';
+    index: number;
+}
+export interface DataTable {
+    id: string;
+    name: string;
+    columns?: DataTableColumnResponse[];
+    projectId?: string;
+    createdAt?: string;
+    updatedAt?: string;
+}
 //# sourceMappingURL=n8n-api.d.ts.map

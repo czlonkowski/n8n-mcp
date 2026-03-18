@@ -26,4 +26,5 @@ export declare function handleDiagnostic(request: any, context?: InstanceContext
 export declare function handleWorkflowVersions(args: unknown, repository: NodeRepository, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleDeployTemplate(args: unknown, templateService: TemplateService, repository: NodeRepository, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleTriggerWebhookWorkflow(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
+export declare function handleCreateDataTable(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
 //# sourceMappingURL=handlers-n8n-manager.d.ts.map

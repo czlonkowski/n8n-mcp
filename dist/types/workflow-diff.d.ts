@@ -94,6 +94,10 @@ export interface ActivateWorkflowOperation extends DiffOperation {
 export interface DeactivateWorkflowOperation extends DiffOperation {
     type: 'deactivateWorkflow';
 }
+export interface TransferWorkflowOperation extends DiffOperation {
+    type: 'transferWorkflow';
+    destinationProjectId: string;
+}
 export interface CleanStaleConnectionsOperation extends DiffOperation {
     type: 'cleanStaleConnections';
     dryRun?: boolean;
@@ -110,7 +114,7 @@ export interface ReplaceConnectionsOperation extends DiffOperation {
         };
     };
 }
-export type WorkflowDiffOperation = AddNodeOperation | RemoveNodeOperation | UpdateNodeOperation | MoveNodeOperation | EnableNodeOperation | DisableNodeOperation | AddConnectionOperation | RemoveConnectionOperation | RewireConnectionOperation | UpdateSettingsOperation | UpdateNameOperation | AddTagOperation | RemoveTagOperation | ActivateWorkflowOperation | DeactivateWorkflowOperation | CleanStaleConnectionsOperation | ReplaceConnectionsOperation;
+export type WorkflowDiffOperation = AddNodeOperation | RemoveNodeOperation | UpdateNodeOperation | MoveNodeOperation | EnableNodeOperation | DisableNodeOperation | AddConnectionOperation | RemoveConnectionOperation | RewireConnectionOperation | UpdateSettingsOperation | UpdateNameOperation | AddTagOperation | RemoveTagOperation | ActivateWorkflowOperation | DeactivateWorkflowOperation | CleanStaleConnectionsOperation | ReplaceConnectionsOperation | TransferWorkflowOperation;
 export interface WorkflowDiffRequest {
     id: string;
     operations: WorkflowDiffOperation[];
@@ -139,6 +143,7 @@ export interface WorkflowDiffResult {
     shouldDeactivate?: boolean;
     tagsToAdd?: string[];
     tagsToRemove?: string[];
+    transferToProjectId?: string;
 }
 export interface NodeReference {
     id?: string;

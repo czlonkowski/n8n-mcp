@@ -56,6 +56,7 @@ exports.handleDiagnostic = handleDiagnostic;
 exports.handleWorkflowVersions = handleWorkflowVersions;
 exports.handleDeployTemplate = handleDeployTemplate;
 exports.handleTriggerWebhookWorkflow = handleTriggerWebhookWorkflow;
+exports.handleCreateDataTable = handleCreateDataTable;
 const n8n_api_client_1 = require("../services/n8n-api-client");
 const n8n_api_1 = require("../config/n8n-api");
 const n8n_api_2 = require("../types/n8n-api");
@@ -175,6 +176,7 @@ const createWorkflowSchema = zod_1.z.object({
         executionTimeout: zod_1.z.number().optional(),
         errorWorkflow: zod_1.z.string().optional(),
     }).optional(),
+    projectId: zod_1.z.string().optional(),
 });
 const updateWorkflowSchema = zod_1.z.object({
     id: zod_1.z.string(),
@@ -287,7 +289,11 @@ async function handleCreateWorkflow(args, context) {
                 details: { errors }
             };
         }
-        const workflow = await client.createWorkflow(input);
+        const createPayload = { ...input };
+        if (input.projectId) {
+            createPayload.projectId = input.projectId;
+        }
+        const workflow = await client.createWorkflow(createPayload);
         if (!workflow || !workflow.id) {
             return {
                 success: false,
@@ -2036,6 +2042,34 @@ async function handleTriggerWebhookWorkflow(args, context) {
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error occurred'
         };
+    }
+}
+const createDataTableSchema = zod_1.z.object({
+    name: zod_1.z.string(),
+    columns: zod_1.z.array(zod_1.z.object({
+        name: zod_1.z.string(),
+        type: zod_1.z.enum(['string', 'number', 'boolean', 'date', 'json']).optional(),
+    })).optional(),
+});
+async function handleCreateDataTable(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const input = createDataTableSchema.parse(args);
+        const dataTable = await client.createDataTable(input);
+        if (!dataTable || !dataTable.id) {
+            return { success: false, error: 'Data table creation failed: n8n API returned an empty response' };
+        }
+        return {
+            success: true,
+            data: { id: dataTable.id, name: dataTable.name },
+            message: `Data table "${dataTable.name}" created with ID: ${dataTable.id}`,
+        };
+    }
+    catch (error) {
+        if (error instanceof zod_1.z.ZodError) {
+            return { success: false, error: 'Invalid input', details: { errors: error.errors } };
+        }
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
 }
 //# sourceMappingURL=handlers-n8n-manager.js.map
