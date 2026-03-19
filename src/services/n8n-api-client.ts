@@ -252,6 +252,14 @@ export class N8nApiClient {
     }
   }
 
+  async transferWorkflow(id: string, destinationProjectId: string): Promise<void> {
+    try {
+      await this.client.put(`/workflows/${id}/transfer`, { destinationProjectId });
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
   async activateWorkflow(id: string): Promise<Workflow> {
     try {
       const response = await this.client.post(`/workflows/${id}/activate`, {});

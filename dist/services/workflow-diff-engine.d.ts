@@ -7,6 +7,7 @@ export declare class WorkflowDiffEngine {
     private removedNodeNames;
     private tagsToAdd;
     private tagsToRemove;
+    private transferToProjectId;
     applyDiff(workflow: Workflow, request: WorkflowDiffRequest): Promise<WorkflowDiffResult>;
     private validateOperation;
     private applyOperation;
@@ -36,6 +37,8 @@ export declare class WorkflowDiffEngine {
     private validateDeactivateWorkflow;
     private applyActivateWorkflow;
     private applyDeactivateWorkflow;
+    private validateTransferWorkflow;
+    private applyTransferWorkflow;
     private validateCleanStaleConnections;
     private validateReplaceConnections;
     private applyCleanStaleConnections;

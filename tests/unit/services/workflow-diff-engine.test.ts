@@ -5057,5 +5057,22 @@ describe('WorkflowDiffEngine', () => {
       expect(result.success).toBe(true);
       expect(result.transferToProjectId).toBeUndefined();
     });
+
+    it('should include tagsToRemove in continueOnError result when removeTag operation is applied', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [
+          { type: 'removeTag', tag: 'old-tag' } as RemoveTagOperation,
+          { type: 'transferWorkflow', destinationProjectId: 'proj-abc' } as TransferWorkflowOperation,
+        ],
+        continueOnError: true,
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      expect(result.tagsToRemove).toContain('old-tag');
+      expect(result.transferToProjectId).toBe('proj-abc');
+    });
   });
 });

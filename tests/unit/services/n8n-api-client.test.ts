@@ -1311,10 +1311,36 @@ describe('N8nApiClient', () => {
           data: { message: 'Bad request' },
         },
       });
-      
+
       const result = await responseErrorInterceptor(error).catch((e: any) => e);
       expect(result).toBeInstanceOf(N8nValidationError);
       expect(result.message).toBe('Bad request');
+    });
+  });
+
+  describe('transferWorkflow', () => {
+    beforeEach(() => {
+      client = new N8nApiClient(defaultConfig);
+    });
+
+    it('should transfer workflow to a different project', async () => {
+      mockAxiosInstance.put.mockResolvedValue({ data: {} });
+
+      await client.transferWorkflow('123', 'project-456');
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith(
+        '/workflows/123/transfer',
+        { destinationProjectId: 'project-456' }
+      );
+    });
+
+    it('should handle transfer error', async () => {
+      const axiosError = createAxiosError({
+        response: { status: 403, data: { message: 'Forbidden' } },
+      });
+      mockAxiosInstance.put.mockRejectedValue(axiosError);
+
+      await expect(client.transferWorkflow('123', 'project-456')).rejects.toThrow('Forbidden');
     });
   });
 });
