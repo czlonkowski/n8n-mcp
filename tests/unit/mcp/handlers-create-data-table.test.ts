@@ -133,5 +133,14 @@ describe('handleCreateDataTable', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('empty response');
     });
+
+    it('returns "Unknown error" when a non-Error value is thrown', async () => {
+      mockApiClient.createDataTable.mockRejectedValue('plain string error');
+
+      const result = await handlers.handleCreateDataTable({ name: 'Test' }, undefined);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Unknown error');
+    });
   });
 });
