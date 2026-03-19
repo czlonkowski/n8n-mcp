@@ -535,12 +535,15 @@ describe('Parameter Validation', () => {
         { name: 'n8n_validate_workflow', args: {}, expected: 'n8n_validate_workflow: Validation failed:\n  • id: id is required' },
       ];
 
-      // n8n_update_partial_workflow and n8n_test_workflow use legacy validation
+      // Tools using legacy validateToolParams validation
       await expect(server.testExecuteTool('n8n_update_partial_workflow', {}))
         .rejects.toThrow('Missing required parameters for n8n_update_partial_workflow: id, operations');
 
       await expect(server.testExecuteTool('n8n_test_workflow', {}))
         .rejects.toThrow('Missing required parameters for n8n_test_workflow: workflowId');
+
+      await expect(server.testExecuteTool('n8n_create_data_table', {}))
+        .rejects.toThrow('Missing required parameters for n8n_create_data_table: name');
 
       for (const tool of n8nToolsWithRequiredParams) {
         await expect(server.testExecuteTool(tool.name, tool.args))
