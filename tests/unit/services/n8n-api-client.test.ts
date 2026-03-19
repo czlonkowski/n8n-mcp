@@ -1311,10 +1311,89 @@ describe('N8nApiClient', () => {
           data: { message: 'Bad request' },
         },
       });
-      
+
       const result = await responseErrorInterceptor(error).catch((e: any) => e);
       expect(result).toBeInstanceOf(N8nValidationError);
       expect(result.message).toBe('Bad request');
+    });
+  });
+
+  describe('transferWorkflow', () => {
+    beforeEach(() => {
+      client = new N8nApiClient(defaultConfig);
+    });
+
+    it('should transfer workflow to a different project', async () => {
+      mockAxiosInstance.put.mockResolvedValue({ data: {} });
+
+      await client.transferWorkflow('123', 'project-456');
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/workflows/123/transfer', {
+        destinationProjectId: 'project-456',
+      });
+    });
+
+    it('should handle transfer error', async () => {
+      const error = {
+        message: 'Request failed',
+        response: { status: 404, data: { message: 'Workflow not found' } },
+      };
+      await mockAxiosInstance.simulateError('put', error);
+
+      try {
+        await client.transferWorkflow('123', 'project-456');
+        expect.fail('Should have thrown an error');
+      } catch (err) {
+        expect(err).toBeInstanceOf(N8nNotFoundError);
+      }
+    });
+  });
+
+  describe('createDataTable', () => {
+    beforeEach(() => {
+      client = new N8nApiClient(defaultConfig);
+    });
+
+    it('should create a data table with name and columns', async () => {
+      const table = { id: 'table-1', name: 'My Table', columns: [] };
+      mockAxiosInstance.post.mockResolvedValue({ data: table });
+
+      const result = await client.createDataTable({
+        name: 'My Table',
+        columns: [{ name: 'col1', type: 'string' as const }],
+      });
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/data-tables', {
+        name: 'My Table',
+        columns: [{ name: 'col1', type: 'string' }],
+      });
+      expect(result).toEqual(table);
+    });
+
+    it('should create a data table without columns', async () => {
+      const table = { id: 'table-2', name: 'Simple Table' };
+      mockAxiosInstance.post.mockResolvedValue({ data: table });
+
+      const result = await client.createDataTable({ name: 'Simple Table' });
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/data-tables', { name: 'Simple Table' });
+      expect(result).toEqual(table);
+    });
+
+    it('should handle creation error', async () => {
+      const error = {
+        message: 'Request failed',
+        response: { status: 400, data: { message: 'Feature not available' } },
+      };
+      await mockAxiosInstance.simulateError('post', error);
+
+      try {
+        await client.createDataTable({ name: 'Fail Table' });
+        expect.fail('Should have thrown an error');
+      } catch (err) {
+        expect(err).toBeInstanceOf(N8nValidationError);
+        expect((err as N8nValidationError).message).toBe('Feature not available');
+      }
     });
   });
 });
