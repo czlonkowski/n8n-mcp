@@ -20,6 +20,7 @@ export declare class N8nApiClient {
     getWorkflow(id: string): Promise<Workflow>;
     updateWorkflow(id: string, workflow: Partial<Workflow>): Promise<Workflow>;
     deleteWorkflow(id: string): Promise<Workflow>;
+    transferWorkflow(id: string, destinationProjectId: string): Promise<void>;
     activateWorkflow(id: string): Promise<Workflow>;
     deactivateWorkflow(id: string): Promise<Workflow>;
     listWorkflows(params?: WorkflowListParams): Promise<WorkflowListResponse>;

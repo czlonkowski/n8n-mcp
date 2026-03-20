@@ -124,6 +124,11 @@ export interface DeactivateWorkflowOperation extends DiffOperation {
   // No additional properties needed - just deactivates the workflow
 }
 
+export interface TransferWorkflowOperation extends DiffOperation {
+  type: 'transferWorkflow';
+  destinationProjectId: string;
+}
+
 // Connection Cleanup Operations
 export interface CleanStaleConnectionsOperation extends DiffOperation {
   type: 'cleanStaleConnections';
@@ -161,7 +166,8 @@ export type WorkflowDiffOperation =
   | ActivateWorkflowOperation
   | DeactivateWorkflowOperation
   | CleanStaleConnectionsOperation
-  | ReplaceConnectionsOperation;
+  | ReplaceConnectionsOperation
+  | TransferWorkflowOperation;
 
 // Main diff request structure
 export interface WorkflowDiffRequest {
@@ -192,6 +198,7 @@ export interface WorkflowDiffResult {
   shouldDeactivate?: boolean; // Flag to deactivate workflow after update (for deactivateWorkflow operation)
   tagsToAdd?: string[];
   tagsToRemove?: string[];
+  transferToProjectId?: string; // For transferWorkflow operation - uses dedicated API call
 }
 
 // Helper type for node reference (supports both ID and name)

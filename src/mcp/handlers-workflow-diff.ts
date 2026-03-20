@@ -68,6 +68,8 @@ const workflowDiffSchema = z.object({
     settings: z.any().optional(),
     name: z.string().optional(),
     tag: z.string().optional(),
+    // Transfer operation
+    destinationProjectId: z.string().min(1).optional(),
     // Aliases: LLMs often use "id" instead of "nodeId" — accept both
     id: z.string().optional(),
   }).transform((op) => {
@@ -370,6 +372,26 @@ export async function handleUpdatePartialWorkflow(
         }
       }
 
+      // Handle project transfer if requested (before activation so workflow is in target project first)
+      let transferMessage = '';
+      if (diffResult.transferToProjectId) {
+        try {
+          await client.transferWorkflow(input.id, diffResult.transferToProjectId);
+          transferMessage = ` Workflow transferred to project ${diffResult.transferToProjectId}.`;
+        } catch (transferError) {
+          logger.error('Failed to transfer workflow to project', transferError);
+          return {
+            success: false,
+            saved: true,
+            error: 'Workflow updated successfully but project transfer failed',
+            details: {
+              workflowUpdated: true,
+              transferError: transferError instanceof Error ? transferError.message : 'Unknown error'
+            }
+          };
+        }
+      }
+
       // Handle activation/deactivation if requested
       let finalWorkflow = updatedWorkflow;
       let activationMessage = '';
@@ -454,7 +476,7 @@ export async function handleUpdatePartialWorkflow(
           nodeCount: finalWorkflow.nodes?.length || 0,
           operationsApplied: diffResult.operationsApplied
         },
-        message: `Workflow "${finalWorkflow.name}" updated successfully. Applied ${diffResult.operationsApplied} operations.${activationMessage} Use n8n_get_workflow with mode 'structure' to verify current state.`,
+        message: `Workflow "${finalWorkflow.name}" updated successfully. Applied ${diffResult.operationsApplied} operations.${transferMessage}${activationMessage} Use n8n_get_workflow with mode 'structure' to verify current state.`,
         details: {
           applied: diffResult.applied,
           failed: diffResult.failed,
@@ -559,6 +581,8 @@ function inferIntentFromOperations(operations: any[]): string {
         return 'Activate workflow';
       case 'deactivateWorkflow':
         return 'Deactivate workflow';
+      case 'transferWorkflow':
+        return `Transfer workflow to project ${op.destinationProjectId || ''}`.trim();
       default:
         return `Workflow ${op.type}`;
     }

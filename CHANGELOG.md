@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.38.0] - 2026-03-20
+
+### Added
+
+- **`transferWorkflow` diff operation** (Issue #644): Move workflows between projects via `n8n_update_partial_workflow`
+  - New `transferWorkflow` operation type with `destinationProjectId` parameter
+  - Calls `PUT /workflows/{id}/transfer` via dedicated API after workflow update
+  - Proper error handling: returns `{ success: false, saved: true }` when transfer fails after update
+  - Transfer executes before activation so workflow is in target project first
+  - Zod schema validates `destinationProjectId` is non-empty
+  - Updated tool description and documentation to list the new operation
+  - `inferIntentFromOperations` returns descriptive intent for transfer operations
+  - `N8nApiClient.transferWorkflow()` method added
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.37.4] - 2026-03-18
 
 ### Changed

@@ -1250,6 +1250,56 @@ describe('N8nApiClient', () => {
     });
   });
 
+  describe('transferWorkflow', () => {
+    beforeEach(() => {
+      client = new N8nApiClient(defaultConfig);
+    });
+
+    it('should transfer workflow successfully via PUT', async () => {
+      mockAxiosInstance.put.mockResolvedValue({ data: undefined });
+
+      await client.transferWorkflow('123', 'project-456');
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith(
+        '/workflows/123/transfer',
+        { destinationProjectId: 'project-456' }
+      );
+    });
+
+    it('should throw N8nNotFoundError on 404', async () => {
+      const error = {
+        message: 'Request failed',
+        response: { status: 404, data: { message: 'Workflow not found' } }
+      };
+      await mockAxiosInstance.simulateError('put', error);
+
+      try {
+        await client.transferWorkflow('123', 'project-456');
+        expect.fail('Should have thrown an error');
+      } catch (err) {
+        expect(err).toBeInstanceOf(N8nNotFoundError);
+        expect((err as N8nNotFoundError).message).toContain('not found');
+        expect((err as N8nNotFoundError).statusCode).toBe(404);
+      }
+    });
+
+    it('should throw appropriate error on 403 forbidden', async () => {
+      const error = {
+        message: 'Request failed',
+        response: { status: 403, data: { message: 'Forbidden' } }
+      };
+      await mockAxiosInstance.simulateError('put', error);
+
+      try {
+        await client.transferWorkflow('123', 'project-456');
+        expect.fail('Should have thrown an error');
+      } catch (err) {
+        expect(err).toBeInstanceOf(N8nApiError);
+        expect((err as N8nApiError).statusCode).toBe(403);
+      }
+    });
+  });
+
   describe('interceptors', () => {
     let requestInterceptor: any;
     let responseInterceptor: any;

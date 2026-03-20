@@ -79,6 +79,7 @@ const workflowDiffSchema = zod_1.z.object({
         settings: zod_1.z.any().optional(),
         name: zod_1.z.string().optional(),
         tag: zod_1.z.string().optional(),
+        destinationProjectId: zod_1.z.string().min(1).optional(),
         id: zod_1.z.string().optional(),
     }).transform((op) => {
         if (NODE_TARGETING_OPERATIONS.has(op.type)) {
@@ -329,6 +330,25 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
                     logger_1.logger.warn('Tag operations failed (non-blocking)', tagError);
                 }
             }
+            let transferMessage = '';
+            if (diffResult.transferToProjectId) {
+                try {
+                    await client.transferWorkflow(input.id, diffResult.transferToProjectId);
+                    transferMessage = ` Workflow transferred to project ${diffResult.transferToProjectId}.`;
+                }
+                catch (transferError) {
+                    logger_1.logger.error('Failed to transfer workflow to project', transferError);
+                    return {
+                        success: false,
+                        saved: true,
+                        error: 'Workflow updated successfully but project transfer failed',
+                        details: {
+                            workflowUpdated: true,
+                            transferError: transferError instanceof Error ? transferError.message : 'Unknown error'
+                        }
+                    };
+                }
+            }
             let finalWorkflow = updatedWorkflow;
             let activationMessage = '';
             try {
@@ -409,7 +429,7 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
                     nodeCount: finalWorkflow.nodes?.length || 0,
                     operationsApplied: diffResult.operationsApplied
                 },
-                message: `Workflow "${finalWorkflow.name}" updated successfully. Applied ${diffResult.operationsApplied} operations.${activationMessage} Use n8n_get_workflow with mode 'structure' to verify current state.`,
+                message: `Workflow "${finalWorkflow.name}" updated successfully. Applied ${diffResult.operationsApplied} operations.${transferMessage}${activationMessage} Use n8n_get_workflow with mode 'structure' to verify current state.`,
                 details: {
                     applied: diffResult.applied,
                     failed: diffResult.failed,
@@ -498,6 +518,8 @@ function inferIntentFromOperations(operations) {
                 return 'Activate workflow';
             case 'deactivateWorkflow':
                 return 'Deactivate workflow';
+            case 'transferWorkflow':
+                return `Transfer workflow to project ${op.destinationProjectId || ''}`.trim();
             default:
                 return `Workflow ${op.type}`;
         }

@@ -76,6 +76,7 @@ describe('handlers-workflow-diff', () => {
       listTags: vi.fn().mockResolvedValue({ data: [] }),
       createTag: vi.fn(),
       updateWorkflowTags: vi.fn().mockResolvedValue([]),
+      transferWorkflow: vi.fn().mockResolvedValue(undefined),
     };
 
     // Setup mock diff engine
@@ -999,6 +1000,186 @@ describe('handlers-workflow-diff', () => {
         expect(mockApiClient.listTags).not.toHaveBeenCalled();
         expect(mockApiClient.createTag).not.toHaveBeenCalled();
         expect(mockApiClient.updateWorkflowTags).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('Project Transfer via Dedicated API', () => {
+      it('should call transferWorkflow when diffResult has transferToProjectId', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+          transferToProjectId: 'project-abc-123',
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+
+        const result = await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{ type: 'transferWorkflow', destinationProjectId: 'project-abc-123' }],
+        }, mockRepository);
+
+        expect(result.success).toBe(true);
+        expect(mockApiClient.transferWorkflow).toHaveBeenCalledWith('test-workflow-id', 'project-abc-123');
+        expect(result.message).toContain('transferred to project');
+      });
+
+      it('should NOT call transferWorkflow when transferToProjectId is absent', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+
+        await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{ type: 'updateName', name: 'New Name' }],
+        }, mockRepository);
+
+        expect(mockApiClient.transferWorkflow).not.toHaveBeenCalled();
+      });
+
+      it('should return success false with saved true when transfer fails', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+          transferToProjectId: 'project-bad-id',
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+        mockApiClient.transferWorkflow.mockRejectedValue(new Error('Project not found'));
+
+        const result = await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{ type: 'transferWorkflow', destinationProjectId: 'project-bad-id' }],
+        }, mockRepository);
+
+        expect(result.success).toBe(false);
+        expect(result.saved).toBe(true);
+        expect(result.error).toBe('Workflow updated successfully but project transfer failed');
+        expect(result.details).toEqual({
+          workflowUpdated: true,
+          transferError: 'Project not found',
+        });
+      });
+
+      it('should return Unknown error when non-Error value is thrown during transfer', async () => {
+        const testWorkflow = createTestWorkflow();
+        const updatedWorkflow = { ...testWorkflow };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 1,
+          message: 'Success',
+          errors: [],
+          transferToProjectId: 'project-unknown',
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+        mockApiClient.transferWorkflow.mockRejectedValue('string error');
+
+        const result = await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [{ type: 'transferWorkflow', destinationProjectId: 'project-unknown' }],
+        }, mockRepository);
+
+        expect(result.success).toBe(false);
+        expect(result.saved).toBe(true);
+        expect(result.details).toEqual({
+          workflowUpdated: true,
+          transferError: 'Unknown error',
+        });
+      });
+
+      it('should call transferWorkflow BEFORE activateWorkflow', async () => {
+        const testWorkflow = createTestWorkflow({ active: false });
+        const updatedWorkflow = { ...testWorkflow, active: false };
+        const activatedWorkflow = { ...testWorkflow, active: true };
+
+        const callOrder: string[] = [];
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 2,
+          message: 'Success',
+          errors: [],
+          transferToProjectId: 'project-target',
+          shouldActivate: true,
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+        mockApiClient.transferWorkflow.mockImplementation(async () => {
+          callOrder.push('transfer');
+        });
+        mockApiClient.activateWorkflow = vi.fn().mockImplementation(async () => {
+          callOrder.push('activate');
+          return activatedWorkflow;
+        });
+
+        const result = await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [
+            { type: 'transferWorkflow', destinationProjectId: 'project-target' },
+            { type: 'activateWorkflow' },
+          ],
+        }, mockRepository);
+
+        expect(result.success).toBe(true);
+        expect(mockApiClient.transferWorkflow).toHaveBeenCalledWith('test-workflow-id', 'project-target');
+        expect(mockApiClient.activateWorkflow).toHaveBeenCalledWith('test-workflow-id');
+        expect(callOrder).toEqual(['transfer', 'activate']);
+      });
+
+      it('should skip activation when transfer fails', async () => {
+        const testWorkflow = createTestWorkflow({ active: false });
+        const updatedWorkflow = { ...testWorkflow, active: false };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 2,
+          message: 'Success',
+          errors: [],
+          transferToProjectId: 'project-fail',
+          shouldActivate: true,
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+        mockApiClient.transferWorkflow.mockRejectedValue(new Error('Transfer denied'));
+        mockApiClient.activateWorkflow = vi.fn();
+
+        const result = await handleUpdatePartialWorkflow({
+          id: 'test-workflow-id',
+          operations: [
+            { type: 'transferWorkflow', destinationProjectId: 'project-fail' },
+            { type: 'activateWorkflow' },
+          ],
+        }, mockRepository);
+
+        expect(result.success).toBe(false);
+        expect(result.saved).toBe(true);
+        expect(result.error).toBe('Workflow updated successfully but project transfer failed');
+        expect(mockApiClient.activateWorkflow).not.toHaveBeenCalled();
       });
     });
 

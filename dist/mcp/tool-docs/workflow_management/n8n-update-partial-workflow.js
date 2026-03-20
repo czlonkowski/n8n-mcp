@@ -5,7 +5,7 @@ exports.n8nUpdatePartialWorkflowDoc = {
     name: 'n8n_update_partial_workflow',
     category: 'workflow_management',
     essentials: {
-        description: 'Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, moveNode, enable/disableNode, addConnection, removeConnection, rewireConnection, cleanStaleConnections, replaceConnections, updateSettings, updateName, add/removeTag, activateWorkflow, deactivateWorkflow. Supports smart parameters (branch, case) for multi-output nodes. Full support for AI connections (ai_languageModel, ai_tool, ai_memory, ai_embedding, ai_vectorStore, ai_document, ai_textSplitter, ai_outputParser).',
+        description: 'Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, moveNode, enable/disableNode, addConnection, removeConnection, rewireConnection, cleanStaleConnections, replaceConnections, updateSettings, updateName, add/removeTag, activateWorkflow, deactivateWorkflow, transferWorkflow. Supports smart parameters (branch, case) for multi-output nodes. Full support for AI connections (ai_languageModel, ai_tool, ai_memory, ai_embedding, ai_vectorStore, ai_document, ai_textSplitter, ai_outputParser).',
         keyParameters: ['id', 'operations', 'continueOnError'],
         example: 'n8n_update_partial_workflow({id: "wf_123", operations: [{type: "rewireConnection", source: "IF", from: "Old", to: "New", branch: "true"}]})',
         performance: 'Fast (50-200ms)',
@@ -23,7 +23,8 @@ exports.n8nUpdatePartialWorkflowDoc = {
             'Batch AI component connections for atomic updates',
             'Auto-sanitization: ALL nodes auto-fixed during updates (operator structures, missing metadata)',
             'Node renames automatically update all connection references - no manual connection operations needed',
-            'Activate/deactivate workflows: Use activateWorkflow/deactivateWorkflow operations (requires activatable triggers like webhook/schedule)'
+            'Activate/deactivate workflows: Use activateWorkflow/deactivateWorkflow operations (requires activatable triggers like webhook/schedule)',
+            'Transfer workflows between projects: Use transferWorkflow with destinationProjectId (enterprise feature)'
         ]
     },
     full: {
@@ -55,6 +56,9 @@ exports.n8nUpdatePartialWorkflowDoc = {
 ### Workflow Activation Operations (2 types):
 - **activateWorkflow**: Activate the workflow to enable automatic execution via triggers
 - **deactivateWorkflow**: Deactivate the workflow to prevent automatic execution
+
+### Project Management Operations (1 type):
+- **transferWorkflow**: Transfer the workflow to a different project. Requires \`destinationProjectId\`. Enterprise/cloud feature.
 
 ## Smart Parameters for Multi-Output Nodes
 
@@ -346,7 +350,10 @@ n8n_update_partial_workflow({
             '// Migrate from deprecated continueOnFail to onError\nn8n_update_partial_workflow({id: "rm2", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {continueOnFail: null, onError: "continueErrorOutput"}}]})',
             '// Remove nested property\nn8n_update_partial_workflow({id: "rm3", operations: [{type: "updateNode", nodeName: "API Request", updates: {"parameters.authentication": null}}]})',
             '// Remove multiple properties\nn8n_update_partial_workflow({id: "rm4", operations: [{type: "updateNode", nodeName: "Data Processor", updates: {continueOnFail: null, alwaysOutputData: null, "parameters.legacy_option": null}}]})',
-            '// Remove entire array property\nn8n_update_partial_workflow({id: "rm5", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {"parameters.headers": null}}]})'
+            '// Remove entire array property\nn8n_update_partial_workflow({id: "rm5", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {"parameters.headers": null}}]})',
+            '\n// ============ PROJECT TRANSFER EXAMPLES ============',
+            '// Transfer workflow to a different project\nn8n_update_partial_workflow({id: "tf1", operations: [{type: "transferWorkflow", destinationProjectId: "project-abc-123"}]})',
+            '// Transfer and activate in one call\nn8n_update_partial_workflow({id: "tf2", operations: [{type: "transferWorkflow", destinationProjectId: "project-abc-123"}, {type: "activateWorkflow"}]})'
         ],
         useCases: [
             'Rewire connections when replacing nodes',
@@ -364,7 +371,8 @@ n8n_update_partial_workflow({
             'Add fallback language models to AI Agents',
             'Configure Vector Store retrieval systems',
             'Swap language models in existing AI workflows',
-            'Batch-update AI tool connections'
+            'Batch-update AI tool connections',
+            'Transfer workflows between team projects (enterprise)'
         ],
         performance: 'Very fast - typically 50-200ms. Much faster than full updates as only changes are processed.',
         bestPractices: [

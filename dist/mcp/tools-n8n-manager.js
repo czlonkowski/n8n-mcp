@@ -137,7 +137,7 @@ exports.n8nManagementTools = [
     },
     {
         name: 'n8n_update_partial_workflow',
-        description: `Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, moveNode, enable/disableNode, addConnection, removeConnection, updateSettings, updateName, add/removeTag. See tools_documentation("n8n_update_partial_workflow", "full") for details.`,
+        description: `Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, moveNode, enable/disableNode, addConnection, removeConnection, updateSettings, updateName, add/removeTag, activate/deactivateWorkflow, transferWorkflow. See tools_documentation("n8n_update_partial_workflow", "full") for details.`,
         inputSchema: {
             type: 'object',
             additionalProperties: true,

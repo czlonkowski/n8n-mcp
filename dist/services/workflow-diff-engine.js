@@ -23,6 +23,7 @@ class WorkflowDiffEngine {
             this.removedNodeNames.clear();
             this.tagsToAdd = [];
             this.tagsToRemove = [];
+            this.transferToProjectId = undefined;
             const workflowCopy = JSON.parse(JSON.stringify(workflow));
             const nodeOperationTypes = ['addNode', 'removeNode', 'updateNode', 'moveNode', 'enableNode', 'disableNode'];
             const nodeOperations = [];
@@ -81,6 +82,10 @@ class WorkflowDiffEngine {
                         failed: failedIndices
                     };
                 }
+                const shouldActivate = workflowCopy._shouldActivate === true;
+                const shouldDeactivate = workflowCopy._shouldDeactivate === true;
+                delete workflowCopy._shouldActivate;
+                delete workflowCopy._shouldDeactivate;
                 const success = appliedIndices.length > 0;
                 return {
                     success,
@@ -91,8 +96,11 @@ class WorkflowDiffEngine {
                     warnings: this.warnings.length > 0 ? this.warnings : undefined,
                     applied: appliedIndices,
                     failed: failedIndices,
+                    shouldActivate: shouldActivate || undefined,
+                    shouldDeactivate: shouldDeactivate || undefined,
                     tagsToAdd: this.tagsToAdd.length > 0 ? this.tagsToAdd : undefined,
-                    tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined
+                    tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined,
+                    transferToProjectId: this.transferToProjectId || undefined
                 };
             }
             else {
@@ -181,7 +189,8 @@ class WorkflowDiffEngine {
                     shouldActivate: shouldActivate || undefined,
                     shouldDeactivate: shouldDeactivate || undefined,
                     tagsToAdd: this.tagsToAdd.length > 0 ? this.tagsToAdd : undefined,
-                    tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined
+                    tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined,
+                    transferToProjectId: this.transferToProjectId || undefined
                 };
             }
         }
@@ -220,6 +229,8 @@ class WorkflowDiffEngine {
             case 'addTag':
             case 'removeTag':
                 return null;
+            case 'transferWorkflow':
+                return this.validateTransferWorkflow(workflow, operation);
             case 'activateWorkflow':
                 return this.validateActivateWorkflow(workflow, operation);
             case 'deactivateWorkflow':
@@ -284,6 +295,9 @@ class WorkflowDiffEngine {
                 break;
             case 'replaceConnections':
                 this.applyReplaceConnections(workflow, operation);
+                break;
+            case 'transferWorkflow':
+                this.applyTransferWorkflow(workflow, operation);
                 break;
         }
     }
@@ -699,6 +713,15 @@ class WorkflowDiffEngine {
     applyDeactivateWorkflow(workflow, operation) {
         workflow._shouldDeactivate = true;
     }
+    validateTransferWorkflow(_workflow, operation) {
+        if (!operation.destinationProjectId) {
+            return 'transferWorkflow requires a non-empty destinationProjectId string';
+        }
+        return null;
+    }
+    applyTransferWorkflow(_workflow, operation) {
+        this.transferToProjectId = operation.destinationProjectId;
+    }
     validateCleanStaleConnections(workflow, operation) {
         return null;
     }
@@ -806,9 +829,10 @@ class WorkflowDiffEngine {
                     for (let connIndex = 0; connIndex < connectionsAtIndex.length; connIndex++) {
                         const connection = connectionsAtIndex[connIndex];
                         if (renames.has(connection.node)) {
+                            const oldTargetName = connection.node;
                             const newTargetName = renames.get(connection.node);
                             connection.node = newTargetName;
-                            logger.debug(`Updated connection: ${sourceName}[${outputType}][${outputIndex}][${connIndex}].node: "${connection.node}" → "${newTargetName}"`);
+                            logger.debug(`Updated connection: ${sourceName}[${outputType}][${outputIndex}][${connIndex}].node: "${oldTargetName}" → "${newTargetName}"`);
                         }
                     }
                 }
