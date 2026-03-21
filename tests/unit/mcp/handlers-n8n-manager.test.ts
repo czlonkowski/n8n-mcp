@@ -1102,10 +1102,10 @@ describe('handlers-n8n-manager', () => {
             enabled: true,
           },
           managementTools: {
-            count: 13,
+            count: 14,
             enabled: true,
           },
-          totalAvailable: 20,
+          totalAvailable: 21,
         },
       });
 

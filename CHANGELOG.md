@@ -7,23 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.39.0] - 2026-03-20
+## [2.40.0] - 2026-03-21
 
-### Added
+### Changed
 
-- **`n8n_create_data_table` MCP tool** (Issue #640): Create data tables in n8n via the REST API
-  - `N8nApiClient.createDataTable()` calling `POST /data-tables`
-  - Zod-validated handler with `N8nApiError` handling for structured error responses
-  - TypeScript interfaces matching the n8n OpenAPI spec (`DataTableColumn`, `DataTableColumnResponse`, `DataTable`)
-  - Column types per spec: `string | number | boolean | date | json`
-  - Input validation: `.min(1)` on table name and column names
-  - Tool documentation with examples, use cases, and pitfalls
-  - Requires n8n enterprise or cloud with data tables feature enabled
+- **`n8n_manage_datatable` MCP tool** (replaces `n8n_create_data_table`): Full data table management covering all 10 n8n data table API endpoints
+  - **Table operations**: createTable, listTables, getTable, updateTable, deleteTable
+  - **Row operations**: getRows, insertRows, updateRows, upsertRows, deleteRows
+  - Filter system with and/or logic and 8 condition operators (eq, neq, like, ilike, gt, gte, lt, lte)
+  - Dry-run support for updateRows, upsertRows, deleteRows
+  - Pagination, sorting, and full-text search for row listing
+  - Shared error handler and consolidated Zod schemas for consistency
+  - 9 new `N8nApiClient` methods for all data table endpoints
 - **`projectId` parameter for `n8n_create_workflow`**: Create workflows directly in a specific team project (enterprise feature)
 
-### Fixed
+### Breaking
 
-- **Health check management tool count**: Updated from 13 to 14 to include `n8n_create_data_table`
+- `n8n_create_data_table` tool replaced by `n8n_manage_datatable` with `action: "createTable"`
 
 Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
 

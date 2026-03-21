@@ -24,6 +24,13 @@ import {
   SourceControlPushResult,
   DataTable,
   DataTableColumn,
+  DataTableListParams,
+  DataTableRow,
+  DataTableRowListParams,
+  DataTableInsertRowsParams,
+  DataTableUpdateRowsParams,
+  DataTableUpsertRowParams,
+  DataTableDeleteRowsParams,
 } from '../types/n8n-api';
 import { handleN8nApiError, logN8nError } from '../utils/n8n-errors';
 import { cleanWorkflowForCreate, cleanWorkflowForUpdate } from './n8n-validation';
@@ -587,6 +594,86 @@ export class N8nApiClient {
   async createDataTable(params: { name: string; columns?: DataTableColumn[] }): Promise<DataTable> {
     try {
       const response = await this.client.post('/data-tables', params);
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async listDataTables(params: DataTableListParams = {}): Promise<{ data: DataTable[]; nextCursor?: string | null }> {
+    try {
+      const response = await this.client.get('/data-tables', { params });
+      return this.validateListResponse<DataTable>(response.data, 'data-tables');
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async getDataTable(id: string): Promise<DataTable> {
+    try {
+      const response = await this.client.get(`/data-tables/${id}`);
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async updateDataTable(id: string, params: { name: string }): Promise<DataTable> {
+    try {
+      const response = await this.client.patch(`/data-tables/${id}`, params);
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async deleteDataTable(id: string): Promise<void> {
+    try {
+      await this.client.delete(`/data-tables/${id}`);
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async getDataTableRows(id: string, params: DataTableRowListParams = {}): Promise<{ data: DataTableRow[]; nextCursor?: string | null }> {
+    try {
+      const response = await this.client.get(`/data-tables/${id}/rows`, { params });
+      return this.validateListResponse<DataTableRow>(response.data, 'data-table-rows');
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async insertDataTableRows(id: string, params: DataTableInsertRowsParams): Promise<any> {
+    try {
+      const response = await this.client.post(`/data-tables/${id}/rows`, params);
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async updateDataTableRows(id: string, params: DataTableUpdateRowsParams): Promise<any> {
+    try {
+      const response = await this.client.patch(`/data-tables/${id}/rows/update`, params);
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async upsertDataTableRow(id: string, params: DataTableUpsertRowParams): Promise<any> {
+    try {
+      const response = await this.client.post(`/data-tables/${id}/rows/upsert`, params);
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async deleteDataTableRows(id: string, params: DataTableDeleteRowsParams): Promise<any> {
+    try {
+      const response = await this.client.delete(`/data-tables/${id}/rows/delete`, { params });
       return response.data;
     } catch (error) {
       throw handleN8nApiError(error);
