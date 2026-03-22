@@ -19,6 +19,14 @@ import { WorkflowBuilder } from '../../utils/builders/workflow.builder';
 import { z } from 'zod';
 import { WorkflowNode, WorkflowConnection, Workflow } from '../../../src/types/n8n-api';
 
+function webhookNode(id: string, name: string, type: string, typeVersion = 2): WorkflowNode {
+  return { id, name, type, typeVersion, position: [250, 300] as [number, number], parameters: {} };
+}
+
+function workflowWithNodes(nodes: WorkflowNode[]): Partial<Workflow> {
+  return { name: 'Test', nodes, connections: {} };
+}
+
 describe('n8n-validation', () => {
   describe('Zod Schemas', () => {
     describe('workflowNodeSchema', () => {
@@ -301,6 +309,44 @@ describe('n8n-validation', () => {
         const cleaned = cleanWorkflowForCreate(workflow as Workflow);
         expect(cleaned.settings).toEqual(customSettings);
       });
+
+      it('should inject webhookId on webhook nodes missing it', () => {
+        const workflow = workflowWithNodes([
+          webhookNode('1', 'Webhook', 'n8n-nodes-base.webhook'),
+        ]);
+
+        const cleaned = cleanWorkflowForCreate(workflow as Workflow);
+        expect(cleaned.nodes![0].webhookId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);
+      });
+
+      it('should preserve existing webhookId on webhook nodes', () => {
+        const workflow = workflowWithNodes([
+          { ...webhookNode('1', 'Webhook', 'n8n-nodes-base.webhook'), webhookId: 'existing-id' },
+        ]);
+
+        const cleaned = cleanWorkflowForCreate(workflow as Workflow);
+        expect(cleaned.nodes![0].webhookId).toBe('existing-id');
+      });
+
+      it('should inject webhookId on formTrigger and chatTrigger nodes', () => {
+        const workflow = workflowWithNodes([
+          webhookNode('1', 'Form', 'n8n-nodes-base.formTrigger'),
+          webhookNode('2', 'Chat', '@n8n/n8n-nodes-langchain.chatTrigger'),
+        ]);
+
+        const cleaned = cleanWorkflowForCreate(workflow as Workflow);
+        expect(cleaned.nodes![0].webhookId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);
+        expect(cleaned.nodes![1].webhookId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);
+      });
+
+      it('should not inject webhookId on non-webhook nodes', () => {
+        const workflow = workflowWithNodes([
+          webhookNode('1', 'Set', 'n8n-nodes-base.set', 3.4),
+        ]);
+
+        const cleaned = cleanWorkflowForCreate(workflow as Workflow);
+        expect(cleaned.nodes![0].webhookId).toBeUndefined();
+      });
     });
 
     describe('cleanWorkflowForUpdate', () => {
@@ -532,6 +578,44 @@ describe('n8n-validation', () => {
           timezone: 'America/New_York'
         });
         expect(cleaned.settings).not.toHaveProperty('someOtherProperty');
+      });
+
+      it('should inject webhookId on webhook nodes missing it', () => {
+        const workflow = workflowWithNodes([
+          webhookNode('1', 'Webhook', 'n8n-nodes-base.webhook'),
+        ]) as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+        expect(cleaned.nodes![0].webhookId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);
+      });
+
+      it('should preserve existing webhookId on webhook nodes', () => {
+        const workflow = workflowWithNodes([
+          { ...webhookNode('1', 'Webhook', 'n8n-nodes-base.webhook'), webhookId: 'existing-id' },
+        ]) as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+        expect(cleaned.nodes![0].webhookId).toBe('existing-id');
+      });
+
+      it('should inject webhookId on formTrigger and chatTrigger nodes', () => {
+        const workflow = workflowWithNodes([
+          webhookNode('1', 'Form', 'n8n-nodes-base.formTrigger'),
+          webhookNode('2', 'Chat', '@n8n/n8n-nodes-langchain.chatTrigger'),
+        ]) as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+        expect(cleaned.nodes![0].webhookId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);
+        expect(cleaned.nodes![1].webhookId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);
+      });
+
+      it('should not inject webhookId on non-webhook nodes', () => {
+        const workflow = workflowWithNodes([
+          webhookNode('1', 'Set', 'n8n-nodes-base.set', 3.4),
+        ]) as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+        expect(cleaned.nodes![0].webhookId).toBeUndefined();
       });
     });
   });

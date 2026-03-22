@@ -1,4 +1,7 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.defaultWorkflowSettings = exports.workflowSettingsSchema = exports.workflowConnectionSchema = exports.workflowNodeSchema = void 0;
 exports.validateWorkflowNode = validateWorkflowNode;
@@ -13,6 +16,7 @@ exports.validateOperatorStructure = validateOperatorStructure;
 exports.getWebhookUrl = getWebhookUrl;
 exports.getWorkflowStructureExample = getWorkflowStructureExample;
 exports.getWorkflowFixSuggestions = getWorkflowFixSuggestions;
+const crypto_1 = __importDefault(require("crypto"));
 const zod_1 = require("zod");
 const node_type_utils_1 = require("../utils/node-type-utils");
 const node_classification_1 = require("../utils/node-classification");
@@ -76,11 +80,27 @@ function validateWorkflowConnections(connections) {
 function validateWorkflowSettings(settings) {
     return exports.workflowSettingsSchema.parse(settings);
 }
+const WEBHOOK_NODE_TYPES = new Set([
+    'n8n-nodes-base.webhook',
+    'n8n-nodes-base.webhookTrigger',
+    'n8n-nodes-base.formTrigger',
+    '@n8n/n8n-nodes-langchain.chatTrigger',
+]);
+function ensureWebhookIds(nodes) {
+    if (!nodes)
+        return;
+    for (const node of nodes) {
+        if (WEBHOOK_NODE_TYPES.has(node.type) && !node.webhookId) {
+            node.webhookId = crypto_1.default.randomUUID();
+        }
+    }
+}
 function cleanWorkflowForCreate(workflow) {
     const { id, createdAt, updatedAt, versionId, meta, active, tags, ...cleanedWorkflow } = workflow;
     if (!cleanedWorkflow.settings || Object.keys(cleanedWorkflow.settings).length === 0) {
         cleanedWorkflow.settings = exports.defaultWorkflowSettings;
     }
+    ensureWebhookIds(cleanedWorkflow.nodes);
     return cleanedWorkflow;
 }
 function cleanWorkflowForUpdate(workflow) {
@@ -116,6 +136,7 @@ function cleanWorkflowForUpdate(workflow) {
     else {
         cleanedWorkflow.settings = { executionOrder: 'v1' };
     }
+    ensureWebhookIds(cleanedWorkflow.nodes);
     return cleanedWorkflow;
 }
 function validateWorkflowStructure(workflow) {

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.40.5] - 2026-03-22
+
+### Fixed
+
+- **Webhook workflows created via MCP get 404 errors** (Issue #643): Auto-inject `webhookId` (UUID) on webhook-type nodes (`webhook`, `webhookTrigger`, `formTrigger`, `chatTrigger`) during `cleanWorkflowForCreate()` and `cleanWorkflowForUpdate()`. n8n 2.10+ requires this field for proper webhook URL registration; without it, webhooks silently fail with 404. Existing `webhookId` values are preserved.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.40.4] - 2026-03-22
 
 ### Fixed
