@@ -14,7 +14,7 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
       'Use dryRun: true to preview update/upsert/delete before applying',
       'Filter supports: eq, neq, like, ilike, gt, gte, lt, lte conditions',
       'Use returnData: true to get affected rows back from update/upsert/delete',
-      'Requires n8n enterprise or cloud with data tables feature'
+      'Requires N8N_API_URL and N8N_API_KEY configured'
     ]
   },
   full: {
@@ -96,8 +96,6 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
       'Use sortBy for deterministic row ordering',
     ],
     pitfalls: [
-      'Requires N8N_API_URL and N8N_API_KEY configured',
-      'Feature only available on n8n enterprise or cloud plans',
       'deleteTable permanently deletes all rows — cannot be undone',
       'deleteRows requires a filter — cannot delete all rows without one',
       'Column types cannot be changed after table creation via API',

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.40.4] - 2026-03-22
+
+### Fixed
+
+- **Incorrect data tables availability info**: Removed "enterprise/cloud only" restriction from tool description and documentation — data tables are available on all n8n plans including self-hosted
+- **Redundant pitfalls removed**: Removed "Requires N8N_API_URL and N8N_API_KEY" and "enterprise or cloud plans" pitfalls — the first is implicit for all n8n management tools, the second was incorrect
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.40.3] - 2026-03-22
 
 ### Fixed

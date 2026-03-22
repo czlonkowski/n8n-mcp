@@ -609,7 +609,7 @@ export const n8nManagementTools: ToolDefinition[] = [
   },
   {
     name: 'n8n_manage_datatable',
-    description: `Manage n8n data tables and rows. Actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows. Requires n8n enterprise/cloud with data tables feature.`,
+    description: `Manage n8n data tables and rows. Actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows.`,
     inputSchema: {
       type: 'object',
       properties: {
