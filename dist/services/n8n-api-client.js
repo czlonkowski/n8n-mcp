@@ -448,6 +448,110 @@ class N8nApiClient {
             throw (0, n8n_errors_1.handleN8nApiError)(error);
         }
     }
+    async createDataTable(params) {
+        try {
+            const response = await this.client.post('/data-tables', params);
+            return response.data;
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async listDataTables(params = {}) {
+        try {
+            const response = await this.client.get('/data-tables', { params });
+            return this.validateListResponse(response.data, 'data-tables');
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async getDataTable(id) {
+        try {
+            const response = await this.client.get(`/data-tables/${id}`);
+            return response.data;
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async updateDataTable(id, params) {
+        try {
+            const response = await this.client.patch(`/data-tables/${id}`, params);
+            return response.data;
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async deleteDataTable(id) {
+        try {
+            await this.client.delete(`/data-tables/${id}`);
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async getDataTableRows(id, params = {}) {
+        try {
+            const response = await this.client.get(`/data-tables/${id}/rows`, {
+                params,
+                paramsSerializer: (p) => this.serializeDataTableParams(p),
+            });
+            return this.validateListResponse(response.data, 'data-table-rows');
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async insertDataTableRows(id, params) {
+        try {
+            const response = await this.client.post(`/data-tables/${id}/rows`, params);
+            return response.data;
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async updateDataTableRows(id, params) {
+        try {
+            const response = await this.client.patch(`/data-tables/${id}/rows/update`, params);
+            return response.data;
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async upsertDataTableRow(id, params) {
+        try {
+            const response = await this.client.post(`/data-tables/${id}/rows/upsert`, params);
+            return response.data;
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async deleteDataTableRows(id, params) {
+        try {
+            const response = await this.client.delete(`/data-tables/${id}/rows/delete`, {
+                params,
+                paramsSerializer: (p) => this.serializeDataTableParams(p),
+            });
+            return response.data;
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    serializeDataTableParams(params) {
+        const parts = [];
+        for (const [key, value] of Object.entries(params)) {
+            if (value === undefined || value === null)
+                continue;
+            parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+        }
+        return parts.join('&');
+    }
     validateListResponse(responseData, resourceType) {
         if (!responseData || typeof responseData !== 'object') {
             throw new Error(`Invalid response from n8n API for ${resourceType}: response is not an object`);

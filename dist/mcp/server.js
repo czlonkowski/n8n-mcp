@@ -720,6 +720,11 @@ class N8NDocumentationMCPServer {
                         ? { valid: true, errors: [] }
                         : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
                     break;
+                case 'n8n_manage_datatable':
+                    validationResult = args.action
+                        ? { valid: true, errors: [] }
+                        : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
+                    break;
                 case 'n8n_deploy_template':
                     validationResult = args.templateId !== undefined
                         ? { valid: true, errors: [] }
@@ -1109,6 +1114,24 @@ class N8NDocumentationMCPServer {
                 if (!this.repository)
                     throw new Error('Repository not initialized');
                 return n8nHandlers.handleDeployTemplate(args, this.templateService, this.repository, this.instanceContext);
+            case 'n8n_manage_datatable': {
+                this.validateToolParams(name, args, ['action']);
+                const dtAction = args.action;
+                switch (dtAction) {
+                    case 'createTable': return n8nHandlers.handleCreateTable(args, this.instanceContext);
+                    case 'listTables': return n8nHandlers.handleListTables(args, this.instanceContext);
+                    case 'getTable': return n8nHandlers.handleGetTable(args, this.instanceContext);
+                    case 'updateTable': return n8nHandlers.handleUpdateTable(args, this.instanceContext);
+                    case 'deleteTable': return n8nHandlers.handleDeleteTable(args, this.instanceContext);
+                    case 'getRows': return n8nHandlers.handleGetRows(args, this.instanceContext);
+                    case 'insertRows': return n8nHandlers.handleInsertRows(args, this.instanceContext);
+                    case 'updateRows': return n8nHandlers.handleUpdateRows(args, this.instanceContext);
+                    case 'upsertRows': return n8nHandlers.handleUpsertRows(args, this.instanceContext);
+                    case 'deleteRows': return n8nHandlers.handleDeleteRows(args, this.instanceContext);
+                    default:
+                        throw new Error(`Unknown action: ${dtAction}. Valid actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows`);
+                }
+            }
             default:
                 throw new Error(`Unknown tool: ${name}`);
         }

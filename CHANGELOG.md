@@ -7,12 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.40.2] - 2026-03-22
+
+### Fixed
+
+- **Double URL-encoding of `filter` and `sortBy` in `getRows`/`deleteRows`**: Moved `encodeURIComponent()` from handler layer to a custom `paramsSerializer` in the API client. Handlers were encoding values before passing them as Axios params, causing double-encoding (`%257B` instead of `%7B`). Handlers now pass raw values; the API client encodes once via `serializeDataTableParams()`
+- **`updateTable` documentation clarified**: Explicitly notes that only renaming is supported (no column modifications via public API)
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.40.1] - 2026-03-21
 
 ### Fixed
 
 - **`n8n_manage_datatable` row operations broken by MCP transport serialization**: `data` parameter received as string instead of JSON — added `z.preprocess` coercers for array/object/filter params
-- **`n8n_manage_datatable` filter/sortBy URL encoding**: n8n API requires URL-encoded query params — added `encodeURIComponent()` for filter and sortBy in getRows and deleteRows
+- **`n8n_manage_datatable` filter/sortBy URL encoding**: n8n API requires URL-encoded query params — added `encodeURIComponent()` for filter and sortBy in getRows and deleteRows (revised in 2.40.2 to move encoding to API client layer)
 - **`json` column type rejected by n8n API**: Removed `json` from column type enum (n8n only accepts string/number/boolean/date)
 - **Garbled 404 error messages**: Fixed `N8nNotFoundError` constructor — API error messages are now passed through cleanly instead of being wrapped in "Resource with ID ... not found"
 

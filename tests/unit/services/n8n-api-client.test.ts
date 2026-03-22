@@ -1491,7 +1491,7 @@ describe('N8nApiClient', () => {
       const params = { limit: 50, sortBy: 'email:asc', search: 'john' };
       const result = await client.getDataTableRows('dt-1', params);
 
-      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/data-tables/dt-1/rows', { params });
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/data-tables/dt-1/rows', expect.objectContaining({ params }));
       expect(result).toEqual(response);
     });
 
@@ -1636,7 +1636,7 @@ describe('N8nApiClient', () => {
       const params = { filter: '{"type":"and","filters":[]}', dryRun: false };
       const result = await client.deleteDataTableRows('dt-1', params);
 
-      expect(mockAxiosInstance.delete).toHaveBeenCalledWith('/data-tables/dt-1/rows/delete', { params });
+      expect(mockAxiosInstance.delete).toHaveBeenCalledWith('/data-tables/dt-1/rows/delete', expect.objectContaining({ params }));
       expect(result).toEqual(deleteResult);
     });
 

@@ -56,6 +56,16 @@ exports.handleDiagnostic = handleDiagnostic;
 exports.handleWorkflowVersions = handleWorkflowVersions;
 exports.handleDeployTemplate = handleDeployTemplate;
 exports.handleTriggerWebhookWorkflow = handleTriggerWebhookWorkflow;
+exports.handleCreateTable = handleCreateTable;
+exports.handleListTables = handleListTables;
+exports.handleGetTable = handleGetTable;
+exports.handleUpdateTable = handleUpdateTable;
+exports.handleDeleteTable = handleDeleteTable;
+exports.handleGetRows = handleGetRows;
+exports.handleInsertRows = handleInsertRows;
+exports.handleUpdateRows = handleUpdateRows;
+exports.handleUpsertRows = handleUpsertRows;
+exports.handleDeleteRows = handleDeleteRows;
 const n8n_api_client_1 = require("../services/n8n-api-client");
 const n8n_api_1 = require("../config/n8n-api");
 const n8n_api_2 = require("../types/n8n-api");
@@ -175,6 +185,7 @@ const createWorkflowSchema = zod_1.z.object({
         executionTimeout: zod_1.z.number().optional(),
         errorWorkflow: zod_1.z.string().optional(),
     }).optional(),
+    projectId: zod_1.z.string().optional(),
 });
 const updateWorkflowSchema = zod_1.z.object({
     id: zod_1.z.string(),
@@ -1470,7 +1481,7 @@ async function handleDiagnostic(request, context) {
         }
     }
     const documentationTools = 7;
-    const managementTools = apiConfigured ? 13 : 0;
+    const managementTools = apiConfigured ? 14 : 0;
     const totalTools = documentationTools + managementTools;
     const versionCheck = await (0, npm_version_checker_1.checkNpmVersion)();
     const cacheMetricsData = getInstanceCacheMetrics();
@@ -2036,6 +2047,243 @@ async function handleTriggerWebhookWorkflow(args, context) {
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error occurred'
         };
+    }
+}
+const dataTableFilterConditionSchema = zod_1.z.object({
+    columnName: zod_1.z.string().min(1),
+    condition: zod_1.z.enum(['eq', 'neq', 'like', 'ilike', 'gt', 'gte', 'lt', 'lte']),
+    value: zod_1.z.any(),
+});
+const dataTableFilterSchema = zod_1.z.object({
+    type: zod_1.z.enum(['and', 'or']).optional().default('and'),
+    filters: zod_1.z.array(dataTableFilterConditionSchema).min(1, 'At least one filter condition is required'),
+});
+const tableIdSchema = zod_1.z.object({
+    tableId: zod_1.z.string().min(1, 'tableId is required'),
+});
+const createTableSchema = zod_1.z.object({
+    name: zod_1.z.string().min(1, 'Table name cannot be empty'),
+    columns: zod_1.z.array(zod_1.z.object({
+        name: zod_1.z.string().min(1, 'Column name cannot be empty'),
+        type: zod_1.z.enum(['string', 'number', 'boolean', 'date']).optional(),
+    })).optional(),
+});
+const listTablesSchema = zod_1.z.object({
+    limit: zod_1.z.number().min(1).max(100).optional(),
+    cursor: zod_1.z.string().optional(),
+});
+const updateTableSchema = tableIdSchema.extend({
+    name: zod_1.z.string().min(1, 'New table name cannot be empty'),
+});
+function tryParseJson(val) {
+    if (typeof val !== 'string')
+        return val;
+    try {
+        return JSON.parse(val);
+    }
+    catch {
+        return val;
+    }
+}
+const coerceJsonArray = zod_1.z.preprocess(tryParseJson, zod_1.z.array(zod_1.z.record(zod_1.z.unknown())));
+const coerceJsonObject = zod_1.z.preprocess(tryParseJson, zod_1.z.record(zod_1.z.unknown()));
+const coerceJsonFilter = zod_1.z.preprocess(tryParseJson, dataTableFilterSchema);
+const getRowsSchema = tableIdSchema.extend({
+    limit: zod_1.z.number().min(1).max(100).optional(),
+    cursor: zod_1.z.string().optional(),
+    filter: zod_1.z.union([coerceJsonFilter, zod_1.z.string()]).optional(),
+    sortBy: zod_1.z.string().optional(),
+    search: zod_1.z.string().optional(),
+});
+const insertRowsSchema = tableIdSchema.extend({
+    data: coerceJsonArray.pipe(zod_1.z.array(zod_1.z.record(zod_1.z.unknown())).min(1, 'At least one row is required')),
+    returnType: zod_1.z.enum(['count', 'id', 'all']).optional(),
+});
+const mutateRowsSchema = tableIdSchema.extend({
+    filter: coerceJsonFilter,
+    data: coerceJsonObject,
+    returnData: zod_1.z.boolean().optional(),
+    dryRun: zod_1.z.boolean().optional(),
+});
+const deleteRowsSchema = tableIdSchema.extend({
+    filter: coerceJsonFilter,
+    returnData: zod_1.z.boolean().optional(),
+    dryRun: zod_1.z.boolean().optional(),
+});
+function handleDataTableError(error) {
+    if (error instanceof zod_1.z.ZodError) {
+        return { success: false, error: 'Invalid input', details: { errors: error.errors } };
+    }
+    if (error instanceof n8n_errors_1.N8nApiError) {
+        return {
+            success: false,
+            error: (0, n8n_errors_1.getUserFriendlyErrorMessage)(error),
+            code: error.code,
+            details: error.details,
+        };
+    }
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
+}
+async function handleCreateTable(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const input = createTableSchema.parse(args);
+        const dataTable = await client.createDataTable(input);
+        if (!dataTable || !dataTable.id) {
+            return { success: false, error: 'Data table creation failed: n8n API returned an empty or invalid response' };
+        }
+        return {
+            success: true,
+            data: { id: dataTable.id, name: dataTable.name },
+            message: `Data table "${dataTable.name}" created with ID: ${dataTable.id}`,
+        };
+    }
+    catch (error) {
+        return handleDataTableError(error);
+    }
+}
+async function handleListTables(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const input = listTablesSchema.parse(args || {});
+        const result = await client.listDataTables(input);
+        return {
+            success: true,
+            data: {
+                tables: result.data,
+                count: result.data.length,
+                nextCursor: result.nextCursor || undefined,
+            },
+        };
+    }
+    catch (error) {
+        return handleDataTableError(error);
+    }
+}
+async function handleGetTable(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { tableId } = tableIdSchema.parse(args);
+        const dataTable = await client.getDataTable(tableId);
+        return { success: true, data: dataTable };
+    }
+    catch (error) {
+        return handleDataTableError(error);
+    }
+}
+async function handleUpdateTable(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { tableId, name } = updateTableSchema.parse(args);
+        const dataTable = await client.updateDataTable(tableId, { name });
+        return {
+            success: true,
+            data: dataTable,
+            message: `Data table renamed to "${dataTable.name}"`,
+        };
+    }
+    catch (error) {
+        return handleDataTableError(error);
+    }
+}
+async function handleDeleteTable(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { tableId } = tableIdSchema.parse(args);
+        await client.deleteDataTable(tableId);
+        return { success: true, message: `Data table ${tableId} deleted successfully` };
+    }
+    catch (error) {
+        return handleDataTableError(error);
+    }
+}
+async function handleGetRows(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { tableId, filter, sortBy, ...params } = getRowsSchema.parse(args);
+        const queryParams = { ...params };
+        if (filter) {
+            queryParams.filter = typeof filter === 'string' ? filter : JSON.stringify(filter);
+        }
+        if (sortBy) {
+            queryParams.sortBy = sortBy;
+        }
+        const result = await client.getDataTableRows(tableId, queryParams);
+        return {
+            success: true,
+            data: {
+                rows: result.data,
+                count: result.data.length,
+                nextCursor: result.nextCursor || undefined,
+            },
+        };
+    }
+    catch (error) {
+        return handleDataTableError(error);
+    }
+}
+async function handleInsertRows(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { tableId, ...params } = insertRowsSchema.parse(args);
+        const result = await client.insertDataTableRows(tableId, params);
+        return {
+            success: true,
+            data: result,
+            message: `Rows inserted into data table ${tableId}`,
+        };
+    }
+    catch (error) {
+        return handleDataTableError(error);
+    }
+}
+async function handleUpdateRows(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { tableId, ...params } = mutateRowsSchema.parse(args);
+        const result = await client.updateDataTableRows(tableId, params);
+        return {
+            success: true,
+            data: result,
+            message: params.dryRun ? 'Dry run: rows matched (no changes applied)' : 'Rows updated successfully',
+        };
+    }
+    catch (error) {
+        return handleDataTableError(error);
+    }
+}
+async function handleUpsertRows(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { tableId, ...params } = mutateRowsSchema.parse(args);
+        const result = await client.upsertDataTableRow(tableId, params);
+        return {
+            success: true,
+            data: result,
+            message: params.dryRun ? 'Dry run: upsert previewed (no changes applied)' : 'Row upserted successfully',
+        };
+    }
+    catch (error) {
+        return handleDataTableError(error);
+    }
+}
+async function handleDeleteRows(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { tableId, filter, ...params } = deleteRowsSchema.parse(args);
+        const queryParams = {
+            filter: JSON.stringify(filter),
+            ...params,
+        };
+        const result = await client.deleteDataTableRows(tableId, queryParams);
+        return {
+            success: true,
+            data: result,
+            message: params.dryRun ? 'Dry run: rows matched for deletion (no changes applied)' : 'Rows deleted successfully',
+        };
+    }
+    catch (error) {
+        return handleDataTableError(error);
     }
 }
 //# sourceMappingURL=handlers-n8n-manager.js.map

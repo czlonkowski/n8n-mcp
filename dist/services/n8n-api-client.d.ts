@@ -1,4 +1,4 @@
-import { Workflow, WorkflowListParams, WorkflowListResponse, Execution, ExecutionListParams, ExecutionListResponse, Credential, CredentialListParams, CredentialListResponse, Tag, TagListParams, TagListResponse, HealthCheckResponse, N8nVersionInfo, Variable, WebhookRequest, SourceControlStatus, SourceControlPullResult, SourceControlPushResult } from '../types/n8n-api';
+import { Workflow, WorkflowListParams, WorkflowListResponse, Execution, ExecutionListParams, ExecutionListResponse, Credential, CredentialListParams, CredentialListResponse, Tag, TagListParams, TagListResponse, HealthCheckResponse, N8nVersionInfo, Variable, WebhookRequest, SourceControlStatus, SourceControlPullResult, SourceControlPushResult, DataTable, DataTableColumn, DataTableListParams, DataTableRow, DataTableRowListParams, DataTableInsertRowsParams, DataTableUpdateRowsParams, DataTableUpsertRowParams, DataTableDeleteRowsParams } from '../types/n8n-api';
 export interface N8nApiClientConfig {
     baseUrl: string;
     apiKey: string;
@@ -45,6 +45,28 @@ export declare class N8nApiClient {
     createVariable(variable: Partial<Variable>): Promise<Variable>;
     updateVariable(id: string, variable: Partial<Variable>): Promise<Variable>;
     deleteVariable(id: string): Promise<void>;
+    createDataTable(params: {
+        name: string;
+        columns?: DataTableColumn[];
+    }): Promise<DataTable>;
+    listDataTables(params?: DataTableListParams): Promise<{
+        data: DataTable[];
+        nextCursor?: string | null;
+    }>;
+    getDataTable(id: string): Promise<DataTable>;
+    updateDataTable(id: string, params: {
+        name: string;
+    }): Promise<DataTable>;
+    deleteDataTable(id: string): Promise<void>;
+    getDataTableRows(id: string, params?: DataTableRowListParams): Promise<{
+        data: DataTableRow[];
+        nextCursor?: string | null;
+    }>;
+    insertDataTableRows(id: string, params: DataTableInsertRowsParams): Promise<any>;
+    updateDataTableRows(id: string, params: DataTableUpdateRowsParams): Promise<any>;
+    upsertDataTableRow(id: string, params: DataTableUpsertRowParams): Promise<any>;
+    deleteDataTableRows(id: string, params: DataTableDeleteRowsParams): Promise<any>;
+    private serializeDataTableParams;
     private validateListResponse;
 }
 //# sourceMappingURL=n8n-api-client.d.ts.map

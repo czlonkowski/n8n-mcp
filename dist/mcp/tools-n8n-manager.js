@@ -57,6 +57,10 @@ exports.n8nManagementTools = [
                         executionTimeout: { type: 'number' },
                         errorWorkflow: { type: 'string' }
                     }
+                },
+                projectId: {
+                    type: 'string',
+                    description: 'Optional project ID to create the workflow in (enterprise feature)'
                 }
             },
             required: ['name', 'nodes', 'connections']
@@ -583,6 +587,53 @@ exports.n8nManagementTools = [
             destructiveHint: false,
             openWorldHint: true,
         },
-    }
+    },
+    {
+        name: 'n8n_manage_datatable',
+        description: `Manage n8n data tables and rows. Actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows. Requires n8n enterprise/cloud with data tables feature.`,
+        inputSchema: {
+            type: 'object',
+            properties: {
+                action: {
+                    type: 'string',
+                    enum: ['createTable', 'listTables', 'getTable', 'updateTable', 'deleteTable', 'getRows', 'insertRows', 'updateRows', 'upsertRows', 'deleteRows'],
+                    description: 'Operation to perform',
+                },
+                tableId: { type: 'string', description: 'Data table ID (required for all actions except createTable and listTables)' },
+                name: { type: 'string', description: 'For createTable/updateTable: table name' },
+                columns: {
+                    type: 'array',
+                    description: 'For createTable: column definitions',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            name: { type: 'string' },
+                            type: { type: 'string', enum: ['string', 'number', 'boolean', 'date'] },
+                        },
+                        required: ['name'],
+                    },
+                },
+                data: { description: 'For insertRows: array of row objects. For updateRows/upsertRows: object with column values.' },
+                filter: {
+                    type: 'object',
+                    description: 'For getRows/updateRows/upsertRows/deleteRows: {type?: "and"|"or", filters: [{columnName, condition, value}]}',
+                },
+                limit: { type: 'number', description: 'For listTables/getRows: max results (1-100)' },
+                cursor: { type: 'string', description: 'For listTables/getRows: pagination cursor' },
+                sortBy: { type: 'string', description: 'For getRows: "columnName:asc" or "columnName:desc"' },
+                search: { type: 'string', description: 'For getRows: text search across string columns' },
+                returnType: { type: 'string', enum: ['count', 'id', 'all'], description: 'For insertRows: what to return (default: count)' },
+                returnData: { type: 'boolean', description: 'For updateRows/upsertRows/deleteRows: return affected rows (default: false)' },
+                dryRun: { type: 'boolean', description: 'For updateRows/upsertRows/deleteRows: preview without applying (default: false)' },
+            },
+            required: ['action'],
+        },
+        annotations: {
+            title: 'Manage Data Tables',
+            readOnlyHint: false,
+            destructiveHint: true,
+            openWorldHint: true,
+        },
+    },
 ];
 //# sourceMappingURL=tools-n8n-manager.js.map

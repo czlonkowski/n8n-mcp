@@ -1,1 +1,1 @@
-{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../../src/mcp/tool-docs/index.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,iBAAiB,EAAE,MAAM,SAAS,CAAC;AA4B5C,eAAO,MAAM,kBAAkB,EAAE,MAAM,CAAC,MAAM,EAAE,iBAAiB,CAmChE,CAAC;AAGF,YAAY,EAAE,iBAAiB,EAAE,MAAM,SAAS,CAAC"}
+{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../../src/mcp/tool-docs/index.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,iBAAiB,EAAE,MAAM,SAAS,CAAC;AA6B5C,eAAO,MAAM,kBAAkB,EAAE,MAAM,CAAC,MAAM,EAAE,iBAAiB,CAoChE,CAAC;AAGF,YAAY,EAAE,iBAAiB,EAAE,MAAM,SAAS,CAAC"}

@@ -637,7 +637,10 @@ export class N8nApiClient {
 
   async getDataTableRows(id: string, params: DataTableRowListParams = {}): Promise<{ data: DataTableRow[]; nextCursor?: string | null }> {
     try {
-      const response = await this.client.get(`/data-tables/${id}/rows`, { params });
+      const response = await this.client.get(`/data-tables/${id}/rows`, {
+        params,
+        paramsSerializer: (p) => this.serializeDataTableParams(p),
+      });
       return this.validateListResponse<DataTableRow>(response.data, 'data-table-rows');
     } catch (error) {
       throw handleN8nApiError(error);
@@ -673,11 +676,27 @@ export class N8nApiClient {
 
   async deleteDataTableRows(id: string, params: DataTableDeleteRowsParams): Promise<any> {
     try {
-      const response = await this.client.delete(`/data-tables/${id}/rows/delete`, { params });
+      const response = await this.client.delete(`/data-tables/${id}/rows/delete`, {
+        params,
+        paramsSerializer: (p) => this.serializeDataTableParams(p),
+      });
       return response.data;
     } catch (error) {
       throw handleN8nApiError(error);
     }
+  }
+
+  /**
+   * Serializes data table query params with explicit encodeURIComponent.
+   * Axios's default serializer doesn't encode some reserved chars that n8n rejects.
+   */
+  private serializeDataTableParams(params: Record<string, any>): string {
+    const parts: string[] = [];
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined || value === null) continue;
+      parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+    }
+    return parts.join('&');
   }
 
   /**

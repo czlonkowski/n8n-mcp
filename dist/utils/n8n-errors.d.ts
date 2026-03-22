@@ -8,7 +8,7 @@ export declare class N8nAuthenticationError extends N8nApiError {
     constructor(message?: string);
 }
 export declare class N8nNotFoundError extends N8nApiError {
-    constructor(resource: string, id?: string);
+    constructor(messageOrResource: string, id?: string);
 }
 export declare class N8nValidationError extends N8nApiError {
     constructor(message: string, details?: unknown);
