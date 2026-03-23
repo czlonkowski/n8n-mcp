@@ -823,7 +823,11 @@ export class WorkflowDiffEngine {
     // Use nullish coalescing to properly handle explicit 0 values
     // Default targetInput to sourceOutput to preserve connection type for AI connections (ai_tool, ai_memory, etc.)
     // Coerce to string to handle numeric values passed as sourceOutput/targetInput
-    const targetInput = String(operation.targetInput ?? sourceOutput);
+    let targetInput = String(operation.targetInput ?? sourceOutput);
+    // Remap numeric targetInput (e.g., "0", "1") to "main" (#659)
+    if (/^\d+$/.test(targetInput)) {
+      targetInput = 'main';
+    }
     const targetIndex = operation.targetIndex ?? 0;
 
     // Initialize source node connections object

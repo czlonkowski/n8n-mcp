@@ -606,7 +606,10 @@ class WorkflowDiffEngine {
         if (!sourceNode || !targetNode)
             return;
         const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation);
-        const targetInput = String(operation.targetInput ?? sourceOutput);
+        let targetInput = String(operation.targetInput ?? sourceOutput);
+        if (/^\d+$/.test(targetInput)) {
+            targetInput = 'main';
+        }
         const targetIndex = operation.targetIndex ?? 0;
         if (!workflow.connections[sourceNode.name]) {
             workflow.connections[sourceNode.name] = {};
