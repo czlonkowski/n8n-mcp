@@ -116,7 +116,7 @@ jobs:
       # Upload coverage to Codecov
       - name: Upload coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
@@ -250,7 +250,7 @@ jobs:
           path: artifacts
 
       - name: Publish test results
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v3
         if: always()
         continue-on-error: true
         with:
