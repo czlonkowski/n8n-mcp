@@ -1280,6 +1280,22 @@ export class WorkflowDiffEngine {
     }
 
     const finalKey = keys[keys.length - 1];
+    
+    // Handle __patch_find_replace for string values (Issue #642)
+    if (value && typeof value === 'object' && '__patch_find_replace' in value) {
+      const patches = value.__patch_find_replace;
+      if (Array.isArray(patches) && typeof current[finalKey] === 'string') {
+        let result = current[finalKey];
+        for (const patch of patches) {
+          if (patch.find && typeof patch.replace === 'string') {
+            result = result.split(patch.find).join(patch.replace);
+          }
+        }
+        current[finalKey] = result;
+        return;
+      }
+    }
+    
     if (value === null) {
       delete current[finalKey];
     } else {
