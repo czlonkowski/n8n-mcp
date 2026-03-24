@@ -1248,10 +1248,43 @@ The system automatically handles:
 
 See [Automated Release Guide](./docs/AUTOMATED_RELEASES.md) for complete details.
 
+## 🤖 LLM Provider Configuration
+
+The AI-powered community node documentation generator supports multiple LLM providers. Configure via environment variables:
+
+### Provider Presets
+
+Set `N8N_MCP_LLM_PROVIDER` for quick setup with a cloud provider:
+
+| Provider | Preset Name | Default Model | API Key Env Var |
+|----------|------------|---------------|-----------------|
+| [OpenAI](https://openai.com) | `openai` | `gpt-4o-mini` | `OPENAI_API_KEY` |
+| [MiniMax](https://www.minimaxi.com) | `minimax` | `MiniMax-M2.7` | `MINIMAX_API_KEY` |
+| [Anthropic](https://anthropic.com) | `anthropic` | `claude-sonnet-4-20250514` | `N8N_MCP_LLM_API_KEY` |
+
+```bash
+# Example: Use MiniMax as the LLM provider
+N8N_MCP_LLM_PROVIDER=minimax
+MINIMAX_API_KEY=your-api-key
+```
+
+### Manual Configuration
+
+For local servers or custom endpoints, configure each setting individually:
+
+```bash
+N8N_MCP_LLM_BASE_URL=http://localhost:1234/v1
+N8N_MCP_LLM_MODEL=qwen3-4b-thinking-2507
+N8N_MCP_LLM_API_KEY=not-needed
+```
+
+Manual overrides (`N8N_MCP_LLM_BASE_URL`, `N8N_MCP_LLM_MODEL`) take precedence over preset defaults.
+
 ## 👏 Acknowledgments
 
 - [n8n](https://n8n.io) team for the workflow automation platform
 - [Anthropic](https://anthropic.com) for the Model Context Protocol
+- [MiniMax](https://www.minimaxi.com) for the MiniMax AI platform
 - All contributors and users of this project
 
 ### Template Attribution

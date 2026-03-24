@@ -1,8 +1,9 @@
 /**
  * AI-powered documentation generator for community nodes.
  *
- * Uses a local LLM (Qwen or compatible) via OpenAI-compatible API
- * to generate structured documentation summaries from README content.
+ * Uses an LLM via OpenAI-compatible API to generate structured
+ * documentation summaries from README content. Supports multiple
+ * providers including local servers, OpenAI, MiniMax, and others.
  */
 
 import OpenAI from 'openai';
@@ -60,6 +61,42 @@ export interface DocumentationGeneratorConfig {
   /** Temperature for generation (default: 0.3, set to undefined to omit) */
   temperature?: number;
 }
+
+/**
+ * Provider preset configuration for cloud LLM services.
+ * Each preset defines the base URL, default model, and provider-specific behavior.
+ */
+export interface LLMProviderPreset {
+  baseUrl: string;
+  model: string;
+  /** Whether temperature should be sent (cloud providers may reject unsupported values) */
+  supportsTemperature: boolean;
+  /** Temperature range constraint [min, max] */
+  temperatureRange?: [number, number];
+}
+
+/**
+ * Built-in LLM provider presets for quick configuration.
+ * Use N8N_MCP_LLM_PROVIDER env var to select a preset by name.
+ */
+export const LLM_PROVIDER_PRESETS: Record<string, LLMProviderPreset> = {
+  openai: {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    supportsTemperature: true,
+  },
+  minimax: {
+    baseUrl: 'https://api.minimax.io/v1',
+    model: 'MiniMax-M2.7',
+    supportsTemperature: true,
+    temperatureRange: [0, 1],
+  },
+  anthropic: {
+    baseUrl: 'https://api.anthropic.com/v1',
+    model: 'claude-sonnet-4-20250514',
+    supportsTemperature: true,
+  },
+};
 
 /**
  * Default configuration
@@ -243,23 +280,34 @@ Guidelines:
   }
 
   /**
-   * Extract JSON from LLM response (handles markdown code blocks)
+   * Strip thinking/reasoning tags from LLM responses.
+   * Some models (MiniMax M2.5/M2.7, Qwen) wrap internal reasoning in <think> tags.
+   */
+  private stripThinkingTags(content: string): string {
+    return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  }
+
+  /**
+   * Extract JSON from LLM response (handles markdown code blocks and thinking tags)
    */
   private extractJson(content: string): string {
+    // Strip thinking tags from reasoning models (MiniMax, Qwen, etc.)
+    const cleaned = this.stripThinkingTags(content);
+
     // Try to extract from markdown code block
-    const jsonBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const jsonBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonBlockMatch) {
       return jsonBlockMatch[1].trim();
     }
 
     // Try to find JSON object directly
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       return jsonMatch[0];
     }
 
     // Return as-is if no extraction needed
-    return content.trim();
+    return cleaned.trim();
   }
 
   /**
@@ -351,21 +399,68 @@ Guidelines:
 }
 
 /**
- * Create a documentation generator with environment variable configuration
+ * Clamp temperature to a provider's supported range.
+ */
+export function clampTemperature(value: number, range: [number, number]): number {
+  return Math.max(range[0], Math.min(range[1], value));
+}
+
+/**
+ * Resolve provider preset from N8N_MCP_LLM_PROVIDER env var.
+ * Returns undefined if no preset matches.
+ */
+export function resolveProviderPreset(providerName?: string): LLMProviderPreset | undefined {
+  if (!providerName) return undefined;
+  return LLM_PROVIDER_PRESETS[providerName.toLowerCase()];
+}
+
+/**
+ * Create a documentation generator with environment variable configuration.
+ *
+ * Supports two configuration modes:
+ * 1. **Provider preset**: Set `N8N_MCP_LLM_PROVIDER` to a provider name (e.g., "minimax", "openai")
+ *    and the base URL, model, and temperature handling are auto-configured.
+ * 2. **Manual config**: Set `N8N_MCP_LLM_BASE_URL`, `N8N_MCP_LLM_MODEL`, etc. individually.
+ *
+ * Manual overrides (BASE_URL, MODEL) take precedence over preset defaults.
  */
 export function createDocumentationGenerator(): DocumentationGenerator {
-  const baseUrl = process.env.N8N_MCP_LLM_BASE_URL || 'http://localhost:1234/v1';
-  const model = process.env.N8N_MCP_LLM_MODEL || 'qwen3-4b-thinking-2507';
+  const providerName = process.env.N8N_MCP_LLM_PROVIDER;
+  const preset = resolveProviderPreset(providerName);
+
+  const baseUrl = process.env.N8N_MCP_LLM_BASE_URL || preset?.baseUrl || 'http://localhost:1234/v1';
+  const model = process.env.N8N_MCP_LLM_MODEL || preset?.model || 'qwen3-4b-thinking-2507';
   const timeout = parseInt(process.env.N8N_MCP_LLM_TIMEOUT || '60000', 10);
-  const apiKey = process.env.N8N_MCP_LLM_API_KEY || process.env.OPENAI_API_KEY;
-  // Only set temperature for local LLM servers; cloud APIs like OpenAI may not support custom values
-  const isLocalServer = !baseUrl.includes('openai.com') && !baseUrl.includes('anthropic.com');
+  const apiKey = process.env.N8N_MCP_LLM_API_KEY
+    || process.env.MINIMAX_API_KEY
+    || process.env.OPENAI_API_KEY;
+
+  // Determine temperature based on provider capabilities
+  const isCloudProvider = preset != null
+    || baseUrl.includes('openai.com')
+    || baseUrl.includes('anthropic.com')
+    || baseUrl.includes('minimax.io');
+
+  let temperature: number | undefined;
+  if (isCloudProvider && preset?.supportsTemperature) {
+    temperature = 0.3;
+    if (preset.temperatureRange) {
+      temperature = clampTemperature(temperature, preset.temperatureRange);
+    }
+  } else if (!isCloudProvider) {
+    // Local servers generally support temperature
+    temperature = 0.3;
+  }
+
+  if (preset) {
+    logger.info(`Using LLM provider preset: ${providerName} (${model} via ${baseUrl})`);
+  }
 
   return new DocumentationGenerator({
     baseUrl,
     model,
     timeout,
     ...(apiKey ? { apiKey } : {}),
-    ...(isLocalServer ? { temperature: 0.3 } : {}),
+    ...(temperature !== undefined ? { temperature } : {}),
   });
 }
