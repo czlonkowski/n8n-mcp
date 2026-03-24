@@ -389,7 +389,7 @@ jobs:
           echo "Version: $(node -e "console.log(require('./package.json').version)")"
       
       - name: Publish to NPM with retry
-        uses: nick-invision/retry@v2
+        uses: nick-invision/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -442,13 +442,13 @@ jobs:
           echo "✅ Synced package.runtime.json to version $VERSION"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -456,7 +456,7 @@ jobs:
       
       - name: Extract metadata for standard image
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -466,7 +466,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
       
       - name: Build and push standard Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -547,7 +547,7 @@ jobs:
 
       - name: Extract metadata for Railway image
         id: meta-railway
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-railway
           tags: |
@@ -557,7 +557,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
       
       - name: Build and push Railway Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile.railway
