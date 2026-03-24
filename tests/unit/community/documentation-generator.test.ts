@@ -967,6 +967,42 @@ describe('DocumentationGenerator', () => {
       expect(result.summary.purpose).toBe('Sends messages to Slack channels');
     });
 
+    it('should handle MiniMax-style multi-line thinking tags', async () => {
+      const thinkContent = '<think>\nStep 1: Read the node info\nStep 2: Extract capabilities\nStep 3: Generate JSON\n</think>';
+      mockCreate.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content: thinkContent + '\n' + JSON.stringify(validSummary),
+            },
+          },
+        ],
+      });
+
+      const result = await generator.generateSummary(sampleInput);
+
+      expect(result.error).toBeUndefined();
+      expect(result.summary.purpose).toBe('Sends messages to Slack channels');
+    });
+
+    it('should handle response with multiple thinking blocks', async () => {
+      mockCreate.mockResolvedValue({
+        choices: [
+          {
+            message: {
+              content:
+                '<think>First thought</think>Some text<think>Second thought</think>\n' + JSON.stringify(validSummary),
+            },
+          },
+        ],
+      });
+
+      const result = await generator.generateSummary(sampleInput);
+
+      expect(result.error).toBeUndefined();
+      expect(result.summary.purpose).toBe('Sends messages to Slack channels');
+    });
+
     it('should return error when response contains multiple JSON objects', async () => {
       // When the response contains multiple JSON objects concatenated,
       // JSON.parse will fail, and we should get a default summary with error

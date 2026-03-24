@@ -23,7 +23,11 @@ export {
   DocumentationResult,
   DocumentationSummary,
   DocumentationSummarySchema,
+  LLMProviderPreset,
+  LLM_PROVIDER_PRESETS,
   createDocumentationGenerator,
+  clampTemperature,
+  resolveProviderPreset,
 } from './documentation-generator';
 
 export {
