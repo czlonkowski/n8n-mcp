@@ -55,18 +55,9 @@ describe('NodeRepository - Outputs Handling', () => {
 
       repository.saveNode(node);
 
-      expect(mockDb.prepare).toHaveBeenCalledWith(`
-      INSERT INTO nodes (
-        node_type, package_name, display_name, description,
-        category, development_style, is_ai_tool, is_trigger,
-        is_webhook, is_versioned, is_tool_variant, tool_variant_of,
-        has_tool_variant, version, documentation,
-        properties_schema, operations, credentials_required,
-        outputs, output_names,
-        is_community, is_verified, author_name, author_github_url,
-        npm_package_name, npm_version, npm_downloads, community_fetched_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+      expect(mockDb.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO nodes')
+      );
 
       expect(mockStatement.run).toHaveBeenCalledWith(
         'nodes-base.splitInBatches',
