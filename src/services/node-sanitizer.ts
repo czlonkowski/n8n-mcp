@@ -177,6 +177,15 @@ function sanitizeOperator(operator: any): any {
     }
   }
 
+  // Normalize operator names to what n8n engine expects (e.g. isNotEmpty -> notEmpty)
+  if (sanitized.operation) {
+    const normalized = normalizeOperationName(sanitized.operation);
+    if (normalized !== sanitized.operation) {
+      logger.debug(`Normalizing operator: "${sanitized.operation}" -> "${normalized}"`);
+      sanitized.operation = normalized;
+    }
+  }
+
   // Set singleValue based on operator type
   if (sanitized.operation) {
     if (isUnaryOperator(sanitized.operation)) {
@@ -190,6 +199,20 @@ function sanitizeOperator(operator: any): any {
   }
 
   return sanitized;
+}
+
+/**
+ * Normalize operator names to what the n8n execution engine expects.
+ * The n8n UI generates "notEmpty"/"empty" but LLMs often produce
+ * "isNotEmpty"/"isEmpty" which the engine silently ignores (#665).
+ */
+const OPERATOR_ALIASES: Record<string, string> = {
+  isNotEmpty: 'notEmpty',
+  isEmpty: 'empty',
+};
+
+function normalizeOperationName(operation: string): string {
+  return OPERATOR_ALIASES[operation] ?? operation;
 }
 
 /**
@@ -207,7 +230,8 @@ function isOperationName(value: string): boolean {
  */
 function inferDataType(operation: string): string {
   // Boolean operations
-  const booleanOps = ['true', 'false', 'isEmpty', 'isNotEmpty'];
+  // Note: isEmpty/isNotEmpty are normalized to empty/notEmpty (object-type) by sanitizer
+  const booleanOps = ['true', 'false'];
   if (booleanOps.includes(operation)) {
     return 'boolean';
   }
