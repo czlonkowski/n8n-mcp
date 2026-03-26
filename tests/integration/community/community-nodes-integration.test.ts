@@ -87,7 +87,7 @@ class InMemoryDatabaseAdapter implements DatabaseAdapter {
 
 class InMemoryPreparedStatement implements PreparedStatement {
   run = vi.fn((...params: any[]): RunResult => {
-    if (this.sql.includes('INSERT INTO nodes')) {
+    if (this.sql.includes('INSERT') && this.sql.includes('INTO nodes')) {
       const node = this.paramsToNode(params);
       this.adapter.saveNode(node);
       return { changes: 1, lastInsertRowid: 1 };
@@ -100,6 +100,9 @@ class InMemoryPreparedStatement implements PreparedStatement {
   });
 
   get = vi.fn((...params: any[]) => {
+    if (this.sql.includes('SELECT npm_readme')) {
+      return undefined; // No existing docs to preserve
+    }
     if (this.sql.includes('SELECT * FROM nodes WHERE node_type = ?')) {
       return this.adapter.getNode(params[0]);
     }
