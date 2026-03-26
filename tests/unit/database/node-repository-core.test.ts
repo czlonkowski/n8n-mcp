@@ -91,7 +91,7 @@ describe('NodeRepository - Core Functionality', () => {
       repository.saveNode(parsedNode);
 
       // Verify prepare was called with correct SQL
-      expect(mockAdapter.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT OR REPLACE INTO nodes'));
+      expect(mockAdapter.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO nodes'));
 
       // Get the prepared statement and verify run was called
       const stmt = mockAdapter._getStatement(mockAdapter.prepare.mock.lastCall?.[0] || '');

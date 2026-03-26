@@ -120,7 +120,7 @@ class MockPreparedStatement implements PreparedStatement {
     }
 
     // saveNode - INSERT OR REPLACE
-    if (this.sql.includes('INSERT OR REPLACE INTO nodes')) {
+    if (this.sql.includes('INSERT INTO nodes')) {
       this.run = vi.fn((...params: any[]): RunResult => {
         const nodes = this.mockData.get('community_nodes') || [];
         const nodeType = params[0];

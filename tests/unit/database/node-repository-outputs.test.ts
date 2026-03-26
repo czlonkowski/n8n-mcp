@@ -56,7 +56,7 @@ describe('NodeRepository - Outputs Handling', () => {
       repository.saveNode(node);
 
       expect(mockDb.prepare).toHaveBeenCalledWith(`
-      INSERT OR REPLACE INTO nodes (
+      INSERT INTO nodes (
         node_type, package_name, display_name, description,
         category, development_style, is_ai_tool, is_trigger,
         is_webhook, is_versioned, is_tool_variant, tool_variant_of,

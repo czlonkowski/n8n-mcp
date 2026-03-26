@@ -87,7 +87,7 @@ class InMemoryDatabaseAdapter implements DatabaseAdapter {
 
 class InMemoryPreparedStatement implements PreparedStatement {
   run = vi.fn((...params: any[]): RunResult => {
-    if (this.sql.includes('INSERT OR REPLACE INTO nodes')) {
+    if (this.sql.includes('INSERT INTO nodes')) {
       const node = this.paramsToNode(params);
       this.adapter.saveNode(node);
       return { changes: 1, lastInsertRowid: 1 };
