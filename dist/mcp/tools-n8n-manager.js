@@ -590,7 +590,7 @@ exports.n8nManagementTools = [
     },
     {
         name: 'n8n_manage_datatable',
-        description: `Manage n8n data tables and rows. Actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows. Requires n8n enterprise/cloud with data tables feature.`,
+        description: `Manage n8n data tables and rows. Actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows.`,
         inputSchema: {
             type: 'object',
             properties: {
@@ -600,10 +600,10 @@ exports.n8nManagementTools = [
                     description: 'Operation to perform',
                 },
                 tableId: { type: 'string', description: 'Data table ID (required for all actions except createTable and listTables)' },
-                name: { type: 'string', description: 'For createTable/updateTable: table name' },
+                name: { type: 'string', description: 'For createTable: table name. For updateTable: new name (rename only — schema is immutable after creation)' },
                 columns: {
                     type: 'array',
-                    description: 'For createTable: column definitions',
+                    description: 'For createTable only: column definitions (schema is immutable after creation via public API)',
                     items: {
                         type: 'object',
                         properties: {

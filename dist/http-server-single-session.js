@@ -133,6 +133,15 @@ class SingleSessionHTTPServer {
     isValidSessionId(sessionId) {
         return Boolean(sessionId && sessionId.length > 0);
     }
+    isJsonRpcNotification(body) {
+        if (!body || typeof body !== 'object')
+            return false;
+        const isSingleNotification = (msg) => msg && typeof msg.method === 'string' && !('id' in msg);
+        if (Array.isArray(body)) {
+            return body.length > 0 && body.every(isSingleNotification);
+        }
+        return isSingleNotification(body);
+    }
     sanitizeErrorForClient(error) {
         const isProduction = process.env.NODE_ENV === 'production';
         if (error instanceof Error) {
@@ -381,6 +390,20 @@ class SingleSessionHTTPServer {
                     }
                     logger_1.logger.info('handleRequest: Reusing existing transport for session', { sessionId });
                     transport = this.transports[sessionId];
+                    if (!transport) {
+                        if (this.isJsonRpcNotification(req.body)) {
+                            logger_1.logger.info('handleRequest: Session removed during lookup, accepting notification', { sessionId });
+                            res.status(202).end();
+                            return;
+                        }
+                        logger_1.logger.warn('handleRequest: Session removed between check and use (TOCTOU)', { sessionId });
+                        res.status(400).json({
+                            jsonrpc: '2.0',
+                            error: { code: -32000, message: 'Bad Request: Session not found or expired' },
+                            id: req.body?.id || null,
+                        });
+                        return;
+                    }
                     const isMultiTenantEnabled = process.env.ENABLE_MULTI_TENANT === 'true';
                     const sessionStrategy = process.env.MULTI_TENANT_SESSION_STRATEGY || 'instance';
                     if (isMultiTenantEnabled && sessionStrategy === 'shared' && instanceContext) {
@@ -389,6 +412,14 @@ class SingleSessionHTTPServer {
                     this.updateSessionAccess(sessionId);
                 }
                 else {
+                    if (this.isJsonRpcNotification(req.body)) {
+                        logger_1.logger.info('handleRequest: Accepting notification for stale/missing session', {
+                            method: req.body?.method,
+                            sessionId: sessionId || 'none',
+                        });
+                        res.status(202).end();
+                        return;
+                    }
                     const errorDetails = {
                         hasSessionId: !!sessionId,
                         isInitialize: isInitialize,

@@ -1,8 +1,15 @@
 # n8n Update Process - Quick Reference
 
-## ⚡ Recommended Fast Workflow (2025-11-04)
+## ⚡ Recommended Fast Workflow (2026-03-25)
 
 **CRITICAL FIRST STEP**: Check existing releases to avoid version conflicts!
+
+**IMPORTANT: Community nodes are preserved incrementally!**
+- `npm run update:n8n` rebuilds the base node DB (wipes community nodes temporarily)
+- Community nodes must be backed up BEFORE and restored AFTER the base rebuild
+- `npm run fetch:community` now upserts by default (preserves READMEs + AI summaries)
+- `npm run generate:docs:incremental` only processes nodes missing docs
+- Use `generate:docs:readme-only` first, then `generate:docs:summary-only` with a local LLM
 
 ```bash
 # 1. CHECK EXISTING RELEASES FIRST (prevents version conflicts!)
@@ -15,14 +22,29 @@ git checkout main && git pull
 # 3. Check for updates (dry run)
 npm run update:n8n:check
 
-# 4. Run update and skip tests (we'll test in CI)
+# 4. Back up community nodes BEFORE update (update:n8n rebuilds base DB!)
+sqlite3 data/nodes.db ".mode insert nodes" "SELECT * FROM nodes WHERE is_community = 1;" > /tmp/n8n_community_backup.sql
+
+# 5. Run update and skip tests (we'll test in CI)
 yes y | npm run update:n8n
 
-# 5. Refresh community nodes (standard practice!)
-npm run fetch:community
-npm run generate:docs
+# 6. Restore community nodes after rebuild
+sqlite3 data/nodes.db < /tmp/n8n_community_backup.sql
 
-# 6. Create feature branch
+# 7. Refresh community nodes (upserts - preserves existing READMEs + AI summaries!)
+npm run fetch:community
+# NOTE: Default mode is now "upsert" - no deletion. Use --rebuild for clean slate.
+
+# 8. Generate docs incrementally (only for new/missing nodes)
+npm run generate:docs:readme-only              # Fetch READMEs from npm (no LLM needed)
+# Then with a local LLM server running (LM Studio, vLLM, Ollama):
+N8N_MCP_LLM_BASE_URL="http://YOUR_SERVER:PORT/v1" \
+N8N_MCP_LLM_MODEL="your-model-name" \
+node dist/scripts/generate-community-docs.js --summary-only --skip-existing-summary --llm-concurrency=11
+# For vLLM with thinking models, the code auto-sends chat_template_kwargs: {enable_thinking: false}
+# Context length needed: 8K minimum (README truncated to 6000 chars, output max 2000 tokens)
+
+# 9. Create feature branch
 git checkout -b update/n8n-X.X.X
 
 # 7. Update version in package.json (must be HIGHER than latest release!)

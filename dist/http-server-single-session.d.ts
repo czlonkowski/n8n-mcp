@@ -21,6 +21,7 @@ export declare class SingleSessionHTTPServer {
     private getActiveSessionCount;
     private canCreateSession;
     private isValidSessionId;
+    private isJsonRpcNotification;
     private sanitizeErrorForClient;
     private updateSessionAccess;
     private switchSessionContext;

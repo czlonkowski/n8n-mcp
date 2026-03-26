@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.41.0] - 2026-03-25
+
+### Changed
+
+- **Updated n8n dependencies**: n8n 2.12.3 → 2.13.3, n8n-core 2.12.0 → 2.13.1, n8n-workflow 2.12.0 → 2.13.1, @n8n/n8n-nodes-langchain 2.12.0 → 2.13.1
+- **Rebuilt node database**: 1,396 nodes (812 from n8n-nodes-base/langchain + 584 community: 516 verified + 68 npm)
+- **Refreshed community nodes**: 584 total (up from 430), with 581 AI-generated documentation summaries
+- **Improved documentation generator**: Strip `<think>` tags from thinking-model responses; use raw fetch for vLLM `chat_template_kwargs` support
+- **Incremental community node updates**: `fetch:community` now upserts by default, preserving existing READMEs and AI summaries. Use `--rebuild` for clean slate
+
+Conceived by Romuald Czlonkowski - https://www.aiadvisors.pl/en
+
 ## [2.40.5] - 2026-03-22
 
 ### Fixed

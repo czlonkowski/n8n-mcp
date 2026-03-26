@@ -3,13 +3,14 @@
  * Fetch community nodes from n8n Strapi API and npm registry.
  *
  * Usage:
- *   npm run fetch:community              # Full rebuild (verified + top 100 npm)
+ *   npm run fetch:community              # Upsert all (preserves READMEs and AI summaries)
  *   npm run fetch:community:verified     # Verified nodes only (fast)
  *   npm run fetch:community:update       # Incremental update (skip existing)
  *
  * Options:
  *   --verified-only    Only fetch verified nodes from Strapi API
  *   --update           Skip nodes that already exist in database
+ *   --rebuild          Delete all community nodes first (wipes READMEs/AI summaries!)
  *   --npm-limit=N      Maximum number of npm packages to fetch (default: 100)
  *   --staging          Use staging Strapi API instead of production
  */
@@ -22,6 +23,7 @@ import { createDatabaseAdapter } from '../database/database-adapter';
 interface CliOptions {
   verifiedOnly: boolean;
   update: boolean;
+  rebuild: boolean;
   npmLimit: number;
   staging: boolean;
 }
@@ -32,6 +34,7 @@ function parseArgs(): CliOptions {
   const options: CliOptions = {
     verifiedOnly: false,
     update: false,
+    rebuild: false,
     npmLimit: 100,
     staging: false,
   };
@@ -41,6 +44,8 @@ function parseArgs(): CliOptions {
       options.verifiedOnly = true;
     } else if (arg === '--update') {
       options.update = true;
+    } else if (arg === '--rebuild') {
+      options.rebuild = true;
     } else if (arg === '--staging') {
       options.staging = true;
     } else if (arg.startsWith('--npm-limit=')) {
@@ -73,7 +78,7 @@ async function main(): Promise<void> {
 
   // Print options
   console.log('Options:');
-  console.log(`  - Mode: ${cliOptions.update ? 'Update (incremental)' : 'Rebuild'}`);
+  console.log(`  - Mode: ${cliOptions.rebuild ? 'Rebuild (clean slate)' : cliOptions.update ? 'Update (skip existing)' : 'Upsert (preserves docs)'}`);
   console.log(`  - Verified only: ${cliOptions.verifiedOnly ? 'Yes' : 'No'}`);
   if (!cliOptions.verifiedOnly) {
     console.log(`  - npm package limit: ${cliOptions.npmLimit}`);
@@ -92,9 +97,10 @@ async function main(): Promise<void> {
   const environment = cliOptions.staging ? 'staging' : 'production';
   const service = new CommunityNodeService(repository, environment);
 
-  // If not updating, delete existing community nodes
-  if (!cliOptions.update) {
-    console.log('\nClearing existing community nodes...');
+  // Only delete existing community nodes when --rebuild is explicitly requested
+  if (cliOptions.rebuild) {
+    console.log('\nClearing existing community nodes (--rebuild)...');
+    console.log('  WARNING: This wipes READMEs and AI summaries!');
     const deleted = service.deleteCommunityNodes();
     console.log(`  Deleted ${deleted} existing community nodes`);
   }
