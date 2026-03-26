@@ -49,7 +49,12 @@ class MockPreparedStatement implements PreparedStatement {
     if (sql.includes('SELECT * FROM nodes WHERE node_type = ?')) {
       this.get = vi.fn((nodeType: string) => this.mockData.get(`node:${nodeType}`));
     }
-    
+
+    // Configure get() for saveNode's SELECT to preserve existing doc fields
+    if (sql.includes('SELECT npm_readme, ai_documentation_summary, ai_summary_generated_at FROM nodes')) {
+      this.get = vi.fn(() => undefined); // No existing row by default
+    }
+
     // Configure all() for getAITools
     if (sql.includes('WHERE is_ai_tool = 1')) {
       this.all = vi.fn(() => this.mockData.get('ai_tools') || []);
@@ -91,7 +96,7 @@ describe('NodeRepository - Core Functionality', () => {
       repository.saveNode(parsedNode);
 
       // Verify prepare was called with correct SQL
-      expect(mockAdapter.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO nodes'));
+      expect(mockAdapter.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT OR REPLACE INTO nodes'));
 
       // Get the prepared statement and verify run was called
       const stmt = mockAdapter._getStatement(mockAdapter.prepare.mock.lastCall?.[0] || '');
@@ -123,7 +128,10 @@ describe('NodeRepository - Core Functionality', () => {
         null, // npmPackageName
         null, // npmVersion
         0, // npmDownloads
-        null  // communityFetchedAt
+        null, // communityFetchedAt
+        null, // npm_readme (preserved from existing)
+        null, // ai_documentation_summary (preserved from existing)
+        null  // ai_summary_generated_at (preserved from existing)
       );
     });
     

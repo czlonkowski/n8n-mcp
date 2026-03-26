@@ -15,8 +15,21 @@ describe('NodeRepository - Outputs Handling', () => {
       all: vi.fn()
     };
 
+    // saveNode now calls prepare twice: first a SELECT (returns get), then INSERT (returns run).
+    // We create a separate mock for the SELECT statement that returns undefined (no existing row).
+    const selectStatement = {
+      run: vi.fn(),
+      get: vi.fn().mockReturnValue(undefined),
+      all: vi.fn()
+    };
+
     mockDb = {
-      prepare: vi.fn().mockReturnValue(mockStatement),
+      prepare: vi.fn((sql: string) => {
+        if (sql.includes('SELECT npm_readme')) {
+          return selectStatement;
+        }
+        return mockStatement;
+      }),
       transaction: vi.fn(),
       exec: vi.fn(),
       close: vi.fn(),
@@ -56,7 +69,7 @@ describe('NodeRepository - Outputs Handling', () => {
       repository.saveNode(node);
 
       expect(mockDb.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO nodes')
+        expect.stringContaining('INSERT OR REPLACE INTO nodes')
       );
 
       expect(mockStatement.run).toHaveBeenCalledWith(
@@ -87,7 +100,10 @@ describe('NodeRepository - Outputs Handling', () => {
         null, // npm_package_name
         null, // npm_version
         0, // npm_downloads
-        null // community_fetched_at
+        null, // community_fetched_at
+        null, // npm_readme (preserved from existing)
+        null, // ai_documentation_summary (preserved from existing)
+        null  // ai_summary_generated_at (preserved from existing)
       );
     });
 
