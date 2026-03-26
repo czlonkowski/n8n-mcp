@@ -152,7 +152,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "1.28.0",
     "@n8n/n8n-nodes-langchain": "^2.13.1",
     "@supabase/supabase-js": "^2.57.4",
     "dotenv": "^16.5.0",

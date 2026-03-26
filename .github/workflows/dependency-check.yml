@@ -77,15 +77,15 @@ jobs:
           echo "Zod version: $ZOD_VERSION"
           echo ""
 
-          # Check MCP SDK version - must be exactly 1.27.1
+          # Check MCP SDK version - must be exactly 1.28.0
           if [[ "$SDK_VERSION" == "not found" ]]; then
             echo "❌ FAILED: Could not determine MCP SDK version!"
             echo "   The dependency may not have been installed correctly."
             exit 1
           fi
-          if [[ "$SDK_VERSION" != "1.27.1" ]]; then
+          if [[ "$SDK_VERSION" != "1.28.0" ]]; then
             echo "❌ FAILED: MCP SDK version mismatch!"
-            echo "   Expected: 1.27.1"
+            echo "   Expected: 1.28.0"
             echo "   Got: $SDK_VERSION"
             echo ""
             echo "This can cause runtime errors. See issues #440, #444, #446, #447, #450"
