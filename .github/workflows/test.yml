@@ -133,23 +133,6 @@ jobs:
       - name: Run type checking
         run: npm run typecheck
       
-      # Run benchmarks
-      - name: Run benchmarks
-        id: benchmarks
-        run: npm run benchmark:ci
-        continue-on-error: true
-      
-      # Upload benchmark results
-      - name: Upload benchmark results
-        if: always() && steps.benchmarks.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-results-${{ github.run_number }}-${{ github.run_attempt }}
-          path: |
-            benchmark-results.json
-          retention-days: 30
-          if-no-files-found: warn
-      
       # Create test report comment for PRs
       - name: Create test report comment
         if: github.event_name == 'pull_request' && always()
@@ -222,7 +205,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- [Test Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
           echo "- [Coverage Report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
-          echo "- [Benchmark Results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
       
       # Store test metadata
       - name: Store test metadata
@@ -252,24 +234,21 @@ jobs:
           path: test-metadata.json
           retention-days: 30
 
-  # Separate job to process and publish test results
+  # Publish test results as checks
   publish-results:
     needs: test
     runs-on: ubuntu-latest
     if: always()
     permissions:
       checks: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      
-      # Download all artifacts
-      - name: Download all artifacts
+
+      - name: Download test results
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-      
-      # Publish test results as checks
+
       - name: Publish test results
         uses: dorny/test-reporter@v1
         if: always()
@@ -280,74 +259,3 @@ jobs:
           reporter: java-junit
           fail-on-error: false
           fail-on-empty: false
-      
-      # Create a combined artifact with all results
-      - name: Create combined results artifact
-        if: always()
-        run: |
-          mkdir -p combined-results
-          cp -r artifacts/* combined-results/ 2>/dev/null || true
-          
-          # Create index file
-          cat > combined-results/index.html << 'EOF'
-          <!DOCTYPE html>
-          <html>
-          <head>
-              <title>n8n-mcp Test Results</title>
-              <style>
-                  body { font-family: Arial, sans-serif; margin: 40px; }
-                  h1 { color: #333; }
-                  .section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }
-                  a { color: #0066cc; text-decoration: none; }
-                  a:hover { text-decoration: underline; }
-              </style>
-          </head>
-          <body>
-              <h1>n8n-mcp Test Results</h1>
-              <div class="section">
-                  <h2>Test Reports</h2>
-                  <ul>
-                      <li><a href="test-results-${{ github.run_number }}-${{ github.run_attempt }}/test-reports/report.html">📊 Detailed HTML Report</a></li>
-                      <li><a href="test-results-${{ github.run_number }}-${{ github.run_attempt }}/test-results/html/index.html">📈 Vitest HTML Report</a></li>
-                      <li><a href="test-results-${{ github.run_number }}-${{ github.run_attempt }}/test-reports/report.md">📄 Markdown Report</a></li>
-                      <li><a href="test-results-${{ github.run_number }}-${{ github.run_attempt }}/test-summary.md">📝 PR Summary</a></li>
-                      <li><a href="test-results-${{ github.run_number }}-${{ github.run_attempt }}/test-results/junit.xml">🔧 JUnit XML</a></li>
-                      <li><a href="test-results-${{ github.run_number }}-${{ github.run_attempt }}/test-results/results.json">🔢 JSON Results</a></li>
-                      <li><a href="test-results-${{ github.run_number }}-${{ github.run_attempt }}/test-reports/report.json">📊 Full JSON Report</a></li>
-                  </ul>
-              </div>
-              <div class="section">
-                  <h2>Coverage Reports</h2>
-                  <ul>
-                      <li><a href="coverage-${{ github.run_number }}-${{ github.run_attempt }}/html/index.html">HTML Coverage Report</a></li>
-                      <li><a href="coverage-${{ github.run_number }}-${{ github.run_attempt }}/lcov.info">LCOV Report</a></li>
-                      <li><a href="coverage-${{ github.run_number }}-${{ github.run_attempt }}/coverage-summary.json">Coverage Summary JSON</a></li>
-                  </ul>
-              </div>
-              <div class="section">
-                  <h2>Benchmark Results</h2>
-                  <ul>
-                      <li><a href="benchmark-results-${{ github.run_number }}-${{ github.run_attempt }}/benchmark-results.json">Benchmark Results JSON</a></li>
-                  </ul>
-              </div>
-              <div class="section">
-                  <h2>Metadata</h2>
-                  <ul>
-                      <li><a href="test-metadata-${{ github.run_number }}-${{ github.run_attempt }}/test-metadata.json">Test Run Metadata</a></li>
-                  </ul>
-              </div>
-              <div class="section">
-                  <p><em>Generated at $(date -u +%Y-%m-%dT%H:%M:%SZ)</em></p>
-                  <p><em>Run: #${{ github.run_number }} | SHA: ${{ github.sha }}</em></p>
-              </div>
-          </body>
-          </html>
-          EOF
-      
-      - name: Upload combined results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: all-test-results-${{ github.run_number }}
-          path: combined-results/
-          retention-days: 90

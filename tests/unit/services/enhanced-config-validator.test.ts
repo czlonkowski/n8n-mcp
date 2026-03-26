@@ -2,7 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EnhancedConfigValidator, ValidationMode, ValidationProfile } from '@/services/enhanced-config-validator';
 import { ValidationError } from '@/services/config-validator';
 import { NodeSpecificValidators } from '@/services/node-specific-validators';
+import { ResourceSimilarityService } from '@/services/resource-similarity-service';
+import { OperationSimilarityService } from '@/services/operation-similarity-service';
+import { NodeRepository } from '@/database/node-repository';
 import { nodeFactory } from '@tests/fixtures/factories/node.factory';
+import { createTestDatabase } from '@tests/utils/database-utils';
+
+// Mock similarity services
+vi.mock('@/services/resource-similarity-service');
+vi.mock('@/services/operation-similarity-service');
 
 // Mock node-specific validators
 vi.mock('@/services/node-specific-validators', () => ({
@@ -15,7 +23,8 @@ vi.mock('@/services/node-specific-validators', () => ({
     validateWebhook: vi.fn(),
     validatePostgres: vi.fn(),
     validateMySQL: vi.fn(),
-    validateAIAgent: vi.fn()
+    validateAIAgent: vi.fn(),
+    validateSet: vi.fn()
   }
 }));
 
@@ -1166,6 +1175,508 @@ describe('EnhancedConfigValidator', () => {
         expect(callArgs).toHaveProperty('suggestions');
         expect(callArgs).toHaveProperty('autofix');
       });
+    });
+  });
+
+  // ─── Type Structure Validation (from enhanced-config-validator-type-structures) ───
+
+  describe('type structure validation', () => {
+    describe('Filter Type Validation', () => {
+      it('should validate valid filter configuration', () => {
+        const config = {
+          conditions: {
+            combinator: 'and',
+            conditions: [{ id: '1', leftValue: '{{ $json.name }}', operator: { type: 'string', operation: 'equals' }, rightValue: 'John' }],
+          },
+        };
+        const properties = [{ name: 'conditions', type: 'filter', required: true, displayName: 'Conditions', default: {} }];
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, properties, 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+        expect(result.errors).toHaveLength(0);
+      });
+
+      it('should validate filter with multiple conditions', () => {
+        const config = {
+          conditions: {
+            combinator: 'or',
+            conditions: [
+              { id: '1', leftValue: '{{ $json.age }}', operator: { type: 'number', operation: 'gt' }, rightValue: 18 },
+              { id: '2', leftValue: '{{ $json.country }}', operator: { type: 'string', operation: 'equals' }, rightValue: 'US' },
+            ],
+          },
+        };
+        const properties = [{ name: 'conditions', type: 'filter', required: true }];
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, properties, 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+
+      it('should detect missing combinator in filter', () => {
+        const config = {
+          conditions: {
+            conditions: [{ id: '1', operator: { type: 'string', operation: 'equals' }, leftValue: 'test', rightValue: 'value' }],
+          },
+        };
+        const properties = [{ name: 'conditions', type: 'filter', required: true }];
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, properties, 'operation', 'ai-friendly');
+        expect(result.valid).toBe(false);
+        expect(result.errors).toContainEqual(expect.objectContaining({ property: expect.stringMatching(/conditions/), type: 'invalid_configuration' }));
+      });
+
+      it('should detect invalid combinator value', () => {
+        const config = {
+          conditions: {
+            combinator: 'invalid',
+            conditions: [{ id: '1', operator: { type: 'string', operation: 'equals' }, leftValue: 'test', rightValue: 'value' }],
+          },
+        };
+        const properties = [{ name: 'conditions', type: 'filter', required: true }];
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, properties, 'operation', 'ai-friendly');
+        expect(result.valid).toBe(false);
+      });
+    });
+
+    describe('Filter Operation Validation', () => {
+      it('should validate string operations correctly', () => {
+        for (const operation of ['equals', 'notEquals', 'contains', 'notContains', 'startsWith', 'endsWith', 'regex']) {
+          const config = { conditions: { combinator: 'and', conditions: [{ id: '1', operator: { type: 'string', operation }, leftValue: 'test', rightValue: 'value' }] } };
+          const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, [{ name: 'conditions', type: 'filter', required: true }], 'operation', 'ai-friendly');
+          expect(result.valid).toBe(true);
+        }
+      });
+
+      it('should reject invalid operation for string type', () => {
+        const config = { conditions: { combinator: 'and', conditions: [{ id: '1', operator: { type: 'string', operation: 'gt' }, leftValue: 'test', rightValue: 'value' }] } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, [{ name: 'conditions', type: 'filter', required: true }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(false);
+        expect(result.errors).toContainEqual(expect.objectContaining({ property: expect.stringContaining('operator.operation'), message: expect.stringContaining('not valid for type') }));
+      });
+
+      it('should validate number operations correctly', () => {
+        for (const operation of ['equals', 'notEquals', 'gt', 'lt', 'gte', 'lte']) {
+          const config = { conditions: { combinator: 'and', conditions: [{ id: '1', operator: { type: 'number', operation }, leftValue: 10, rightValue: 20 }] } };
+          const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, [{ name: 'conditions', type: 'filter', required: true }], 'operation', 'ai-friendly');
+          expect(result.valid).toBe(true);
+        }
+      });
+
+      it('should reject string operations for number type', () => {
+        const config = { conditions: { combinator: 'and', conditions: [{ id: '1', operator: { type: 'number', operation: 'contains' }, leftValue: 10, rightValue: 20 }] } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, [{ name: 'conditions', type: 'filter', required: true }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(false);
+      });
+
+      it('should validate boolean operations', () => {
+        const config = { conditions: { combinator: 'and', conditions: [{ id: '1', operator: { type: 'boolean', operation: 'true' }, leftValue: '{{ $json.isActive }}' }] } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, [{ name: 'conditions', type: 'filter', required: true }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+
+      it('should validate dateTime operations', () => {
+        const config = { conditions: { combinator: 'and', conditions: [{ id: '1', operator: { type: 'dateTime', operation: 'after' }, leftValue: '{{ $json.createdAt }}', rightValue: '2024-01-01' }] } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, [{ name: 'conditions', type: 'filter', required: true }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+
+      it('should validate array operations', () => {
+        const config = { conditions: { combinator: 'and', conditions: [{ id: '1', operator: { type: 'array', operation: 'contains' }, leftValue: '{{ $json.tags }}', rightValue: 'urgent' }] } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, [{ name: 'conditions', type: 'filter', required: true }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    describe('ResourceMapper Type Validation', () => {
+      it('should validate valid resourceMapper configuration', () => {
+        const config = { mapping: { mappingMode: 'defineBelow', value: { name: '{{ $json.fullName }}', email: '{{ $json.emailAddress }}', status: 'active' } } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.httpRequest', config, [{ name: 'mapping', type: 'resourceMapper', required: true }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+
+      it('should validate autoMapInputData mode', () => {
+        const config = { mapping: { mappingMode: 'autoMapInputData', value: {} } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.httpRequest', config, [{ name: 'mapping', type: 'resourceMapper', required: true }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    describe('AssignmentCollection Type Validation', () => {
+      it('should validate valid assignmentCollection configuration', () => {
+        const config = { assignments: { assignments: [{ id: '1', name: 'userName', value: '{{ $json.name }}', type: 'string' }, { id: '2', name: 'userAge', value: 30, type: 'number' }] } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.set', config, [{ name: 'assignments', type: 'assignmentCollection', required: true }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+
+      it('should detect missing assignments array', () => {
+        const config = { assignments: {} };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.set', config, [{ name: 'assignments', type: 'assignmentCollection', required: true }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(false);
+      });
+    });
+
+    describe('ResourceLocator Type Validation', () => {
+      it.skip('should validate valid resourceLocator by ID', () => {
+        const config = { resource: { mode: 'id', value: 'abc123' } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.googleSheets', config, [{ name: 'resource', type: 'resourceLocator', required: true, displayName: 'Resource', default: { mode: 'list', value: '' } }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+
+      it.skip('should validate resourceLocator by URL', () => {
+        const config = { resource: { mode: 'url', value: 'https://example.com/resource/123' } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.googleSheets', config, [{ name: 'resource', type: 'resourceLocator', required: true, displayName: 'Resource', default: { mode: 'list', value: '' } }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+
+      it.skip('should validate resourceLocator by list', () => {
+        const config = { resource: { mode: 'list', value: 'item-from-dropdown' } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.googleSheets', config, [{ name: 'resource', type: 'resourceLocator', required: true, displayName: 'Resource', default: { mode: 'list', value: '' } }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    describe('Type Structure Edge Cases', () => {
+      it('should handle null values gracefully', () => {
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', { conditions: null }, [{ name: 'conditions', type: 'filter', required: false }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+
+      it('should handle undefined values gracefully', () => {
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', {}, [{ name: 'conditions', type: 'filter', required: false }], 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+
+      it('should handle multiple special types in same config', () => {
+        const config = {
+          conditions: { combinator: 'and', conditions: [{ id: '1', operator: { type: 'string', operation: 'equals' }, leftValue: 'test', rightValue: 'value' }] },
+          assignments: { assignments: [{ id: '1', name: 'result', value: 'processed', type: 'string' }] },
+        };
+        const properties = [{ name: 'conditions', type: 'filter', required: true }, { name: 'assignments', type: 'assignmentCollection', required: true }];
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.custom', config, properties, 'operation', 'ai-friendly');
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    describe('Validation Profiles for Type Structures', () => {
+      it('should respect strict profile for type validation', () => {
+        const config = { conditions: { combinator: 'and', conditions: [{ id: '1', operator: { type: 'string', operation: 'gt' }, leftValue: 'test', rightValue: 'value' }] } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, [{ name: 'conditions', type: 'filter', required: true }], 'operation', 'strict');
+        expect(result.valid).toBe(false);
+        expect(result.profile).toBe('strict');
+      });
+
+      it('should respect minimal profile (less strict)', () => {
+        const config = { conditions: { combinator: 'and', conditions: [] } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, [{ name: 'conditions', type: 'filter', required: true }], 'operation', 'minimal');
+        expect(result.profile).toBe('minimal');
+      });
+    });
+  });
+});
+
+// ─── Integration Tests (from enhanced-config-validator-integration) ─────────
+
+describe('EnhancedConfigValidator - Integration Tests', () => {
+  let mockResourceService: any;
+  let mockOperationService: any;
+  let mockRepository: any;
+
+  beforeEach(() => {
+    mockRepository = {
+      getNode: vi.fn(),
+      getNodeOperations: vi.fn().mockReturnValue([]),
+      getNodeResources: vi.fn().mockReturnValue([]),
+      getOperationsForResource: vi.fn().mockReturnValue([]),
+      getDefaultOperationForResource: vi.fn().mockReturnValue(undefined),
+      getNodePropertyDefaults: vi.fn().mockReturnValue({})
+    };
+
+    mockResourceService = { findSimilarResources: vi.fn().mockReturnValue([]) };
+    mockOperationService = { findSimilarOperations: vi.fn().mockReturnValue([]) };
+
+    vi.mocked(ResourceSimilarityService).mockImplementation(() => mockResourceService);
+    vi.mocked(OperationSimilarityService).mockImplementation(() => mockOperationService);
+
+    EnhancedConfigValidator.initializeSimilarityServices(mockRepository);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('similarity service integration', () => {
+    it('should initialize similarity services when initializeSimilarityServices is called', () => {
+      expect(ResourceSimilarityService).toHaveBeenCalled();
+      expect(OperationSimilarityService).toHaveBeenCalled();
+    });
+
+    it('should use resource similarity service for invalid resource errors', () => {
+      mockResourceService.findSimilarResources.mockReturnValue([{ value: 'message', confidence: 0.8, reason: 'Similar resource name', availableOperations: ['send', 'update'] }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'invalidResource', operation: 'send' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }, { value: 'channel', name: 'Channel' }] }, { name: 'operation', type: 'options', required: true, displayOptions: { show: { resource: ['message'] } }, options: [{ value: 'send', name: 'Send Message' }] }], 'operation', 'ai-friendly');
+      expect(mockResourceService.findSimilarResources).toHaveBeenCalledWith('nodes-base.slack', 'invalidResource', expect.any(Number));
+      expect(result.suggestions.length).toBeGreaterThan(0);
+    });
+
+    it('should use operation similarity service for invalid operation errors', () => {
+      mockOperationService.findSimilarOperations.mockReturnValue([{ value: 'send', confidence: 0.9, reason: 'Very similar - likely a typo', resource: 'message' }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'message', operation: 'invalidOperation' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }, { name: 'operation', type: 'options', required: true, displayOptions: { show: { resource: ['message'] } }, options: [{ value: 'send', name: 'Send Message' }, { value: 'update', name: 'Update Message' }] }], 'operation', 'ai-friendly');
+      expect(mockOperationService.findSimilarOperations).toHaveBeenCalledWith('nodes-base.slack', 'invalidOperation', 'message', expect.any(Number));
+      expect(result.suggestions.length).toBeGreaterThan(0);
+    });
+
+    it('should handle similarity service errors gracefully', () => {
+      mockResourceService.findSimilarResources.mockImplementation(() => { throw new Error('Service error'); });
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'invalidResource', operation: 'send' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }], 'operation', 'ai-friendly');
+      expect(result).toBeDefined();
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBeGreaterThan(0);
+    });
+
+    it('should not call similarity services for valid configurations', () => {
+      mockRepository.getNodeResources.mockReturnValue([{ value: 'message', name: 'Message' }, { value: 'channel', name: 'Channel' }]);
+      mockRepository.getNodeOperations.mockReturnValue([{ value: 'send', name: 'Send Message' }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'message', operation: 'send', channel: '#general', text: 'Test message' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }, { name: 'operation', type: 'options', required: true, displayOptions: { show: { resource: ['message'] } }, options: [{ value: 'send', name: 'Send Message' }] }], 'operation', 'ai-friendly');
+      expect(mockResourceService.findSimilarResources).not.toHaveBeenCalled();
+      expect(mockOperationService.findSimilarOperations).not.toHaveBeenCalled();
+      expect(result.valid).toBe(true);
+    });
+
+    it('should limit suggestion count when calling similarity services', () => {
+      EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'invalidResource' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }], 'operation', 'ai-friendly');
+      expect(mockResourceService.findSimilarResources).toHaveBeenCalledWith('nodes-base.slack', 'invalidResource', 3);
+    });
+  });
+
+  describe('error enhancement with suggestions', () => {
+    it('should enhance resource validation errors with suggestions', () => {
+      mockResourceService.findSimilarResources.mockReturnValue([{ value: 'message', confidence: 0.85, reason: 'Very similar - likely a typo', availableOperations: ['send', 'update', 'delete'] }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'msgs' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }, { value: 'channel', name: 'Channel' }] }], 'operation', 'ai-friendly');
+      const resourceError = result.errors.find(e => e.property === 'resource');
+      expect(resourceError).toBeDefined();
+      expect(resourceError!.suggestion).toBeDefined();
+      expect(resourceError!.suggestion).toContain('message');
+    });
+
+    it('should enhance operation validation errors with suggestions', () => {
+      mockOperationService.findSimilarOperations.mockReturnValue([{ value: 'send', confidence: 0.9, reason: 'Almost exact match - likely a typo', resource: 'message', description: 'Send Message' }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'message', operation: 'sned' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }, { name: 'operation', type: 'options', required: true, displayOptions: { show: { resource: ['message'] } }, options: [{ value: 'send', name: 'Send Message' }, { value: 'update', name: 'Update Message' }] }], 'operation', 'ai-friendly');
+      const operationError = result.errors.find(e => e.property === 'operation');
+      expect(operationError).toBeDefined();
+      expect(operationError!.suggestion).toBeDefined();
+      expect(operationError!.suggestion).toContain('send');
+    });
+
+    it('should not enhance errors when no good suggestions are available', () => {
+      mockResourceService.findSimilarResources.mockReturnValue([{ value: 'message', confidence: 0.2, reason: 'Possibly related resource' }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'completelyWrongValue' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }], 'operation', 'ai-friendly');
+      const resourceError = result.errors.find(e => e.property === 'resource');
+      expect(resourceError).toBeDefined();
+      expect(resourceError!.suggestion).toBeUndefined();
+    });
+
+    it('should provide multiple operation suggestions when resource is known', () => {
+      mockOperationService.findSimilarOperations.mockReturnValue([{ value: 'send', confidence: 0.7, reason: 'Similar operation' }, { value: 'update', confidence: 0.6, reason: 'Similar operation' }, { value: 'delete', confidence: 0.5, reason: 'Similar operation' }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'message', operation: 'invalidOp' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }, { name: 'operation', type: 'options', required: true, displayOptions: { show: { resource: ['message'] } }, options: [{ value: 'send', name: 'Send Message' }, { value: 'update', name: 'Update Message' }, { value: 'delete', name: 'Delete Message' }] }], 'operation', 'ai-friendly');
+      expect(result.suggestions.length).toBeGreaterThan(2);
+      expect(result.suggestions.filter(s => s.includes('send') || s.includes('update') || s.includes('delete')).length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('confidence thresholds and filtering', () => {
+    it('should only use high confidence resource suggestions', () => {
+      mockResourceService.findSimilarResources.mockReturnValue([{ value: 'message1', confidence: 0.9, reason: 'High confidence' }, { value: 'message2', confidence: 0.4, reason: 'Low confidence' }, { value: 'message3', confidence: 0.7, reason: 'Medium confidence' }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'invalidResource' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }], 'operation', 'ai-friendly');
+      const resourceError = result.errors.find(e => e.property === 'resource');
+      expect(resourceError?.suggestion).toBeDefined();
+      expect(resourceError!.suggestion).toContain('message1');
+    });
+
+    it('should only use high confidence operation suggestions', () => {
+      mockOperationService.findSimilarOperations.mockReturnValue([{ value: 'send', confidence: 0.95, reason: 'Very high confidence' }, { value: 'post', confidence: 0.3, reason: 'Low confidence' }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'message', operation: 'invalidOperation' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }, { name: 'operation', type: 'options', required: true, displayOptions: { show: { resource: ['message'] } }, options: [{ value: 'send', name: 'Send Message' }] }], 'operation', 'ai-friendly');
+      const operationError = result.errors.find(e => e.property === 'operation');
+      expect(operationError?.suggestion).toBeDefined();
+      expect(operationError!.suggestion).toContain('send');
+      expect(operationError!.suggestion).not.toContain('post');
+    });
+  });
+
+  describe('integration with existing validation logic', () => {
+    it('should work with minimal validation mode', () => {
+      mockRepository.getNodeResources.mockReturnValue([]);
+      mockResourceService.findSimilarResources.mockReturnValue([{ value: 'message', confidence: 0.8, reason: 'Similar' }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'invalidResource' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }], 'minimal', 'ai-friendly');
+      expect(mockResourceService.findSimilarResources).toHaveBeenCalled();
+      expect(result.errors.length).toBeGreaterThan(0);
+    });
+
+    it('should work with strict validation profile', () => {
+      mockRepository.getNodeResources.mockReturnValue([{ value: 'message', name: 'Message' }]);
+      mockRepository.getOperationsForResource.mockReturnValue([]);
+      mockOperationService.findSimilarOperations.mockReturnValue([{ value: 'send', confidence: 0.8, reason: 'Similar' }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'message', operation: 'invalidOp' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }, { name: 'operation', type: 'options', required: true, displayOptions: { show: { resource: ['message'] } }, options: [{ value: 'send', name: 'Send Message' }] }], 'operation', 'strict');
+      expect(mockOperationService.findSimilarOperations).toHaveBeenCalled();
+      const operationError = result.errors.find(e => e.property === 'operation');
+      expect(operationError?.suggestion).toBeDefined();
+    });
+
+    it('should preserve original error properties when enhancing', () => {
+      mockResourceService.findSimilarResources.mockReturnValue([{ value: 'message', confidence: 0.8, reason: 'Similar' }]);
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'invalidResource' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }], 'operation', 'ai-friendly');
+      const resourceError = result.errors.find(e => e.property === 'resource');
+      expect(resourceError?.type).toBeDefined();
+      expect(resourceError?.property).toBe('resource');
+      expect(resourceError?.message).toBeDefined();
+      expect(resourceError?.suggestion).toBeDefined();
+    });
+  });
+});
+
+// ─── Operation and Resource Validation (from enhanced-config-validator-operations) ───
+
+describe('EnhancedConfigValidator - Operation and Resource Validation', () => {
+  let repository: NodeRepository;
+  let testDb: any;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase();
+    repository = testDb.nodeRepository;
+
+    // Configure mocked similarity services to return empty arrays by default
+    vi.mocked(ResourceSimilarityService).mockImplementation(() => ({
+      findSimilarResources: vi.fn().mockReturnValue([])
+    }) as any);
+    vi.mocked(OperationSimilarityService).mockImplementation(() => ({
+      findSimilarOperations: vi.fn().mockReturnValue([])
+    }) as any);
+
+    EnhancedConfigValidator.initializeSimilarityServices(repository);
+
+    repository.saveNode({
+      nodeType: 'nodes-base.googleDrive', packageName: 'n8n-nodes-base', displayName: 'Google Drive', description: 'Access Google Drive', category: 'transform', style: 'declarative' as const, isAITool: false, isTrigger: false, isWebhook: false, isVersioned: true, version: '1',
+      properties: [
+        { name: 'resource', type: 'options', required: true, options: [{ value: 'file', name: 'File' }, { value: 'folder', name: 'Folder' }, { value: 'fileFolder', name: 'File & Folder' }] },
+        { name: 'operation', type: 'options', required: true, displayOptions: { show: { resource: ['file'] } }, options: [{ value: 'copy', name: 'Copy' }, { value: 'delete', name: 'Delete' }, { value: 'download', name: 'Download' }, { value: 'list', name: 'List' }, { value: 'share', name: 'Share' }, { value: 'update', name: 'Update' }, { value: 'upload', name: 'Upload' }] },
+        { name: 'operation', type: 'options', required: true, displayOptions: { show: { resource: ['folder'] } }, options: [{ value: 'create', name: 'Create' }, { value: 'delete', name: 'Delete' }, { value: 'share', name: 'Share' }] },
+        { name: 'operation', type: 'options', required: true, displayOptions: { show: { resource: ['fileFolder'] } }, options: [{ value: 'search', name: 'Search' }] }
+      ],
+      operations: [], credentials: []
+    });
+
+    repository.saveNode({
+      nodeType: 'nodes-base.slack', packageName: 'n8n-nodes-base', displayName: 'Slack', description: 'Send messages to Slack', category: 'communication', style: 'declarative' as const, isAITool: false, isTrigger: false, isWebhook: false, isVersioned: true, version: '2',
+      properties: [
+        { name: 'resource', type: 'options', required: true, options: [{ value: 'channel', name: 'Channel' }, { value: 'message', name: 'Message' }, { value: 'user', name: 'User' }] },
+        { name: 'operation', type: 'options', required: true, displayOptions: { show: { resource: ['message'] } }, options: [{ value: 'send', name: 'Send' }, { value: 'update', name: 'Update' }, { value: 'delete', name: 'Delete' }] }
+      ],
+      operations: [], credentials: []
+    });
+  });
+
+  afterEach(async () => {
+    if (testDb) { await testDb.cleanup(); }
+  });
+
+  describe('Invalid Operations', () => {
+    it('should detect invalid operation for Google Drive fileFolder resource', () => {
+      const node = repository.getNode('nodes-base.googleDrive');
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.googleDrive', { resource: 'fileFolder', operation: 'listFiles' }, node.properties, 'operation', 'ai-friendly');
+      expect(result.valid).toBe(false);
+      const operationError = result.errors.find(e => e.property === 'operation');
+      expect(operationError).toBeDefined();
+      expect(operationError!.message).toContain('listFiles');
+    });
+
+    it('should detect typos in operations', () => {
+      const node = repository.getNode('nodes-base.googleDrive');
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.googleDrive', { resource: 'file', operation: 'downlod' }, node.properties, 'operation', 'ai-friendly');
+      expect(result.valid).toBe(false);
+      const operationError = result.errors.find(e => e.property === 'operation');
+      expect(operationError).toBeDefined();
+    });
+
+    it('should list valid operations for the resource', () => {
+      const node = repository.getNode('nodes-base.googleDrive');
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.googleDrive', { resource: 'folder', operation: 'upload' }, node.properties, 'operation', 'ai-friendly');
+      expect(result.valid).toBe(false);
+      const operationError = result.errors.find(e => e.property === 'operation');
+      expect(operationError).toBeDefined();
+      expect(operationError!.fix).toContain('Valid operations for resource "folder"');
+      expect(operationError!.fix).toContain('create');
+      expect(operationError!.fix).toContain('delete');
+      expect(operationError!.fix).toContain('share');
+    });
+  });
+
+  describe('Invalid Resources', () => {
+    it('should detect invalid plural resource "files"', () => {
+      const node = repository.getNode('nodes-base.googleDrive');
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.googleDrive', { resource: 'files', operation: 'list' }, node.properties, 'operation', 'ai-friendly');
+      expect(result.valid).toBe(false);
+      const resourceError = result.errors.find(e => e.property === 'resource');
+      expect(resourceError).toBeDefined();
+      expect(resourceError!.message).toContain('files');
+    });
+
+    it('should detect typos in resources', () => {
+      const node = repository.getNode('nodes-base.googleDrive');
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.googleDrive', { resource: 'flie', operation: 'download' }, node.properties, 'operation', 'ai-friendly');
+      expect(result.valid).toBe(false);
+      const resourceError = result.errors.find(e => e.property === 'resource');
+      expect(resourceError).toBeDefined();
+    });
+
+    it('should list valid resources when no match found', () => {
+      const node = repository.getNode('nodes-base.googleDrive');
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.googleDrive', { resource: 'document', operation: 'create' }, node.properties, 'operation', 'ai-friendly');
+      expect(result.valid).toBe(false);
+      const resourceError = result.errors.find(e => e.property === 'resource');
+      expect(resourceError).toBeDefined();
+      expect(resourceError!.fix).toContain('Valid resources:');
+      expect(resourceError!.fix).toContain('file');
+      expect(resourceError!.fix).toContain('folder');
+    });
+  });
+
+  describe('Combined Resource and Operation Validation', () => {
+    it('should validate both resource and operation together', () => {
+      const node = repository.getNode('nodes-base.googleDrive');
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.googleDrive', { resource: 'files', operation: 'listFiles' }, node.properties, 'operation', 'ai-friendly');
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBeGreaterThanOrEqual(2);
+      expect(result.errors.find(e => e.property === 'resource')).toBeDefined();
+      expect(result.errors.find(e => e.property === 'operation')).toBeDefined();
+    });
+  });
+
+  describe('Slack Node Validation', () => {
+    it('should detect invalid operation "sendMessage" for Slack', () => {
+      const node = repository.getNode('nodes-base.slack');
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'message', operation: 'sendMessage' }, node.properties, 'operation', 'ai-friendly');
+      expect(result.valid).toBe(false);
+      const operationError = result.errors.find(e => e.property === 'operation');
+      expect(operationError).toBeDefined();
+    });
+
+    it('should detect invalid plural resource "channels" for Slack', () => {
+      const node = repository.getNode('nodes-base.slack');
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'channels', operation: 'create' }, node.properties, 'operation', 'ai-friendly');
+      expect(result.valid).toBe(false);
+      const resourceError = result.errors.find(e => e.property === 'resource');
+      expect(resourceError).toBeDefined();
+    });
+  });
+
+  describe('Valid Configurations', () => {
+    it('should accept valid Google Drive configuration', () => {
+      const node = repository.getNode('nodes-base.googleDrive');
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.googleDrive', { resource: 'file', operation: 'download' }, node.properties, 'operation', 'ai-friendly');
+      expect(result.errors.find(e => e.property === 'resource')).toBeUndefined();
+      expect(result.errors.find(e => e.property === 'operation')).toBeUndefined();
+    });
+
+    it('should accept valid Slack configuration', () => {
+      const node = repository.getNode('nodes-base.slack');
+      const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'message', operation: 'send' }, node.properties, 'operation', 'ai-friendly');
+      expect(result.errors.find(e => e.property === 'resource')).toBeUndefined();
+      expect(result.errors.find(e => e.property === 'operation')).toBeUndefined();
     });
   });
 });
