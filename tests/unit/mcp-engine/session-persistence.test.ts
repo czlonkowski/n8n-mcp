@@ -177,8 +177,8 @@ describe('N8NMCPEngine - Session Persistence', () => {
       const serverAny = server as any;
 
       const now = new Date();
-      const createdAt = new Date(now.getTime() - 10 * 60 * 1000); // 10 minutes ago
-      const lastAccess = new Date(now.getTime() - 5 * 60 * 1000);  // 5 minutes ago
+      const createdAt = new Date(now.getTime() - 60 * 1000); // 1 minute ago
+      const lastAccess = new Date(now.getTime() - 30 * 1000);  // 30 seconds ago
 
       serverAny.sessionMetadata['engine-session'] = {
         createdAt,
