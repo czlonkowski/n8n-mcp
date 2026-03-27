@@ -27,10 +27,10 @@ describe('SingleSessionHTTPServer - Session Persistence', () => {
 
       // Use current timestamps to avoid expiration
       const now = new Date();
-      const createdAt1 = new Date(now.getTime() - 10 * 60 * 1000); // 10 minutes ago
-      const lastAccess1 = new Date(now.getTime() - 5 * 60 * 1000);  // 5 minutes ago
-      const createdAt2 = new Date(now.getTime() - 15 * 60 * 1000); // 15 minutes ago
-      const lastAccess2 = new Date(now.getTime() - 3 * 60 * 1000);  // 3 minutes ago
+      const createdAt1 = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes ago
+      const lastAccess1 = new Date(now.getTime() - 30 * 1000);  // 30 seconds ago
+      const createdAt2 = new Date(now.getTime() - 3 * 60 * 1000); // 3 minutes ago
+      const lastAccess2 = new Date(now.getTime() - 20 * 1000);  // 20 seconds ago
 
       // Access private properties for testing
       const serverAny = server as any;
@@ -101,8 +101,8 @@ describe('SingleSessionHTTPServer - Session Persistence', () => {
 
       // Create an active session (accessed recently)
       serverAny.sessionMetadata['active-session'] = {
-        createdAt: new Date(now - 10 * 60 * 1000), // 10 minutes ago
-        lastAccess: new Date(now - 5 * 60 * 1000)  // 5 minutes ago
+        createdAt: new Date(now - 2 * 60 * 1000), // 2 minutes ago
+        lastAccess: new Date(now - 30 * 1000)  // 30 seconds ago
       };
       serverAny.sessionContexts['active-session'] = {
         n8nApiUrl: 'https://active.example.com',
@@ -257,8 +257,8 @@ describe('SingleSessionHTTPServer - Session Persistence', () => {
         {
           sessionId: 'active-session',
           metadata: {
-            createdAt: new Date(now - 10 * 60 * 1000).toISOString(),
-            lastAccess: new Date(now - 5 * 60 * 1000).toISOString()
+            createdAt: new Date(now - 2 * 60 * 1000).toISOString(),
+            lastAccess: new Date(now - 30 * 1000).toISOString()
           },
           context: {
             n8nApiUrl: 'https://active.example.com',
@@ -465,8 +465,8 @@ describe('SingleSessionHTTPServer - Session Persistence', () => {
     it('should parse ISO 8601 timestamps correctly', () => {
       // Use current timestamps to avoid expiration
       const now = new Date();
-      const createdAtDate = new Date(now.getTime() - 10 * 60 * 1000); // 10 minutes ago
-      const lastAccessDate = new Date(now.getTime() - 5 * 60 * 1000);  // 5 minutes ago
+      const createdAtDate = new Date(now.getTime() - 2 * 60 * 1000); // 2 minutes ago
+      const lastAccessDate = new Date(now.getTime() - 30 * 1000);  // 30 seconds ago
       const createdAt = createdAtDate.toISOString();
       const lastAccess = lastAccessDate.toISOString();
 
@@ -500,8 +500,8 @@ describe('SingleSessionHTTPServer - Session Persistence', () => {
       // Create sessions with current timestamps
       const serverAny = server as any;
       const now = new Date();
-      const createdAt = new Date(now.getTime() - 10 * 60 * 1000); // 10 minutes ago
-      const lastAccess = new Date(now.getTime() - 5 * 60 * 1000);  // 5 minutes ago
+      const createdAt = new Date(now.getTime() - 60 * 1000); // 1 minute ago
+      const lastAccess = new Date(now.getTime() - 30 * 1000);  // 30 seconds ago
 
       serverAny.sessionMetadata['session-1'] = {
         createdAt,

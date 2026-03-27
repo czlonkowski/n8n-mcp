@@ -128,8 +128,8 @@ describe('N8NMCPEngine - Session Persistence', () => {
         {
           sessionId: 'valid-1',
           metadata: {
-            createdAt: new Date(now - 10 * 60 * 1000).toISOString(),
-            lastAccess: new Date(now - 5 * 60 * 1000).toISOString()
+            createdAt: new Date(now - 2 * 60 * 1000).toISOString(),
+            lastAccess: new Date(now - 30 * 1000).toISOString()
           },
           context: {
             n8nApiUrl: 'https://valid1.example.com',
@@ -140,8 +140,8 @@ describe('N8NMCPEngine - Session Persistence', () => {
         {
           sessionId: 'valid-2',
           metadata: {
-            createdAt: new Date(now - 10 * 60 * 1000).toISOString(),
-            lastAccess: new Date(now - 5 * 60 * 1000).toISOString()
+            createdAt: new Date(now - 2 * 60 * 1000).toISOString(),
+            lastAccess: new Date(now - 30 * 1000).toISOString()
           },
           context: {
             n8nApiUrl: 'https://valid2.example.com',
