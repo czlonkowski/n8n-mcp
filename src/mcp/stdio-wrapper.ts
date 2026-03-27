@@ -39,6 +39,25 @@ console.clear = () => {};
 console.count = () => {};
 console.countReset = () => {};
 
+// CRITICAL: Intercept process.stdout.write to prevent non-JSON-RPC output (#628, #627, #567)
+// Console suppression alone is insufficient — native modules (better-sqlite3), n8n packages,
+// and third-party code can call process.stdout.write() directly, corrupting the JSON-RPC stream.
+// Only allow writes that look like JSON-RPC messages; redirect everything else to stderr.
+const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+const stderrWrite = process.stderr.write.bind(process.stderr);
+
+process.stdout.write = function (chunk: any, encodingOrCallback?: any, callback?: any): boolean {
+  const str = typeof chunk === 'string' ? chunk : chunk.toString();
+  // JSON-RPC messages are JSON objects with "jsonrpc" field — let those through
+  // The MCP SDK sends one JSON object per write call
+  const trimmed = str.trimStart();
+  if (trimmed.startsWith('{') && trimmed.includes('"jsonrpc"')) {
+    return originalStdoutWrite(chunk, encodingOrCallback, callback);
+  }
+  // Redirect everything else to stderr so it doesn't corrupt the protocol
+  return stderrWrite(chunk, encodingOrCallback, callback);
+} as typeof process.stdout.write;
+
 // Import and run the server AFTER suppressing output
 import { N8NDocumentationMCPServer } from './server';
 

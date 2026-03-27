@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.41.2] - 2026-03-27
+
+### Fixed
+
+- **MCP initialization floods Claude Desktop with JSON parse errors** (Issues #628, #627, #567): Intercept `process.stdout.write` in stdio mode to redirect non-JSON-RPC output to stderr. Console method suppression alone was insufficient — native modules (better-sqlite3), n8n packages, and third-party code can call `process.stdout.write()` directly, corrupting the JSON-RPC stream. Only writes containing valid JSON-RPC messages (`{"jsonrpc":...}`) are now allowed through stdout; everything else is redirected to stderr. This fixes the flood of "Unexpected token is not valid JSON" warnings on every new chat in Claude Desktop, including leaked `refCount`, `dbPath`, `clientVersion`, `protocolVersion`, and other debug strings.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.41.1] - 2026-03-27
 
 ### Fixed
