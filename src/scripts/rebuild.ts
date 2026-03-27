@@ -124,7 +124,15 @@ async function rebuild() {
   }
   
   console.log(`💾 Save completed: ${saved} nodes saved successfully`);
-  
+
+  // Rebuild FTS5 index to guarantee consistency.
+  // The content-synced FTS5 table (content=nodes) can accumulate stale rowid
+  // references when rows are deleted and re-inserted during a rebuild cycle.
+  // An explicit rebuild re-indexes all current rows from the nodes table.
+  console.log('\n🔍 Rebuilding FTS5 search index...');
+  db.prepare("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')").run();
+  console.log('✅ FTS5 index rebuilt successfully');
+
   // Validation check
   console.log('\n🔍 Running validation checks...');
   try {

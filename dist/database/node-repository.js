@@ -12,8 +12,9 @@ class NodeRepository {
         this.db = dbOrService;
     }
     saveNode(node) {
+        const existing = this.db.prepare('SELECT npm_readme, ai_documentation_summary, ai_summary_generated_at FROM nodes WHERE node_type = ?').get(node.nodeType);
         const stmt = this.db.prepare(`
-      INSERT INTO nodes (
+      INSERT OR REPLACE INTO nodes (
         node_type, package_name, display_name, description,
         category, development_style, is_ai_tool, is_trigger,
         is_webhook, is_versioned, is_tool_variant, tool_variant_of,
@@ -21,39 +22,11 @@ class NodeRepository {
         properties_schema, operations, credentials_required,
         outputs, output_names,
         is_community, is_verified, author_name, author_github_url,
-        npm_package_name, npm_version, npm_downloads, community_fetched_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(node_type) DO UPDATE SET
-        package_name = excluded.package_name,
-        display_name = excluded.display_name,
-        description = excluded.description,
-        category = excluded.category,
-        development_style = excluded.development_style,
-        is_ai_tool = excluded.is_ai_tool,
-        is_trigger = excluded.is_trigger,
-        is_webhook = excluded.is_webhook,
-        is_versioned = excluded.is_versioned,
-        is_tool_variant = excluded.is_tool_variant,
-        tool_variant_of = excluded.tool_variant_of,
-        has_tool_variant = excluded.has_tool_variant,
-        version = excluded.version,
-        documentation = excluded.documentation,
-        properties_schema = excluded.properties_schema,
-        operations = excluded.operations,
-        credentials_required = excluded.credentials_required,
-        outputs = excluded.outputs,
-        output_names = excluded.output_names,
-        is_community = excluded.is_community,
-        is_verified = excluded.is_verified,
-        author_name = excluded.author_name,
-        author_github_url = excluded.author_github_url,
-        npm_package_name = excluded.npm_package_name,
-        npm_version = excluded.npm_version,
-        npm_downloads = excluded.npm_downloads,
-        community_fetched_at = excluded.community_fetched_at,
-        updated_at = CURRENT_TIMESTAMP
+        npm_package_name, npm_version, npm_downloads, community_fetched_at,
+        npm_readme, ai_documentation_summary, ai_summary_generated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-        stmt.run(node.nodeType, node.packageName, node.displayName, node.description, node.category, node.style, node.isAITool ? 1 : 0, node.isTrigger ? 1 : 0, node.isWebhook ? 1 : 0, node.isVersioned ? 1 : 0, node.isToolVariant ? 1 : 0, node.toolVariantOf || null, node.hasToolVariant ? 1 : 0, node.version, node.documentation || null, JSON.stringify(node.properties, null, 2), JSON.stringify(node.operations, null, 2), JSON.stringify(node.credentials, null, 2), node.outputs ? JSON.stringify(node.outputs, null, 2) : null, node.outputNames ? JSON.stringify(node.outputNames, null, 2) : null, node.isCommunity ? 1 : 0, node.isVerified ? 1 : 0, node.authorName || null, node.authorGithubUrl || null, node.npmPackageName || null, node.npmVersion || null, node.npmDownloads || 0, node.communityFetchedAt || null);
+        stmt.run(node.nodeType, node.packageName, node.displayName, node.description, node.category, node.style, node.isAITool ? 1 : 0, node.isTrigger ? 1 : 0, node.isWebhook ? 1 : 0, node.isVersioned ? 1 : 0, node.isToolVariant ? 1 : 0, node.toolVariantOf || null, node.hasToolVariant ? 1 : 0, node.version, node.documentation || null, JSON.stringify(node.properties, null, 2), JSON.stringify(node.operations, null, 2), JSON.stringify(node.credentials, null, 2), node.outputs ? JSON.stringify(node.outputs, null, 2) : null, node.outputNames ? JSON.stringify(node.outputNames, null, 2) : null, node.isCommunity ? 1 : 0, node.isVerified ? 1 : 0, node.authorName || null, node.authorGithubUrl || null, node.npmPackageName || null, node.npmVersion || null, node.npmDownloads || 0, node.communityFetchedAt || null, existing?.npm_readme || null, existing?.ai_documentation_summary || null, existing?.ai_summary_generated_at || null);
     }
     getNode(nodeType) {
         const normalizedType = node_type_normalizer_1.NodeTypeNormalizer.normalizeToFullForm(nodeType);

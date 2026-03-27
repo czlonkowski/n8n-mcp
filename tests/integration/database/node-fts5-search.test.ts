@@ -17,6 +17,12 @@ describe('Node FTS5 Search Integration Tests', () => {
     const testDbPath = './data/nodes.db';
     db = await createDatabaseAdapter(testDbPath);
     repository = new NodeRepository(db);
+
+    // Rebuild FTS5 index to ensure it is in sync with the nodes table.
+    // The content-synced FTS5 index (content=nodes) can become stale if the
+    // database was rebuilt without an explicit FTS5 rebuild command, leaving
+    // phantom rowid references that cause "missing row" errors on MATCH queries.
+    db.prepare("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')").run();
   });
 
   afterAll(() => {

@@ -130,6 +130,9 @@ async function rebuild() {
         }
     }
     console.log(`💾 Save completed: ${saved} nodes saved successfully`);
+    console.log('\n🔍 Rebuilding FTS5 search index...');
+    db.prepare("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')").run();
+    console.log('✅ FTS5 index rebuilt successfully');
     console.log('\n🔍 Running validation checks...');
     try {
         const validationResults = validateDatabase(repository);

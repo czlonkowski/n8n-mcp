@@ -43,7 +43,14 @@ describe.skipIf(!dbExists)('Database Content Validation', () => {
     // Ignore NODE_DB_PATH env var which might be set to :memory: by vitest
     db = await createDatabaseAdapter(dbPath);
     repository = new NodeRepository(db);
-    console.log('✅ Database found - running validation tests');
+
+    // Rebuild FTS5 index to ensure it is in sync with the nodes table.
+    // The content-synced FTS5 index (content=nodes) can become stale if the
+    // database was rebuilt without an explicit FTS5 rebuild command, leaving
+    // phantom rowid references that cause "missing row" errors on MATCH queries.
+    db.prepare("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')").run();
+
+    console.log('Database found - running validation tests');
   });
 
   describe('[CRITICAL] Database Must Have Data', () => {
