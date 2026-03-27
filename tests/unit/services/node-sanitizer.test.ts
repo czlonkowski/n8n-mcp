@@ -102,9 +102,9 @@ describe('Node Sanitizer', () => {
       const sanitized = sanitizeNode(node);
       const condition = (sanitized.parameters.conditions as any).conditions[0];
 
-      // Should fix operator structure
-      expect(condition.operator.type).toBe('boolean'); // Inferred data type (isEmpty/isNotEmpty are boolean ops)
-      expect(condition.operator.operation).toBe('isNotEmpty'); // Moved to operation field
+      // Should fix operator structure and auto-correct isNotEmpty to notEmpty
+      expect(condition.operator.type).toBe('string'); // Inferred data type (default)
+      expect(condition.operator.operation).toBe('notEmpty'); // Moved to operation field and auto-corrected
     });
 
     it('should add singleValue for unary operators', () => {
@@ -253,6 +253,39 @@ describe('Node Sanitizer', () => {
       expect(condition.operator.type).toBe('string');
       expect(condition.operator.operation).toBe('equals');
     });
+
+    it('should auto-correct isNotEmpty to notEmpty', () => {
+      const node: WorkflowNode = {
+        id: 'test-if-autocorrect',
+        name: 'IF AutoCorrect',
+        type: 'n8n-nodes-base.if',
+        typeVersion: 2.2,
+        position: [0, 0],
+        parameters: {
+          conditions: {
+            conditions: [
+              {
+                id: 'condition1',
+                leftValue: '={{ $json.value }}',
+                rightValue: '',
+                operator: {
+                  type: 'string',
+                  operation: 'isNotEmpty' // Legacy operator name
+                }
+              }
+            ]
+          }
+        }
+      };
+
+      const sanitized = sanitizeNode(node);
+      const condition = (sanitized.parameters.conditions as any).conditions[0];
+
+      // Should auto-correct isNotEmpty to notEmpty
+      expect(condition.operator.operation).toBe('notEmpty');
+      expect(condition.operator.type).toBe('string');
+      expect(condition.operator.singleValue).toBe(true); // notEmpty is unary
+    });
   });
 
   describe('validateNodeMetadata', () => {
@@ -370,7 +403,7 @@ describe('Node Sanitizer', () => {
                 rightValue: '',
                 operator: {
                   type: 'string',
-                  operation: 'isNotEmpty'
+                  operation: 'notEmpty'
                   // Missing singleValue: true
                 }
               }
@@ -444,7 +477,7 @@ describe('Node Sanitizer', () => {
                 rightValue: '',
                 operator: {
                   type: 'string',
-                  operation: 'isNotEmpty',
+                  operation: 'notEmpty',
                   singleValue: true
                 }
               }

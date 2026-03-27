@@ -259,9 +259,9 @@ export async function handleUpdatePartialWorkflow(
         // Build recovery guidance based on error types
         const recoverySteps = [];
         if (errorTypes.has('operator_issues')) {
-          recoverySteps.push('Operator structure issue detected. Use validate_node_operation to check specific nodes.');
+          recoverySteps.push('Operator structure issue detected. Use validate_node to check specific nodes.');
           recoverySteps.push('Binary operators (equals, contains, greaterThan, etc.) must NOT have singleValue:true');
-          recoverySteps.push('Unary operators (isEmpty, isNotEmpty, true, false) REQUIRE singleValue:true');
+          recoverySteps.push('Unary operators (empty, notEmpty, true, false) REQUIRE singleValue:true');
         }
         if (errorTypes.has('connection_issues')) {
           recoverySteps.push('Connection validation failed. Check all node connections reference existing nodes.');

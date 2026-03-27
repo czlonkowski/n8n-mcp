@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.41.1] - 2026-03-27
+
+### Fixed
+
+- **If node operators silently fail at runtime** (Issue #665): Replaced incorrect operator names `isNotEmpty`/`isEmpty` with `notEmpty`/`empty` across all validators, sanitizer, documentation, and error messages. n8n's execution engine does not recognize `isNotEmpty`/`isEmpty` — unknown operators silently return `false`, causing If/Switch conditions to always take the wrong branch. Added auto-correction in the sanitizer so existing workflows using legacy names are fixed on update.
+
+- **`addConnection` creates broken connections with `type: "0"`** (Issue #659): Fixed two edge cases where numeric `targetInput` or `sourceOutput` values leaked into connection objects as `"type": "0"` instead of `"type": "main"`. Numeric `targetInput` values are now remapped to `"main"`, and the `sourceOutput` remapping guard was relaxed to handle redundant `sourceOutput: 0` + `sourceIndex: 0` combinations. Also resolves Issue #653 (dangling connections after `removeNode`) which was caused by malformed connections from this bug.
+
+- **`__patch_find_replace` corrupts Code node jsCode** (Issue #642): Implemented the `__patch_find_replace` feature for surgical string edits in `updateNode` operations. Previously, passing `{"parameters.jsCode": {"__patch_find_replace": [...]}}` stored the patch object literally as jsCode, producing `[object Object]` at runtime. The feature now reads the current string value, applies each `{find, replace}` entry sequentially, and writes back the modified string. Includes validation for patch format, target property existence, and string type.
+
+### Improved
+
+- Extracted `OPERATOR_CORRECTIONS` and `UNARY_OPERATORS` to module-level constants for better performance and single source of truth
+- Added `exists`/`notExists` to unary operator lists for consistency across sanitizer and validator
+- Fixed recovery guidance referencing non-existent `validate_node_operation` tool (now `validate_node`)
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.41.0] - 2026-03-25
 
 ### Changed

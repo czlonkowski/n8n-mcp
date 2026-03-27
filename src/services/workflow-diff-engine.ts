@@ -470,6 +470,31 @@ export class WorkflowDiffEngine {
       }
     }
 
+    // Validate __patch_find_replace syntax (#642)
+    for (const [path, value] of Object.entries(operation.updates)) {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)
+          && '__patch_find_replace' in value) {
+        const patches = value.__patch_find_replace;
+        if (!Array.isArray(patches)) {
+          return `Invalid __patch_find_replace at "${path}": must be an array of {find, replace} objects`;
+        }
+        for (let i = 0; i < patches.length; i++) {
+          const patch = patches[i];
+          if (!patch || typeof patch.find !== 'string' || typeof patch.replace !== 'string') {
+            return `Invalid __patch_find_replace entry at "${path}[${i}]": each entry must have "find" (string) and "replace" (string)`;
+          }
+        }
+        // node was already found above — reuse it
+        const currentValue = this.getNestedProperty(node, path);
+        if (currentValue === undefined) {
+          return `Cannot apply __patch_find_replace to "${path}": property does not exist on node`;
+        }
+        if (typeof currentValue !== 'string') {
+          return `Cannot apply __patch_find_replace to "${path}": current value is ${typeof currentValue}, expected string`;
+        }
+      }
+    }
+
     return null;
   }
 
@@ -721,7 +746,26 @@ export class WorkflowDiffEngine {
 
     // Apply updates using dot notation
     Object.entries(operation.updates).forEach(([path, value]) => {
-      this.setNestedProperty(node, path, value);
+      // Handle __patch_find_replace for surgical string edits (#642)
+      // Format and type validation already passed in validateUpdateNode()
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)
+          && '__patch_find_replace' in value) {
+        const patches = value.__patch_find_replace as Array<{ find: string; replace: string }>;
+        let current = this.getNestedProperty(node, path) as string;
+        for (const patch of patches) {
+          if (!current.includes(patch.find)) {
+            this.warnings.push({
+              operation: -1,
+              message: `__patch_find_replace: "${patch.find.substring(0, 50)}" not found in "${path}". Skipped.`
+            });
+            continue;
+          }
+          current = current.replace(patch.find, patch.replace);
+        }
+        this.setNestedProperty(node, path, current);
+      } else {
+        this.setNestedProperty(node, path, value);
+      }
     });
 
     // Sanitize node after updates to ensure metadata is complete
@@ -766,11 +810,13 @@ export class WorkflowDiffEngine {
     let sourceOutput = String(operation.sourceOutput ?? 'main');
     let sourceIndex = operation.sourceIndex ?? 0;
 
-    // Remap numeric sourceOutput (e.g., "0", "1") to "main" with sourceIndex (#537)
+    // Remap numeric sourceOutput (e.g., "0", "1") to "main" with sourceIndex (#537, #659)
     // Skip when smart parameters (branch, case) are present — they take precedence
-    if (/^\d+$/.test(sourceOutput) && operation.sourceIndex === undefined
+    const numericOutput = /^\d+$/.test(sourceOutput) ? parseInt(sourceOutput, 10) : null;
+    if (numericOutput !== null
+        && (operation.sourceIndex === undefined || operation.sourceIndex === numericOutput)
         && operation.branch === undefined && operation.case === undefined) {
-      sourceIndex = parseInt(sourceOutput, 10);
+      sourceIndex = numericOutput;
       sourceOutput = 'main';
     }
 
@@ -823,7 +869,11 @@ export class WorkflowDiffEngine {
     // Use nullish coalescing to properly handle explicit 0 values
     // Default targetInput to sourceOutput to preserve connection type for AI connections (ai_tool, ai_memory, etc.)
     // Coerce to string to handle numeric values passed as sourceOutput/targetInput
-    const targetInput = String(operation.targetInput ?? sourceOutput);
+    let targetInput = String(operation.targetInput ?? sourceOutput);
+    // Remap numeric targetInput (e.g., "0") to "main" — connection types are named strings (#659)
+    if (/^\d+$/.test(targetInput)) {
+      targetInput = 'main';
+    }
     const targetIndex = operation.targetIndex ?? 0;
 
     // Initialize source node connections object
@@ -1264,6 +1314,16 @@ export class WorkflowDiffEngine {
       .map(n => `"${n.name}" (id: ${n.id.substring(0, 8)}...)`)
       .join(', ');
     return `Node not found for ${operationType}: "${nodeIdentifier}". Available nodes: ${availableNodes}. Tip: Use node ID for names with special characters (apostrophes, quotes).`;
+  }
+
+  private getNestedProperty(obj: any, path: string): any {
+    const keys = path.split('.');
+    let current = obj;
+    for (const key of keys) {
+      if (current == null || typeof current !== 'object') return undefined;
+      current = current[key];
+    }
+    return current;
   }
 
   private setNestedProperty(obj: any, path: string, value: any): void {

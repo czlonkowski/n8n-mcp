@@ -13,6 +13,23 @@ import { INodeParameters } from 'n8n-workflow';
 import { logger } from '../utils/logger';
 import { WorkflowNode } from '../types/n8n-api';
 
+/** Legacy operator names that n8n no longer recognizes, mapped to their correct names. */
+const OPERATOR_CORRECTIONS: Record<string, string> = {
+  'isEmpty': 'empty',
+  'isNotEmpty': 'notEmpty',
+};
+
+/** Operators that take no right-hand value and require singleValue: true. */
+const UNARY_OPERATORS = new Set([
+  'true',
+  'false',
+  'isNumeric',
+  'empty',
+  'notEmpty',
+  'exists',
+  'notExists',
+]);
+
 /**
  * Sanitize a single node by adding required metadata
  */
@@ -162,29 +179,28 @@ function sanitizeOperator(operator: any): any {
   const sanitized = { ...operator };
 
   // Fix common mistake: type field used for operation name
-  // WRONG: {type: "isNotEmpty"}
-  // RIGHT: {type: "string", operation: "isNotEmpty"}
+  // WRONG: {type: "notEmpty"}
+  // RIGHT: {type: "string", operation: "notEmpty"}
   if (sanitized.type && !sanitized.operation) {
-    // Check if type value looks like an operation (lowercase, no dots)
     const typeValue = sanitized.type as string;
     if (isOperationName(typeValue)) {
       logger.debug(`Fixing operator structure: converting type="${typeValue}" to operation`);
-
-      // Infer data type from operation
-      const dataType = inferDataType(typeValue);
-      sanitized.type = dataType;
+      sanitized.type = inferDataType(typeValue);
       sanitized.operation = typeValue;
     }
+  }
+
+  // Auto-correct legacy operator names to n8n-recognized names
+  if (sanitized.operation && OPERATOR_CORRECTIONS[sanitized.operation]) {
+    sanitized.operation = OPERATOR_CORRECTIONS[sanitized.operation];
   }
 
   // Set singleValue based on operator type
   if (sanitized.operation) {
     if (isUnaryOperator(sanitized.operation)) {
-      // Unary operators require singleValue: true
       sanitized.singleValue = true;
     } else {
-      // Binary operators should NOT have singleValue (or it should be false/undefined)
-      // Remove it to prevent UI errors
+      // Binary operators should NOT have singleValue — remove it to prevent UI errors
       delete sanitized.singleValue;
     }
   }
@@ -207,7 +223,7 @@ function isOperationName(value: string): boolean {
  */
 function inferDataType(operation: string): string {
   // Boolean operations
-  const booleanOps = ['true', 'false', 'isEmpty', 'isNotEmpty'];
+  const booleanOps = ['true', 'false'];
   if (booleanOps.includes(operation)) {
     return 'boolean';
   }
@@ -225,7 +241,6 @@ function inferDataType(operation: string): string {
   }
 
   // Object operations: empty/notEmpty/exists/notExists are generic object-level checks
-  // (distinct from isEmpty/isNotEmpty which are boolean-typed operations)
   const objectOps = ['empty', 'notEmpty', 'exists', 'notExists'];
   if (objectOps.includes(operation)) {
     return 'object';
@@ -239,18 +254,7 @@ function inferDataType(operation: string): string {
  * Check if operator is unary (requires singleValue: true)
  */
 function isUnaryOperator(operation: string): boolean {
-  const unaryOps = [
-    'isEmpty',
-    'isNotEmpty',
-    'true',
-    'false',
-    'isNumeric',
-    'empty',
-    'notEmpty',
-    'exists',
-    'notExists'
-  ];
-  return unaryOps.includes(operation);
+  return UNARY_OPERATORS.has(operation);
 }
 
 /**

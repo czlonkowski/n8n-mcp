@@ -445,7 +445,7 @@ describe('Integration: Real-World Type Structure Validation', () => {
     expect(sheetIdErrors).toBe(0);
   });
 
-  it('should validate all filter operations including exists/notExists/isNotEmpty', async () => {
+  it('should validate all filter operations including exists/notExists/notEmpty', async () => {
     const templates = db.prepare(`
       SELECT id, name, workflow_json_compressed
       FROM templates

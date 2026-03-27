@@ -730,30 +730,30 @@ class EnhancedConfigValidator extends config_validator_1.ConfigValidator {
                 'empty', 'notEmpty', 'equals', 'notEquals',
                 'contains', 'notContains', 'startsWith', 'notStartsWith',
                 'endsWith', 'notEndsWith', 'regex', 'notRegex',
-                'exists', 'notExists', 'isNotEmpty'
+                'exists', 'notExists'
             ],
             number: [
                 'empty', 'notEmpty', 'equals', 'notEquals', 'gt', 'lt', 'gte', 'lte',
-                'exists', 'notExists', 'isNotEmpty'
+                'exists', 'notExists'
             ],
             dateTime: [
                 'empty', 'notEmpty', 'equals', 'notEquals', 'after', 'before', 'afterOrEquals', 'beforeOrEquals',
-                'exists', 'notExists', 'isNotEmpty'
+                'exists', 'notExists'
             ],
             boolean: [
                 'empty', 'notEmpty', 'true', 'false', 'equals', 'notEquals',
-                'exists', 'notExists', 'isNotEmpty'
+                'exists', 'notExists'
             ],
             array: [
                 'contains', 'notContains', 'lengthEquals', 'lengthNotEquals',
                 'lengthGt', 'lengthLt', 'lengthGte', 'lengthLte', 'empty', 'notEmpty',
-                'exists', 'notExists', 'isNotEmpty'
+                'exists', 'notExists'
             ],
             object: [
                 'empty', 'notEmpty',
-                'exists', 'notExists', 'isNotEmpty'
+                'exists', 'notExists'
             ],
-            any: ['exists', 'notExists', 'isNotEmpty']
+            any: ['exists', 'notExists']
         };
         for (let i = 0; i < conditions.length; i++) {
             const condition = conditions[i];

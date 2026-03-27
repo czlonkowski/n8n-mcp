@@ -47,6 +47,7 @@ export declare class WorkflowDiffEngine {
     private normalizeNodeName;
     private findNode;
     private formatNodeNotFoundError;
+    private getNestedProperty;
     private setNestedProperty;
 }
 //# sourceMappingURL=workflow-diff-engine.d.ts.map

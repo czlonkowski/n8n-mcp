@@ -427,6 +427,158 @@ describe('WorkflowDiffEngine', () => {
       expect(result.errors![0].message).toContain('Missing required parameter \'updates\'');
       expect(result.errors![0].message).toContain('Correct structure:');
     });
+
+    it('should apply __patch_find_replace to string properties (#642)', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: { jsCode: 'const x = 1;\nreturn x + 2;' }
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeName: 'Code',
+          updates: {
+            'parameters.jsCode': {
+              __patch_find_replace: [
+                { find: 'x + 2', replace: 'x + 3' }
+              ]
+            }
+          }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
+      expect(codeNode?.parameters.jsCode).toBe('const x = 1;\nreturn x + 3;');
+    });
+
+    it('should apply multiple sequential __patch_find_replace patches', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: { jsCode: 'const a = 1;\nconst b = 2;\nreturn a + b;' }
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeName: 'Code',
+          updates: {
+            'parameters.jsCode': {
+              __patch_find_replace: [
+                { find: 'const a = 1', replace: 'const a = 10' },
+                { find: 'const b = 2', replace: 'const b = 20' }
+              ]
+            }
+          }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
+      expect(codeNode?.parameters.jsCode).toBe('const a = 10;\nconst b = 20;\nreturn a + b;');
+    });
+
+    it('should reject __patch_find_replace on non-string properties', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: { retryCount: 3 }
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeName: 'Code',
+          updates: {
+            'parameters.retryCount': {
+              __patch_find_replace: [
+                { find: '3', replace: '5' }
+              ]
+            }
+          }
+        }]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors?.[0]?.message).toContain('__patch_find_replace');
+    });
+
+    it('should reject __patch_find_replace with invalid format', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: { jsCode: 'const x = 1;' }
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeName: 'Code',
+          updates: {
+            'parameters.jsCode': {
+              __patch_find_replace: 'not an array'
+            }
+          }
+        }]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors?.[0]?.message).toContain('must be an array');
+    });
+
+    it('should warn when __patch_find_replace find string not found', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: { jsCode: 'const x = 1;' }
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeName: 'Code',
+          updates: {
+            'parameters.jsCode': {
+              __patch_find_replace: [
+                { find: 'nonexistent text', replace: 'something' }
+              ]
+            }
+          }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings!.some(w => w.message.includes('not found'))).toBe(true);
+    });
   });
 
   describe('MoveNode Operation', () => {
@@ -765,6 +917,97 @@ describe('WorkflowDiffEngine', () => {
       expect(result.errors![0].message).toContain('Webhook');
       expect(result.errors![0].message).toContain('HTTP Request');
       expect(result.errors![0].message).toContain('Slack');
+    });
+
+    it('should remap numeric targetInput to main (#659)', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: {}
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'addConnection' as const,
+          source: 'Slack',
+          target: 'Code',
+          sourceOutput: 'main',
+          targetInput: '0',
+          sourceIndex: 0,
+          targetIndex: 0
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.workflow.connections['Slack']['main'][0][0].type).toBe('main');
+    });
+
+    it('should remap sourceOutput 0 with explicit sourceIndex 0 (#659)', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: {}
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'addConnection' as const,
+          source: 'Slack',
+          target: 'Code',
+          sourceOutput: '0',
+          sourceIndex: 0,
+          targetIndex: 0
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.workflow.connections['Slack']['main']).toBeDefined();
+      expect(result.workflow.connections['Slack']['0']).toBeUndefined();
+      expect(result.workflow.connections['Slack']['main'][0][0].type).toBe('main');
+    });
+
+    it('should preserve named targetInput like ai_tool', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'agent-1',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: {}
+      });
+      workflow.nodes.push({
+        id: 'tool-1',
+        name: 'Calculator',
+        type: '@n8n/n8n-nodes-langchain.toolCalculator',
+        typeVersion: 1,
+        position: [1100, 300],
+        parameters: {}
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'addConnection' as const,
+          source: 'Calculator',
+          target: 'AI Agent',
+          sourceOutput: 'ai_tool',
+          targetInput: 'ai_tool'
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.workflow.connections['Calculator']['ai_tool'][0][0].type).toBe('ai_tool');
     });
   });
 

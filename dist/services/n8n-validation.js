@@ -419,10 +419,10 @@ function validateOperatorStructure(operator, path) {
     }
     if (!operator.operation) {
         errors.push(`${path}: missing required field "operation". ` +
-            'Operation specifies the comparison type (e.g., "equals", "contains", "isNotEmpty")');
+            'Operation specifies the comparison type (e.g., "equals", "contains", "notEmpty")');
     }
     if (operator.operation) {
-        const unaryOperators = ['isEmpty', 'isNotEmpty', 'true', 'false', 'isNumeric'];
+        const unaryOperators = ['empty', 'notEmpty', 'true', 'false', 'isNumeric', 'exists', 'notExists'];
         const isUnary = unaryOperators.includes(operator.operation);
         if (isUnary) {
             if (operator.singleValue !== true) {
@@ -433,7 +433,7 @@ function validateOperatorStructure(operator, path) {
         else {
             if (operator.singleValue === true) {
                 errors.push(`${path}: binary operator "${operator.operation}" should not have "singleValue: true". ` +
-                    'Only unary operators (isEmpty, isNotEmpty, true, false, isNumeric) need this property.');
+                    'Only unary operators (empty, notEmpty, true, false, isNumeric, exists, notExists) need this property.');
             }
         }
     }

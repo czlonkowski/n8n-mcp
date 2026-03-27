@@ -119,8 +119,8 @@ When ANY workflow update is made, ALL nodes in the workflow are automatically sa
 
 1. **Operator Structure Fixes**:
    - Binary operators (equals, contains, greaterThan, etc.) automatically have \`singleValue\` removed
-   - Unary operators (isEmpty, isNotEmpty, true, false) automatically get \`singleValue: true\` added
-   - Invalid operator structures (e.g., \`{type: "isNotEmpty"}\`) are corrected to \`{type: "boolean", operation: "isNotEmpty"}\`
+   - Unary operators (empty, notEmpty, true, false) automatically get \`singleValue: true\` added
+   - Invalid operator structures (e.g., \`{type: "notEmpty"}\`) are corrected to \`{type: "object", operation: "notEmpty"}\`
 
 2. **Missing Metadata Added**:
    - IF nodes with conditions get complete \`conditions.options\` structure if missing
@@ -333,6 +333,8 @@ n8n_update_partial_workflow({
       '// Best-effort mode: apply what works, report what fails\nn8n_update_partial_workflow({id: "vwx", operations: [\n  {type: "updateName", name: "Fixed Workflow"},\n  {type: "removeConnection", source: "Broken", target: "Node"},\n  {type: "cleanStaleConnections"}\n], continueOnError: true})',
       '// Update node parameter\nn8n_update_partial_workflow({id: "yza", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {"parameters.url": "https://api.example.com"}}]})',
       '// Validate before applying\nn8n_update_partial_workflow({id: "bcd", operations: [{type: "removeNode", nodeName: "Old Process"}], validateOnly: true})',
+      '// Surgically edit code using __patch_find_replace (avoids replacing entire code block)\nn8n_update_partial_workflow({id: "pfr1", operations: [{type: "updateNode", nodeName: "Code", updates: {"parameters.jsCode": {"__patch_find_replace": [{"find": "const limit = 10;", "replace": "const limit = 50;"}]}}}]})',
+      '// Multiple sequential patches on the same property\nn8n_update_partial_workflow({id: "pfr2", operations: [{type: "updateNode", nodeName: "Code", updates: {"parameters.jsCode": {"__patch_find_replace": [{"find": "api.old-domain.com", "replace": "api.new-domain.com"}, {"find": "Authorization: Bearer old_token", "replace": "Authorization: Bearer new_token"}]}}}]})',
       '\n// ============ AI CONNECTION EXAMPLES ============',
       '// Connect language model to AI Agent\nn8n_update_partial_workflow({id: "ai1", operations: [{type: "addConnection", source: "OpenAI Chat Model", target: "AI Agent", sourceOutput: "ai_languageModel"}]})',
       '// Connect tool to AI Agent\nn8n_update_partial_workflow({id: "ai2", operations: [{type: "addConnection", source: "HTTP Request Tool", target: "AI Agent", sourceOutput: "ai_tool"}]})',
@@ -411,10 +413,12 @@ n8n_update_partial_workflow({
       '**CRITICAL**: For Switch nodes, ALWAYS use case=N instead of sourceIndex. Using same sourceIndex for multiple connections will put them on the same case output.',
       'cleanStaleConnections removes ALL broken connections - cannot be selective',
       'replaceConnections overwrites entire connections object - all previous connections lost',
-      '**Auto-sanitization behavior**: Binary operators (equals, contains) automatically have singleValue removed; unary operators (isEmpty, isNotEmpty) automatically get singleValue:true added',
+      '**Auto-sanitization behavior**: Binary operators (equals, contains) automatically have singleValue removed; unary operators (empty, notEmpty) automatically get singleValue:true added',
       '**Auto-sanitization runs on ALL nodes**: When ANY update is made, ALL nodes in the workflow are sanitized (not just modified ones)',
       '**Auto-sanitization cannot fix everything**: It fixes operator structures and missing metadata, but cannot fix broken connections or branch mismatches',
       '**Corrupted workflows beyond repair**: Workflows in paradoxical states (API returns corrupt, API rejects updates) cannot be fixed via API - must be recreated',
+      '**__patch_find_replace for code edits**: Instead of replacing entire code blocks, use `{"parameters.jsCode": {"__patch_find_replace": [{"find": "old text", "replace": "new text"}]}}` to surgically edit string properties',
+      '__patch_find_replace replaces the FIRST occurrence of each find string. Patches are applied sequentially — order matters',
       'To remove a property, set it to null in the updates object',
       'When properties are mutually exclusive (e.g., continueOnFail and onError), setting only the new property will fail - you must remove the old one with null',
       'Removing a required property may cause validation errors - check node documentation first',

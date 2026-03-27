@@ -4,6 +4,19 @@ exports.sanitizeNode = sanitizeNode;
 exports.sanitizeWorkflowNodes = sanitizeWorkflowNodes;
 exports.validateNodeMetadata = validateNodeMetadata;
 const logger_1 = require("../utils/logger");
+const OPERATOR_CORRECTIONS = {
+    'isEmpty': 'empty',
+    'isNotEmpty': 'notEmpty',
+};
+const UNARY_OPERATORS = new Set([
+    'true',
+    'false',
+    'isNumeric',
+    'empty',
+    'notEmpty',
+    'exists',
+    'notExists',
+]);
 function sanitizeNode(node) {
     const sanitized = { ...node };
     if (isFilterBasedNode(node.type, node.typeVersion)) {
@@ -92,10 +105,12 @@ function sanitizeOperator(operator) {
         const typeValue = sanitized.type;
         if (isOperationName(typeValue)) {
             logger_1.logger.debug(`Fixing operator structure: converting type="${typeValue}" to operation`);
-            const dataType = inferDataType(typeValue);
-            sanitized.type = dataType;
+            sanitized.type = inferDataType(typeValue);
             sanitized.operation = typeValue;
         }
+    }
+    if (sanitized.operation && OPERATOR_CORRECTIONS[sanitized.operation]) {
+        sanitized.operation = OPERATOR_CORRECTIONS[sanitized.operation];
     }
     if (sanitized.operation) {
         if (isUnaryOperator(sanitized.operation)) {
@@ -112,7 +127,7 @@ function isOperationName(value) {
     return !dataTypes.includes(value) && /^[a-z][a-zA-Z]*$/.test(value);
 }
 function inferDataType(operation) {
-    const booleanOps = ['true', 'false', 'isEmpty', 'isNotEmpty'];
+    const booleanOps = ['true', 'false'];
     if (booleanOps.includes(operation)) {
         return 'boolean';
     }
@@ -131,18 +146,7 @@ function inferDataType(operation) {
     return 'string';
 }
 function isUnaryOperator(operation) {
-    const unaryOps = [
-        'isEmpty',
-        'isNotEmpty',
-        'true',
-        'false',
-        'isNumeric',
-        'empty',
-        'notEmpty',
-        'exists',
-        'notExists'
-    ];
-    return unaryOps.includes(operation);
+    return UNARY_OPERATORS.has(operation);
 }
 function generateConditionId() {
     return `condition-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
