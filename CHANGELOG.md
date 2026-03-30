@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.41.4] - 2026-03-30
+
+### Fixed
+
+- **`validate_workflow` misses `conditions.options` check for If/Switch nodes** (Issue #675): Added version-conditional validation — If v2.2+ and Switch v3.2+ now require `conditions.options` metadata, If v2.0-2.1 validates operator structures, and v1.x is left unchecked. Previously only caught by `n8n_create_workflow` pre-flight but not by offline `validate_workflow`.
+
+- **False positive "Set node has no fields configured" for Set v3+** (Issue #676): The `validateSet` checker now recognizes `config.assignments.assignments` (v3+ schema) in addition to `config.values` (v1/v2 schema). Updated suggestion text to match current UI terminology.
+
+- **Expression validator does not detect unwrapped n8n expressions** (Issue #677): Added heuristic pre-pass that detects bare `$json`, `$node`, `$input`, `$execution`, `$workflow`, `$prevNode`, `$env`, `$now`, `$today`, `$itemIndex`, and `$runIndex` references missing `={{ }}` wrappers. Uses anchored patterns to avoid false positives. Emits warnings, not errors.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.41.3] - 2026-03-27
 
 ### Fixed

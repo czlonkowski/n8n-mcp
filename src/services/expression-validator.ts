@@ -19,6 +19,18 @@ interface ExpressionContext {
 }
 
 export class ExpressionValidator {
+  // Bare n8n variable references missing {{ }} wrappers
+  private static readonly BARE_EXPRESSION_PATTERNS: Array<{ pattern: RegExp; name: string }> = [
+    { pattern: /^\$json[.\[]/, name: '$json' },
+    { pattern: /^\$node\[/, name: '$node' },
+    { pattern: /^\$input\./, name: '$input' },
+    { pattern: /^\$execution\./, name: '$execution' },
+    { pattern: /^\$workflow\./, name: '$workflow' },
+    { pattern: /^\$prevNode\./, name: '$prevNode' },
+    { pattern: /^\$env\./, name: '$env' },
+    { pattern: /^\$(now|today|itemIndex|runIndex)$/, name: 'built-in variable' },
+  ];
+
   // Common n8n expression patterns
   private static readonly EXPRESSION_PATTERN = /\{\{([\s\S]+?)\}\}/g;
   private static readonly VARIABLE_PATTERNS = {
@@ -289,6 +301,32 @@ export class ExpressionValidator {
   }
 
   /**
+   * Detect bare n8n variable references missing {{ }} wrappers.
+   * Emits warnings since the value is technically valid as a literal string.
+   */
+  private static checkBareExpression(
+    value: string,
+    path: string,
+    result: ExpressionValidationResult
+  ): void {
+    if (value.includes('{{') || value.startsWith('=')) {
+      return;
+    }
+
+    const trimmed = value.trim();
+    for (const { pattern, name } of this.BARE_EXPRESSION_PATTERNS) {
+      if (pattern.test(trimmed)) {
+        result.warnings.push(
+          (path ? `${path}: ` : '') +
+          `Possible unwrapped expression: "${trimmed}" looks like an n8n ${name} reference. ` +
+          `Use "={{ ${trimmed} }}" to evaluate it as an expression.`
+        );
+        return;
+      }
+    }
+  }
+
+  /**
    * Recursively validate expressions in parameters
    */
   private static validateParametersRecursive(
@@ -307,6 +345,9 @@ export class ExpressionValidator {
     }
     
     if (typeof obj === 'string') {
+      // Detect bare expressions missing {{ }} wrappers
+      this.checkBareExpression(obj, path, result);
+
       if (obj.includes('{{')) {
         const validation = this.validateExpression(obj, context);
         

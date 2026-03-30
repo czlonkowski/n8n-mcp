@@ -105,6 +105,78 @@ describe('ExpressionValidator', () => {
     });
   });
 
+  describe('bare expression detection', () => {
+    it('should warn on bare $json.name', () => {
+      const params = { value: '$json.name' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      expect(result.warnings.some(w => w.includes('unwrapped expression'))).toBe(true);
+    });
+
+    it('should warn on bare $node["Webhook"].json', () => {
+      const params = { value: '$node["Webhook"].json' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      expect(result.warnings.some(w => w.includes('unwrapped expression'))).toBe(true);
+    });
+
+    it('should warn on bare $now', () => {
+      const params = { value: '$now' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      expect(result.warnings.some(w => w.includes('unwrapped expression'))).toBe(true);
+    });
+
+    it('should warn on bare $execution.id', () => {
+      const params = { value: '$execution.id' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      expect(result.warnings.some(w => w.includes('unwrapped expression'))).toBe(true);
+    });
+
+    it('should warn on bare $env.API_KEY', () => {
+      const params = { value: '$env.API_KEY' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      expect(result.warnings.some(w => w.includes('unwrapped expression'))).toBe(true);
+    });
+
+    it('should warn on bare $input.item.json.field', () => {
+      const params = { value: '$input.item.json.field' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      expect(result.warnings.some(w => w.includes('unwrapped expression'))).toBe(true);
+    });
+
+    it('should NOT warn on properly wrapped ={{ $json.name }}', () => {
+      const params = { value: '={{ $json.name }}' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      expect(result.warnings.some(w => w.includes('unwrapped expression'))).toBe(false);
+    });
+
+    it('should NOT warn on properly wrapped {{ $json.name }}', () => {
+      const params = { value: '{{ $json.name }}' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      expect(result.warnings.some(w => w.includes('unwrapped expression'))).toBe(false);
+    });
+
+    it('should NOT warn when $json appears mid-string', () => {
+      const params = { value: 'The $json data is ready' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      expect(result.warnings.some(w => w.includes('unwrapped expression'))).toBe(false);
+    });
+
+    it('should NOT warn on plain text', () => {
+      const params = { value: 'Hello World' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      expect(result.warnings.some(w => w.includes('unwrapped expression'))).toBe(false);
+    });
+
+    it('should detect bare expression in nested structure', () => {
+      const params = {
+        assignments: {
+          assignments: [{ value: '$json.name' }]
+        }
+      };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      expect(result.warnings.some(w => w.includes('unwrapped expression'))).toBe(true);
+    });
+  });
+
   describe('edge cases', () => {
     it('should handle empty expressions', () => {
       const result = ExpressionValidator.validateExpression('{{ }}', defaultContext);

@@ -1713,12 +1713,16 @@ export class NodeSpecificValidators {
     // Validate mode-specific requirements
     if (config.mode === 'manual') {
       // In manual mode, at least one field should be defined
-      const hasFields = config.values && Object.keys(config.values).length > 0;
+      const hasFieldsViaValues = config.values && Object.keys(config.values).length > 0;
+      const hasFieldsViaAssignments = config.assignments?.assignments
+        && Array.isArray(config.assignments.assignments)
+        && config.assignments.assignments.length > 0;
+      const hasFields = hasFieldsViaValues || hasFieldsViaAssignments;
       if (!hasFields && !config.jsonOutput) {
         warnings.push({
           type: 'missing_common',
           message: 'Set node has no fields configured - will output empty items',
-          suggestion: 'Add fields in the Values section or use JSON mode'
+          suggestion: 'Add field assignments or use JSON mode'
         });
       }
     }

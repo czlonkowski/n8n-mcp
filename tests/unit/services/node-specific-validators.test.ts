@@ -2384,6 +2384,73 @@ return [{"json": {"result": result}}]
     });
   });
 
+  describe('validateSet', () => {
+    it('should not warn when Set v3 has populated assignments', () => {
+      context.config = {
+        mode: 'manual',
+        assignments: {
+          assignments: [
+            { id: '1', name: 'status', value: 'active', type: 'string' }
+          ]
+        }
+      };
+
+      NodeSpecificValidators.validateSet(context);
+
+      const fieldWarnings = context.warnings.filter(w => w.message.includes('no fields configured'));
+      expect(fieldWarnings).toHaveLength(0);
+    });
+
+    it('should not warn when Set v2 has populated values', () => {
+      context.config = {
+        mode: 'manual',
+        values: {
+          string: [{ name: 'field', value: 'val' }]
+        }
+      };
+
+      NodeSpecificValidators.validateSet(context);
+
+      const fieldWarnings = context.warnings.filter(w => w.message.includes('no fields configured'));
+      expect(fieldWarnings).toHaveLength(0);
+    });
+
+    it('should warn when Set v3 has empty assignments array', () => {
+      context.config = {
+        mode: 'manual',
+        assignments: { assignments: [] }
+      };
+
+      NodeSpecificValidators.validateSet(context);
+
+      const fieldWarnings = context.warnings.filter(w => w.message.includes('no fields configured'));
+      expect(fieldWarnings).toHaveLength(1);
+    });
+
+    it('should warn when Set manual mode has no values or assignments', () => {
+      context.config = {
+        mode: 'manual'
+      };
+
+      NodeSpecificValidators.validateSet(context);
+
+      const fieldWarnings = context.warnings.filter(w => w.message.includes('no fields configured'));
+      expect(fieldWarnings).toHaveLength(1);
+    });
+
+    it('should not warn when Set manual mode has jsonOutput', () => {
+      context.config = {
+        mode: 'manual',
+        jsonOutput: '{"key":"value"}'
+      };
+
+      NodeSpecificValidators.validateSet(context);
+
+      const fieldWarnings = context.warnings.filter(w => w.message.includes('no fields configured'));
+      expect(fieldWarnings).toHaveLength(0);
+    });
+  });
+
   describe('validateAIAgent', () => {
     let context: NodeValidationContext;
 

@@ -15,6 +15,7 @@ import { validateAISpecificNodes, hasAINodes, AI_CONNECTION_TYPES } from './ai-n
 import { isAIToolSubNode } from './ai-tool-validators';
 import { isTriggerNode } from '../utils/node-type-utils';
 import { isNonExecutableNode } from '../utils/node-classification';
+import { validateConditionNodeStructure } from './n8n-validation';
 import { ToolVariantGenerator } from './tool-variant-generator';
 const logger = new Logger({ prefix: '[WorkflowValidator]' });
 
@@ -578,6 +579,19 @@ export class WorkflowValidator {
             message: typeof warning === 'string' ? warning : warning.message || String(warning)
           });
         });
+
+        // Validate If/Switch conditions structure (version-conditional)
+        if (node.type === 'n8n-nodes-base.if' || node.type === 'n8n-nodes-base.switch') {
+          const conditionErrors = validateConditionNodeStructure(node as any);
+          for (const err of conditionErrors) {
+            result.errors.push({
+              type: 'error',
+              nodeId: node.id,
+              nodeName: node.name,
+              message: err
+            });
+          }
+        }
 
       } catch (error) {
         result.errors.push({

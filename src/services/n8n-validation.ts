@@ -344,10 +344,10 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
     });
   }
 
-  // Validate filter-based nodes (IF v2.2+, Switch v3.2+) have complete metadata
+  // Validate If/Switch condition structures (version-conditional)
   if (workflow.nodes) {
     workflow.nodes.forEach((node, index) => {
-      const filterErrors = validateFilterBasedNodeMetadata(node);
+      const filterErrors = validateConditionNodeStructure(node);
       if (filterErrors.length > 0) {
         errors.push(...filterErrors.map(err => `Node "${node.name}" (index ${index}): ${err}`));
       }
@@ -488,104 +488,79 @@ export function hasWebhookTrigger(workflow: Workflow): boolean {
 }
 
 /**
- * Validate filter-based node metadata (IF v2.2+, Switch v3.2+)
- * Returns array of error messages
+ * Validate If/Switch node conditions structure for ANY version.
+ * Version-conditional: validates the correct structure per version.
  */
-export function validateFilterBasedNodeMetadata(node: WorkflowNode): string[] {
+export function validateConditionNodeStructure(node: WorkflowNode): string[] {
   const errors: string[] = [];
+  const typeVersion = node.typeVersion || 1;
 
-  // Check if node is filter-based
-  const isIFNode = node.type === 'n8n-nodes-base.if' && node.typeVersion >= 2.2;
-  const isSwitchNode = node.type === 'n8n-nodes-base.switch' && node.typeVersion >= 3.2;
-
-  if (!isIFNode && !isSwitchNode) {
-    return errors; // Not a filter-based node
-  }
-
-  // Validate IF node
-  if (isIFNode) {
-    const conditions = (node.parameters.conditions as any);
-
-    // Check conditions.options exists
-    if (!conditions?.options) {
-      errors.push(
-        'Missing required "conditions.options". ' +
-        'IF v2.2+ requires: {version: 2, leftValue: "", caseSensitive: true, typeValidation: "strict"}'
-      );
-    } else {
-      // Validate required fields
-      const requiredFields = {
-        version: 2,
-        leftValue: '',
-        caseSensitive: 'boolean',
-        typeValidation: 'strict'
-      };
-
-      for (const [field, expectedValue] of Object.entries(requiredFields)) {
-        if (!(field in conditions.options)) {
-          errors.push(
-            `Missing required field "conditions.options.${field}". ` +
-            `Expected value: ${typeof expectedValue === 'string' ? `"${expectedValue}"` : expectedValue}`
-          );
-        }
+  if (node.type === 'n8n-nodes-base.if') {
+    if (typeVersion >= 2.2) {
+      errors.push(...validateFilterOptionsRequired(node.parameters?.conditions, 'conditions'));
+      errors.push(...validateFilterConditionOperators(node.parameters?.conditions, 'conditions'));
+    } else if (typeVersion >= 2) {
+      // v2 has conditions but no options requirement; just validate operators
+      errors.push(...validateFilterConditionOperators(node.parameters?.conditions as any, 'conditions'));
+    }
+  } else if (node.type === 'n8n-nodes-base.switch') {
+    if (typeVersion >= 3.2) {
+      const rules = node.parameters?.rules as any;
+      if (rules?.rules && Array.isArray(rules.rules)) {
+        rules.rules.forEach((rule: any, i: number) => {
+          errors.push(...validateFilterOptionsRequired(rule.conditions, `rules.rules[${i}].conditions`));
+          errors.push(...validateFilterConditionOperators(rule.conditions, `rules.rules[${i}].conditions`));
+        });
       }
-    }
-
-    // Validate operators in conditions
-    if (conditions?.conditions && Array.isArray(conditions.conditions)) {
-      conditions.conditions.forEach((condition: any, i: number) => {
-        const operatorErrors = validateOperatorStructure(condition.operator, `conditions.conditions[${i}].operator`);
-        errors.push(...operatorErrors);
-      });
-    }
-  }
-
-  // Validate Switch node
-  if (isSwitchNode) {
-    const rules = (node.parameters.rules as any);
-
-    if (rules?.rules && Array.isArray(rules.rules)) {
-      rules.rules.forEach((rule: any, ruleIndex: number) => {
-        // Check rule.conditions.options
-        if (!rule.conditions?.options) {
-          errors.push(
-            `Missing required "rules.rules[${ruleIndex}].conditions.options". ` +
-            'Switch v3.2+ requires: {version: 2, leftValue: "", caseSensitive: true, typeValidation: "strict"}'
-          );
-        } else {
-          // Validate required fields
-          const requiredFields = {
-            version: 2,
-            leftValue: '',
-            caseSensitive: 'boolean',
-            typeValidation: 'strict'
-          };
-
-          for (const [field, expectedValue] of Object.entries(requiredFields)) {
-            if (!(field in rule.conditions.options)) {
-              errors.push(
-                `Missing required field "rules.rules[${ruleIndex}].conditions.options.${field}". ` +
-                `Expected value: ${typeof expectedValue === 'string' ? `"${expectedValue}"` : expectedValue}`
-              );
-            }
-          }
-        }
-
-        // Validate operators in rule conditions
-        if (rule.conditions?.conditions && Array.isArray(rule.conditions.conditions)) {
-          rule.conditions.conditions.forEach((condition: any, condIndex: number) => {
-            const operatorErrors = validateOperatorStructure(
-              condition.operator,
-              `rules.rules[${ruleIndex}].conditions.conditions[${condIndex}].operator`
-            );
-            errors.push(...operatorErrors);
-          });
-        }
-      });
     }
   }
 
   return errors;
+}
+
+function validateFilterOptionsRequired(conditions: any, path: string): string[] {
+  const errors: string[] = [];
+  if (!conditions || typeof conditions !== 'object') return errors;
+
+  if (!conditions.options) {
+    errors.push(
+      `Missing required "${path}.options". ` +
+      'Filter-based nodes require: {version: 2, leftValue: "", caseSensitive: true, typeValidation: "strict"}'
+    );
+  } else {
+    const requiredFields: [string, string][] = [
+      ['version', '2'],
+      ['leftValue', '""'],
+      ['caseSensitive', 'true'],
+      ['typeValidation', '"strict"'],
+    ];
+    for (const [field, display] of requiredFields) {
+      if (!(field in conditions.options)) {
+        errors.push(
+          `Missing required field "${path}.options.${field}". Expected value: ${display}`
+        );
+      }
+    }
+  }
+  return errors;
+}
+
+function validateFilterConditionOperators(conditions: any, path: string): string[] {
+  const errors: string[] = [];
+  if (!conditions?.conditions || !Array.isArray(conditions.conditions)) return errors;
+
+  conditions.conditions.forEach((condition: any, i: number) => {
+    errors.push(...validateOperatorStructure(
+      condition.operator,
+      `${path}.conditions[${i}].operator`
+    ));
+  });
+  return errors;
+}
+
+/** @deprecated Use validateConditionNodeStructure instead */
+export function validateFilterBasedNodeMetadata(node: WorkflowNode): string[] {
+  return validateConditionNodeStructure(node);
 }
 
 /**

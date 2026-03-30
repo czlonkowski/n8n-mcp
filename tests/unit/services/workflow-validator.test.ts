@@ -4,6 +4,7 @@ import { NodeRepository } from '@/database/node-repository';
 import { EnhancedConfigValidator } from '@/services/enhanced-config-validator';
 import { ExpressionValidator } from '@/services/expression-validator';
 import { createWorkflow } from '@tests/utils/builders/workflow.builder';
+import { validateConditionNodeStructure } from '@/services/n8n-validation';
 
 // Mock dependencies
 vi.mock('@/database/node-repository');
@@ -741,6 +742,158 @@ describe('WorkflowValidator', () => {
       expect(result.errors).toHaveLength(0);
       expect(result.warnings).toHaveLength(0);
       expect(result.statistics.validConnections).toBe(3);
+    });
+  });
+
+  // ─── If/Switch conditions validation ──────────────────────────────
+
+  describe('If/Switch conditions validation (validateConditionNodeStructure)', () => {
+    it('If v2.3 missing conditions.options → error', () => {
+      const node = {
+        id: '1', name: 'IF', type: 'n8n-nodes-base.if', typeVersion: 2.3,
+        position: [0, 0] as [number, number],
+        parameters: {
+          conditions: {
+            conditions: [{ leftValue: '={{ $json.x }}', rightValue: 'a', operator: { type: 'string', operation: 'equals' } }],
+            combinator: 'and'
+          }
+        }
+      };
+      const errors = validateConditionNodeStructure(node);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors.some(e => e.includes('options'))).toBe(true);
+    });
+
+    it('If v2.3 with complete options → no error', () => {
+      const node = {
+        id: '1', name: 'IF', type: 'n8n-nodes-base.if', typeVersion: 2.3,
+        position: [0, 0] as [number, number],
+        parameters: {
+          conditions: {
+            options: { version: 2, leftValue: '', caseSensitive: true, typeValidation: 'strict' },
+            conditions: [{ leftValue: '={{ $json.x }}', rightValue: 'a', operator: { type: 'string', operation: 'equals' } }],
+            combinator: 'and'
+          }
+        }
+      };
+      const errors = validateConditionNodeStructure(node);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('If v2.0 without options → no error', () => {
+      const node = {
+        id: '1', name: 'IF', type: 'n8n-nodes-base.if', typeVersion: 2.0,
+        position: [0, 0] as [number, number],
+        parameters: {
+          conditions: {
+            conditions: [{ leftValue: '={{ $json.x }}', rightValue: 'a', operator: { type: 'string', operation: 'equals' } }],
+            combinator: 'and'
+          }
+        }
+      };
+      const errors = validateConditionNodeStructure(node);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('If v2.0 with bad operator (missing type) → operator error', () => {
+      const node = {
+        id: '1', name: 'IF', type: 'n8n-nodes-base.if', typeVersion: 2.0,
+        position: [0, 0] as [number, number],
+        parameters: {
+          conditions: {
+            conditions: [{ leftValue: '={{ $json.x }}', rightValue: 'a', operator: { operation: 'equals' } }],
+            combinator: 'and'
+          }
+        }
+      };
+      const errors = validateConditionNodeStructure(node);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors.some(e => e.includes('type'))).toBe(true);
+    });
+
+    it('If v1 with old format → no errors', () => {
+      const node = {
+        id: '1', name: 'IF', type: 'n8n-nodes-base.if', typeVersion: 1,
+        position: [0, 0] as [number, number],
+        parameters: {
+          conditions: { string: [{ value1: '={{ $json.x }}', value2: 'a', operation: 'equals' }] }
+        }
+      };
+      const errors = validateConditionNodeStructure(node);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('Switch v3.2 missing rule options → error', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: {
+          rules: {
+            rules: [{
+              conditions: {
+                conditions: [{ leftValue: '={{ $json.x }}', rightValue: 'a', operator: { type: 'string', operation: 'equals' } }],
+                combinator: 'and'
+              },
+              outputKey: 'Branch 1'
+            }]
+          }
+        }
+      };
+      const errors = validateConditionNodeStructure(node);
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors.some(e => e.includes('rules.rules[0].conditions.options'))).toBe(true);
+    });
+
+    it('Switch v3.2 with complete options → no error', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: {
+          rules: {
+            rules: [{
+              conditions: {
+                options: { version: 2, leftValue: '', caseSensitive: true, typeValidation: 'strict' },
+                conditions: [{ leftValue: '={{ $json.x }}', rightValue: 'a', operator: { type: 'string', operation: 'equals' } }],
+                combinator: 'and'
+              },
+              outputKey: 'Branch 1'
+            }]
+          }
+        }
+      };
+      const errors = validateConditionNodeStructure(node);
+      expect(errors).toHaveLength(0);
+    });
+
+    it('If v2.2 with empty parameters (missing conditions) → no error (graceful)', () => {
+      const node = {
+        id: '1', name: 'IF', type: 'n8n-nodes-base.if', typeVersion: 2.2,
+        position: [0, 0] as [number, number],
+        parameters: {}
+      };
+      const errors = validateConditionNodeStructure(node);
+      // Empty parameters are allowed — draft/incomplete nodes are valid at this level
+      expect(errors).toHaveLength(0);
+    });
+
+    it('Switch v3.0 without options → no error', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.0,
+        position: [0, 0] as [number, number],
+        parameters: {
+          rules: {
+            rules: [{
+              conditions: {
+                conditions: [{ leftValue: '={{ $json.x }}', rightValue: 'a', operator: { type: 'string', operation: 'equals' } }],
+                combinator: 'and'
+              },
+              outputKey: 'Branch 1'
+            }]
+          }
+        }
+      };
+      const errors = validateConditionNodeStructure(node);
+      expect(errors).toHaveLength(0);
     });
   });
 });
