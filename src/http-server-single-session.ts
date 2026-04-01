@@ -42,8 +42,33 @@ interface MultiTenantHeaders {
   'x-session-id'?: string;
 }
 
-// Session management constants
-const MAX_SESSIONS = Math.max(1, parseInt(process.env.N8N_MCP_MAX_SESSIONS || '100', 10));
+function parseBooleanEnv(...names: string[]): boolean | undefined {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value === undefined) continue;
+
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  }
+
+  return undefined;
+}
+
+function parseNumberEnv(defaultValue: number, minimum: number, ...names: string[]): number {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value === undefined) continue;
+
+    const parsed = parseInt(value, 10);
+    if (!Number.isNaN(parsed)) {
+      return Math.max(minimum, parsed);
+    }
+  }
+
+  return defaultValue;
+}
+
 const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 interface Session {
@@ -120,9 +145,19 @@ export class SingleSessionHTTPServer {
   private authToken: string | null = null;
   private cleanupTimer: NodeJS.Timeout | null = null;
   private generateWorkflowHandler?: GenerateWorkflowHandler;
+  private authEnabled: boolean;
+  private rateLimitEnabled: boolean;
+  private maxSessions: number;
+  private authRateLimitWindow: number;
+  private authRateLimitMax: number;
 
   constructor(options?: SingleSessionHTTPServerOptions) {
     this.generateWorkflowHandler = options?.generateWorkflowHandler;
+    this.authEnabled = parseBooleanEnv('AUTH_ENABLED') ?? true;
+    this.rateLimitEnabled = parseBooleanEnv('RATE_LIMIT_ENABLED') ?? true;
+    this.maxSessions = parseNumberEnv(100, 1, 'N8N_MCP_MAX_SESSIONS', 'MAX_SESSIONS');
+    this.authRateLimitWindow = parseNumberEnv(900000, 1, 'AUTH_RATE_LIMIT_WINDOW');
+    this.authRateLimitMax = parseNumberEnv(20, 1, 'AUTH_RATE_LIMIT_MAX', 'AUTH_MAX_ATTEMPTS');
     // Validate environment on construction
     this.validateEnvironment();
     // No longer pre-create session - will be created per initialize request following SDK pattern
@@ -145,7 +180,7 @@ export class SingleSessionHTTPServer {
     
     logger.info('Session cleanup started', { 
       interval: SESSION_CLEANUP_INTERVAL / 1000 / 60,
-      maxSessions: MAX_SESSIONS,
+      maxSessions: this.maxSessions,
       sessionTimeout: this.sessionTimeout / 1000 / 60
     });
   }
@@ -237,7 +272,7 @@ export class SingleSessionHTTPServer {
    * Check if we can create a new session
    */
   private canCreateSession(): boolean {
-    return this.getActiveSessionCount() < MAX_SESSIONS;
+    return this.getActiveSessionCount() < this.maxSessions;
   }
   
   /**
@@ -422,6 +457,12 @@ export class SingleSessionHTTPServer {
   private validateEnvironment(): void {
     // Load auth token from env var or file
     this.authToken = this.loadAuthToken();
+
+    if (!this.authEnabled) {
+      this.authToken = null;
+      logger.warn('HTTP authentication disabled via AUTH_ENABLED=false');
+      return;
+    }
     
     if (!this.authToken || this.authToken.trim() === '') {
       const message = 'No authentication token found or token is empty. Set AUTH_TOKEN environment variable or AUTH_TOKEN_FILE pointing to a file containing the token.';
@@ -503,14 +544,14 @@ export class SingleSessionHTTPServer {
           if (!this.canCreateSession()) {
             logger.warn('handleRequest: Session limit reached', {
               currentSessions: this.getActiveSessionCount(),
-              maxSessions: MAX_SESSIONS
+              maxSessions: this.maxSessions
             });
             
             res.status(429).json({
               jsonrpc: '2.0',
               error: {
                 code: -32000,
-                message: `Session limit reached (${MAX_SESSIONS}). Please wait for existing sessions to expire.`
+                message: `Session limit reached (${this.maxSessions}). Please wait for existing sessions to expire.`
               },
               id: req.body?.id || null
             });
@@ -911,9 +952,10 @@ export class SingleSessionHTTPServer {
           }
         },
         authentication: {
-          type: 'Bearer Token',
-          header: 'Authorization: Bearer <token>',
-          required_for: ['POST /mcp']
+          type: this.authEnabled ? 'Bearer Token' : 'None',
+          header: this.authEnabled ? 'Authorization: Bearer <token>' : 'Not required',
+          required_for: this.authEnabled ? ['POST /mcp'] : [],
+          enabled: this.authEnabled
         },
         documentation: 'https://github.com/czlonkowski/n8n-mcp'
       });
@@ -937,12 +979,14 @@ export class SingleSessionHTTPServer {
           active: sessionMetrics.activeSessions,
           total: sessionMetrics.totalSessions,
           expired: sessionMetrics.expiredSessions,
-          max: MAX_SESSIONS,
-          usage: `${sessionMetrics.activeSessions}/${MAX_SESSIONS}`,
+          max: this.maxSessions,
+          usage: `${sessionMetrics.activeSessions}/${this.maxSessions}`,
           sessionIds: activeTransports
         },
         security: {
           production: isProduction,
+          authenticationEnabled: this.authEnabled,
+          rateLimitEnabled: this.rateLimitEnabled,
           defaultToken: isDefaultToken,
           tokenLength: this.authToken?.length || 0
         },
@@ -1073,7 +1117,7 @@ export class SingleSessionHTTPServer {
             method: 'POST',
             path: '/mcp',
             description: 'Main MCP JSON-RPC endpoint',
-            authentication: 'Bearer token required'
+            authentication: this.authEnabled ? 'Bearer token required' : 'None'
           },
           health: {
             method: 'GET',
@@ -1154,35 +1198,37 @@ export class SingleSessionHTTPServer {
     // SECURITY: Rate limiting for authentication endpoint
     // Prevents brute force attacks and DoS
     // See: https://github.com/czlonkowski/n8n-mcp/issues/265 (HIGH-02)
-    const authLimiter = rateLimit({
-      windowMs: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW || '900000'), // 15 minutes
-      max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '20'), // 20 authentication attempts per IP
-      message: {
-        jsonrpc: '2.0',
-        error: {
-          code: -32000,
-          message: 'Too many authentication attempts. Please try again later.'
-        },
-        id: null
-      },
-      standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
-      legacyHeaders: false, // Disable `X-RateLimit-*` headers
-      handler: (req, res) => {
-        logger.warn('Rate limit exceeded', {
-          ip: req.ip,
-          userAgent: req.get('user-agent'),
-          event: 'rate_limit'
-        });
-        res.status(429).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32000,
-            message: 'Too many authentication attempts'
+    const authLimiter = this.authEnabled && this.rateLimitEnabled
+      ? rateLimit({
+          windowMs: this.authRateLimitWindow,
+          max: this.authRateLimitMax,
+          message: {
+            jsonrpc: '2.0',
+            error: {
+              code: -32000,
+              message: 'Too many authentication attempts. Please try again later.'
+            },
+            id: null
           },
-          id: null
-        });
-      }
-    });
+          standardHeaders: true,
+          legacyHeaders: false,
+          handler: (req, res) => {
+            logger.warn('Rate limit exceeded', {
+              ip: req.ip,
+              userAgent: req.get('user-agent'),
+              event: 'rate_limit'
+            });
+            res.status(429).json({
+              jsonrpc: '2.0',
+              error: {
+                code: -32000,
+                message: 'Too many authentication attempts'
+              },
+              id: null
+            });
+          }
+        })
+      : ((req: express.Request, res: express.Response, next: express.NextFunction) => next());
 
     // Main MCP endpoint with authentication and rate limiting
     app.post('/mcp', authLimiter, jsonParser, async (req: express.Request, res: express.Response): Promise<void> => {
@@ -1237,66 +1283,70 @@ export class SingleSessionHTTPServer {
       // Enhanced authentication check with specific logging
       const authHeader = req.headers.authorization;
       
-      // Check if Authorization header is missing
-      if (!authHeader) {
-        logger.warn('Authentication failed: Missing Authorization header', { 
-          ip: req.ip,
-          userAgent: req.get('user-agent'),
-          reason: 'no_auth_header'
-        });
-        res.status(401).json({ 
-          jsonrpc: '2.0',
-          error: {
-            code: -32001,
-            message: 'Unauthorized'
-          },
-          id: null
-        });
-        return;
-      }
-      
-      // Check if Authorization header has Bearer prefix
-      if (!authHeader.startsWith('Bearer ')) {
-        logger.warn('Authentication failed: Invalid Authorization header format (expected Bearer token)', { 
-          ip: req.ip,
-          userAgent: req.get('user-agent'),
-          reason: 'invalid_auth_format',
-          headerPrefix: authHeader.substring(0, Math.min(authHeader.length, 10)) + '...'  // Log first 10 chars for debugging
-        });
-        res.status(401).json({ 
-          jsonrpc: '2.0',
-          error: {
-            code: -32001,
-            message: 'Unauthorized'
-          },
-          id: null
-        });
-        return;
-      }
-      
-      // Extract token and trim whitespace
-      const token = authHeader.slice(7).trim();
+      if (this.authEnabled) {
+        // Check if Authorization header is missing
+        if (!authHeader) {
+          logger.warn('Authentication failed: Missing Authorization header', { 
+            ip: req.ip,
+            userAgent: req.get('user-agent'),
+            reason: 'no_auth_header'
+          });
+          res.status(401).json({ 
+            jsonrpc: '2.0',
+            error: {
+              code: -32001,
+              message: 'Unauthorized'
+            },
+            id: null
+          });
+          return;
+        }
+        
+        // Check if Authorization header has Bearer prefix
+        if (!authHeader.startsWith('Bearer ')) {
+          logger.warn('Authentication failed: Invalid Authorization header format (expected Bearer token)', { 
+            ip: req.ip,
+            userAgent: req.get('user-agent'),
+            reason: 'invalid_auth_format',
+            headerPrefix: authHeader.substring(0, Math.min(authHeader.length, 10)) + '...'
+          });
+          res.status(401).json({ 
+            jsonrpc: '2.0',
+            error: {
+              code: -32001,
+              message: 'Unauthorized'
+            },
+            id: null
+          });
+          return;
+        }
+        
+        // Extract token and trim whitespace
+        const token = authHeader.slice(7).trim();
 
-      // SECURITY: Use timing-safe comparison to prevent timing attacks
-      // See: https://github.com/czlonkowski/n8n-mcp/issues/265 (CRITICAL-02)
-      const isValidToken = this.authToken &&
-        AuthManager.timingSafeCompare(token, this.authToken);
+        // SECURITY: Use timing-safe comparison to prevent timing attacks
+        // See: https://github.com/czlonkowski/n8n-mcp/issues/265 (CRITICAL-02)
+        const isValidToken = this.authToken &&
+          AuthManager.timingSafeCompare(token, this.authToken);
 
-      if (!isValidToken) {
-        logger.warn('Authentication failed: Invalid token', {
-          ip: req.ip,
-          userAgent: req.get('user-agent'),
-          reason: 'invalid_token'
-        });
-        res.status(401).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32001,
-            message: 'Unauthorized'
-          },
-          id: null
-        });
-        return;
+        if (!isValidToken) {
+          logger.warn('Authentication failed: Invalid token', {
+            ip: req.ip,
+            userAgent: req.get('user-agent'),
+            reason: 'invalid_token'
+          });
+          res.status(401).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32001,
+              message: 'Unauthorized'
+            },
+            id: null
+          });
+          return;
+        }
+      } else {
+        logger.info('Authentication bypassed because AUTH_ENABLED=false');
       }
       
       // Handle request with single session
@@ -1402,7 +1452,7 @@ export class SingleSessionHTTPServer {
         port, 
         host, 
         environment: process.env.NODE_ENV || 'development',
-        maxSessions: MAX_SESSIONS,
+        maxSessions: this.maxSessions,
         sessionTimeout: this.sessionTimeout / 1000 / 60,
         production: isProduction,
         defaultToken: isDefaultToken
@@ -1414,7 +1464,7 @@ export class SingleSessionHTTPServer {
       
       console.log(`n8n MCP Single-Session HTTP Server running on ${host}:${port}`);
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`Session Limits: ${MAX_SESSIONS} max sessions, ${this.sessionTimeout / 1000 / 60}min timeout`);
+      console.log(`Session Limits: ${this.maxSessions} max sessions, ${this.sessionTimeout / 1000 / 60}min timeout`);
       console.log(`Health check: ${endpoints.health}`);
       console.log(`MCP endpoint: ${endpoints.mcp}`);
       
@@ -1541,7 +1591,7 @@ export class SingleSessionHTTPServer {
           total: metrics.totalSessions,
           active: metrics.activeSessions,
           expired: metrics.expiredSessions,
-          max: MAX_SESSIONS,
+          max: this.maxSessions,
           sessionIds: Object.keys(this.transports)
         }
       };
@@ -1555,7 +1605,7 @@ export class SingleSessionHTTPServer {
         total: metrics.totalSessions,
         active: metrics.activeSessions,
         expired: metrics.expiredSessions,
-        max: MAX_SESSIONS,
+        max: this.maxSessions,
         sessionIds: Object.keys(this.transports)
       }
     };
@@ -1661,11 +1711,11 @@ export class SingleSessionHTTPServer {
         }
 
         // Check if we've hit the MAX_SESSIONS limit (check real-time count)
-        if (Object.keys(this.sessionMetadata).length >= MAX_SESSIONS) {
+        if (Object.keys(this.sessionMetadata).length >= this.maxSessions) {
           logger.warn(
-            `Reached MAX_SESSIONS limit (${MAX_SESSIONS}), skipping remaining sessions`
+            `Reached MAX_SESSIONS limit (${this.maxSessions}), skipping remaining sessions`
           );
-          logSecurityEvent('max_sessions_reached', { count: MAX_SESSIONS });
+          logSecurityEvent('max_sessions_reached', { count: this.maxSessions });
           break;
         }
 
