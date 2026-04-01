@@ -140,11 +140,11 @@
     "@vitest/coverage-v8": "^3.2.4",
     "@vitest/runner": "^3.2.4",
     "@vitest/ui": "^3.2.4",
-    "axios": "^1.11.0",
+    "axios": "^1.14.0",
     "axios-mock-adapter": "^2.1.0",
     "fishery": "^2.3.1",
     "msw": "^2.10.4",
-    "nodemon": "^3.1.10",
+    "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
