@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.44.1] - 2026-04-01
+
+### Security
+
+- **Bump axios** from `^1.11.0` to `^1.14.0` to patch known vulnerability
+- **Bump nodemon** from `^3.1.10` to `^3.1.14` to patch transitive dependency vulnerabilities
+
+### Changed
+
+- **Upgrade GitHub Actions** to latest versions across all CI/CD workflows (docker, release, test, update-n8n-deps) — contributed by @salmanmkc in #663
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.44.0] - 2026-04-01
 
 ### Added
