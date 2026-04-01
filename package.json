@@ -12,7 +12,7 @@
     }
   },
   "bin": {
-    "n8n-mcp": "./dist/mcp/index.js"
+    "n8n-mcp": "./dist/mcp/stdio-wrapper.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
