@@ -1,6 +1,6 @@
 {
   "name": "n8n-mcp-runtime",
-  "version": "2.44.1",
+  "version": "2.45.0",
   "description": "n8n MCP Server Runtime Dependencies Only",
   "private": true,
   "dependencies": {
