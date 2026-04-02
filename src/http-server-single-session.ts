@@ -28,6 +28,8 @@ import { InstanceContext, validateInstanceContext } from './types/instance-conte
 import { SessionState } from './types/session-state';
 import { GenerateWorkflowHandler } from './types/generate-workflow';
 import { closeSharedDatabase } from './database/shared-database';
+import { loadAuthMode, loadOAuthConfig, fetchN8nOAuthMetadata, type AuthMode, type OAuthConfig } from './auth/oauth-config';
+import { N8nTokenVerifier } from './auth/n8n-token-verifier';
 
 dotenv.config();
 
@@ -118,6 +120,10 @@ export class SingleSessionHTTPServer {
     process.env.SESSION_TIMEOUT_MINUTES || '30', 10
   ) * 60 * 1000;
   private authToken: string | null = null;
+  private authMode: AuthMode = 'token';
+  private oauthConfig: OAuthConfig | null = null;
+  private oauthBaseConfig: Omit<OAuthConfig, 'n8nOAuthMetadata'> | null = null;
+  private n8nTokenVerifier: N8nTokenVerifier | null = null;
   private cleanupTimer: NodeJS.Timeout | null = null;
   private generateWorkflowHandler?: GenerateWorkflowHandler;
 
@@ -420,49 +426,78 @@ export class SingleSessionHTTPServer {
    * Validate required environment variables
    */
   private validateEnvironment(): void {
-    // Load auth token from env var or file
-    this.authToken = this.loadAuthToken();
-    
-    if (!this.authToken || this.authToken.trim() === '') {
-      const message = 'No authentication token found or token is empty. Set AUTH_TOKEN environment variable or AUTH_TOKEN_FILE pointing to a file containing the token.';
-      logger.error(message);
-      throw new Error(message);
-    }
-    
-    // Update authToken to trimmed version
-    this.authToken = this.authToken.trim();
-    
-    if (this.authToken.length < 32) {
-      logger.warn('AUTH_TOKEN should be at least 32 characters for security');
-    }
-    
-    // Check for default token and show prominent warnings
-    const isDefaultToken = this.authToken === 'REPLACE_THIS_AUTH_TOKEN_32_CHARS_MIN_abcdefgh';
-    const isProduction = process.env.NODE_ENV === 'production';
-    
-    if (isDefaultToken) {
-      if (isProduction) {
-        const message = 'CRITICAL SECURITY ERROR: Cannot start in production with default AUTH_TOKEN. Generate secure token: openssl rand -base64 32';
+    // Determine authentication mode
+    this.authMode = loadAuthMode();
+    logger.info(`Authentication mode: ${this.authMode}`);
+
+    // Load static token when needed (token or both modes)
+    if (this.authMode === 'token' || this.authMode === 'both') {
+      this.authToken = this.loadAuthToken();
+
+      if (!this.authToken || this.authToken.trim() === '') {
+        const message = 'No authentication token found or token is empty. Set AUTH_TOKEN environment variable or AUTH_TOKEN_FILE pointing to a file containing the token.';
         logger.error(message);
-        console.error('\n🚨 CRITICAL SECURITY ERROR 🚨');
-        console.error(message);
-        console.error('Set NODE_ENV to development for testing, or update AUTH_TOKEN for production\n');
         throw new Error(message);
       }
-      
-      logger.warn('⚠️ SECURITY WARNING: Using default AUTH_TOKEN - CHANGE IMMEDIATELY!');
-      logger.warn('Generate secure token with: openssl rand -base64 32');
-      
-      // Only show console warnings in HTTP mode
-      if (process.env.MCP_MODE === 'http') {
-        console.warn('\n⚠️  SECURITY WARNING ⚠️');
-        console.warn('Using default AUTH_TOKEN - CHANGE IMMEDIATELY!');
-        console.warn('Generate secure token: openssl rand -base64 32');
-        console.warn('Update via Railway dashboard environment variables\n');
+
+      // Update authToken to trimmed version
+      this.authToken = this.authToken.trim();
+
+      if (this.authToken.length < 32) {
+        logger.warn('AUTH_TOKEN should be at least 32 characters for security');
       }
+
+      // Check for default token and show prominent warnings
+      const isDefaultToken = this.authToken === 'REPLACE_THIS_AUTH_TOKEN_32_CHARS_MIN_abcdefgh';
+      const isProduction = process.env.NODE_ENV === 'production';
+
+      if (isDefaultToken) {
+        if (isProduction) {
+          const message = 'CRITICAL SECURITY ERROR: Cannot start in production with default AUTH_TOKEN. Generate secure token: openssl rand -base64 32';
+          logger.error(message);
+          console.error('\n🚨 CRITICAL SECURITY ERROR 🚨');
+          console.error(message);
+          console.error('Set NODE_ENV to development for testing, or update AUTH_TOKEN for production\n');
+          throw new Error(message);
+        }
+
+        logger.warn('⚠️ SECURITY WARNING: Using default AUTH_TOKEN - CHANGE IMMEDIATELY!');
+        logger.warn('Generate secure token with: openssl rand -base64 32');
+
+        // Only show console warnings in HTTP mode
+        if (process.env.MCP_MODE === 'http') {
+          console.warn('\n⚠️  SECURITY WARNING ⚠️');
+          console.warn('Using default AUTH_TOKEN - CHANGE IMMEDIATELY!');
+          console.warn('Generate secure token: openssl rand -base64 32');
+          console.warn('Update via Railway dashboard environment variables\n');
+        }
+      }
+    }
+
+    // Load OAuth base config when needed (oauth or both modes)
+    // Full initialization (metadata fetch) happens async in start()
+    if (this.authMode === 'oauth' || this.authMode === 'both') {
+      this.oauthBaseConfig = loadOAuthConfig(this.authMode);
+      logger.info('OAuth configuration pre-validated (metadata will be fetched at startup)');
     }
   }
   
+
+  /**
+   * Build an InstanceContext from OAuth auth info when the token was issued by n8n.
+   * The n8n-issued Bearer token is reused as the API key for n8n API calls.
+   */
+  private buildOAuthInstanceContext(req: express.Request): InstanceContext | undefined {
+    const auth = (req as any).auth;
+    if (!auth?.token || !auth?.extra?.n8nBaseUrl) {
+      return undefined;
+    }
+
+    return {
+      n8nApiUrl: auth.extra.n8nBaseUrl,
+      n8nApiKey: auth.token,
+    };
+  }
 
   /**
    * Handle incoming MCP request using proper SDK pattern
@@ -886,7 +921,31 @@ export class SingleSessionHTTPServer {
       });
       next();
     });
-    
+
+    // Fetch n8n OAuth metadata and mount resource metadata router when OAuth is enabled
+    if ((this.authMode === 'oauth' || this.authMode === 'both') && this.oauthBaseConfig) {
+      const metadata = await fetchN8nOAuthMetadata(this.oauthBaseConfig.issuerUrl);
+      this.oauthConfig = {
+        ...this.oauthBaseConfig,
+        n8nOAuthMetadata: metadata,
+      };
+      this.n8nTokenVerifier = new N8nTokenVerifier(this.oauthBaseConfig.issuerUrl);
+
+      const { mcpAuthMetadataRouter } = await import('@modelcontextprotocol/sdk/server/auth/router.js');
+      app.use(mcpAuthMetadataRouter({
+        oauthMetadata: this.oauthConfig.n8nOAuthMetadata,
+        resourceServerUrl: new URL(this.oauthConfig.serverUrl),
+        serviceDocumentationUrl: new URL('https://github.com/czlonkowski/n8n-mcp'),
+        scopesSupported: this.oauthConfig.n8nOAuthMetadata.scopes_supported,
+        resourceName: 'n8n Documentation MCP Server',
+      }));
+      logger.info('OAuth resource metadata router mounted (n8n as auth server)', {
+        issuer: this.oauthConfig.n8nOAuthMetadata.issuer,
+        scopes: this.oauthConfig.n8nOAuthMetadata.scopes_supported,
+        serverUrl: this.oauthConfig.serverUrl,
+      });
+    }
+
     // Root endpoint with API information
     app.get('/', (req, res) => {
       const port = parseInt(process.env.PORT || '3000');
@@ -911,9 +970,15 @@ export class SingleSessionHTTPServer {
           }
         },
         authentication: {
-          type: 'Bearer Token',
+          mode: this.authMode,
+          type: this.authMode === 'token' ? 'Bearer Token' :
+                this.authMode === 'oauth' ? 'OAuth 2.1' : 'Bearer Token + OAuth 2.1',
           header: 'Authorization: Bearer <token>',
-          required_for: ['POST /mcp']
+          required_for: ['POST /mcp'],
+          ...(this.authMode !== 'token' && this.oauthConfig && {
+            n8n_auth_server: this.oauthConfig.n8nOAuthMetadata.issuer,
+            resource_metadata: `${baseUrl}/.well-known/oauth-protected-resource`,
+          }),
         },
         documentation: 'https://github.com/czlonkowski/n8n-mcp'
       });
@@ -1184,8 +1249,30 @@ export class SingleSessionHTTPServer {
       }
     });
 
+    // Build OAuth middleware using SDK's requireBearerAuth when OAuth is enabled
+    let oauthMiddleware: express.RequestHandler | undefined;
+    let resourceMetadataUrl: string | undefined;
+
+    if (this.authMode !== 'token' && this.oauthConfig && this.n8nTokenVerifier) {
+      const { requireBearerAuth } = await import('@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js');
+      const { getOAuthProtectedResourceMetadataUrl } = await import('@modelcontextprotocol/sdk/server/auth/router.js');
+      resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(new URL(this.oauthConfig.serverUrl));
+      oauthMiddleware = requireBearerAuth({
+        verifier: this.n8nTokenVerifier,
+        resourceMetadataUrl,
+      });
+    }
+
+    // Create unified auth middleware
+    const authMiddleware = AuthManager.createAuthMiddleware(
+      this.authMode,
+      oauthMiddleware,
+      this.authToken,
+      resourceMetadataUrl
+    );
+
     // Main MCP endpoint with authentication and rate limiting
-    app.post('/mcp', authLimiter, jsonParser, async (req: express.Request, res: express.Response): Promise<void> => {
+    app.post('/mcp', authLimiter, jsonParser, authMiddleware, async (req: express.Request, res: express.Response): Promise<void> => {
       // Log comprehensive debug info about the request
       logger.info('POST /mcp request received - DETAILED DEBUG', {
         headers: req.headers,
@@ -1234,72 +1321,7 @@ export class SingleSessionHTTPServer {
         });
       }
       
-      // Enhanced authentication check with specific logging
-      const authHeader = req.headers.authorization;
-      
-      // Check if Authorization header is missing
-      if (!authHeader) {
-        logger.warn('Authentication failed: Missing Authorization header', { 
-          ip: req.ip,
-          userAgent: req.get('user-agent'),
-          reason: 'no_auth_header'
-        });
-        res.status(401).json({ 
-          jsonrpc: '2.0',
-          error: {
-            code: -32001,
-            message: 'Unauthorized'
-          },
-          id: null
-        });
-        return;
-      }
-      
-      // Check if Authorization header has Bearer prefix
-      if (!authHeader.startsWith('Bearer ')) {
-        logger.warn('Authentication failed: Invalid Authorization header format (expected Bearer token)', { 
-          ip: req.ip,
-          userAgent: req.get('user-agent'),
-          reason: 'invalid_auth_format',
-          headerPrefix: authHeader.substring(0, Math.min(authHeader.length, 10)) + '...'  // Log first 10 chars for debugging
-        });
-        res.status(401).json({ 
-          jsonrpc: '2.0',
-          error: {
-            code: -32001,
-            message: 'Unauthorized'
-          },
-          id: null
-        });
-        return;
-      }
-      
-      // Extract token and trim whitespace
-      const token = authHeader.slice(7).trim();
-
-      // SECURITY: Use timing-safe comparison to prevent timing attacks
-      // See: https://github.com/czlonkowski/n8n-mcp/issues/265 (CRITICAL-02)
-      const isValidToken = this.authToken &&
-        AuthManager.timingSafeCompare(token, this.authToken);
-
-      if (!isValidToken) {
-        logger.warn('Authentication failed: Invalid token', {
-          ip: req.ip,
-          userAgent: req.get('user-agent'),
-          reason: 'invalid_token'
-        });
-        res.status(401).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32001,
-            message: 'Unauthorized'
-          },
-          id: null
-        });
-        return;
-      }
-      
-      // Handle request with single session
+      // Authentication already handled by authMiddleware
       logger.info('Authentication successful - proceeding to handleRequest', {
         hasSession: !!this.session,
         sessionType: this.session?.isSSE ? 'SSE' : 'StreamableHTTP',
@@ -1345,19 +1367,38 @@ export class SingleSessionHTTPServer {
         return context;
       })();
 
+      // If OAuth auth succeeded, use the n8n token as the API key for downstream calls
+      const oauthContext = this.buildOAuthInstanceContext(req);
+
+      // Merge contexts: header values take precedence, but fill missing fields from OAuth
+      // This handles the common case where headers provide x-n8n-key (REST API key)
+      // but no x-n8n-url, while OAuth context knows the n8n URL from OAUTH_ISSUER_URL
+      const effectiveContext: InstanceContext | undefined = (() => {
+        if (instanceContext && oauthContext) {
+          return {
+            ...oauthContext,
+            ...instanceContext,
+            n8nApiUrl: instanceContext.n8nApiUrl || oauthContext.n8nApiUrl,
+            n8nApiKey: instanceContext.n8nApiKey || oauthContext.n8nApiKey,
+          };
+        }
+        return instanceContext || oauthContext;
+      })();
+
       // Log context extraction for debugging (only if context exists)
-      if (instanceContext) {
+      if (effectiveContext) {
         // Use sanitized logging for security
-        logger.debug('Instance context extracted from headers', {
-          hasUrl: !!instanceContext.n8nApiUrl,
-          hasKey: !!instanceContext.n8nApiKey,
-          instanceId: instanceContext.instanceId ? instanceContext.instanceId.substring(0, 8) + '...' : undefined,
-          sessionId: instanceContext.sessionId ? instanceContext.sessionId.substring(0, 8) + '...' : undefined,
-          urlDomain: instanceContext.n8nApiUrl ? new URL(instanceContext.n8nApiUrl).hostname : undefined
+        logger.debug('Instance context extracted', {
+          source: instanceContext ? 'headers' : 'oauth',
+          hasUrl: !!effectiveContext.n8nApiUrl,
+          hasKey: !!effectiveContext.n8nApiKey,
+          instanceId: effectiveContext.instanceId ? effectiveContext.instanceId.substring(0, 8) + '...' : undefined,
+          sessionId: effectiveContext.sessionId ? effectiveContext.sessionId.substring(0, 8) + '...' : undefined,
+          urlDomain: effectiveContext.n8nApiUrl ? new URL(effectiveContext.n8nApiUrl).hostname : undefined
         });
       }
 
-      await this.handleRequest(req, res, instanceContext);
+      await this.handleRequest(req, res, effectiveContext);
       
       logger.info('POST /mcp request completed - checking response status', {
         responseHeadersSent: res.headersSent,
@@ -1469,6 +1510,9 @@ export class SingleSessionHTTPServer {
       this.cleanupTimer = null;
       logger.info('Session cleanup timer stopped');
     }
+
+    // Clean up token verifier (no-op currently, but good practice)
+    this.n8nTokenVerifier = null;
     
     // Close all active transports (SDK pattern)
     const sessionIds = Object.keys(this.transports);
