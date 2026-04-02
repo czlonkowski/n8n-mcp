@@ -1,0 +1,23 @@
+{
+  "name": "n8n-mcp",
+  "version": "0.1.0",
+  "description": "Build n8n workflows from Codex via MCP",
+  "author": {
+    "name": "czlonkowski",
+    "url": "https://github.com/czlonkowski/n8n-mcp"
+  },
+  "homepage": "https://github.com/czlonkowski/n8n-mcp",
+  "repository": "https://github.com/czlonkowski/n8n-mcp",
+  "keywords": [
+    "mcp",
+    "codex"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "n8n MCP",
+    "shortDescription": "Build n8n workflows from Codex via MCP",
+    "longDescription": "A MCP server for Claude Desktop / Claude Code / Windsurf / Cursor to build n8n workflows.",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/czlonkowski/n8n-mcp"
+  }
+}
