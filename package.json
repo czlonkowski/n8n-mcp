@@ -1,6 +1,6 @@
 {
   "name": "n8n-mcp",
-  "version": "2.45.0",
+  "version": "2.45.1",
   "description": "Integration between n8n workflow automation and Model Context Protocol (MCP)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,7 +12,7 @@
     }
   },
   "bin": {
-    "n8n-mcp": "./dist/mcp/index.js"
+    "n8n-mcp": "./dist/mcp/stdio-wrapper.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

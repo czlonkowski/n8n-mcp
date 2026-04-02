@@ -776,6 +776,28 @@ export async function handleUpdateWorkflow(
       const current = await client.getWorkflow(id);
       workflowBefore = JSON.parse(JSON.stringify(current));
 
+      // Preserve credentials from current workflow for nodes that don't specify them.
+      // AI-generated node updates typically omit credential references because they
+      // aren't included in the context provided to the AI. Without this merge, the
+      // n8n API rejects the PUT with missing credentials.
+      if (updateData.nodes && current.nodes) {
+        const currentById = new Map<string, any>();
+        const currentByName = new Map<string, any>();
+        for (const node of current.nodes) {
+          if (node.id) currentById.set(node.id, node);
+          currentByName.set(node.name, node);
+        }
+        for (const node of updateData.nodes as any[]) {
+          const hasCredentials = node.credentials && typeof node.credentials === 'object' && Object.keys(node.credentials).length > 0;
+          if (!hasCredentials) {
+            const match = (node.id && currentById.get(node.id)) || currentByName.get(node.name);
+            if (match?.credentials) {
+              node.credentials = match.credentials;
+            }
+          }
+        }
+      }
+
       // Create backup before modifying workflow (default: true)
       if (createBackup !== false) {
         try {

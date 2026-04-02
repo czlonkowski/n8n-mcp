@@ -35,7 +35,7 @@ node -e "
 const pkg = require('./package.json');
 pkg.name = 'n8n-mcp';
 pkg.description = 'Integration between n8n workflow automation and Model Context Protocol (MCP)';
-pkg.bin = { 'n8n-mcp': './dist/mcp/index.js' };
+pkg.bin = { 'n8n-mcp': './dist/mcp/stdio-wrapper.js' };
 pkg.repository = { type: 'git', url: 'git+https://github.com/czlonkowski/n8n-mcp.git' };
 pkg.keywords = ['n8n', 'mcp', 'model-context-protocol', 'ai', 'workflow', 'automation'];
 pkg.author = 'Romuald Czlonkowski @ www.aiadvisors.pl/en';

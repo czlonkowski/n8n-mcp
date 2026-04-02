@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.45.1] - 2026-04-02
+
+### Fixed
+
+- **Use stdio-wrapper.js as default bin entry point** — the previous entry point (`index.js`) wrote INFO-level logs to stdout, corrupting JSON-RPC MCP transport for stdio-mode users (Fixes #693, Related: #555, #628)
+- **Preserve node credentials during full workflow updates** — `n8n_update_full_workflow` now carries forward existing credential references from the server when user-provided nodes omit them, preventing "missing credentials" errors on PUT (Fixes #689)
+
+### Changed
+
+- **Updated publish scripts** to use `stdio-wrapper.js` as the npm bin entry point, ensuring the fix persists across releases
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.45.0] - 2026-04-01
 
 ### Changed

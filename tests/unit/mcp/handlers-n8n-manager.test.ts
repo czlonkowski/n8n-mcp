@@ -16,6 +16,12 @@ import { ExecutionStatus } from '@/types/n8n-api';
 vi.mock('@/services/n8n-api-client');
 vi.mock('@/services/workflow-validator');
 vi.mock('@/database/node-repository');
+vi.mock('@/services/workflow-versioning-service', () => ({
+  WorkflowVersioningService: vi.fn().mockImplementation(() => ({
+    createBackup: vi.fn().mockResolvedValue({ versionId: 'v1', versionNumber: 1, pruned: 0 }),
+    getVersions: vi.fn().mockResolvedValue([]),
+  })),
+}));
 vi.mock('@/config/n8n-api', () => ({
   getN8nApiConfig: vi.fn()
 }));
@@ -1341,6 +1347,144 @@ describe('handlers-n8n-manager', () => {
       });
 
       expect(result.error).toMatch(/mode:\s*'preview'/);
+    });
+  });
+
+  describe('handleUpdateWorkflow - credential preservation', () => {
+    function mockCurrentWorkflow(nodes: any[]): void {
+      const workflow = createTestWorkflow({ id: 'wf-1', active: false, nodes });
+      mockApiClient.getWorkflow.mockResolvedValue(workflow);
+      mockApiClient.updateWorkflow.mockResolvedValue({ ...workflow, updatedAt: '2024-01-02' });
+    }
+
+    function getSentNodes(): any[] {
+      return mockApiClient.updateWorkflow.mock.calls[0][1].nodes;
+    }
+
+    it('should preserve credentials from current workflow when update nodes omit them', async () => {
+      mockCurrentWorkflow([
+        {
+          id: 'node-1', name: 'Postgres', type: 'n8n-nodes-base.postgres',
+          typeVersion: 2, position: [100, 100],
+          parameters: { operation: 'executeQuery', query: 'SELECT 1' },
+          credentials: { postgresApi: { id: 'cred-123', name: 'My Postgres' } },
+        },
+        {
+          id: 'node-2', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest',
+          typeVersion: 4, position: [300, 100],
+          parameters: { url: 'https://example.com' },
+          credentials: { httpBasicAuth: { id: 'cred-456', name: 'Basic Auth' } },
+        },
+        {
+          id: 'node-3', name: 'Set', type: 'n8n-nodes-base.set',
+          typeVersion: 3, position: [500, 100], parameters: {},
+        },
+      ]);
+
+      await handlers.handleUpdateWorkflow(
+        {
+          id: 'wf-1',
+          nodes: [
+            {
+              id: 'node-1', name: 'Postgres', type: 'n8n-nodes-base.postgres',
+              typeVersion: 2, position: [100, 100],
+              parameters: { operation: 'executeQuery', query: 'SELECT * FROM users' },
+            },
+            {
+              id: 'node-2', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest',
+              typeVersion: 4, position: [300, 100],
+              parameters: { url: 'https://example.com/v2' },
+            },
+            {
+              id: 'node-3', name: 'Set', type: 'n8n-nodes-base.set',
+              typeVersion: 3, position: [500, 100], parameters: { mode: 'manual' },
+            },
+          ],
+          connections: {},
+        },
+        mockRepository,
+      );
+
+      const sentNodes = getSentNodes();
+      expect(sentNodes[0].credentials).toEqual({ postgresApi: { id: 'cred-123', name: 'My Postgres' } });
+      expect(sentNodes[1].credentials).toEqual({ httpBasicAuth: { id: 'cred-456', name: 'Basic Auth' } });
+      expect(sentNodes[2].credentials).toBeUndefined();
+    });
+
+    it('should not overwrite user-provided credentials', async () => {
+      mockCurrentWorkflow([
+        {
+          id: 'node-1', name: 'Postgres', type: 'n8n-nodes-base.postgres',
+          typeVersion: 2, position: [100, 100], parameters: {},
+          credentials: { postgresApi: { id: 'cred-old', name: 'Old Postgres' } },
+        },
+      ]);
+
+      await handlers.handleUpdateWorkflow(
+        {
+          id: 'wf-1',
+          nodes: [
+            {
+              id: 'node-1', name: 'Postgres', type: 'n8n-nodes-base.postgres',
+              typeVersion: 2, position: [100, 100], parameters: {},
+              credentials: { postgresApi: { id: 'cred-new', name: 'New Postgres' } },
+            },
+          ],
+          connections: {},
+        },
+        mockRepository,
+      );
+
+      const sentNodes = getSentNodes();
+      expect(sentNodes[0].credentials).toEqual({ postgresApi: { id: 'cred-new', name: 'New Postgres' } });
+    });
+
+    it('should match nodes by name when ids differ', async () => {
+      mockCurrentWorkflow([
+        {
+          id: 'server-id-1', name: 'Gmail', type: 'n8n-nodes-base.gmail',
+          typeVersion: 2, position: [100, 100], parameters: {},
+          credentials: { gmailOAuth2: { id: 'cred-gmail', name: 'Gmail' } },
+        },
+      ]);
+
+      await handlers.handleUpdateWorkflow(
+        {
+          id: 'wf-1',
+          nodes: [
+            {
+              id: 'client-id-different', name: 'Gmail', type: 'n8n-nodes-base.gmail',
+              typeVersion: 2, position: [100, 100],
+              parameters: { resource: 'message' },
+            },
+          ],
+          connections: {},
+        },
+        mockRepository,
+      );
+
+      const sentNodes = getSentNodes();
+      expect(sentNodes[0].credentials).toEqual({ gmailOAuth2: { id: 'cred-gmail', name: 'Gmail' } });
+    });
+
+    it('should treat empty credentials object as missing and carry forward', async () => {
+      mockCurrentWorkflow([
+        { id: 'node-1', name: 'Postgres', type: 'n8n-nodes-base.postgres', typeVersion: 2, position: [100, 100], parameters: {}, credentials: { postgresApi: { id: 'cred-123', name: 'My Postgres' } } },
+      ]);
+
+      await handlers.handleUpdateWorkflow(
+        {
+          id: 'wf-1',
+          nodes: [
+            { id: 'node-1', name: 'Postgres', type: 'n8n-nodes-base.postgres', typeVersion: 2, position: [100, 100], parameters: {}, credentials: {} },
+          ],
+          connections: {},
+        },
+        mockRepository,
+      );
+
+      const sentNodes = getSentNodes();
+      expect(sentNodes[0].credentials).toEqual({ postgresApi: { id: 'cred-123', name: 'My Postgres' } });
     });
   });
 });
