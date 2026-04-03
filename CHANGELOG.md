@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.46.1] - 2026-04-03
+
+### Fixed
+
+- **Fix SSE reconnection loop** — SSE clients entering rapid reconnection loops because `POST /mcp` never routed messages to `SSEServerTransport.handlePostMessage()` (Fixes #617). Root cause: SSE sessions were stored in a separate `this.session` property invisible to the StreamableHTTP POST handler
+- **Add authentication to SSE endpoints** — `GET /sse` and `POST /messages` now require Bearer token authentication, closing an auth gap where SSE connections were unauthenticated
+- **Fix rate limiter exhaustion during reconnection** — added `skipSuccessfulRequests: true` to `authLimiter` so legitimate requests don't count toward the rate limit, preventing 429 storms during SSE reconnection loops
+
+### Changed
+
+- **Separate SSE endpoints (SDK pattern)** — SSE transport now uses dedicated `GET /sse` + `POST /messages` endpoints instead of sharing `/mcp` with StreamableHTTP, following the official MCP SDK backward-compatible server pattern
+- **Unified auth into `authenticateRequest()` method** — consolidated duplicated Bearer token validation logic from three endpoints into a single method with consistent JSON-RPC error responses
+- **SSE sessions use shared transports map** — removed the legacy `this.session` singleton; SSE sessions are now stored in the same `this.transports` map as StreamableHTTP sessions with `instanceof` guards for type discrimination
+
+### Deprecated
+
+- **SSE transport (`GET /sse`, `POST /messages`)** — SSE is deprecated in MCP SDK v1.x and removed in v2.x. Clients should migrate to StreamableHTTP (`POST /mcp`). These endpoints will be removed in a future major release
+
+### Security
+
+- **Rate limiting on all authenticated endpoints** — `authLimiter` now applied to `GET /sse` and `POST /messages` in addition to `POST /mcp`
+- **Transport type guards** — `instanceof` checks prevent cross-protocol access (SSE session IDs rejected on StreamableHTTP endpoint and vice versa)
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.46.0] - 2026-04-03
 
 ### Added

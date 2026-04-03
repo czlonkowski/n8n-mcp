@@ -59,11 +59,24 @@ vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
   })
 }));
 
-vi.mock('@modelcontextprotocol/sdk/server/sse.js', () => ({
-  SSEServerTransport: vi.fn().mockImplementation(() => ({
-    close: vi.fn().mockResolvedValue(undefined)
-  }))
-}));
+vi.mock('@modelcontextprotocol/sdk/server/sse.js', () => {
+  class MockSSEServerTransport {
+    sessionId: string;
+    onclose: (() => void) | null = null;
+    onerror: ((error: Error) => void) | null = null;
+    close = vi.fn().mockResolvedValue(undefined);
+    handlePostMessage = vi.fn().mockImplementation(async (_req: any, res: any) => {
+      res.writeHead(202);
+      res.end('Accepted');
+    });
+    start = vi.fn().mockResolvedValue(undefined);
+
+    constructor(_endpoint: string, _res: any) {
+      this.sessionId = 'sse-' + Math.random().toString(36).substring(2, 11);
+    }
+  }
+  return { SSEServerTransport: MockSSEServerTransport };
+});
 
 vi.mock('../../src/mcp/server', () => ({
   N8NDocumentationMCPServer: vi.fn().mockImplementation(() => ({
@@ -1100,24 +1113,16 @@ describe('HTTP Server Session Management', () => {
         'session-2': { lastAccess: new Date(), createdAt: new Date() }
       };
 
-      // Set up legacy session for SSE compatibility
-      const mockLegacyTransport = { close: vi.fn().mockResolvedValue(undefined) };
-      (server as any).session = {
-        transport: mockLegacyTransport
-      };
-
       await server.shutdown();
 
       // All transports should be closed
       expect(mockTransport1.close).toHaveBeenCalled();
       expect(mockTransport2.close).toHaveBeenCalled();
-      expect(mockLegacyTransport.close).toHaveBeenCalled();
 
       // All data structures should be cleared
       expect(Object.keys((server as any).transports)).toHaveLength(0);
       expect(Object.keys((server as any).servers)).toHaveLength(0);
       expect(Object.keys((server as any).sessionMetadata)).toHaveLength(0);
-      expect((server as any).session).toBe(null);
     });
 
     it('should handle transport close errors during shutdown', async () => {
@@ -1169,22 +1174,21 @@ describe('HTTP Server Session Management', () => {
       expect(Array.isArray(sessionInfo.sessions!.sessionIds)).toBe(true);
     });
 
-    it('should show legacy SSE session when present', async () => {
+    it('should show active when transports exist', async () => {
       server = new SingleSessionHTTPServer();
 
-      // Mock legacy session
-      const mockSession = {
-        sessionId: 'sse-session-123',
+      // Add a transport to simulate an active session
+      (server as any).transports['session-123'] = { close: vi.fn() };
+      (server as any).sessionMetadata['session-123'] = {
         lastAccess: new Date(),
-        isSSE: true
+        createdAt: new Date()
       };
-      (server as any).session = mockSession;
 
       const sessionInfo = server.getSessionInfo();
 
       expect(sessionInfo.active).toBe(true);
-      expect(sessionInfo.sessionId).toBe('sse-session-123');
-      expect(sessionInfo.age).toBeGreaterThanOrEqual(0);
+      expect(sessionInfo.sessions!.total).toBe(1);
+      expect(sessionInfo.sessions!.sessionIds).toContain('session-123');
     });
   });
 

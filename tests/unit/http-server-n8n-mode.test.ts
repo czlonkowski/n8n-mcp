@@ -219,8 +219,22 @@ describe('HTTP Server n8n Mode', () => {
           mcp: {
             method: 'POST',
             path: '/mcp',
-            description: 'Main MCP JSON-RPC endpoint',
+            description: 'Main MCP JSON-RPC endpoint (StreamableHTTP)',
             authentication: 'Bearer token required'
+          },
+          sse: {
+            method: 'GET',
+            path: '/sse',
+            description: 'DEPRECATED: SSE stream for legacy clients. Migrate to StreamableHTTP (POST /mcp).',
+            authentication: 'Bearer token required',
+            deprecated: true
+          },
+          messages: {
+            method: 'POST',
+            path: '/messages',
+            description: 'DEPRECATED: Message delivery for SSE sessions. Migrate to StreamableHTTP (POST /mcp).',
+            authentication: 'Bearer token required',
+            deprecated: true
           },
           health: {
             method: 'GET',

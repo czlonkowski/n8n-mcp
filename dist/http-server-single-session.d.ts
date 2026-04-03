@@ -12,7 +12,6 @@ export declare class SingleSessionHTTPServer {
     private sessionMetadata;
     private sessionContexts;
     private contextSwitchLocks;
-    private session;
     private consoleManager;
     private expressServer;
     private sessionTimeout;
@@ -29,14 +28,14 @@ export declare class SingleSessionHTTPServer {
     private isJsonRpcNotification;
     private sanitizeErrorForClient;
     private updateSessionAccess;
+    private authenticateRequest;
     private switchSessionContext;
     private performContextSwitch;
     private getSessionMetrics;
     private loadAuthToken;
     private validateEnvironment;
     handleRequest(req: express.Request, res: express.Response, instanceContext?: InstanceContext): Promise<void>;
-    private resetSessionSSE;
-    private isExpired;
+    private createSSESession;
     private isSessionExpired;
     start(): Promise<void>;
     shutdown(): Promise<void>;
