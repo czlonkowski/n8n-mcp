@@ -19,5 +19,6 @@
     "longDescription": "A MCP server for Claude Desktop / Claude Code / Windsurf / Cursor to build n8n workflows.",
     "category": "Productivity",
     "websiteURL": "https://github.com/czlonkowski/n8n-mcp"
-  }
+  },
+  "skills": "./skills/"
 }
