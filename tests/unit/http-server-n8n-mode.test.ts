@@ -393,6 +393,44 @@ describe('HTTP Server n8n Mode', () => {
     });
   });
 
+  describe('Environment Compatibility', () => {
+    it('should allow HTTP mode without AUTH_TOKEN when AUTH_ENABLED=false', async () => {
+      delete process.env.AUTH_TOKEN;
+      process.env.AUTH_ENABLED = 'false';
+
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('post', '/mcp');
+      expect(handler).toBeTruthy();
+
+      const { req, res } = createMockReqRes();
+      req.method = 'POST';
+      req.body = {
+        jsonrpc: '2.0',
+        method: 'test',
+        params: {},
+        id: 1
+      };
+
+      await handler(req, res);
+
+      expect(res.status).not.toHaveBeenCalledWith(401);
+      expect(mockConsoleManager.wrapOperation).toHaveBeenCalled();
+      expect((server as any).authEnabled).toBe(false);
+    });
+
+    it('should honor legacy MAX_SESSIONS and AUTH_MAX_ATTEMPTS aliases', () => {
+      process.env.MAX_SESSIONS = '250';
+      process.env.AUTH_MAX_ATTEMPTS = '123';
+
+      server = new SingleSessionHTTPServer();
+
+      expect((server as any).maxSessions).toBe(250);
+      expect((server as any).authRateLimitMax).toBe(123);
+    });
+  });
+
   describe('Normal Mode Behavior', () => {
     it('should maintain standard behavior for health endpoint', async () => {
       // Test both with and without N8N_MODE
