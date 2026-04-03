@@ -4,7 +4,7 @@ export const n8nUpdatePartialWorkflowDoc: ToolDocumentation = {
   name: 'n8n_update_partial_workflow',
   category: 'workflow_management',
   essentials: {
-    description: 'Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, moveNode, enable/disableNode, addConnection, removeConnection, rewireConnection, cleanStaleConnections, replaceConnections, updateSettings, updateName, add/removeTag, activateWorkflow, deactivateWorkflow, transferWorkflow. Supports smart parameters (branch, case) for multi-output nodes. Full support for AI connections (ai_languageModel, ai_tool, ai_memory, ai_embedding, ai_vectorStore, ai_document, ai_textSplitter, ai_outputParser).',
+    description: 'Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, patchNodeField, moveNode, enable/disableNode, addConnection, removeConnection, rewireConnection, cleanStaleConnections, replaceConnections, updateSettings, updateName, add/removeTag, activateWorkflow, deactivateWorkflow, transferWorkflow. Supports smart parameters (branch, case) for multi-output nodes. Full support for AI connections (ai_languageModel, ai_tool, ai_memory, ai_embedding, ai_vectorStore, ai_document, ai_textSplitter, ai_outputParser).',
     keyParameters: ['id', 'operations', 'continueOnError'],
     example: 'n8n_update_partial_workflow({id: "wf_123", operations: [{type: "rewireConnection", source: "IF", from: "Old", to: "New", branch: "true"}]})',
     performance: 'Fast (50-200ms)',
@@ -27,14 +27,15 @@ export const n8nUpdatePartialWorkflowDoc: ToolDocumentation = {
     ]
   },
   full: {
-    description: `Updates workflows using surgical diff operations instead of full replacement. Supports 17 operation types for precise modifications. Operations are validated and applied atomically by default - all succeed or none are applied.
+    description: `Updates workflows using surgical diff operations instead of full replacement. Supports 18 operation types for precise modifications. Operations are validated and applied atomically by default - all succeed or none are applied.
 
 ## Available Operations:
 
-### Node Operations (6 types):
+### Node Operations (7 types):
 - **addNode**: Add a new node with name, type, and position (required)
 - **removeNode**: Remove a node by ID or name
 - **updateNode**: Update node properties using dot notation (e.g., 'parameters.url')
+- **patchNodeField**: Surgically edit string fields using find/replace patches. Strict mode: errors if find string not found, errors if multiple matches (ambiguity) unless replaceAll is set. Supports replaceAll and regex flags.
 - **moveNode**: Change node position [x, y]
 - **enableNode**: Enable a disabled node
 - **disableNode**: Disable an active node
@@ -335,6 +336,11 @@ n8n_update_partial_workflow({
       '// Validate before applying\nn8n_update_partial_workflow({id: "bcd", operations: [{type: "removeNode", nodeName: "Old Process"}], validateOnly: true})',
       '// Surgically edit code using __patch_find_replace (avoids replacing entire code block)\nn8n_update_partial_workflow({id: "pfr1", operations: [{type: "updateNode", nodeName: "Code", updates: {"parameters.jsCode": {"__patch_find_replace": [{"find": "const limit = 10;", "replace": "const limit = 50;"}]}}}]})',
       '// Multiple sequential patches on the same property\nn8n_update_partial_workflow({id: "pfr2", operations: [{type: "updateNode", nodeName: "Code", updates: {"parameters.jsCode": {"__patch_find_replace": [{"find": "api.old-domain.com", "replace": "api.new-domain.com"}, {"find": "Authorization: Bearer old_token", "replace": "Authorization: Bearer new_token"}]}}}]})',
+      '\n// ============ PATCHNODEFIELD EXAMPLES (strict find/replace) ============',
+      '// Surgical code edit with patchNodeField (errors if not found)\nn8n_update_partial_workflow({id: "pnf1", operations: [{type: "patchNodeField", nodeName: "Code", fieldPath: "parameters.jsCode", patches: [{find: "const limit = 10;", replace: "const limit = 50;"}]}]})',
+      '// Replace all occurrences of a string\nn8n_update_partial_workflow({id: "pnf2", operations: [{type: "patchNodeField", nodeName: "Code", fieldPath: "parameters.jsCode", patches: [{find: "api.old.com", replace: "api.new.com", replaceAll: true}]}]})',
+      '// Multiple sequential patches\nn8n_update_partial_workflow({id: "pnf3", operations: [{type: "patchNodeField", nodeName: "Set Email", fieldPath: "parameters.assignments.assignments.6.value", patches: [{find: "© 2025 n8n-mcp", replace: "© 2026 n8n-mcp"}, {find: "<p>Unsubscribe</p>", replace: ""}]}]})',
+      '// Regex-based replacement\nn8n_update_partial_workflow({id: "pnf4", operations: [{type: "patchNodeField", nodeName: "Code", fieldPath: "parameters.jsCode", patches: [{find: "const\\\\s+limit\\\\s*=\\\\s*\\\\d+", replace: "const limit = 100", regex: true}]}]})',
       '\n// ============ AI CONNECTION EXAMPLES ============',
       '// Connect language model to AI Agent\nn8n_update_partial_workflow({id: "ai1", operations: [{type: "addConnection", source: "OpenAI Chat Model", target: "AI Agent", sourceOutput: "ai_languageModel"}]})',
       '// Connect tool to AI Agent\nn8n_update_partial_workflow({id: "ai2", operations: [{type: "addConnection", source: "HTTP Request Tool", target: "AI Agent", sourceOutput: "ai_tool"}]})',
@@ -373,7 +379,10 @@ n8n_update_partial_workflow({
       'Configure Vector Store retrieval systems',
       'Swap language models in existing AI workflows',
       'Batch-update AI tool connections',
-      'Transfer workflows between team projects (enterprise)'
+      'Transfer workflows between team projects (enterprise)',
+      'Surgical string edits in email templates, code, or JSON bodies (patchNodeField)',
+      'Fix typos or update URLs in large HTML content without re-transmitting the full string',
+      'Bulk find/replace across node field content (replaceAll flag)'
     ],
     performance: 'Very fast - typically 50-200ms. Much faster than full updates as only changes are processed.',
     bestPractices: [
@@ -396,7 +405,10 @@ n8n_update_partial_workflow({
       'To remove properties, set them to null in the updates object',
       'When migrating from deprecated properties, remove the old property and add the new one in the same operation',
       'Use null to resolve mutual exclusivity validation errors between properties',
-      'Batch multiple property removals in a single updateNode operation for efficiency'
+      'Batch multiple property removals in a single updateNode operation for efficiency',
+      'Prefer patchNodeField over __patch_find_replace for strict error handling — patchNodeField errors on not-found and detects ambiguous matches',
+      'Use replaceAll: true in patchNodeField when you want to replace all occurrences of a string',
+      'Use regex: true in patchNodeField for pattern-based replacements (e.g., whitespace-insensitive matching)'
     ],
     pitfalls: [
       '**REQUIRES N8N_API_URL and N8N_API_KEY environment variables** - will not work without n8n API access',
@@ -419,6 +431,9 @@ n8n_update_partial_workflow({
       '**Corrupted workflows beyond repair**: Workflows in paradoxical states (API returns corrupt, API rejects updates) cannot be fixed via API - must be recreated',
       '**__patch_find_replace for code edits**: Instead of replacing entire code blocks, use `{"parameters.jsCode": {"__patch_find_replace": [{"find": "old text", "replace": "new text"}]}}` to surgically edit string properties',
       '__patch_find_replace replaces the FIRST occurrence of each find string. Patches are applied sequentially — order matters',
+      '**patchNodeField is strict**: it ERRORS if the find string is not found (unlike __patch_find_replace which only warns)',
+      '**patchNodeField detects ambiguity**: if find matches multiple times, it ERRORS unless replaceAll: true is set',
+      'When using regex: true in patchNodeField, escape special regex characters (., *, +, etc.) if you want literal matching',
       'To remove a property, set it to null in the updates object',
       'When properties are mutually exclusive (e.g., continueOnFail and onError), setting only the new property will fail - you must remove the old one with null',
       'Removing a required property may cause validation errors - check node documentation first',

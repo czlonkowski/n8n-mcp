@@ -14,6 +14,7 @@ export declare class WorkflowDiffEngine {
     private validateAddNode;
     private validateRemoveNode;
     private validateUpdateNode;
+    private validatePatchNodeField;
     private validateMoveNode;
     private validateToggleNode;
     private validateAddConnection;
@@ -22,6 +23,7 @@ export declare class WorkflowDiffEngine {
     private applyAddNode;
     private applyRemoveNode;
     private applyUpdateNode;
+    private applyPatchNodeField;
     private applyMoveNode;
     private applyEnableNode;
     private applyDisableNode;

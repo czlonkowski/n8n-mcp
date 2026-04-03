@@ -519,6 +519,24 @@ async function handleUpdateWorkflow(args, repository, context) {
         if (updateData.nodes || updateData.connections) {
             const current = await client.getWorkflow(id);
             workflowBefore = JSON.parse(JSON.stringify(current));
+            if (updateData.nodes && current.nodes) {
+                const currentById = new Map();
+                const currentByName = new Map();
+                for (const node of current.nodes) {
+                    if (node.id)
+                        currentById.set(node.id, node);
+                    currentByName.set(node.name, node);
+                }
+                for (const node of updateData.nodes) {
+                    const hasCredentials = node.credentials && typeof node.credentials === 'object' && Object.keys(node.credentials).length > 0;
+                    if (!hasCredentials) {
+                        const match = (node.id && currentById.get(node.id)) || currentByName.get(node.name);
+                        if (match?.credentials) {
+                            node.credentials = match.credentials;
+                        }
+                    }
+                }
+            }
             if (createBackup !== false) {
                 try {
                     const versioningService = new workflow_versioning_service_1.WorkflowVersioningService(repository, client);

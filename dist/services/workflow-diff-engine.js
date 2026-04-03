@@ -6,6 +6,39 @@ const logger_1 = require("../utils/logger");
 const node_sanitizer_1 = require("./node-sanitizer");
 const node_type_utils_1 = require("../utils/node-type-utils");
 const logger = new logger_1.Logger({ prefix: '[WorkflowDiffEngine]' });
+const PATCH_LIMITS = {
+    MAX_PATCHES: 50,
+    MAX_REGEX_LENGTH: 500,
+    MAX_FIELD_SIZE_REGEX: 512 * 1024,
+};
+const DANGEROUS_PATH_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+function isUnsafeRegex(pattern) {
+    const nestedQuantifier = /\([^)]*[+*][^)]*\)[+*{]/;
+    if (nestedQuantifier.test(pattern))
+        return true;
+    const overlappingAlternation = /\([^)]*\|[^)]*\)[+*{]/;
+    if (overlappingAlternation.test(pattern)) {
+        const match = pattern.match(/\(([^)]*)\|([^)]*)\)[+*{]/);
+        if (match) {
+            const [, left, right] = match;
+            const broadClasses = ['.', '\\w', '\\d', '\\s', '\\S', '\\W', '\\D', '[^'];
+            const leftHasBroad = broadClasses.some(c => left.includes(c));
+            const rightHasBroad = broadClasses.some(c => right.includes(c));
+            if (leftHasBroad && rightHasBroad)
+                return true;
+        }
+    }
+    return false;
+}
+function countOccurrences(str, search) {
+    let count = 0;
+    let pos = 0;
+    while ((pos = str.indexOf(search, pos)) !== -1) {
+        count++;
+        pos += search.length;
+    }
+    return count;
+}
 class WorkflowDiffEngine {
     constructor() {
         this.renameMap = new Map();
@@ -25,7 +58,7 @@ class WorkflowDiffEngine {
             this.tagsToRemove = [];
             this.transferToProjectId = undefined;
             const workflowCopy = JSON.parse(JSON.stringify(workflow));
-            const nodeOperationTypes = ['addNode', 'removeNode', 'updateNode', 'moveNode', 'enableNode', 'disableNode'];
+            const nodeOperationTypes = ['addNode', 'removeNode', 'updateNode', 'patchNodeField', 'moveNode', 'enableNode', 'disableNode'];
             const nodeOperations = [];
             const otherOperations = [];
             request.operations.forEach((operation, index) => {
@@ -213,6 +246,8 @@ class WorkflowDiffEngine {
                 return this.validateRemoveNode(workflow, operation);
             case 'updateNode':
                 return this.validateUpdateNode(workflow, operation);
+            case 'patchNodeField':
+                return this.validatePatchNodeField(workflow, operation);
             case 'moveNode':
                 return this.validateMoveNode(workflow, operation);
             case 'enableNode':
@@ -253,6 +288,9 @@ class WorkflowDiffEngine {
                 break;
             case 'updateNode':
                 this.applyUpdateNode(workflow, operation);
+                break;
+            case 'patchNodeField':
+                this.applyPatchNodeField(workflow, operation);
                 break;
             case 'moveNode':
                 this.applyMoveNode(workflow, operation);
@@ -372,6 +410,63 @@ class WorkflowDiffEngine {
                     return `Cannot apply __patch_find_replace to "${path}": current value is ${typeof currentValue}, expected string`;
                 }
             }
+        }
+        return null;
+    }
+    validatePatchNodeField(workflow, operation) {
+        if (!operation.nodeId && !operation.nodeName) {
+            return `patchNodeField requires either "nodeId" or "nodeName"`;
+        }
+        if (!operation.fieldPath || typeof operation.fieldPath !== 'string') {
+            return `patchNodeField requires a "fieldPath" string (e.g., "parameters.jsCode")`;
+        }
+        const pathSegments = operation.fieldPath.split('.');
+        if (pathSegments.some(k => DANGEROUS_PATH_KEYS.has(k))) {
+            return `patchNodeField: fieldPath "${operation.fieldPath}" contains a forbidden key (__proto__, constructor, or prototype)`;
+        }
+        if (!Array.isArray(operation.patches) || operation.patches.length === 0) {
+            return `patchNodeField requires a non-empty "patches" array of {find, replace} objects`;
+        }
+        if (operation.patches.length > PATCH_LIMITS.MAX_PATCHES) {
+            return `patchNodeField: too many patches (${operation.patches.length}). Maximum is ${PATCH_LIMITS.MAX_PATCHES} per operation. Split into multiple operations if needed.`;
+        }
+        for (let i = 0; i < operation.patches.length; i++) {
+            const patch = operation.patches[i];
+            if (!patch || typeof patch.find !== 'string' || typeof patch.replace !== 'string') {
+                return `Invalid patch entry at index ${i}: each entry must have "find" (string) and "replace" (string)`;
+            }
+            if (patch.find.length === 0) {
+                return `Invalid patch entry at index ${i}: "find" must not be empty`;
+            }
+            if (patch.regex) {
+                if (patch.find.length > PATCH_LIMITS.MAX_REGEX_LENGTH) {
+                    return `Regex pattern at patch index ${i} is too long (${patch.find.length} chars). Maximum is ${PATCH_LIMITS.MAX_REGEX_LENGTH} characters.`;
+                }
+                try {
+                    new RegExp(patch.find);
+                }
+                catch (e) {
+                    return `Invalid regex pattern at patch index ${i}: ${e instanceof Error ? e.message : 'invalid regex'}`;
+                }
+                if (isUnsafeRegex(patch.find)) {
+                    return `Potentially unsafe regex pattern at patch index ${i}: nested quantifiers or overlapping alternations can cause excessive backtracking. Simplify the pattern or use literal matching (regex: false).`;
+                }
+            }
+        }
+        const node = this.findNode(workflow, operation.nodeId, operation.nodeName);
+        if (!node) {
+            return this.formatNodeNotFoundError(workflow, operation.nodeId || operation.nodeName || '', 'patchNodeField');
+        }
+        const currentValue = this.getNestedProperty(node, operation.fieldPath);
+        if (currentValue === undefined) {
+            return `Cannot apply patchNodeField to "${operation.fieldPath}": property does not exist on node "${node.name}"`;
+        }
+        if (typeof currentValue !== 'string') {
+            return `Cannot apply patchNodeField to "${operation.fieldPath}": current value is ${typeof currentValue}, expected string`;
+        }
+        const hasRegex = operation.patches.some(p => p.regex);
+        if (hasRegex && typeof currentValue === 'string' && currentValue.length > PATCH_LIMITS.MAX_FIELD_SIZE_REGEX) {
+            return `Field "${operation.fieldPath}" is too large for regex operations (${Math.round(currentValue.length / 1024)}KB). Maximum is ${PATCH_LIMITS.MAX_FIELD_SIZE_REGEX / 1024}KB. Use literal matching (regex: false) for large fields.`;
         }
         return null;
     }
@@ -583,6 +678,51 @@ class WorkflowDiffEngine {
                 this.setNestedProperty(node, path, value);
             }
         });
+        const sanitized = (0, node_sanitizer_1.sanitizeNode)(node);
+        Object.assign(node, sanitized);
+    }
+    applyPatchNodeField(workflow, operation) {
+        const node = this.findNode(workflow, operation.nodeId, operation.nodeName);
+        if (!node)
+            return;
+        this.modifiedNodeIds.add(node.id);
+        let current = this.getNestedProperty(node, operation.fieldPath);
+        for (let i = 0; i < operation.patches.length; i++) {
+            const patch = operation.patches[i];
+            if (patch.regex) {
+                const globalRegex = new RegExp(patch.find, 'g');
+                const matches = current.match(globalRegex);
+                if (!matches || matches.length === 0) {
+                    throw new Error(`patchNodeField: regex pattern "${patch.find}" not found in "${operation.fieldPath}" (patch index ${i}). ` +
+                        `Use n8n_get_workflow to inspect the current value.`);
+                }
+                if (matches.length > 1 && !patch.replaceAll) {
+                    throw new Error(`patchNodeField: regex pattern "${patch.find}" matches ${matches.length} times in "${operation.fieldPath}" (patch index ${i}). ` +
+                        `Set "replaceAll": true to replace all occurrences, or refine the pattern to match exactly once.`);
+                }
+                const regex = patch.replaceAll ? globalRegex : new RegExp(patch.find);
+                current = current.replace(regex, patch.replace);
+            }
+            else {
+                const occurrences = countOccurrences(current, patch.find);
+                if (occurrences === 0) {
+                    throw new Error(`patchNodeField: "${patch.find.substring(0, 80)}" not found in "${operation.fieldPath}" (patch index ${i}). ` +
+                        `Ensure the find string exactly matches the current content (including whitespace and newlines). ` +
+                        `Use n8n_get_workflow to inspect the current value.`);
+                }
+                if (occurrences > 1 && !patch.replaceAll) {
+                    throw new Error(`patchNodeField: "${patch.find.substring(0, 80)}" found ${occurrences} times in "${operation.fieldPath}" (patch index ${i}). ` +
+                        `Set "replaceAll": true to replace all occurrences, or use a more specific find string that matches exactly once.`);
+                }
+                if (patch.replaceAll) {
+                    current = current.split(patch.find).join(patch.replace);
+                }
+                else {
+                    current = current.replace(patch.find, patch.replace);
+                }
+            }
+        }
+        this.setNestedProperty(node, operation.fieldPath, current);
         const sanitized = (0, node_sanitizer_1.sanitizeNode)(node);
         Object.assign(node, sanitized);
     }
@@ -924,6 +1064,8 @@ class WorkflowDiffEngine {
         const keys = path.split('.');
         let current = obj;
         for (const key of keys) {
+            if (DANGEROUS_PATH_KEYS.has(key))
+                return undefined;
             if (current == null || typeof current !== 'object')
                 return undefined;
             current = current[key];
@@ -933,6 +1075,9 @@ class WorkflowDiffEngine {
     setNestedProperty(obj, path, value) {
         const keys = path.split('.');
         let current = obj;
+        if (keys.some(k => DANGEROUS_PATH_KEYS.has(k))) {
+            throw new Error(`Invalid property path: "${path}" contains a forbidden key`);
+        }
         for (let i = 0; i < keys.length - 1; i++) {
             const key = keys[i];
             if (!(key in current) || typeof current[key] !== 'object' || current[key] === null) {

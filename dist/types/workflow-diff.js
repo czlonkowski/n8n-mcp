@@ -4,7 +4,7 @@ exports.isNodeOperation = isNodeOperation;
 exports.isConnectionOperation = isConnectionOperation;
 exports.isMetadataOperation = isMetadataOperation;
 function isNodeOperation(op) {
-    return ['addNode', 'removeNode', 'updateNode', 'moveNode', 'enableNode', 'disableNode'].includes(op.type);
+    return ['addNode', 'removeNode', 'updateNode', 'patchNodeField', 'moveNode', 'enableNode', 'disableNode'].includes(op.type);
 }
 function isConnectionOperation(op) {
     return ['addConnection', 'removeConnection', 'rewireConnection', 'cleanStaleConnections', 'replaceConnections'].includes(op.type);

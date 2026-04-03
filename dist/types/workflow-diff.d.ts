@@ -40,6 +40,18 @@ export interface DisableNodeOperation extends DiffOperation {
     nodeId?: string;
     nodeName?: string;
 }
+export interface PatchNodeFieldOperation extends DiffOperation {
+    type: 'patchNodeField';
+    nodeId?: string;
+    nodeName?: string;
+    fieldPath: string;
+    patches: Array<{
+        find: string;
+        replace: string;
+        replaceAll?: boolean;
+        regex?: boolean;
+    }>;
+}
 export interface AddConnectionOperation extends DiffOperation {
     type: 'addConnection';
     source: string;
@@ -114,7 +126,7 @@ export interface ReplaceConnectionsOperation extends DiffOperation {
         };
     };
 }
-export type WorkflowDiffOperation = AddNodeOperation | RemoveNodeOperation | UpdateNodeOperation | MoveNodeOperation | EnableNodeOperation | DisableNodeOperation | AddConnectionOperation | RemoveConnectionOperation | RewireConnectionOperation | UpdateSettingsOperation | UpdateNameOperation | AddTagOperation | RemoveTagOperation | ActivateWorkflowOperation | DeactivateWorkflowOperation | CleanStaleConnectionsOperation | ReplaceConnectionsOperation | TransferWorkflowOperation;
+export type WorkflowDiffOperation = AddNodeOperation | RemoveNodeOperation | UpdateNodeOperation | PatchNodeFieldOperation | MoveNodeOperation | EnableNodeOperation | DisableNodeOperation | AddConnectionOperation | RemoveConnectionOperation | RewireConnectionOperation | UpdateSettingsOperation | UpdateNameOperation | AddTagOperation | RemoveTagOperation | ActivateWorkflowOperation | DeactivateWorkflowOperation | CleanStaleConnectionsOperation | ReplaceConnectionsOperation | TransferWorkflowOperation;
 export interface WorkflowDiffRequest {
     id: string;
     operations: WorkflowDiffOperation[];
@@ -149,7 +161,7 @@ export interface NodeReference {
     id?: string;
     name?: string;
 }
-export declare function isNodeOperation(op: WorkflowDiffOperation): op is AddNodeOperation | RemoveNodeOperation | UpdateNodeOperation | MoveNodeOperation | EnableNodeOperation | DisableNodeOperation;
+export declare function isNodeOperation(op: WorkflowDiffOperation): op is AddNodeOperation | RemoveNodeOperation | UpdateNodeOperation | PatchNodeFieldOperation | MoveNodeOperation | EnableNodeOperation | DisableNodeOperation;
 export declare function isConnectionOperation(op: WorkflowDiffOperation): op is AddConnectionOperation | RemoveConnectionOperation | RewireConnectionOperation | CleanStaleConnectionsOperation | ReplaceConnectionsOperation;
 export declare function isMetadataOperation(op: WorkflowDiffOperation): op is UpdateSettingsOperation | UpdateNameOperation | AddTagOperation | RemoveTagOperation;
 //# sourceMappingURL=workflow-diff.d.ts.map

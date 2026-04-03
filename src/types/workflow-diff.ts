@@ -55,6 +55,19 @@ export interface DisableNodeOperation extends DiffOperation {
   nodeName?: string;
 }
 
+export interface PatchNodeFieldOperation extends DiffOperation {
+  type: 'patchNodeField';
+  nodeId?: string;
+  nodeName?: string;
+  fieldPath: string;          // Dot-notation path, e.g. "parameters.jsCode"
+  patches: Array<{
+    find: string;
+    replace: string;
+    replaceAll?: boolean;     // Default: false. Replace all occurrences.
+    regex?: boolean;          // Default: false. Treat find as a regex pattern.
+  }>;
+}
+
 // Connection Operations
 export interface AddConnectionOperation extends DiffOperation {
   type: 'addConnection';
@@ -153,6 +166,7 @@ export type WorkflowDiffOperation =
   | AddNodeOperation
   | RemoveNodeOperation
   | UpdateNodeOperation
+  | PatchNodeFieldOperation
   | MoveNodeOperation
   | EnableNodeOperation
   | DisableNodeOperation
@@ -208,10 +222,10 @@ export interface NodeReference {
 }
 
 // Utility functions type guards
-export function isNodeOperation(op: WorkflowDiffOperation): op is 
-  AddNodeOperation | RemoveNodeOperation | UpdateNodeOperation | 
+export function isNodeOperation(op: WorkflowDiffOperation): op is
+  AddNodeOperation | RemoveNodeOperation | UpdateNodeOperation | PatchNodeFieldOperation |
   MoveNodeOperation | EnableNodeOperation | DisableNodeOperation {
-  return ['addNode', 'removeNode', 'updateNode', 'moveNode', 'enableNode', 'disableNode'].includes(op.type);
+  return ['addNode', 'removeNode', 'updateNode', 'patchNodeField', 'moveNode', 'enableNode', 'disableNode'].includes(op.type);
 }
 
 export function isConnectionOperation(op: WorkflowDiffOperation): op is

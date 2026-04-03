@@ -51,7 +51,7 @@ function getValidator(repository) {
     return cachedValidator;
 }
 const NODE_TARGETING_OPERATIONS = new Set([
-    'updateNode', 'removeNode', 'moveNode', 'enableNode', 'disableNode'
+    'updateNode', 'removeNode', 'moveNode', 'enableNode', 'disableNode', 'patchNodeField'
 ]);
 const workflowDiffSchema = zod_1.z.object({
     id: zod_1.z.string(),
@@ -62,6 +62,8 @@ const workflowDiffSchema = zod_1.z.object({
         nodeId: zod_1.z.string().optional(),
         nodeName: zod_1.z.string().optional(),
         updates: zod_1.z.any().optional(),
+        fieldPath: zod_1.z.string().optional(),
+        patches: zod_1.z.any().optional(),
         position: zod_1.z.tuple([zod_1.z.number(), zod_1.z.number()]).optional(),
         source: zod_1.z.string().optional(),
         target: zod_1.z.string().optional(),
@@ -506,6 +508,8 @@ function inferIntentFromOperations(operations) {
                 return `Remove node ${op.nodeName || op.nodeId || ''}`.trim();
             case 'updateNode':
                 return `Update node ${op.nodeName || op.nodeId || ''}`.trim();
+            case 'patchNodeField':
+                return `Patch field on node ${op.nodeName || op.nodeId || ''}`.trim();
             case 'addConnection':
                 return `Connect ${op.source || 'node'} to ${op.target || 'node'}`;
             case 'removeConnection':
@@ -537,6 +541,10 @@ function inferIntentFromOperations(operations) {
     if (typeSet.has('updateNode')) {
         const count = opTypes.filter((t) => t === 'updateNode').length;
         summary.push(`update ${count} node${count > 1 ? 's' : ''}`);
+    }
+    if (typeSet.has('patchNodeField')) {
+        const count = opTypes.filter((t) => t === 'patchNodeField').length;
+        summary.push(`patch ${count} field${count > 1 ? 's' : ''}`);
     }
     if (typeSet.has('addConnection') || typeSet.has('rewireConnection')) {
         summary.push('modify connections');
