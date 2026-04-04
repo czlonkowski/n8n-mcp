@@ -987,6 +987,12 @@ These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
   - `action: 'get'` - Get execution details by ID
   - `action: 'delete'` - Delete execution records
 
+#### Credential Management
+- **`n8n_manage_credentials`** - Manage n8n credentials (list, get, create, update, delete, getSchema)
+
+#### Security & Audit
+- **`n8n_audit_instance`** - Security audit combining n8n's built-in audit API with deep workflow scanning (50+ secret patterns, webhook auth, error handling, data retention). Returns actionable remediation playbook.
+
 #### System Tools
 - **`n8n_health_check`** - Check n8n API connectivity and features
 

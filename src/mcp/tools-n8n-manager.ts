@@ -655,6 +655,27 @@ export const n8nManagementTools: ToolDefinition[] = [
     },
   },
   {
+    name: 'n8n_manage_credentials',
+    description: 'Manage n8n credentials. Actions: list, get, create, update, delete, getSchema. Use getSchema to discover required fields before creating. SECURITY: credential data values are never logged.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'get', 'create', 'update', 'delete', 'getSchema'], description: 'Action to perform' },
+        id: { type: 'string', description: 'Credential ID (required for get, update, delete)' },
+        name: { type: 'string', description: 'Credential name (required for create)' },
+        type: { type: 'string', description: 'Credential type e.g. httpHeaderAuth, httpBasicAuth, oAuth2Api (required for create, getSchema)' },
+        data: { type: 'object', description: 'Credential data fields - use getSchema to discover required fields (required for create, optional for update)' },
+      },
+      required: ['action'],
+    },
+    annotations: {
+      title: 'Manage Credentials',
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: true,
+    },
+  },
+  {
     name: 'n8n_generate_workflow',
     description: 'Generate an n8n workflow from a natural language description using AI. ' +
       'Call with just a description to get workflow proposals. ' +
@@ -691,6 +712,46 @@ export const n8nManagementTools: ToolDefinition[] = [
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,
+      openWorldHint: true,
+    },
+  },
+  {
+    name: 'n8n_audit_instance',
+    description: `Security audit of n8n instance. Combines n8n's built-in audit API (credentials, database, nodes, instance, filesystem risks) with deep workflow scanning (hardcoded secrets via 50+ regex patterns, unauthenticated webhooks, error handling gaps, data retention risks). Returns actionable markdown report with remediation steps using n8n_manage_credentials and n8n_update_partial_workflow.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        categories: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['credentials', 'database', 'nodes', 'instance', 'filesystem'],
+          },
+          description: 'Built-in audit categories to check (default: all 5)',
+        },
+        includeCustomScan: {
+          type: 'boolean',
+          description: 'Run deep workflow scanning for secrets, webhooks, error handling (default: true)',
+        },
+        daysAbandonedWorkflow: {
+          type: 'number',
+          description: 'Days threshold for abandoned workflow detection (default: 90)',
+        },
+        customChecks: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['hardcoded_secrets', 'unauthenticated_webhooks', 'error_handling', 'data_retention'],
+          },
+          description: 'Specific custom checks to run (default: all 4)',
+        },
+      },
+    },
+    annotations: {
+      title: 'Audit Instance Security',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
       openWorldHint: true,
     },
   },

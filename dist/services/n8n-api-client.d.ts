@@ -24,6 +24,11 @@ export declare class N8nApiClient {
     activateWorkflow(id: string): Promise<Workflow>;
     deactivateWorkflow(id: string): Promise<Workflow>;
     listWorkflows(params?: WorkflowListParams): Promise<WorkflowListResponse>;
+    generateAudit(options?: {
+        categories?: string[];
+        daysAbandonedWorkflow?: number;
+    }): Promise<any>;
+    listAllWorkflows(): Promise<Workflow[]>;
     getExecution(id: string, includeData?: boolean): Promise<Execution>;
     listExecutions(params?: ExecutionListParams): Promise<ExecutionListResponse>;
     deleteExecution(id: string): Promise<void>;
@@ -33,6 +38,7 @@ export declare class N8nApiClient {
     createCredential(credential: Partial<Credential>): Promise<Credential>;
     updateCredential(id: string, credential: Partial<Credential>): Promise<Credential>;
     deleteCredential(id: string): Promise<void>;
+    getCredentialSchema(typeName: string): Promise<any>;
     listTags(params?: TagListParams): Promise<TagListResponse>;
     createTag(tag: Partial<Tag>): Promise<Tag>;
     updateTag(id: string, tag: Partial<Tag>): Promise<Tag>;

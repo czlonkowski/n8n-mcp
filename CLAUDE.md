@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Note:** This file is committed to a public OSS repository. Never add sensitive information (API keys, internal URLs, credentials, private infrastructure details) here.
+
 ## Project Overview
 
 n8n-mcp is a comprehensive documentation and knowledge server that provides AI assistants with complete access to n8n node information through the Model Context Protocol (MCP). It serves as a bridge between n8n's workflow automation platform and AI models, enabling them to understand and work with n8n nodes effectively.
@@ -194,35 +196,6 @@ The MCP server exposes tools in several categories:
 
 ### Development Best Practices
 - Run typecheck and lint after every code change
-
-### Session Persistence Feature (v2.24.1)
-
-**Location:**
-- Types: `src/types/session-state.ts`
-- Implementation: `src/http-server-single-session.ts` (lines 698-702, 1444-1584)
-- Wrapper: `src/mcp-engine.ts` (lines 123-169)
-- Tests: `tests/unit/http-server/session-persistence.test.ts`, `tests/unit/mcp-engine/session-persistence.test.ts`
-
-**Key Features:**
-- **Export/Restore API**: `exportSessionState()` and `restoreSessionState()` methods
-- **Multi-tenant support**: Enables zero-downtime deployments for SaaS platforms
-- **Security-first**: API keys exported as plaintext - downstream MUST encrypt
-- **Dormant sessions**: Restored sessions recreate transports on first request
-- **Automatic expiration**: Respects `sessionTimeout` setting (default 30 min)
-- **MAX_SESSIONS limit**: Caps at 100 concurrent sessions (configurable via N8N_MCP_MAX_SESSIONS env var)
-
-**Important Implementation Notes:**
-- Only exports sessions with valid n8nApiUrl and n8nApiKey in context
-- Skips expired sessions during both export and restore
-- Uses `validateInstanceContext()` for data integrity checks
-- Handles null/invalid session gracefully with warnings
-- Session metadata (timestamps) and context (credentials) are persisted
-- Transport and server objects are NOT persisted (recreated on-demand)
-
-**Testing:**
-- 22 unit tests covering export, restore, edge cases, and round-trip cycles
-- Tests use current timestamps to avoid expiration issues
-- Integration with multi-tenant backends documented in README.md
 
 # important-instruction-reminders
 Do what has been asked; nothing more, nothing less.

@@ -61,9 +61,10 @@ class N8nApiClient {
             },
         });
         this.client.interceptors.request.use((config) => {
+            const isSensitive = config.url?.includes('/credentials') && config.method !== 'get';
             logger_1.logger.debug(`n8n API Request: ${config.method?.toUpperCase()} ${config.url}`, {
                 params: config.params,
-                data: config.data,
+                data: isSensitive ? '[REDACTED]' : config.data,
             });
             return config;
         }, (error) => {
@@ -229,6 +230,38 @@ class N8nApiClient {
             throw (0, n8n_errors_1.handleN8nApiError)(error);
         }
     }
+    async generateAudit(options) {
+        try {
+            const additionalOptions = {};
+            if (options?.categories)
+                additionalOptions.categories = options.categories;
+            if (options?.daysAbandonedWorkflow !== undefined)
+                additionalOptions.daysAbandonedWorkflow = options.daysAbandonedWorkflow;
+            const body = Object.keys(additionalOptions).length > 0 ? { additionalOptions } : {};
+            const response = await this.client.post('/audit', body);
+            return response.data;
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async listAllWorkflows() {
+        const allWorkflows = [];
+        let cursor;
+        const seenCursors = new Set();
+        const PAGE_SIZE = 100;
+        const MAX_PAGES = 50;
+        for (let page = 0; page < MAX_PAGES; page++) {
+            const params = { limit: PAGE_SIZE, cursor };
+            const response = await this.listWorkflows(params);
+            allWorkflows.push(...response.data);
+            if (!response.nextCursor || seenCursors.has(response.nextCursor))
+                break;
+            seenCursors.add(response.nextCursor);
+            cursor = response.nextCursor;
+        }
+        return allWorkflows;
+    }
     async getExecution(id, includeData = false) {
         try {
             const response = await this.client.get(`/executions/${id}`, {
@@ -333,6 +366,15 @@ class N8nApiClient {
     async deleteCredential(id) {
         try {
             await this.client.delete(`/credentials/${id}`);
+        }
+        catch (error) {
+            throw (0, n8n_errors_1.handleN8nApiError)(error);
+        }
+    }
+    async getCredentialSchema(typeName) {
+        try {
+            const response = await this.client.get(`/credentials/schema/${typeName}`);
+            return response.data;
         }
         catch (error) {
             throw (0, n8n_errors_1.handleN8nApiError)(error);

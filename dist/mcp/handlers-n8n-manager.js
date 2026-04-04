@@ -67,7 +67,16 @@ exports.handleInsertRows = handleInsertRows;
 exports.handleUpdateRows = handleUpdateRows;
 exports.handleUpsertRows = handleUpsertRows;
 exports.handleDeleteRows = handleDeleteRows;
+exports.handleListCredentials = handleListCredentials;
+exports.handleGetCredential = handleGetCredential;
+exports.handleCreateCredential = handleCreateCredential;
+exports.handleUpdateCredential = handleUpdateCredential;
+exports.handleDeleteCredential = handleDeleteCredential;
+exports.handleGetCredentialSchema = handleGetCredentialSchema;
+exports.handleAuditInstance = handleAuditInstance;
 const n8n_api_client_1 = require("../services/n8n-api-client");
+const workflow_security_scanner_1 = require("../services/workflow-security-scanner");
+const audit_report_builder_1 = require("../services/audit-report-builder");
 const n8n_api_1 = require("../config/n8n-api");
 const n8n_api_2 = require("../types/n8n-api");
 const n8n_validation_1 = require("../services/n8n-validation");
@@ -2129,7 +2138,7 @@ const deleteRowsSchema = tableIdSchema.extend({
     returnData: zod_1.z.boolean().optional(),
     dryRun: zod_1.z.boolean().optional(),
 });
-function handleDataTableError(error) {
+function handleCrudError(error) {
     if (error instanceof zod_1.z.ZodError) {
         return { success: false, error: 'Invalid input', details: { errors: error.errors } };
     }
@@ -2158,7 +2167,7 @@ async function handleCreateTable(args, context) {
         };
     }
     catch (error) {
-        return handleDataTableError(error);
+        return handleCrudError(error);
     }
 }
 async function handleListTables(args, context) {
@@ -2176,7 +2185,7 @@ async function handleListTables(args, context) {
         };
     }
     catch (error) {
-        return handleDataTableError(error);
+        return handleCrudError(error);
     }
 }
 async function handleGetTable(args, context) {
@@ -2187,7 +2196,7 @@ async function handleGetTable(args, context) {
         return { success: true, data: dataTable };
     }
     catch (error) {
-        return handleDataTableError(error);
+        return handleCrudError(error);
     }
 }
 async function handleUpdateTable(args, context) {
@@ -2205,7 +2214,7 @@ async function handleUpdateTable(args, context) {
         };
     }
     catch (error) {
-        return handleDataTableError(error);
+        return handleCrudError(error);
     }
 }
 async function handleDeleteTable(args, context) {
@@ -2216,7 +2225,7 @@ async function handleDeleteTable(args, context) {
         return { success: true, message: `Data table ${tableId} deleted successfully` };
     }
     catch (error) {
-        return handleDataTableError(error);
+        return handleCrudError(error);
     }
 }
 async function handleGetRows(args, context) {
@@ -2241,7 +2250,7 @@ async function handleGetRows(args, context) {
         };
     }
     catch (error) {
-        return handleDataTableError(error);
+        return handleCrudError(error);
     }
 }
 async function handleInsertRows(args, context) {
@@ -2256,7 +2265,7 @@ async function handleInsertRows(args, context) {
         };
     }
     catch (error) {
-        return handleDataTableError(error);
+        return handleCrudError(error);
     }
 }
 async function handleUpdateRows(args, context) {
@@ -2271,7 +2280,7 @@ async function handleUpdateRows(args, context) {
         };
     }
     catch (error) {
-        return handleDataTableError(error);
+        return handleCrudError(error);
     }
 }
 async function handleUpsertRows(args, context) {
@@ -2286,7 +2295,7 @@ async function handleUpsertRows(args, context) {
         };
     }
     catch (error) {
-        return handleDataTableError(error);
+        return handleCrudError(error);
     }
 }
 async function handleDeleteRows(args, context) {
@@ -2305,7 +2314,220 @@ async function handleDeleteRows(args, context) {
         };
     }
     catch (error) {
-        return handleDataTableError(error);
+        return handleCrudError(error);
+    }
+}
+const listCredentialsSchema = zod_1.z.object({}).passthrough();
+const getCredentialSchema = zod_1.z.object({
+    id: zod_1.z.string({ required_error: 'Credential ID is required' }),
+});
+const createCredentialSchema = zod_1.z.object({
+    name: zod_1.z.string({ required_error: 'Credential name is required' }),
+    type: zod_1.z.string({ required_error: 'Credential type is required' }),
+    data: zod_1.z.record(zod_1.z.any(), { required_error: 'Credential data is required' }),
+});
+const updateCredentialSchema = zod_1.z.object({
+    id: zod_1.z.string({ required_error: 'Credential ID is required' }),
+    name: zod_1.z.string().optional(),
+    data: zod_1.z.record(zod_1.z.any()).optional(),
+});
+const deleteCredentialSchema = zod_1.z.object({
+    id: zod_1.z.string({ required_error: 'Credential ID is required' }),
+});
+const getCredentialSchemaTypeSchema = zod_1.z.object({
+    type: zod_1.z.string({ required_error: 'Credential type is required' }),
+});
+async function handleListCredentials(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        listCredentialsSchema.parse(args);
+        const result = await client.listCredentials();
+        return {
+            success: true,
+            data: {
+                credentials: result.data,
+                count: result.data.length,
+                nextCursor: result.nextCursor || undefined,
+            },
+        };
+    }
+    catch (error) {
+        return handleCrudError(error);
+    }
+}
+async function handleGetCredential(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { id } = getCredentialSchema.parse(args);
+        const credential = await client.getCredential(id);
+        const { data: _sensitiveData, ...safeCred } = credential;
+        return {
+            success: true,
+            data: safeCred,
+        };
+    }
+    catch (error) {
+        return handleCrudError(error);
+    }
+}
+async function handleCreateCredential(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { name, type, data } = createCredentialSchema.parse(args);
+        logger_1.logger.info(`Creating credential: name="${name}", type="${type}"`);
+        const credential = await client.createCredential({ name, type, data });
+        const { data: _sensitiveData, ...safeCred } = credential;
+        return {
+            success: true,
+            data: safeCred,
+            message: `Credential "${name}" (type: ${type}) created with ID ${credential.id}`,
+        };
+    }
+    catch (error) {
+        return handleCrudError(error);
+    }
+}
+async function handleUpdateCredential(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { id, name, data } = updateCredentialSchema.parse(args);
+        logger_1.logger.info(`Updating credential: id="${id}"${name ? `, name="${name}"` : ''}`);
+        const updatePayload = {};
+        if (name !== undefined)
+            updatePayload.name = name;
+        if (data !== undefined)
+            updatePayload.data = data;
+        const credential = await client.updateCredential(id, updatePayload);
+        const { data: _sensitiveData, ...safeCred } = credential;
+        return {
+            success: true,
+            data: safeCred,
+            message: `Credential ${id} updated successfully`,
+        };
+    }
+    catch (error) {
+        return handleCrudError(error);
+    }
+}
+async function handleDeleteCredential(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { id } = deleteCredentialSchema.parse(args);
+        logger_1.logger.info(`Deleting credential: id="${id}"`);
+        await client.deleteCredential(id);
+        return {
+            success: true,
+            message: `Credential ${id} deleted successfully`,
+        };
+    }
+    catch (error) {
+        return handleCrudError(error);
+    }
+}
+async function handleGetCredentialSchema(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { type } = getCredentialSchemaTypeSchema.parse(args);
+        const schema = await client.getCredentialSchema(type);
+        return {
+            success: true,
+            data: schema,
+            message: `Schema for credential type "${type}"`,
+        };
+    }
+    catch (error) {
+        return handleCrudError(error);
+    }
+}
+const auditInstanceSchema = zod_1.z.object({
+    categories: zod_1.z.array(zod_1.z.enum([
+        'credentials', 'database', 'nodes', 'instance', 'filesystem',
+    ])).optional(),
+    includeCustomScan: zod_1.z.boolean().optional().default(true),
+    daysAbandonedWorkflow: zod_1.z.number().optional(),
+    customChecks: zod_1.z.array(zod_1.z.enum([
+        'hardcoded_secrets', 'unauthenticated_webhooks', 'error_handling', 'data_retention',
+    ])).optional(),
+});
+async function handleAuditInstance(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const input = auditInstanceSchema.parse(args);
+        const totalStart = Date.now();
+        const warnings = [];
+        let builtinAudit = null;
+        let builtinAuditMs = 0;
+        try {
+            const auditStart = Date.now();
+            builtinAudit = await client.generateAudit({
+                categories: input.categories,
+                daysAbandonedWorkflow: input.daysAbandonedWorkflow,
+            });
+            builtinAuditMs = Date.now() - auditStart;
+        }
+        catch (auditError) {
+            builtinAuditMs = Date.now() - totalStart;
+            const msg = auditError?.statusCode === 404
+                ? 'Built-in audit endpoint not available on this n8n version.'
+                : `Built-in audit failed: ${auditError?.message || 'unknown error'}`;
+            warnings.push(msg);
+            logger_1.logger.warn(`Audit: ${msg}`);
+        }
+        let customReport = null;
+        let workflowFetchMs = 0;
+        let customScanMs = 0;
+        if (input.includeCustomScan) {
+            try {
+                const fetchStart = Date.now();
+                const allWorkflows = await client.listAllWorkflows();
+                workflowFetchMs = Date.now() - fetchStart;
+                logger_1.logger.info(`Audit: fetched ${allWorkflows.length} workflows for scanning`);
+                const scanStart = Date.now();
+                customReport = (0, workflow_security_scanner_1.scanWorkflows)(allWorkflows, input.customChecks);
+                customScanMs = Date.now() - scanStart;
+                logger_1.logger.info(`Audit: custom scan found ${customReport.summary.total} findings across ${customReport.workflowsScanned} workflows`);
+            }
+            catch (scanError) {
+                warnings.push(`Custom scan failed: ${scanError?.message || 'unknown error'}`);
+                logger_1.logger.warn(`Audit: custom scan failed: ${scanError?.message}`);
+            }
+        }
+        const totalMs = Date.now() - totalStart;
+        const apiConfig = context?.n8nApiUrl
+            ? { baseUrl: context.n8nApiUrl }
+            : (0, n8n_api_1.getN8nApiConfig)();
+        const instanceUrl = apiConfig?.baseUrl || 'unknown';
+        const report = (0, audit_report_builder_1.buildAuditReport)({
+            builtinAudit,
+            customReport,
+            performance: { builtinAuditMs, workflowFetchMs, customScanMs, totalMs },
+            instanceUrl,
+            warnings: warnings.length > 0 ? warnings : undefined,
+        });
+        return {
+            success: true,
+            data: {
+                report: report.markdown,
+                summary: report.summary,
+            },
+        };
+    }
+    catch (error) {
+        if (error instanceof zod_1.z.ZodError) {
+            return {
+                success: false,
+                error: 'Invalid audit parameters',
+                details: { issues: error.errors },
+            };
+        }
+        if (error instanceof n8n_errors_1.N8nApiError) {
+            return {
+                success: false,
+                error: (0, n8n_errors_1.getUserFriendlyErrorMessage)(error),
+            };
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        return { success: false, error: message };
     }
 }
 //# sourceMappingURL=handlers-n8n-manager.js.map

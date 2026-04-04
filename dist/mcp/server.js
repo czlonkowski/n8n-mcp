@@ -730,6 +730,14 @@ class N8NDocumentationMCPServer {
                         ? { valid: true, errors: [] }
                         : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
                     break;
+                case 'n8n_manage_credentials':
+                    validationResult = args.action
+                        ? { valid: true, errors: [] }
+                        : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
+                    break;
+                case 'n8n_audit_instance':
+                    validationResult = { valid: true, errors: [] };
+                    break;
                 case 'n8n_deploy_template':
                     validationResult = args.templateId !== undefined
                         ? { valid: true, errors: [] }
@@ -1140,6 +1148,22 @@ class N8NDocumentationMCPServer {
                         throw new Error(`Unknown action: ${dtAction}. Valid actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows`);
                 }
             }
+            case 'n8n_manage_credentials': {
+                this.validateToolParams(name, args, ['action']);
+                const credAction = args.action;
+                switch (credAction) {
+                    case 'list': return n8nHandlers.handleListCredentials(args, this.instanceContext);
+                    case 'get': return n8nHandlers.handleGetCredential(args, this.instanceContext);
+                    case 'create': return n8nHandlers.handleCreateCredential(args, this.instanceContext);
+                    case 'update': return n8nHandlers.handleUpdateCredential(args, this.instanceContext);
+                    case 'delete': return n8nHandlers.handleDeleteCredential(args, this.instanceContext);
+                    case 'getSchema': return n8nHandlers.handleGetCredentialSchema(args, this.instanceContext);
+                    default:
+                        throw new Error(`Unknown action: ${credAction}. Valid actions: list, get, create, update, delete, getSchema`);
+                }
+            }
+            case 'n8n_audit_instance':
+                return n8nHandlers.handleAuditInstance(args, this.instanceContext);
             case 'n8n_generate_workflow': {
                 this.validateToolParams(name, args, ['description']);
                 if (this.generateWorkflowHandler && this.instanceContext) {

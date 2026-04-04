@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.47.0] - 2026-04-04
+
+### Added
+
+- **`n8n_audit_instance` tool** — Security audit combining n8n's built-in `POST /audit` API (5 risk categories: credentials, database, nodes, instance, filesystem) with deep workflow scanning. Custom checks include 50+ regex patterns for hardcoded secrets (OpenAI, AWS, Stripe, GitHub, Slack, SendGrid, and more), unauthenticated webhook detection, error handling gap analysis, data retention risk assessment, and PII detection. Returns a compact markdown report grouped by workflow with a Remediation Playbook showing auto-fixable items, items requiring review, and items requiring user action. Inspired by [Audit n8n Workflows Security](https://wotai.co/blog/audit-n8n-workflows-security)
+- **`n8n_manage_credentials` tool** — Full credential CRUD with schema discovery. Actions: list, get, create, update, delete, getSchema. Enables AI agents to create credentials and assign them to workflow nodes as part of security remediation. Credential secret values are never logged or returned in responses (defense-in-depth)
+- **Credential scanner service** (`src/services/credential-scanner.ts`) — 50+ regex patterns ported from the production cache ingestion pipeline, covering AI/ML keys, cloud/DevOps tokens, GitHub PATs, payment keys, email/marketing APIs, and more. Per-node scanning with masked output
+- **Workflow security scanner** (`src/services/workflow-security-scanner.ts`) — 4 configurable checks: hardcoded secrets, unauthenticated webhooks (excludes respondToWebhook), error handling gaps (3+ node threshold), data retention settings
+- **Audit report builder** (`src/services/audit-report-builder.ts`) — Generates compact grouped-by-workflow markdown with tables, built-in audit rendering, and a Remediation Playbook with tool chains for auto-fixing
+
+### Changed
+
+- **CLAUDE.md** — Removed Session Persistence section (no longer needed), added OSS sensitivity notice to prevent secrets from landing in committed files
+- **API client request interceptor** — Now redacts request body for `/credentials` endpoints to prevent secret leakage in debug logs
+- **Credential handler responses** — All credential handlers (get, create, update) strip the `data` field from responses as defense-in-depth against future n8n versions returning decrypted values
+
+### Security
+
+- **Secret masking at scan time** — `maskSecret()` is called immediately during scanning; raw values are never stored in detection results
+- **Credential body redaction** — API client interceptor suppresses body logging for credential endpoints
+- **Cursor dedup guard** — `listAllWorkflows()` tracks seen cursors to prevent infinite pagination loops
+- **PII findings classified as review** — PII detections (email, phone, credit card) are marked as `review_recommended` instead of `auto_fixable`, preventing nonsensical auto-remediation
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.46.1] - 2026-04-03
 
 ### Fixed

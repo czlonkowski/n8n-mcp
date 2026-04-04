@@ -77,9 +77,11 @@ export class N8nApiClient {
     // Request interceptor for logging
     this.client.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
+        // Redact request body for credential endpoints to prevent secret leakage
+        const isSensitive = config.url?.includes('/credentials') && config.method !== 'get';
         logger.debug(`n8n API Request: ${config.method?.toUpperCase()} ${config.url}`, {
           params: config.params,
-          data: config.data,
+          data: isSensitive ? '[REDACTED]' : config.data,
         });
         return config;
       },
@@ -309,6 +311,40 @@ export class N8nApiClient {
     }
   }
 
+  // Audit
+  async generateAudit(options?: { categories?: string[]; daysAbandonedWorkflow?: number }): Promise<any> {
+    try {
+      const additionalOptions: Record<string, unknown> = {};
+      if (options?.categories) additionalOptions.categories = options.categories;
+      if (options?.daysAbandonedWorkflow !== undefined) additionalOptions.daysAbandonedWorkflow = options.daysAbandonedWorkflow;
+
+      const body = Object.keys(additionalOptions).length > 0 ? { additionalOptions } : {};
+      const response = await this.client.post('/audit', body);
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  // Fetch all workflows with pagination (for audit scanning)
+  async listAllWorkflows(): Promise<Workflow[]> {
+    const allWorkflows: Workflow[] = [];
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    const PAGE_SIZE = 100;
+    const MAX_PAGES = 50; // Safety limit: 5000 workflows max
+
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const params: WorkflowListParams = { limit: PAGE_SIZE, cursor };
+      const response = await this.listWorkflows(params);
+      allWorkflows.push(...response.data);
+      if (!response.nextCursor || seenCursors.has(response.nextCursor)) break;
+      seenCursors.add(response.nextCursor);
+      cursor = response.nextCursor;
+    }
+    return allWorkflows;
+  }
+
   // Execution Management
   async getExecution(id: string, includeData = false): Promise<Execution> {
     try {
@@ -456,6 +492,15 @@ export class N8nApiClient {
   async deleteCredential(id: string): Promise<void> {
     try {
       await this.client.delete(`/credentials/${id}`);
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async getCredentialSchema(typeName: string): Promise<any> {
+    try {
+      const response = await this.client.get(`/credentials/schema/${typeName}`);
+      return response.data;
     } catch (error) {
       throw handleN8nApiError(error);
     }
