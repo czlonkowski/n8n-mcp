@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.47.1] - 2026-04-04
+
+### Fixed
+
+- **Credential get fallback** — `n8n_manage_credentials({action: "get"})` now falls back to list + filter when `GET /credentials/:id` returns 403 Forbidden or 405 Method Not Allowed, since this endpoint is not in the n8n public API
+- **Credential update accepts `type` field** — `n8n_manage_credentials({action: "update"})` now forwards the optional `type` field to the n8n API, which some n8n versions require in the PATCH payload
+- **Credential response stripping** — `create` and `update` handlers now strip the `data` field from responses (defense-in-depth, matching the `get` handler pattern)
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.47.0] - 2026-04-04
 
 ### Added

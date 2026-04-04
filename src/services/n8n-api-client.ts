@@ -135,13 +135,7 @@ export class N8nApiClient {
    * Internal method to fetch version once
    */
   private async fetchVersionOnce(): Promise<N8nVersionInfo | null> {
-    // Check if already cached globally
-    let version = getCachedVersion(this.baseUrl);
-    if (!version) {
-      // Fetch from server
-      version = await fetchN8nVersion(this.baseUrl);
-    }
-    return version;
+    return getCachedVersion(this.baseUrl) ?? await fetchN8nVersion(this.baseUrl);
   }
 
   /**

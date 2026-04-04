@@ -248,10 +248,11 @@ function checkDataRetentionSettings(workflow: WorkflowInput): AuditFinding[] {
     return [];
   }
 
-  const savesAllErrors = settings.saveDataErrorExecution === 'all';
-  const savesAllSuccess = settings.saveDataSuccessExecution === 'all';
+  const savesAllData =
+    settings.saveDataErrorExecution === 'all' &&
+    settings.saveDataSuccessExecution === 'all';
 
-  if (!savesAllErrors || !savesAllSuccess) {
+  if (!savesAllData) {
     return [];
   }
 

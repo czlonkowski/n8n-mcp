@@ -2994,6 +2994,7 @@ const createCredentialSchema = z.object({
 const updateCredentialSchema = z.object({
   id: z.string({ required_error: 'Credential ID is required' }),
   name: z.string().optional(),
+  type: z.string().optional(),
   data: z.record(z.any()).optional(),
 });
 
@@ -3027,7 +3028,23 @@ export async function handleGetCredential(args: unknown, context?: InstanceConte
   try {
     const client = ensureApiConfigured(context);
     const { id } = getCredentialSchema.parse(args);
-    const credential = await client.getCredential(id);
+    let credential;
+    try {
+      credential = await client.getCredential(id);
+    } catch (getError: unknown) {
+      // GET /credentials/:id is not in the n8n public API — fall back to list + filter
+      const status = (getError as { statusCode?: number }).statusCode;
+      const msg = (getError as Error).message ?? '';
+      const isUnsupported = status === 405 || status === 403 || msg.includes('not allowed');
+      if (!isUnsupported) {
+        throw getError;
+      }
+      const list = await client.listCredentials();
+      credential = list.data.find((c) => c.id === id);
+      if (!credential) {
+        return { success: false, error: `Credential ${id} not found` };
+      }
+    }
     // Strip sensitive data field — defense in depth against future n8n versions returning decrypted values
     const { data: _sensitiveData, ...safeCred } = credential;
     return {
@@ -3059,10 +3076,11 @@ export async function handleCreateCredential(args: unknown, context?: InstanceCo
 export async function handleUpdateCredential(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
   try {
     const client = ensureApiConfigured(context);
-    const { id, name, data } = updateCredentialSchema.parse(args);
+    const { id, name, type, data } = updateCredentialSchema.parse(args);
     logger.info(`Updating credential: id="${id}"${name ? `, name="${name}"` : ''}`);
     const updatePayload: Record<string, any> = {};
     if (name !== undefined) updatePayload.name = name;
+    if (type !== undefined) updatePayload.type = type;
     if (data !== undefined) updatePayload.data = data;
     const credential = await client.updateCredential(id, updatePayload);
     const { data: _sensitiveData, ...safeCred } = credential;
