@@ -197,7 +197,12 @@ describe('CommunityNodeService', () => {
 
       const result = await service.syncCommunityNodes({ verifiedOnly: true });
 
-      expect(result.duration).toBeGreaterThanOrEqual(10);
+      // Assertion intentionally loose: setTimeout does not guarantee a
+      // minimum elapsed time, so on fast CI runners the mocked 10ms delay
+      // can resolve in 9ms and cause a flake. We only need to verify that
+      // duration was measured (non-negative number), not its precise value.
+      expect(result.duration).toBeGreaterThanOrEqual(0);
+      expect(result.duration).toBeLessThan(5000);
     });
   });
 
