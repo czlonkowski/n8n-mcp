@@ -100,7 +100,8 @@
     "prepare:publish": "./scripts/publish-npm.sh",
     "update:all": "./scripts/update-and-publish-prep.sh",
     "test:release-automation": "node scripts/test-release-automation.js",
-    "prepare:release": "node scripts/prepare-release.js"
+    "prepare:release": "node scripts/prepare-release.js",
+    "prepare": "husky"
   },
   "repository": {
     "type": "git",
@@ -132,6 +133,7 @@
   ],
   "devDependencies": {
     "@faker-js/faker": "^9.9.0",
+    "@secretlint/secretlint-rule-preset-recommend": "9.3.4",
     "@testing-library/jest-dom": "^6.6.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.3",
@@ -143,8 +145,10 @@
     "axios": "^1.14.0",
     "axios-mock-adapter": "^2.1.0",
     "fishery": "^2.3.1",
+    "husky": "9.1.7",
     "msw": "^2.10.4",
     "nodemon": "^3.1.14",
+    "secretlint": "9.3.4",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
