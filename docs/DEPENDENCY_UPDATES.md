@@ -60,14 +60,17 @@ If you prefer Renovate over the custom solution:
 
 The update system tracks these n8n packages:
 - `n8n-nodes-base` - Core n8n nodes (loaded by the node-loader at rebuild time)
-- `n8n-workflow` - Workflow types and utilities (type-only imports)
+- `n8n-core` - Runtime helpers that `n8n-nodes-base` internally `require()`s
+  (declared only as a devDependency in `n8n-nodes-base`, so we install it
+  ourselves)
+- `n8n-workflow` - Workflow types and utilities (type-only imports in our code)
 - `@n8n/n8n-nodes-langchain` - AI/LangChain nodes
 
-> **Note:** We intentionally do not depend on the `n8n` meta package or `n8n-core`.
-> The MCP server reads node metadata from a prebuilt SQLite database and never
-> executes n8n nodes, so pulling in the full n8n runtime (editor backend, task
-> runner, queue, typeorm, etc.) would bloat the dev dependency tree without any
-> runtime benefit. Dropping them trimmed ~250 transitive packages from the tree.
+> **Note:** We intentionally do not depend on the `n8n` meta package. The MCP
+> server reads node metadata from a prebuilt SQLite database and never executes
+> n8n nodes, so pulling in the full n8n runtime (editor backend, task runner,
+> queue, typeorm, AI workflow builder, etc.) would bloat the dev dependency
+> tree without any runtime benefit.
 
 ## 🔍 What Happens During Updates
 

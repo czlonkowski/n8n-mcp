@@ -104,6 +104,7 @@ npm run sync:runtime-version
 echo ""
 echo -e "${BLUE}📊 Gathering update information...${NC}"
 # Get all tracked n8n package versions
+N8N_CORE=$(node -e "console.log(require('./package.json').dependencies['n8n-core'])")
 N8N_WORKFLOW=$(node -e "console.log(require('./package.json').dependencies['n8n-workflow'])")
 N8N_LANGCHAIN=$(node -e "console.log(require('./package.json').dependencies['@n8n/n8n-nodes-langchain'])")
 
@@ -137,6 +138,7 @@ echo -e "${BLUE}📝 Creating commit...${NC}"
 COMMIT_MSG="chore: update n8n to $NEW_N8N and bump version to $NEW_PROJECT
 
 - Updated n8n-nodes-base to $NEW_N8N
+- Updated n8n-core to $N8N_CORE
 - Updated n8n-workflow to $N8N_WORKFLOW
 - Updated @n8n/n8n-nodes-langchain to $N8N_LANGCHAIN
 - Rebuilt node database with $NODE_COUNT nodes"

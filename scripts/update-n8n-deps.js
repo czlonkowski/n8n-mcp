@@ -52,6 +52,7 @@ class N8nDependencyUpdater {
     const updates = [];
     const trackedDeps = [
       'n8n-nodes-base',
+      'n8n-core',
       'n8n-workflow',
       '@n8n/n8n-nodes-langchain',
     ];
