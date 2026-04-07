@@ -12,8 +12,9 @@ const path = require('path');
 class N8nDependencyUpdater {
   constructor() {
     this.packageJsonPath = path.join(__dirname, '..', 'package.json');
-    // Only track the main n8n package - let it manage its own dependencies
-    this.mainPackage = 'n8n';
+    // Track n8n-nodes-base directly (the package our loader actually requires).
+    // The full `n8n` meta package was dropped in favor of this leaner dep tree.
+    this.mainPackage = 'n8n-nodes-base';
   }
 
   /**
@@ -30,19 +31,6 @@ class N8nDependencyUpdater {
   }
 
   /**
-   * Get dependencies of a specific n8n version
-   */
-  getN8nDependencies(n8nVersion) {
-    try {
-      const output = execSync(`npm view n8n@${n8nVersion} dependencies --json`, { encoding: 'utf8' });
-      return JSON.parse(output);
-    } catch (error) {
-      console.error(`Failed to get dependencies for n8n@${n8nVersion}:`, error.message);
-      return {};
-    }
-  }
-
-  /**
    * Get current version from package.json
    */
   getCurrentVersion(packageName) {
@@ -52,88 +40,43 @@ class N8nDependencyUpdater {
   }
 
   /**
-   * Check which packages need updates
+   * Check which packages need updates.
+   *
+   * Each tracked package is checked independently against its own
+   * `latest` dist-tag on npm. The old strategy of deriving peer versions
+   * from the `n8n` meta package was removed when we dropped that dep.
    */
   async checkForUpdates() {
     console.log('🔍 Checking for n8n dependency updates...\n');
-    
+
     const updates = [];
-    
-    // First check the main n8n package
-    const currentN8nVersion = this.getCurrentVersion('n8n');
-    const latestN8nVersion = this.getLatestVersion('n8n');
-    
-    if (!currentN8nVersion || !latestN8nVersion) {
-      console.error('Failed to check n8n version');
-      return updates;
-    }
-    
-    if (currentN8nVersion !== latestN8nVersion) {
-      console.log(`📦 n8n: ${currentN8nVersion} → ${latestN8nVersion} (update available)`);
-      
-      // Get the dependencies that n8n requires
-      const n8nDeps = this.getN8nDependencies(latestN8nVersion);
-      
-      // Add main n8n update
-      updates.push({
-        package: 'n8n',
-        current: currentN8nVersion,
-        latest: latestN8nVersion
-      });
-      
-      // Check our tracked dependencies that n8n uses
-      const trackedDeps = ['n8n-core', 'n8n-workflow', '@n8n/n8n-nodes-langchain'];
-      
-      for (const dep of trackedDeps) {
-        const currentVersion = this.getCurrentVersion(dep);
-        const requiredVersion = n8nDeps[dep];
-        
-        if (requiredVersion && currentVersion) {
-          // Extract version from npm dependency format (e.g., "^1.2.3" -> "1.2.3")
-          const cleanRequiredVersion = requiredVersion.replace(/^[\^~>=<]/, '').split(' ')[0];
-          
-          if (currentVersion !== cleanRequiredVersion) {
-            updates.push({
-              package: dep,
-              current: currentVersion,
-              latest: cleanRequiredVersion,
-              reason: `Required by n8n@${latestN8nVersion}`
-            });
-            console.log(`📦 ${dep}: ${currentVersion} → ${cleanRequiredVersion} (required by n8n)`);
-          } else {
-            console.log(`✅ ${dep}: ${currentVersion} (compatible with n8n@${latestN8nVersion})`);
-          }
-        }
+    const trackedDeps = [
+      'n8n-nodes-base',
+      'n8n-workflow',
+      '@n8n/n8n-nodes-langchain',
+    ];
+
+    for (const dep of trackedDeps) {
+      const currentVersion = this.getCurrentVersion(dep);
+      const latestVersion = this.getLatestVersion(dep);
+
+      if (!currentVersion || !latestVersion) {
+        console.error(`Failed to resolve version for ${dep}`);
+        continue;
       }
-    } else {
-      console.log(`✅ n8n: ${currentN8nVersion} (up to date)`);
-      
-      // Even if n8n is up to date, check if our dependencies match what n8n expects
-      const n8nDeps = this.getN8nDependencies(currentN8nVersion);
-      const trackedDeps = ['n8n-core', 'n8n-workflow', '@n8n/n8n-nodes-langchain'];
-      
-      for (const dep of trackedDeps) {
-        const currentVersion = this.getCurrentVersion(dep);
-        const requiredVersion = n8nDeps[dep];
-        
-        if (requiredVersion && currentVersion) {
-          const cleanRequiredVersion = requiredVersion.replace(/^[\^~>=<]/, '').split(' ')[0];
-          
-          if (currentVersion !== cleanRequiredVersion) {
-            updates.push({
-              package: dep,
-              current: currentVersion,
-              latest: cleanRequiredVersion,
-              reason: `Required by n8n@${currentN8nVersion}`
-            });
-            console.log(`📦 ${dep}: ${currentVersion} → ${cleanRequiredVersion} (sync with n8n)`);
-          } else {
-            console.log(`✅ ${dep}: ${currentVersion} (in sync)`);
-          }
-        }
+
+      if (currentVersion !== latestVersion) {
+        console.log(`📦 ${dep}: ${currentVersion} → ${latestVersion} (update available)`);
+        updates.push({
+          package: dep,
+          current: currentVersion,
+          latest: latestVersion,
+        });
+      } else {
+        console.log(`✅ ${dep}: ${currentVersion} (up to date)`);
       }
     }
-    
+
     return updates;
   }
 

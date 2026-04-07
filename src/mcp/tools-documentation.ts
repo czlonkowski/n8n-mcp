@@ -66,9 +66,10 @@ ${full.relatedTools.map(t => `- ${t}`).join('\n')}`;
 }
 
 export function getToolsOverview(depth: 'essentials' | 'full' = 'essentials'): string {
-  // Get version info from package.json
+  // Get version info from package.json. We track n8n-nodes-base directly
+  // instead of the n8n meta package, so use that as the compatibility hint.
   const packageJson = require('../../package.json');
-  const supportedN8nVersion = packageJson.dependencies?.n8n?.replace(/[^0-9.]/g, '') || 'latest';
+  const supportedN8nVersion = packageJson.dependencies?.['n8n-nodes-base']?.replace(/[^0-9.]/g, '') || 'latest';
   
   if (depth === 'essentials') {
     return `# n8n MCP Tools Reference

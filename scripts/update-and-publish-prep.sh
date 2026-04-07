@@ -36,9 +36,9 @@ fi
 
 # 3. Get current versions for comparison
 echo -e "${BLUE}📊 Current versions:${NC}"
-CURRENT_N8N=$(node -e "console.log(require('./package.json').dependencies['n8n'])" 2>/dev/null || echo "not installed")
+CURRENT_N8N=$(node -e "console.log(require('./package.json').dependencies['n8n-nodes-base'])" 2>/dev/null || echo "not installed")
 CURRENT_PROJECT=$(node -e "console.log(require('./package.json').version)")
-echo "- n8n: $CURRENT_N8N"
+echo "- n8n-nodes-base: $CURRENT_N8N"
 echo "- n8n-mcp: $CURRENT_PROJECT"
 echo ""
 
@@ -82,8 +82,8 @@ npm run build
 # 9. Bump version
 echo ""
 echo -e "${BLUE}📌 Bumping version...${NC}"
-# Get new n8n version
-NEW_N8N=$(node -e "console.log(require('./package.json').dependencies['n8n'])")
+# Get new n8n-nodes-base version
+NEW_N8N=$(node -e "console.log(require('./package.json').dependencies['n8n-nodes-base'])")
 # Bump patch version
 npm version patch --no-git-tag-version
 
@@ -103,8 +103,7 @@ npm run sync:runtime-version
 # 12. Get update details for commit message
 echo ""
 echo -e "${BLUE}📊 Gathering update information...${NC}"
-# Get all n8n package versions
-N8N_CORE=$(node -e "console.log(require('./package.json').dependencies['n8n-core'])")
+# Get all tracked n8n package versions
 N8N_WORKFLOW=$(node -e "console.log(require('./package.json').dependencies['n8n-workflow'])")
 N8N_LANGCHAIN=$(node -e "console.log(require('./package.json').dependencies['@n8n/n8n-nodes-langchain'])")
 
@@ -137,8 +136,7 @@ echo ""
 echo -e "${BLUE}📝 Creating commit...${NC}"
 COMMIT_MSG="chore: update n8n to $NEW_N8N and bump version to $NEW_PROJECT
 
-- Updated n8n to $NEW_N8N
-- Updated n8n-core to $N8N_CORE
+- Updated n8n-nodes-base to $NEW_N8N
 - Updated n8n-workflow to $N8N_WORKFLOW
 - Updated @n8n/n8n-nodes-langchain to $N8N_LANGCHAIN
 - Rebuilt node database with $NODE_COUNT nodes"
@@ -173,7 +171,7 @@ echo ""
 echo -e "${GREEN}✅ Update completed successfully!${NC}"
 echo ""
 echo -e "${BLUE}Summary:${NC}"
-echo "- Updated n8n from $CURRENT_N8N to $NEW_N8N"
+echo "- Updated n8n-nodes-base from $CURRENT_N8N to $NEW_N8N"
 echo "- Bumped version from $CURRENT_PROJECT to $NEW_PROJECT"
 echo "- All 1,182 tests passed"
 echo "- Project built and ready for npm publish"

@@ -65,7 +65,7 @@ ${full.relatedTools.map(t => `- ${t}`).join('\n')}`;
 }
 function getToolsOverview(depth = 'essentials') {
     const packageJson = require('../../package.json');
-    const supportedN8nVersion = packageJson.dependencies?.n8n?.replace(/[^0-9.]/g, '') || 'latest';
+    const supportedN8nVersion = packageJson.dependencies?.['n8n-nodes-base']?.replace(/[^0-9.]/g, '') || 'latest';
     if (depth === 'essentials') {
         return `# n8n MCP Tools Reference
 
