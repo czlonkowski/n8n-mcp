@@ -25,7 +25,7 @@ export const n8nValidateWorkflowDoc: ToolDocumentation = {
 
 The validation uses the same engine as validate_workflow but works with workflows already in n8n, making it perfect for validating existing workflows before execution.
 
-Requires N8N_API_URL and N8N_API_KEY environment variables to be configured.`,
+Requires N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) environment variables to be configured.`,
     parameters: {
       id: {
         type: 'string',

@@ -371,4 +371,80 @@ describe('instance-context Coverage Tests', () => {
       expect(validation.valid).toBe(true);
     });
   });
+
+  describe('Cookie Authentication', () => {
+    it('should accept context with only cookie credential', () => {
+      const context: InstanceContext = {
+        n8nApiUrl: 'https://api.n8n.cloud',
+        n8nApiCookie: 'n8n-auth=abc123; Path=/'
+      };
+
+      expect(isInstanceContext(context)).toBe(true);
+      const validation = validateInstanceContext(context);
+      expect(validation.valid).toBe(true);
+    });
+
+    it('should accept context with both apiKey and cookie (apiKey takes precedence)', () => {
+      const context: InstanceContext = {
+        n8nApiUrl: 'https://api.n8n.cloud',
+        n8nApiKey: 'my-api-key',
+        n8nApiCookie: 'n8n-auth=abc123'
+      };
+
+      expect(isInstanceContext(context)).toBe(true);
+      const validation = validateInstanceContext(context);
+      expect(validation.valid).toBe(true);
+    });
+
+    it('should reject empty string cookie', () => {
+      const context: InstanceContext = {
+        n8nApiUrl: 'https://api.n8n.cloud',
+        n8nApiCookie: ''
+      };
+
+      const validation = validateInstanceContext(context);
+      expect(validation.valid).toBe(false);
+      expect(validation.errors?.[0]).toContain('Invalid n8nApiCookie:');
+      expect(validation.errors?.[0]).toContain('empty string');
+    });
+
+    it('should reject placeholder cookie values', () => {
+      const placeholderCookies = [
+        'your_cookie',
+        'YOUR_COOKIE',
+        'placeholder',
+        'example',
+      ];
+
+      placeholderCookies.forEach(cookie => {
+        const context: InstanceContext = {
+          n8nApiUrl: 'https://api.n8n.cloud',
+          n8nApiCookie: cookie
+        };
+
+        const validation = validateInstanceContext(context);
+        expect(validation.valid).toBe(false);
+        expect(validation.errors?.some(e => e.includes('Invalid n8nApiCookie:'))).toBe(true);
+      });
+    });
+
+    it('should reject invalid cookie in isInstanceContext type guard', () => {
+      const context = {
+        n8nApiUrl: 'https://api.n8n.cloud',
+        n8nApiCookie: 'placeholder'
+      };
+
+      expect(isInstanceContext(context)).toBe(false);
+    });
+
+    it('should accept context with no credentials (documentation-only usage)', () => {
+      const context: InstanceContext = {
+        n8nApiUrl: 'https://api.n8n.cloud'
+      };
+
+      expect(isInstanceContext(context)).toBe(true);
+      const validation = validateInstanceContext(context);
+      expect(validation.valid).toBe(true);
+    });
+  });
 });

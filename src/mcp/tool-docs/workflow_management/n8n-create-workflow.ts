@@ -87,7 +87,7 @@ n8n_create_workflow({
       'Test with n8n_test_workflow'
     ],
     pitfalls: [
-      '**REQUIRES N8N_API_URL and N8N_API_KEY environment variables** - tool unavailable without n8n API access',
+      '**REQUIRES N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) environment variables** - tool unavailable without n8n API access',
       'Workflows created in INACTIVE state - must activate separately',
       'Node IDs must be unique within workflow',
       'Credentials must be configured separately in n8n',

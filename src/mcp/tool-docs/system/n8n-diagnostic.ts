@@ -20,7 +20,7 @@ export const n8nDiagnosticDoc: ToolDocumentation = {
     description: `Comprehensive diagnostic tool for troubleshooting n8n API configuration and management tool availability.
 
 This tool performs a detailed check of:
-- Environment variable configuration (N8N_API_URL, N8N_API_KEY)
+- Environment variable configuration (N8N_API_URL, N8N_API_KEY or N8N_API_COOKIE)
 - API connectivity and authentication
 - Tool availability status
 - Common configuration issues
@@ -40,7 +40,7 @@ The diagnostic is essential when:
     returns: `Comprehensive diagnostic report containing:
 - timestamp: ISO timestamp of diagnostic run
 - environment: Enhanced environment variables
-  - N8N_API_URL, N8N_API_KEY (masked), NODE_ENV, MCP_MODE
+  - N8N_API_URL, N8N_API_KEY (masked), N8N_API_COOKIE (masked), NODE_ENV, MCP_MODE
   - isDocker: Boolean indicating if running in Docker
   - cloudPlatform: Detected cloud platform (railway/render/fly/etc.) or null
   - nodeVersion: Node.js version
@@ -68,7 +68,7 @@ The diagnostic is essential when:
       'n8n_diagnostic({verbose: false}) - Standard diagnostic without sensitive data'
     ],
     useCases: [
-      'Initial setup verification after configuring N8N_API_URL and N8N_API_KEY',
+      'Initial setup verification after configuring N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE)',
       'Troubleshooting when n8n management tools are not available',
       'Debugging API connection failures or authentication errors',
       'Verifying n8n instance compatibility and feature availability',

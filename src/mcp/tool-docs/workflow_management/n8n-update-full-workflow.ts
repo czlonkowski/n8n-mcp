@@ -48,7 +48,7 @@ export const n8nUpdateFullWorkflowDoc: ToolDocumentation = {
       'Test updates in non-production first'
     ],
     pitfalls: [
-      'Requires N8N_API_URL and N8N_API_KEY configured',
+      'Requires N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) configured',
       'Must include ALL nodes/connections',
       'Missing nodes will be deleted',
       'Can break active workflows',

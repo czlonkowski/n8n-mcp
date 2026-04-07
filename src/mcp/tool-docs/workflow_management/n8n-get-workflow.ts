@@ -56,7 +56,7 @@ export const n8nGetWorkflowDoc: ToolDocumentation = {
       'Validate workflow after retrieval if planning modifications'
     ],
     pitfalls: [
-      'Requires N8N_API_URL and N8N_API_KEY configured',
+      'Requires N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) configured',
       'mode="details" adds database queries for execution stats',
       'Workflow must exist or returns 404 error',
       'Credentials are referenced by ID but values not included'

@@ -153,6 +153,7 @@ interface DiagnosticResponseData {
   environment: {
     N8N_API_URL: string | null;
     N8N_API_KEY: string | null;
+    N8N_API_COOKIE: string | null;
     NODE_ENV: string;
     MCP_MODE: string;
     isDocker: boolean;
@@ -273,7 +274,7 @@ export function clearInstanceCache(): void {
 
 export function getN8nApiClient(context?: InstanceContext): N8nApiClient | null {
   // If context provided with n8n config, use instance-specific client
-  if (context?.n8nApiUrl && context?.n8nApiKey) {
+  if (context?.n8nApiUrl && (context?.n8nApiKey || context?.n8nApiCookie)) {
     // Validate context before using
     const validation = validateInstanceContext(context);
     if (!validation.valid) {
@@ -284,8 +285,10 @@ export function getN8nApiClient(context?: InstanceContext): N8nApiClient | null 
       return null;
     }
     // Create secure hash of credentials for cache key using memoization
+    // Include cookie (if any) in the hash so different cookies get different clients
+    const credential = context.n8nApiKey ?? context.n8nApiCookie ?? '';
     const cacheKey = createCacheKey(
-      `${context.n8nApiUrl}:${context.n8nApiKey}:${context.instanceId || ''}`
+      `${context.n8nApiUrl}:${credential}:${context.instanceId || ''}`
     );
 
     // Check cache first
@@ -363,9 +366,9 @@ function ensureApiConfigured(context?: InstanceContext): N8nApiClient {
   const client = getN8nApiClient(context);
   if (!client) {
     if (context?.instanceId) {
-      throw new Error(`n8n API not configured for instance ${context.instanceId}. Please provide n8nApiUrl and n8nApiKey in the instance context.`);
+      throw new Error(`n8n API not configured for instance ${context.instanceId}. Please provide n8nApiUrl and n8nApiKey or n8nApiCookie in the instance context.`);
     }
-    throw new Error('n8n API not configured. Please set N8N_API_URL and N8N_API_KEY environment variables.');
+    throw new Error('n8n API not configured. Please set N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) environment variables.');
   }
   return client;
 }
@@ -1966,6 +1969,7 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
   const envVars = {
     N8N_API_URL: process.env.N8N_API_URL || null,
     N8N_API_KEY: process.env.N8N_API_KEY ? '***configured***' : null,
+    N8N_API_COOKIE: process.env.N8N_API_COOKIE ? '***configured***' : null,
     NODE_ENV: process.env.NODE_ENV || 'production',
     MCP_MODE: mcpMode,
     isDocker,
@@ -2040,7 +2044,7 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
         enabled: apiConfigured,
         description: apiConfigured ?
           'Management tools are ENABLED - create, update, execute workflows' :
-          'Management tools are DISABLED - configure N8N_API_URL and N8N_API_KEY to enable'
+          'Management tools are DISABLED - configure N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) to enable'
       },
       totalAvailable: totalTools
     },
@@ -2096,7 +2100,7 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
         '1. Verify n8n instance is running and accessible',
         '2. Check N8N_API_URL is correct (currently: ' + apiConfig?.baseUrl + ')',
         '3. Test URL in browser: ' + apiConfig?.baseUrl + '/healthz',
-        '4. Verify N8N_API_KEY has proper permissions',
+        '4. Verify N8N_API_KEY (or N8N_API_COOKIE) has proper permissions',
         '5. Check firewall/network settings if using remote n8n',
         '6. Try running n8n_health_check again after fixes'
       ],
@@ -2146,9 +2150,10 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
       howToEnable: {
         steps: [
           '1. Get your n8n API key: [Your n8n instance]/settings/api',
+          '   (Or use a session cookie from your browser login as N8N_API_COOKIE)',
           '2. Set environment variables:',
           '   N8N_API_URL=https://your-n8n-instance.com',
-          '   N8N_API_KEY=your_api_key_here',
+          '   N8N_API_KEY=your_api_key_here  (or N8N_API_COOKIE=your_session_cookie)',
           '3. Restart the MCP server',
           '4. Run n8n_health_check with mode="diagnostic" to verify',
           '5. All 19 tools will be available!'

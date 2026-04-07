@@ -11,7 +11,7 @@ export const n8nListAvailableToolsDoc: ToolDocumentation = {
     tips: [
       'Shows only tools available with current API configuration',
       'If no n8n tools appear, run n8n_diagnostic to troubleshoot',
-      'Tool availability depends on N8N_API_URL and N8N_API_KEY being set'
+      'Tool availability depends on N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) being set'
     ]
   },
   full: {
@@ -24,7 +24,7 @@ This tool provides:
 - Dynamic availability based on API configuration
 
 The tool list is dynamic:
-- Shows 14+ management tools when N8N_API_URL and N8N_API_KEY are configured
+- Shows 14+ management tools when N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) are configured
 - Shows only documentation tools when API is not configured
 - Helps discover available functionality
 - Provides quick reference for tool names and purposes`,
@@ -63,7 +63,7 @@ The tool list is dynamic:
       'Cache results as tool list only changes with configuration'
     ],
     pitfalls: [
-      'Tool list is empty if N8N_API_URL and N8N_API_KEY are not set',
+      'Tool list is empty if N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) are not set',
       'Does not validate if tools will actually work - just shows availability',
       'Tool names must be used exactly as returned',
       'Does not show tool parameters - use tools_documentation for details'

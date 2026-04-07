@@ -126,7 +126,7 @@ export async function handleUpdatePartialWorkflow(
     if (!client) {
       return {
         success: false,
-        error: 'n8n API not configured. Please set N8N_API_URL and N8N_API_KEY environment variables.'
+        error: 'n8n API not configured. Please set N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) environment variables.'
       };
     }
 

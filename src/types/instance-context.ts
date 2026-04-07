@@ -13,6 +13,14 @@ export interface InstanceContext {
    */
   n8nApiUrl?: string;
   n8nApiKey?: string;
+  /**
+   * n8n session cookie for browser-session-based authentication.
+   * Use when you cannot obtain an API key (e.g. self-hosted instances without API key access).
+   * Obtain by inspecting the Cookie header after logging into the n8n UI.
+   * Treated as a secret — never log the value.
+   * When both n8nApiKey and n8nApiCookie are provided, n8nApiKey takes precedence.
+   */
+  n8nApiCookie?: string;
   n8nApiTimeout?: number;
   n8nApiMaxRetries?: number;
 
@@ -96,6 +104,16 @@ function isValidApiKey(key: string): boolean {
 }
 
 /**
+ * Validate cookie string format (basic check for non-empty string without placeholders)
+ */
+function isValidCookie(cookie: string): boolean {
+  return cookie.length > 0 &&
+         !cookie.toLowerCase().includes('your_cookie') &&
+         !cookie.toLowerCase().includes('placeholder') &&
+         !cookie.toLowerCase().includes('example');
+}
+
+/**
  * Type guard to check if an object is an InstanceContext
  */
 export function isInstanceContext(obj: any): obj is InstanceContext {
@@ -108,6 +126,9 @@ export function isInstanceContext(obj: any): obj is InstanceContext {
   const hasValidKey = obj.n8nApiKey === undefined ||
     (typeof obj.n8nApiKey === 'string' && isValidApiKey(obj.n8nApiKey));
 
+  const hasValidCookie = obj.n8nApiCookie === undefined ||
+    (typeof obj.n8nApiCookie === 'string' && isValidCookie(obj.n8nApiCookie));
+
   const hasValidTimeout = obj.n8nApiTimeout === undefined ||
     (typeof obj.n8nApiTimeout === 'number' && obj.n8nApiTimeout > 0);
 
@@ -119,7 +140,7 @@ export function isInstanceContext(obj: any): obj is InstanceContext {
   const hasValidMetadata = obj.metadata === undefined ||
     (typeof obj.metadata === 'object' && obj.metadata !== null);
 
-  return hasValidUrl && hasValidKey && hasValidTimeout && hasValidRetries &&
+  return hasValidUrl && hasValidKey && hasValidCookie && hasValidTimeout && hasValidRetries &&
          hasValidInstanceId && hasValidSessionId && hasValidMetadata;
 }
 
@@ -164,6 +185,23 @@ export function validateInstanceContext(context: InstanceContext): {
         errors.push(`Invalid n8nApiKey: contains example text - Please provide actual API key`);
       } else {
         errors.push(`Invalid n8nApiKey: format validation failed - Ensure key is valid`);
+      }
+    }
+  }
+
+  // Validate cookie if provided
+  if (context.n8nApiCookie !== undefined) {
+    if (context.n8nApiCookie === '') {
+      errors.push(`Invalid n8nApiCookie: empty string - cookie value is required when field is provided`);
+    } else if (!isValidCookie(context.n8nApiCookie)) {
+      if (context.n8nApiCookie.toLowerCase().includes('your_cookie')) {
+        errors.push(`Invalid n8nApiCookie: contains placeholder 'your_cookie' - Please provide actual cookie`);
+      } else if (context.n8nApiCookie.toLowerCase().includes('placeholder')) {
+        errors.push(`Invalid n8nApiCookie: contains placeholder text - Please provide actual cookie`);
+      } else if (context.n8nApiCookie.toLowerCase().includes('example')) {
+        errors.push(`Invalid n8nApiCookie: contains example text - Please provide actual cookie`);
+      } else {
+        errors.push(`Invalid n8nApiCookie: format validation failed - Ensure cookie is valid`);
       }
     }
   }

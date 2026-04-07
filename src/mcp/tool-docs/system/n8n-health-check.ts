@@ -90,7 +90,7 @@ Health checks are crucial for:
       'Use health status to implement circuit breaker patterns'
     ],
     pitfalls: [
-      'Requires N8N_API_URL and N8N_API_KEY to be configured',
+      'Requires N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) to be configured',
       'Network issues may cause false negatives',
       'Does not check individual workflow health',
       'Health endpoint might be cached - not real-time for all metrics'

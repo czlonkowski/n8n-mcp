@@ -183,7 +183,7 @@ ${tools.map(toolName => {
 - All node types require the "nodes-base." or "nodes-langchain." prefix
 - Use get_node() with detail='standard' first for most tasks (~95% smaller than detail='full')
 - Validation profiles: minimal (editing), runtime (default), strict (deployment)
-- n8n API tools only available when N8N_API_URL and N8N_API_KEY are configured
+- n8n API tools only available when N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) are configured
 
 For detailed documentation on any tool:
 tools_documentation({topic: "tool_name", depth: "full"})`;

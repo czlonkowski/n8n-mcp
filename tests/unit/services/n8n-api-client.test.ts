@@ -185,6 +185,55 @@ describe('N8nApiClient', () => {
       expect(mockAxiosInstance.interceptors.request.use).toHaveBeenCalled();
       expect(mockAxiosInstance.interceptors.response.use).toHaveBeenCalled();
     });
+
+    it('should use Cookie header when only cookie is provided (no apiKey)', () => {
+      client = new N8nApiClient({
+        baseUrl: 'https://n8n.example.com',
+        cookie: 'n8n-auth=abc123; Path=/',
+      });
+
+      expect(axios.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'Cookie': 'n8n-auth=abc123; Path=/',
+            'Content-Type': 'application/json',
+          }),
+        })
+      );
+      // X-N8N-API-KEY should NOT be set
+      const callArgs = vi.mocked(axios.create).mock.calls[0][0] as any;
+      expect(callArgs.headers['X-N8N-API-KEY']).toBeUndefined();
+    });
+
+    it('should prefer X-N8N-API-KEY header when both apiKey and cookie are provided', () => {
+      client = new N8nApiClient({
+        baseUrl: 'https://n8n.example.com',
+        apiKey: 'my-api-key',
+        cookie: 'n8n-auth=abc123',
+      });
+
+      expect(axios.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'X-N8N-API-KEY': 'my-api-key',
+            'Content-Type': 'application/json',
+          }),
+        })
+      );
+      // Cookie should NOT be set when apiKey is present
+      const callArgs = vi.mocked(axios.create).mock.calls[0][0] as any;
+      expect(callArgs.headers['Cookie']).toBeUndefined();
+    });
+
+    it('should use neither auth header when neither apiKey nor cookie is provided', () => {
+      client = new N8nApiClient({
+        baseUrl: 'https://n8n.example.com',
+      });
+
+      const callArgs = vi.mocked(axios.create).mock.calls[0][0] as any;
+      expect(callArgs.headers['X-N8N-API-KEY']).toBeUndefined();
+      expect(callArgs.headers['Cookie']).toBeUndefined();
+    });
   });
 
   describe('healthCheck', () => {

@@ -61,7 +61,7 @@ The tool uses a confidence-based system to ensure safe fixes:
 - **Medium (70-89%)**: Generally safe but review recommended
 - **Low (<70%)**: Manual review strongly recommended
 
-Requires N8N_API_URL and N8N_API_KEY environment variables to be configured.`,
+Requires N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) environment variables to be configured.`,
     parameters: {
       id: {
         type: 'string',

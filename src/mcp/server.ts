@@ -612,7 +612,7 @@ export class N8NDocumentationMCPServer {
       // 2. Instance context (multi-tenant support)
       // 3. Multi-tenant mode enabled (always show tools, runtime checks will handle auth)
       const hasEnvConfig = isN8nApiConfigured();
-      const hasInstanceConfig = !!(this.instanceContext?.n8nApiUrl && this.instanceContext?.n8nApiKey);
+      const hasInstanceConfig = !!(this.instanceContext?.n8nApiUrl && (this.instanceContext?.n8nApiKey || this.instanceContext?.n8nApiCookie));
       const isMultiTenantEnabled = process.env.ENABLE_MULTI_TENANT === 'true';
 
       const shouldIncludeManagementTools = hasEnvConfig || hasInstanceConfig || isMultiTenantEnabled;

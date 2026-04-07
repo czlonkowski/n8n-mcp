@@ -96,7 +96,7 @@ export const n8nExecutionsDoc: ToolDocumentation = {
       'Delete old executions to save storage'
     ],
     pitfalls: [
-      'Requires N8N_API_URL and N8N_API_KEY configured',
+      'Requires N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) configured',
       'mode="full" can return very large responses for complex workflows',
       'mode="error" fetches workflow by default (adds ~50-100ms), disable with fetchWorkflow=false',
       'Execution must exist or returns 404',

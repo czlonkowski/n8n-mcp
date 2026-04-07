@@ -39,7 +39,7 @@ export const n8nDeleteWorkflowDoc: ToolDocumentation = {
       'Export workflow before deletion for backup'
     ],
     pitfalls: [
-      'Requires N8N_API_URL and N8N_API_KEY configured',
+      'Requires N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) configured',
       'Cannot be undone - permanent deletion',
       'Deletes all execution history',
       'Active workflows can be deleted',

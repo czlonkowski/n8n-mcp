@@ -38,6 +38,8 @@ const DEFAULT_PROTOCOL_VERSION = STANDARD_PROTOCOL_VERSION;
 interface MultiTenantHeaders {
   'x-n8n-url'?: string;
   'x-n8n-key'?: string;
+  /** Session cookie for browser-session-based n8n authentication (alternative to x-n8n-key) */
+  'x-n8n-cookie'?: string;
   'x-instance-id'?: string;
   'x-session-id'?: string;
 }
@@ -60,6 +62,7 @@ function extractMultiTenantHeaders(req: express.Request): MultiTenantHeaders {
   return {
     'x-n8n-url': req.headers['x-n8n-url'] as string | undefined,
     'x-n8n-key': req.headers['x-n8n-key'] as string | undefined,
+    'x-n8n-cookie': req.headers['x-n8n-cookie'] as string | undefined,
     'x-instance-id': req.headers['x-instance-id'] as string | undefined,
     'x-session-id': req.headers['x-session-id'] as string | undefined,
   };
@@ -1343,13 +1346,15 @@ export class SingleSessionHTTPServer {
         const headers = extractMultiTenantHeaders(req);
         const hasUrl = headers['x-n8n-url'];
         const hasKey = headers['x-n8n-key'];
+        const hasCookie = headers['x-n8n-cookie'];
 
-        if (!hasUrl && !hasKey) return undefined;
+        if (!hasUrl && !hasKey && !hasCookie) return undefined;
 
         // Create context with proper type handling
         const context: InstanceContext = {
           n8nApiUrl: hasUrl || undefined,
           n8nApiKey: hasKey || undefined,
+          n8nApiCookie: hasCookie || undefined,
           instanceId: headers['x-instance-id'] || undefined,
           sessionId: headers['x-session-id'] || undefined
         };
@@ -1368,7 +1373,7 @@ export class SingleSessionHTTPServer {
           logger.warn('Invalid instance context from headers', {
             errors: validation.errors,
             hasUrl: !!hasUrl,
-            hasKey: !!hasKey
+            hasCredentials: !!(hasKey || hasCookie)
           });
           return undefined;
         }
@@ -1378,10 +1383,11 @@ export class SingleSessionHTTPServer {
 
       // Log context extraction for debugging (only if context exists)
       if (instanceContext) {
-        // Use sanitized logging for security
+        // Use sanitized logging for security — never log credential values
         logger.debug('Instance context extracted from headers', {
           hasUrl: !!instanceContext.n8nApiUrl,
-          hasKey: !!instanceContext.n8nApiKey,
+          hasCredentials: !!(instanceContext.n8nApiKey || instanceContext.n8nApiCookie),
+          authMethod: instanceContext.n8nApiKey ? 'api-key' : instanceContext.n8nApiCookie ? 'cookie' : 'none',
           instanceId: instanceContext.instanceId ? instanceContext.instanceId.substring(0, 8) + '...' : undefined,
           sessionId: instanceContext.sessionId ? instanceContext.sessionId.substring(0, 8) + '...' : undefined,
           urlDomain: instanceContext.n8nApiUrl ? new URL(instanceContext.n8nApiUrl).hostname : undefined
@@ -1607,8 +1613,8 @@ export class SingleSessionHTTPServer {
       const context = this.sessionContexts[sessionId];
 
       // Skip sessions without context - these can't be restored meaningfully
-      // (Context is required to reconnect to the correct n8n instance)
-      if (!context || !context.n8nApiUrl || !context.n8nApiKey) {
+      // (Context with URL and at least one credential is required to reconnect)
+      if (!context || !context.n8nApiUrl || (!context.n8nApiKey && !context.n8nApiCookie)) {
         logger.debug(`Skipping session ${sessionId} - missing required context`);
         continue;
       }
@@ -1623,6 +1629,7 @@ export class SingleSessionHTTPServer {
         context: {
           n8nApiUrl: context.n8nApiUrl,
           n8nApiKey: context.n8nApiKey,
+          n8nApiCookie: context.n8nApiCookie,
           instanceId: context.instanceId || sessionId, // Use sessionId as fallback
           sessionId: context.sessionId,
           metadata: context.metadata
@@ -1730,6 +1737,7 @@ export class SingleSessionHTTPServer {
         this.sessionContexts[sessionState.sessionId] = {
           n8nApiUrl: sessionState.context.n8nApiUrl,
           n8nApiKey: sessionState.context.n8nApiKey,
+          n8nApiCookie: sessionState.context.n8nApiCookie,
           instanceId: sessionState.context.instanceId,
           sessionId: sessionState.context.sessionId,
           metadata: sessionState.context.metadata

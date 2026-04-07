@@ -42,7 +42,18 @@ import {
 
 export interface N8nApiClientConfig {
   baseUrl: string;
-  apiKey: string;
+  /**
+   * n8n API key sent as X-N8N-API-KEY header.
+   * When both apiKey and cookie are provided, apiKey takes precedence.
+   * At least one of apiKey or cookie must be provided.
+   */
+  apiKey?: string;
+  /**
+   * n8n session cookie sent as Cookie header.
+   * Used when apiKey is not available (e.g. browser-session-based authentication).
+   * At least one of apiKey or cookie must be provided.
+   */
+  cookie?: string;
   timeout?: number;
   maxRetries?: number;
 }
@@ -55,7 +66,7 @@ export class N8nApiClient {
   private versionPromise: Promise<N8nVersionInfo | null> | null = null;
 
   constructor(config: N8nApiClientConfig) {
-    const { baseUrl, apiKey, timeout = 30000, maxRetries = 3 } = config;
+    const { baseUrl, apiKey, cookie, timeout = 30000, maxRetries = 3 } = config;
 
     this.maxRetries = maxRetries;
     this.baseUrl = baseUrl;
@@ -65,11 +76,19 @@ export class N8nApiClient {
       ? baseUrl
       : `${baseUrl.replace(/\/$/, '')}/api/v1`;
 
+    // Prefer API key when both are provided; fall back to cookie auth
+    const authHeaders: Record<string, string> = {};
+    if (apiKey) {
+      authHeaders['X-N8N-API-KEY'] = apiKey;
+    } else if (cookie) {
+      authHeaders['Cookie'] = cookie;
+    }
+
     this.client = axios.create({
       baseURL: apiUrl,
       timeout,
       headers: {
-        'X-N8N-API-KEY': apiKey,
+        ...authHeaders,
         'Content-Type': 'application/json',
       },
     });

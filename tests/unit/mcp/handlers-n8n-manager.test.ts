@@ -226,6 +226,35 @@ describe('handlers-n8n-manager', () => {
         maxRetries: 3,
       });
     });
+
+    it('should create client using cookie when context has only cookie credential', () => {
+      vi.mocked(getN8nApiConfig).mockReturnValue(null); // no env config
+      const context = {
+        n8nApiUrl: 'https://n8n.example.com',
+        n8nApiCookie: 'n8n-auth=abc123',
+        instanceId: 'cookie-instance'
+      };
+
+      const client = handlers.getN8nApiClient(context);
+      expect(client).toBeTruthy();
+      expect(N8nApiClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseUrl: 'https://n8n.example.com',
+          cookie: 'n8n-auth=abc123',
+        })
+      );
+    });
+
+    it('should return null when context has url but neither key nor cookie', () => {
+      vi.mocked(getN8nApiConfig).mockReturnValue(null);
+      const context = {
+        n8nApiUrl: 'https://n8n.example.com',
+        instanceId: 'no-creds'
+      };
+
+      const client = handlers.getN8nApiClient(context);
+      expect(client).toBeNull();
+    });
   });
 
   describe('handleCreateWorkflow', () => {
@@ -324,7 +353,7 @@ describe('handlers-n8n-manager', () => {
 
       expect(result).toEqual({
         success: false,
-        error: 'n8n API not configured. Please set N8N_API_URL and N8N_API_KEY environment variables.',
+        error: 'n8n API not configured. Please set N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) environment variables.',
       });
     });
 
@@ -824,7 +853,7 @@ describe('handlers-n8n-manager', () => {
 
       expect(result).toEqual({
         success: false,
-        error: 'n8n API not configured. Please set N8N_API_URL and N8N_API_KEY environment variables.',
+        error: 'n8n API not configured. Please set N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) environment variables.',
       });
     });
   });

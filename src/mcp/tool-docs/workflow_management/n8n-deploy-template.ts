@@ -60,7 +60,7 @@ n8n_deploy_template({
       'Test workflow before connecting to production systems'
     ],
     pitfalls: [
-      '**REQUIRES N8N_API_URL and N8N_API_KEY environment variables** - tool unavailable without n8n API access',
+      '**REQUIRES N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) environment variables** - tool unavailable without n8n API access',
       'Workflows created in INACTIVE state - must configure credentials and activate in n8n',
       'Templates may reference services you do not have (Slack, Google, etc.)',
       'Template database must be populated - run npm run fetch:templates if templates not found',

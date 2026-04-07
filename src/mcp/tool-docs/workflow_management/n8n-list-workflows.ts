@@ -45,7 +45,7 @@ export const n8nListWorkflowsDoc: ToolDocumentation = {
       'Iterate with cursor until hasMore is false for complete list'
     ],
     pitfalls: [
-      'Requires N8N_API_URL and N8N_API_KEY configured',
+      'Requires N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) configured',
       'Maximum 100 workflows per request',
       'Server may return fewer than requested limit',
       'returned field is count of current page only, not system total'

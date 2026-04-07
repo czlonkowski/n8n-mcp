@@ -55,8 +55,12 @@ export interface SessionState {
    * Contains the n8n API credentials and instance-specific settings.
    * This is the critical data needed to reconnect to the correct n8n instance.
    *
-   * Note: API keys are stored in plaintext. The downstream application
-   * MUST encrypt this data before persisting to disk.
+   * Note: Credentials are stored in plaintext. The downstream application
+   * MUST encrypt this data before persisting to disk. This applies to both
+   * API keys and session cookies.
+   *
+   * At least one of n8nApiKey or n8nApiCookie is required for management tools
+   * and session restore. When both are present, n8nApiKey takes precedence.
    */
   context: {
     /**
@@ -68,8 +72,16 @@ export interface SessionState {
     /**
      * n8n instance API key (plaintext - encrypt before storage!)
      * Example: "n8n_api_1234567890abcdef"
+     * At least one of n8nApiKey or n8nApiCookie must be provided.
      */
-    n8nApiKey: string;
+    n8nApiKey?: string;
+
+    /**
+     * n8n session cookie for browser-session-based authentication (plaintext - encrypt before storage!)
+     * Obtained from the Cookie header after logging into the n8n UI.
+     * At least one of n8nApiKey or n8nApiCookie must be provided.
+     */
+    n8nApiCookie?: string;
 
     /**
      * Instance identifier (optional)

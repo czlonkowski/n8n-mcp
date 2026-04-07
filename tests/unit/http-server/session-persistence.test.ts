@@ -543,4 +543,112 @@ describe('SingleSessionHTTPServer - Session Persistence', () => {
       });
     });
   });
+
+  describe('Cookie-based authentication', () => {
+    it('should export sessions that use cookie auth instead of apiKey', () => {
+      const serverAny = server as any;
+      const sessionId = 'cookie-session';
+
+      serverAny.sessionMetadata[sessionId] = {
+        createdAt: new Date(),
+        lastAccess: new Date()
+      };
+      serverAny.sessionContexts[sessionId] = {
+        n8nApiUrl: 'https://n8n.example.com',
+        n8nApiCookie: 'n8n-auth=abc123; Path=/',
+        instanceId: 'cookie-instance'
+      };
+
+      const exported = server.exportSessionState();
+
+      expect(exported).toHaveLength(1);
+      expect(exported[0].context.n8nApiCookie).toBe('n8n-auth=abc123; Path=/');
+      expect(exported[0].context.n8nApiKey).toBeUndefined();
+    });
+
+    it('should skip sessions with neither apiKey nor cookie during export', () => {
+      const serverAny = server as any;
+
+      // Session with cookie - should be exported
+      serverAny.sessionMetadata['cookie-session'] = {
+        createdAt: new Date(),
+        lastAccess: new Date()
+      };
+      serverAny.sessionContexts['cookie-session'] = {
+        n8nApiUrl: 'https://n8n.example.com',
+        n8nApiCookie: 'n8n-auth=abc123',
+        instanceId: 'instance'
+      };
+
+      // Session with no credentials - should be skipped
+      serverAny.sessionMetadata['no-creds-session'] = {
+        createdAt: new Date(),
+        lastAccess: new Date()
+      };
+      serverAny.sessionContexts['no-creds-session'] = {
+        n8nApiUrl: 'https://n8n.example.com',
+        instanceId: 'instance2'
+      };
+
+      const exported = server.exportSessionState();
+      expect(exported).toHaveLength(1);
+      expect(exported[0].sessionId).toBe('cookie-session');
+    });
+
+    it('should restore sessions that use cookie auth', () => {
+      const sessions: SessionState[] = [
+        {
+          sessionId: 'cookie-restored',
+          metadata: {
+            createdAt: new Date().toISOString(),
+            lastAccess: new Date().toISOString()
+          },
+          context: {
+            n8nApiUrl: 'https://n8n.example.com',
+            n8nApiCookie: 'n8n-auth=abc123; Path=/',
+            instanceId: 'cookie-instance'
+          }
+        }
+      ];
+
+      const count = server.restoreSessionState(sessions);
+      expect(count).toBe(1);
+
+      const serverAny = server as any;
+      expect(serverAny.sessionContexts['cookie-restored']).toMatchObject({
+        n8nApiUrl: 'https://n8n.example.com',
+        n8nApiCookie: 'n8n-auth=abc123; Path=/',
+        instanceId: 'cookie-instance'
+      });
+    });
+
+    it('should preserve both apiKey and cookie in round-trip when both are present', () => {
+      const serverAny = server as any;
+      const sessionId = 'both-creds-session';
+
+      serverAny.sessionMetadata[sessionId] = {
+        createdAt: new Date(),
+        lastAccess: new Date()
+      };
+      serverAny.sessionContexts[sessionId] = {
+        n8nApiUrl: 'https://n8n.example.com',
+        n8nApiKey: 'my-api-key',
+        n8nApiCookie: 'n8n-auth=abc123',
+        instanceId: 'instance'
+      };
+
+      const exported = server.exportSessionState();
+      expect(exported[0].context.n8nApiKey).toBe('my-api-key');
+      expect(exported[0].context.n8nApiCookie).toBe('n8n-auth=abc123');
+
+      // Clear and restore
+      delete serverAny.sessionMetadata[sessionId];
+      delete serverAny.sessionContexts[sessionId];
+
+      const count = server.restoreSessionState(exported);
+      expect(count).toBe(1);
+      expect(serverAny.sessionContexts[sessionId].n8nApiKey).toBe('my-api-key');
+      expect(serverAny.sessionContexts[sessionId].n8nApiCookie).toBe('n8n-auth=abc123');
+    });
+  });
 });

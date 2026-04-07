@@ -6,6 +6,8 @@ import { logger } from '../utils/logger';
 const n8nApiConfigSchema = z.object({
   N8N_API_URL: z.string().url().optional(),
   N8N_API_KEY: z.string().min(1).optional(),
+  /** Session cookie for browser-session-based authentication (alternative to N8N_API_KEY) */
+  N8N_API_COOKIE: z.string().min(1).optional(),
   N8N_API_TIMEOUT: z.coerce.number().positive().default(30000),
   N8N_API_MAX_RETRIES: z.coerce.number().positive().default(3),
 });
@@ -29,14 +31,15 @@ export function getN8nApiConfig() {
   
   const config = result.data;
   
-  // Check if both URL and API key are provided
-  if (!config.N8N_API_URL || !config.N8N_API_KEY) {
+  // Require URL and at least one credential (API key or cookie)
+  if (!config.N8N_API_URL || (!config.N8N_API_KEY && !config.N8N_API_COOKIE)) {
     return null;
   }
   
   return {
     baseUrl: config.N8N_API_URL,
     apiKey: config.N8N_API_KEY,
+    cookie: config.N8N_API_COOKIE,
     timeout: config.N8N_API_TIMEOUT,
     maxRetries: config.N8N_API_MAX_RETRIES,
   };
@@ -55,16 +58,18 @@ export function isN8nApiConfigured(): boolean {
 export function getN8nApiConfigFromContext(context: {
   n8nApiUrl?: string;
   n8nApiKey?: string;
+  n8nApiCookie?: string;
   n8nApiTimeout?: number;
   n8nApiMaxRetries?: number;
 }): N8nApiConfig | null {
-  if (!context.n8nApiUrl || !context.n8nApiKey) {
+  if (!context.n8nApiUrl || (!context.n8nApiKey && !context.n8nApiCookie)) {
     return null;
   }
 
   return {
     baseUrl: context.n8nApiUrl,
     apiKey: context.n8nApiKey,
+    cookie: context.n8nApiCookie,
     timeout: context.n8nApiTimeout ?? 30000,
     maxRetries: context.n8nApiMaxRetries ?? 3,
   };

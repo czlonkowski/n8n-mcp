@@ -411,7 +411,7 @@ n8n_update_partial_workflow({
       'Use regex: true in patchNodeField for pattern-based replacements (e.g., whitespace-insensitive matching)'
     ],
     pitfalls: [
-      '**REQUIRES N8N_API_URL and N8N_API_KEY environment variables** - will not work without n8n API access',
+      '**REQUIRES N8N_API_URL and N8N_API_KEY (or N8N_API_COOKIE) environment variables** - will not work without n8n API access',
       'Atomic mode (default): all operations must succeed or none are applied',
       'continueOnError breaks atomic guarantees - use with caution',
       'Order matters for dependent operations (e.g., must add node before connecting to it)',
