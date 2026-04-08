@@ -78,8 +78,8 @@ async function expectExitWithin(
   child: ChildProcess,
   budgetMs: number,
 ): Promise<ExitResult | 'timeout'> {
-  if (child.exitCode !== null) {
-    return { code: child.exitCode, signal: null };
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return { code: child.exitCode, signal: child.signalCode };
   }
   let budgetTimer: NodeJS.Timeout | undefined;
   const timer = new Promise<'timeout'>((resolve) => {
@@ -103,9 +103,8 @@ async function expectExitWithin(
 
 const distMissing = !fs.existsSync(INDEX_JS);
 const dbMissing = !fs.existsSync(NODES_DB);
-const describeOrSkip = distMissing || dbMissing ? describe.skip : describe;
 
-describeOrSkip('stdio shutdown on stdin close (Issue #711)', () => {
+describe.skipIf(distMissing || dbMissing)('stdio shutdown on stdin close (Issue #711)', () => {
   beforeAll(() => {
     if (distMissing) {
       // eslint-disable-next-line no-console

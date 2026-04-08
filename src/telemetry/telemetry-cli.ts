@@ -25,15 +25,12 @@ export function handleTelemetryCliIfPresent(args: string[]): void {
     case 'enable':
       telemetryConfig.enable();
       process.exit(0);
-      break;
     case 'disable':
       telemetryConfig.disable();
       process.exit(0);
-      break;
     case 'status':
       console.log(telemetryConfig.getStatus());
       process.exit(0);
-      break;
     default:
       console.log(`
 Usage: n8n-mcp telemetry [command]
