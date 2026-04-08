@@ -74,6 +74,7 @@ exports.handleUpdateCredential = handleUpdateCredential;
 exports.handleDeleteCredential = handleDeleteCredential;
 exports.handleGetCredentialSchema = handleGetCredentialSchema;
 exports.handleAuditInstance = handleAuditInstance;
+const crypto_1 = require("crypto");
 const n8n_api_client_1 = require("../services/n8n-api-client");
 const workflow_security_scanner_1 = require("../services/workflow-security-scanner");
 const audit_report_builder_1 = require("../services/audit-report-builder");
@@ -517,7 +518,7 @@ async function handleGetWorkflowMinimal(args, context) {
 }
 async function handleUpdateWorkflow(args, repository, context) {
     const startTime = Date.now();
-    const sessionId = `mutation_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const sessionId = `mutation_${Date.now()}_${(0, crypto_1.randomUUID)()}`;
     let workflowBefore = null;
     let userIntent = 'Full workflow update';
     try {
@@ -2329,6 +2330,7 @@ const createCredentialSchema = zod_1.z.object({
 const updateCredentialSchema = zod_1.z.object({
     id: zod_1.z.string({ required_error: 'Credential ID is required' }),
     name: zod_1.z.string().optional(),
+    type: zod_1.z.string().optional(),
     data: zod_1.z.record(zod_1.z.any()).optional(),
 });
 const deleteCredentialSchema = zod_1.z.object({
@@ -2359,7 +2361,23 @@ async function handleGetCredential(args, context) {
     try {
         const client = ensureApiConfigured(context);
         const { id } = getCredentialSchema.parse(args);
-        const credential = await client.getCredential(id);
+        let credential;
+        try {
+            credential = await client.getCredential(id);
+        }
+        catch (getError) {
+            const status = getError.statusCode;
+            const msg = getError.message ?? '';
+            const isUnsupported = status === 405 || status === 403 || msg.includes('not allowed');
+            if (!isUnsupported) {
+                throw getError;
+            }
+            const list = await client.listCredentials();
+            credential = list.data.find((c) => c.id === id);
+            if (!credential) {
+                return { success: false, error: `Credential ${id} not found` };
+            }
+        }
         const { data: _sensitiveData, ...safeCred } = credential;
         return {
             success: true,
@@ -2390,11 +2408,13 @@ async function handleCreateCredential(args, context) {
 async function handleUpdateCredential(args, context) {
     try {
         const client = ensureApiConfigured(context);
-        const { id, name, data } = updateCredentialSchema.parse(args);
+        const { id, name, type, data } = updateCredentialSchema.parse(args);
         logger_1.logger.info(`Updating credential: id="${id}"${name ? `, name="${name}"` : ''}`);
         const updatePayload = {};
         if (name !== undefined)
             updatePayload.name = name;
+        if (type !== undefined)
+            updatePayload.type = type;
         if (data !== undefined)
             updatePayload.data = data;
         const credential = await client.updateCredential(id, updatePayload);

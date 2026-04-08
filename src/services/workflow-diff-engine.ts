@@ -1440,12 +1440,16 @@ export class WorkflowDiffEngine {
    * @returns Normalized node name for safe comparison
    */
   private normalizeNodeName(name: string): string {
+    // Single-pass unescape so sequential replacements can't feed into each
+    // other. Previously we did three separate `.replace()` calls — but
+    // `\\` → `\` first could produce a backslash that the next pass
+    // (`\'` → `'`) treated as an escape sequence, silently dropping a
+    // backslash in inputs like `\\\\'` (correct normalization: `\\'`,
+    // buggy sequential result: `\'`). Addresses CodeQL js/double-escaping.
     return name
-      .trim()                    // Remove leading/trailing whitespace
-      .replace(/\\\\/g, '\\')    // FIRST: Unescape backslashes: \\ -> \ (must be first to handle multiply-escaped chars)
-      .replace(/\\'/g, "'")      // THEN: Unescape single quotes: \' -> '
-      .replace(/\\"/g, '"')      // THEN: Unescape double quotes: \" -> "
-      .replace(/\s+/g, ' ');     // FINALLY: Normalize all whitespace (spaces, tabs, newlines) to single space
+      .trim()
+      .replace(/\\([\\'"])/g, '$1')
+      .replace(/\s+/g, ' ');
   }
 
   /**
@@ -1521,14 +1525,22 @@ export class WorkflowDiffEngine {
     const keys = path.split('.');
     let current = obj;
 
-    // Prototype pollution protection
+    // Prototype pollution protection (eager: throw before any write).
     if (keys.some(k => DANGEROUS_PATH_KEYS.has(k))) {
       throw new Error(`Invalid property path: "${path}" contains a forbidden key`);
     }
 
     for (let i = 0; i < keys.length - 1; i++) {
       const key = keys[i];
-      if (!(key in current) || typeof current[key] !== 'object' || current[key] === null) {
+      // Per-iteration guard. Redundant with the eager check above (which
+      // already throws), but kept so CodeQL's `js/prototype-pollution-utility`
+      // dataflow sees the write site is guarded at the point of assignment.
+      if (DANGEROUS_PATH_KEYS.has(key)) {
+        throw new Error(`Invalid property path: "${path}" contains a forbidden key`);
+      }
+      if (!Object.prototype.hasOwnProperty.call(current, key)
+          || typeof current[key] !== 'object'
+          || current[key] === null) {
         if (value === null) return; // parent path doesn't exist, nothing to delete
         current[key] = {};
       }
@@ -1536,6 +1548,10 @@ export class WorkflowDiffEngine {
     }
 
     const finalKey = keys[keys.length - 1];
+    // Same CodeQL-visible guard at the final write site.
+    if (DANGEROUS_PATH_KEYS.has(finalKey)) {
+      throw new Error(`Invalid property path: "${path}" contains a forbidden key`);
+    }
     if (value === null) {
       delete current[finalKey];
     } else {

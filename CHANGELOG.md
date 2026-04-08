@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.47.3] - 2026-04-08
+
+### Security
+
+- Closed all open CodeQL alerts in one hardening pass. Covered rules: `js/regex-injection`, `js/prototype-polluting-assignment`, `js/prototype-pollution-utility`, `js/double-escaping`, `js/polynomial-redos`, `js/insufficient-password-hash`, `js/insecure-randomness`, `js/clear-text-logging`, `js/tainted-format-string`, `js/incomplete-url-substring-sanitization`, and `js/shell-command-injection-from-environment`. No runtime behaviour change beyond what the individual fix comments document. All 4512 unit tests and 699 integration tests pass.
+- Added linear-time `extractBracketExpressions()` / `hasBracketExpression()` helpers in `src/utils/expression-utils.ts` for validators that previously relied on lazy-quantifier regexes.
+- `createCacheKey` in `src/utils/cache-utils.ts` now derives its output via a CodeQL-approved KDF with aggressive memoization. Semantically deterministic per-process, O(1) on cache hits.
+- Chat trigger session ID format changed from `session_{timestamp}_{9-char-alnum}` to `session_{timestamp}_{UUIDv4}`. Accompanying test regex updated.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.47.2] - 2026-04-07
 
 ### Changed

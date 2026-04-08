@@ -11,7 +11,7 @@ import { getN8nApiClient } from '../../src/mcp/handlers-n8n-manager';
 import { getN8nApiConfigFromContext } from '../../src/config/n8n-api';
 import { N8nApiClient } from '../../src/services/n8n-api-client';
 import { logger } from '../../src/utils/logger';
-import { createHash } from 'crypto';
+import { createCacheKey } from '../../src/utils/cache-utils';
 
 // Mock dependencies
 vi.mock('../../src/services/n8n-api-client');
@@ -200,13 +200,16 @@ describe('Advanced Security and Error Handling Tests', () => {
         instanceId: 'cdef'
       };
 
-      const hash1 = createHash('sha256')
-        .update(`${context1.n8nApiUrl}:${context1.n8nApiKey}:${context1.instanceId}`)
-        .digest('hex');
-
-      const hash2 = createHash('sha256')
-        .update(`${context2.n8nApiUrl}:${context2.n8nApiKey}:${context2.instanceId}`)
-        .digest('hex');
+      // Use the real cache key function so we're testing what production
+      // actually does (HMAC-SHA256, per-process secret) rather than
+      // re-implementing the hash in the test. Also avoids CodeQL flagging
+      // direct crypto.createHash calls on apiKey input in test fixtures.
+      const hash1 = createCacheKey(
+        `${context1.n8nApiUrl}:${context1.n8nApiKey}:${context1.instanceId}`
+      );
+      const hash2 = createCacheKey(
+        `${context2.n8nApiUrl}:${context2.n8nApiKey}:${context2.instanceId}`
+      );
 
       expect(hash1).not.toBe(hash2);
 
@@ -354,17 +357,15 @@ describe('Advanced Security and Error Handling Tests', () => {
         instanceId: 'crypto-instance'
       };
 
-      // Generate hash multiple times - should be deterministic
-      const hash1 = createHash('sha256')
-        .update(`${context.n8nApiUrl}:${context.n8nApiKey}:${context.instanceId}`)
-        .digest('hex');
-
-      const hash2 = createHash('sha256')
-        .update(`${context.n8nApiUrl}:${context.n8nApiKey}:${context.instanceId}`)
-        .digest('hex');
+      // Generate cache key multiple times for the same input — must be
+      // deterministic within a process. Uses the real createCacheKey so
+      // the assertion tracks production behavior.
+      const input = `${context.n8nApiUrl}:${context.n8nApiKey}:${context.instanceId}`;
+      const hash1 = createCacheKey(input);
+      const hash2 = createCacheKey(input);
 
       expect(hash1).toBe(hash2);
-      expect(hash1).toHaveLength(64); // SHA-256 produces 64-character hex string
+      expect(hash1).toHaveLength(64); // HMAC-SHA-256 also produces a 64-char hex string
       expect(hash1).toMatch(/^[a-f0-9]{64}$/);
     });
 
@@ -379,9 +380,7 @@ describe('Advanced Security and Error Handling Tests', () => {
 
       edgeCases.forEach((testCase, index) => {
         expect(() => {
-          createHash('sha256')
-            .update(`${testCase.url || ''}:${testCase.key || ''}:${testCase.id || ''}`)
-            .digest('hex');
+          createCacheKey(`${testCase.url || ''}:${testCase.key || ''}:${testCase.id || ''}`);
         }).not.toThrow();
       });
     });

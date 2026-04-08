@@ -578,15 +578,27 @@ export class EnhancedDocumentationFetcher {
     while ((match = linkRegex.exec(relatedText)) !== null) {
       const title = match[1];
       const url = match[2];
-      
-      // Determine resource type
+
+      // Determine resource type. Parse the hostname where possible so
+      // `http://evil/docs.n8n.io` doesn't get misclassified as official
+      // docs. Addresses CodeQL js/incomplete-url-substring-sanitization.
       let type: RelatedResource['type'] = 'external';
-      if (url.includes('docs.n8n.io') || url.startsWith('/')) {
+      if (url.startsWith('/')) {
         type = 'documentation';
-      } else if (url.includes('api.')) {
-        type = 'api';
+      } else {
+        let host = '';
+        try {
+          host = new URL(url).hostname.toLowerCase();
+        } catch {
+          // Relative or malformed URL — leave type as 'external'.
+        }
+        if (host === 'docs.n8n.io' || host.endsWith('.docs.n8n.io')) {
+          type = 'documentation';
+        } else if (host.startsWith('api.')) {
+          type = 'api';
+        }
       }
-      
+
       resources.push({ title, url, type });
     }
     

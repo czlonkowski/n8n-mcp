@@ -576,9 +576,12 @@ export class NodeRepository {
         }
       }
     } catch (error) {
-      // Log error and return undefined rather than throwing
-      // This ensures validation continues even with malformed node data
-      console.error(`Error getting default operation for ${nodeType}:`, error);
+      // Log error and return undefined rather than throwing.
+      // `nodeType` is passed as a separate argument (not interpolated into
+      // the format string) so a value containing `%s` / `%d` / `%o` can't
+      // hijack `console.error`'s format directives. Addresses CodeQL
+      // js/tainted-format-string.
+      console.error('Error getting default operation for', nodeType, error);
       return undefined;
     }
 

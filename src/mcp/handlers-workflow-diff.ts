@@ -4,6 +4,7 @@
  */
 
 import { z } from 'zod';
+import { randomUUID } from 'crypto';
 import { McpToolResponse } from '../types/n8n-api';
 import { WorkflowDiffRequest, WorkflowDiffOperation, WorkflowDiffValidationError } from '../types/workflow-diff';
 import { WorkflowDiffEngine } from '../services/workflow-diff-engine';
@@ -102,7 +103,10 @@ export async function handleUpdatePartialWorkflow(
   context?: InstanceContext
 ): Promise<McpToolResponse> {
   const startTime = Date.now();
-  const sessionId = `mutation_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+  // Correlation ID for telemetry. Use a CSPRNG (crypto.randomUUID) rather
+  // than Math.random so two concurrent mutations can't collide on a
+  // predictable suffix — addresses CodeQL js/insecure-randomness.
+  const sessionId = `mutation_${Date.now()}_${randomUUID()}`;
   let workflowBefore: any = null;
   let validationBefore: any = null;
   let validationAfter: any = null;

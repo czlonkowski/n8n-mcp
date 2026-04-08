@@ -6,6 +6,8 @@
  * expression format issues without needing node-specific knowledge.
  */
 
+import { extractBracketExpressions, hasBracketExpression } from '../utils/expression-utils';
+
 export interface UniversalValidationResult {
   isValid: boolean;
   hasExpression: boolean;
@@ -17,7 +19,6 @@ export interface UniversalValidationResult {
 }
 
 export class UniversalExpressionValidator {
-  private static readonly EXPRESSION_PATTERN = /\{\{[\s\S]+?\}\}/;
   private static readonly EXPRESSION_PREFIX = '=';
 
   /**
@@ -47,7 +48,7 @@ export class UniversalExpressionValidator {
       };
     }
 
-    const hasExpression = this.EXPRESSION_PATTERN.test(value);
+    const hasExpression = hasBracketExpression(value);
 
     if (!hasExpression) {
       return {
@@ -104,8 +105,24 @@ export class UniversalExpressionValidator {
       ? value.substring(1)
       : value;
 
-    // Check if there's any content outside of {{ }}
-    const withoutExpressions = content.replace(/\{\{[\s\S]+?\}\}/g, '');
+    // Check if there's any content outside of {{ }}. Linear-time removal
+    // using indexOf instead of regex replace (CodeQL js/polynomial-redos).
+    let withoutExpressions = '';
+    let cursor = 0;
+    while (cursor < content.length) {
+      const start = content.indexOf('{{', cursor);
+      if (start === -1) {
+        withoutExpressions += content.slice(cursor);
+        break;
+      }
+      withoutExpressions += content.slice(cursor, start);
+      const end = content.indexOf('}}', start + 2);
+      if (end === -1) {
+        withoutExpressions += content.slice(start);
+        break;
+      }
+      cursor = end + 2;
+    }
     return withoutExpressions.trim().length > 0;
   }
 
@@ -143,8 +160,9 @@ export class UniversalExpressionValidator {
       };
     }
 
-    // Extract properly matched expressions for further validation
-    const expressions = value.match(/\{\{[\s\S]+?\}\}/g) || [];
+    // Extract properly matched expressions for further validation.
+    // Linear-time scan instead of regex (CodeQL js/polynomial-redos).
+    const expressions = extractBracketExpressions(value);
 
     for (const expr of expressions) {
       // Check for empty expressions
@@ -176,7 +194,7 @@ export class UniversalExpressionValidator {
    * Validate against known n8n expression patterns
    */
   static validateCommonPatterns(value: string): UniversalValidationResult {
-    if (!this.EXPRESSION_PATTERN.test(value)) {
+    if (!hasBracketExpression(value)) {
       return {
         isValid: true,
         hasExpression: false,
@@ -187,7 +205,7 @@ export class UniversalExpressionValidator {
       };
     }
 
-    const expressions = value.match(/\{\{[\s\S]+?\}\}/g) || [];
+    const expressions = extractBracketExpressions(value);
     const warnings: string[] = [];
 
     for (const expr of expressions) {
@@ -273,7 +291,7 @@ export class UniversalExpressionValidator {
    * Get a corrected version of the value
    */
   static getCorrectedValue(value: string): string {
-    if (!this.EXPRESSION_PATTERN.test(value)) {
+    if (!hasBracketExpression(value)) {
       return value;
     }
 

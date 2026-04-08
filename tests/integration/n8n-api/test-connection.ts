@@ -9,10 +9,12 @@ async function testConnection() {
   try {
     console.log('Loading credentials...');
     const creds = getN8nCredentials();
+    // Only log non-sensitive metadata. `hasApiKey` is a boolean derived
+    // from the key so it doesn't leak length, content, or structure.
+    // Addresses CodeQL js/clear-text-logging.
     console.log('Credentials loaded:', {
       url: creds.url,
-      hasApiKey: !!creds.apiKey,
-      apiKeyLength: creds.apiKey?.length
+      hasApiKey: !!creds.apiKey
     });
 
     console.log('\nCreating n8n client...');

@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import { NodeRepository } from '../database/node-repository';
 import { EnhancedConfigValidator } from './enhanced-config-validator';
 import { ExpressionValidator } from './expression-validator';
+import { extractBracketExpressions } from '../utils/expression-utils';
 import { ExpressionFormatValidator } from './expression-format-validator';
 import { NodeSimilarityService, NodeSuggestion } from './node-similarity-service';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
@@ -1523,13 +1524,12 @@ export class WorkflowValidator {
    */
   private countExpressionsInObject(obj: any): number {
     let count = 0;
-    
+
     if (typeof obj === 'string') {
-      // Count expressions in string
-      const matches = obj.match(/\{\{[\s\S]+?\}\}/g);
-      if (matches) {
-        count += matches.length;
-      }
+      // Count expressions in string using linear-time scan instead of
+      // the lazy regex `/\{\{[\s\S]+?\}\}/g` which CodeQL flagged as
+      // polynomial-ReDoS.
+      count += extractBracketExpressions(obj).length;
     } else if (Array.isArray(obj)) {
       // Recursively count in arrays
       for (const item of obj) {

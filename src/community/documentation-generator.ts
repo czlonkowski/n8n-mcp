@@ -385,8 +385,21 @@ export function createDocumentationGenerator(): DocumentationGenerator {
   const model = process.env.N8N_MCP_LLM_MODEL || 'qwen3-4b-thinking-2507';
   const timeout = parseInt(process.env.N8N_MCP_LLM_TIMEOUT || '60000', 10);
   const apiKey = process.env.N8N_MCP_LLM_API_KEY || process.env.OPENAI_API_KEY;
-  // Only set temperature for local LLM servers; cloud APIs like OpenAI may not support custom values
-  const isLocalServer = !baseUrl.includes('openai.com') && !baseUrl.includes('anthropic.com');
+  // Only set temperature for local LLM servers; cloud APIs like OpenAI may
+  // not support custom values. Parse the URL and check the hostname suffix
+  // instead of `baseUrl.includes('openai.com')` so an arbitrary URL like
+  // `http://example.com/openai.com/...` isn't misclassified as a cloud API.
+  // Addresses CodeQL js/incomplete-url-substring-sanitization.
+  let isLocalServer = true;
+  try {
+    const host = new URL(baseUrl).hostname;
+    const isCloud =
+      host === 'openai.com' || host.endsWith('.openai.com') ||
+      host === 'anthropic.com' || host.endsWith('.anthropic.com');
+    isLocalServer = !isCloud;
+  } catch {
+    // Malformed URL — fall through with the default (treat as local).
+  }
 
   return new DocumentationGenerator({
     baseUrl,

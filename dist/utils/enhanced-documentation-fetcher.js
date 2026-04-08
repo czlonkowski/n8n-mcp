@@ -372,11 +372,22 @@ class EnhancedDocumentationFetcher {
             const title = match[1];
             const url = match[2];
             let type = 'external';
-            if (url.includes('docs.n8n.io') || url.startsWith('/')) {
+            if (url.startsWith('/')) {
                 type = 'documentation';
             }
-            else if (url.includes('api.')) {
-                type = 'api';
+            else {
+                let host = '';
+                try {
+                    host = new URL(url).hostname.toLowerCase();
+                }
+                catch {
+                }
+                if (host === 'docs.n8n.io' || host.endsWith('.docs.n8n.io')) {
+                    type = 'documentation';
+                }
+                else if (host.startsWith('api.')) {
+                    type = 'api';
+                }
             }
             resources.push({ title, url, type });
         }

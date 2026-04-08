@@ -96,10 +96,16 @@ export interface SingleSessionHTTPServerOptions {
 export class SingleSessionHTTPServer {
   // Map to store transports by session ID (following SDK pattern)
   // Stores both StreamableHTTP and SSE transports; use instanceof to discriminate
-  private transports: { [sessionId: string]: StreamableHTTPServerTransport | SSEServerTransport } = {};
-  private servers: { [sessionId: string]: N8NDocumentationMCPServer } = {};
-  private sessionMetadata: { [sessionId: string]: { lastAccess: Date; createdAt: Date } } = {};
-  private sessionContexts: { [sessionId: string]: InstanceContext | undefined } = {};
+  // Null-prototype objects: sessionId comes from user-controlled HTTP headers
+  // (clients can send arbitrary `Mcp-Session-Id` values), so these maps must
+  // not inherit from Object.prototype. Otherwise a session id of `__proto__`
+  // or `constructor` would both pass truthiness checks and write to
+  // Object.prototype when we assign properties to the looked-up value.
+  // Addresses CodeQL js/prototype-polluting-assignment at lines 309 and 399.
+  private transports: { [sessionId: string]: StreamableHTTPServerTransport | SSEServerTransport } = Object.create(null);
+  private servers: { [sessionId: string]: N8NDocumentationMCPServer } = Object.create(null);
+  private sessionMetadata: { [sessionId: string]: { lastAccess: Date; createdAt: Date } } = Object.create(null);
+  private sessionContexts: { [sessionId: string]: InstanceContext | undefined } = Object.create(null);
   private contextSwitchLocks: Map<string, Promise<void>> = new Map();
   private consoleManager = new ConsoleManager();
   private expressServer: any;
@@ -305,7 +311,14 @@ export class SingleSessionHTTPServer {
    * Update session last access time
    */
   private updateSessionAccess(sessionId: string): void {
-    if (this.sessionMetadata[sessionId]) {
+    // Own-property check (not truthy lookup) so a sessionId of `__proto__`
+    // or `constructor` can't slip through on a plain-object container and
+    // end up writing to `Object.prototype.lastAccess`. Storage is also a
+    // null-prototype object (see class-property initializers), so both
+    // layers must be bypassed for pollution to happen.
+    // Using `hasOwnProperty.call` rather than `Object.hasOwn` because the
+    // TS target is ES2020.
+    if (Object.prototype.hasOwnProperty.call(this.sessionMetadata, sessionId)) {
       this.sessionMetadata[sessionId].lastAccess = new Date();
     }
   }
@@ -394,8 +407,11 @@ export class SingleSessionHTTPServer {
       // Update the session context
       this.sessionContexts[sessionId] = newContext;
 
-      // Update the MCP server's instance context if it exists
-      if (this.servers[sessionId]) {
+      // Update the MCP server's instance context if it exists. Own-property
+      // check prevents a malicious sessionId (`__proto__`) from writing
+      // `instanceContext` onto Object.prototype via a plain-object container.
+      // Storage is also null-prototype — defense in depth.
+      if (Object.prototype.hasOwnProperty.call(this.servers, sessionId)) {
         (this.servers[sessionId] as any).instanceContext = newContext;
       }
     }

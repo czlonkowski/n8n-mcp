@@ -3,6 +3,8 @@
  * Validates expression syntax, variable references, and context availability
  */
 
+import { extractBracketExpressions } from '../utils/expression-utils';
+
 interface ExpressionValidationResult {
   valid: boolean;
   errors: string[];
@@ -31,8 +33,8 @@ export class ExpressionValidator {
     { pattern: /^\$(now|today|itemIndex|runIndex)$/, name: 'built-in variable' },
   ];
 
-  // Common n8n expression patterns
-  private static readonly EXPRESSION_PATTERN = /\{\{([\s\S]+?)\}\}/g;
+  // Expression extraction is now handled by the linear-time
+  // `extractBracketExpressions` helper in utils/expression-utils.
   private static readonly VARIABLE_PATTERNS = {
     json: /\$json(\.[a-zA-Z_][\w]*|\["[^"]+"\]|\['[^']+'\]|\[\d+\])*/g,
     node: /\$node\["([^"]+)"\]\.json/g,
@@ -127,17 +129,15 @@ export class ExpressionValidator {
   }
 
   /**
-   * Extract all expressions from a string
+   * Extract all expressions from a string.
+   *
+   * Uses the shared linear-time `extractBracketExpressions` helper
+   * instead of the old `EXPRESSION_PATTERN.exec()` loop to avoid
+   * CodeQL js/polynomial-redos. Strips the `{{` / `}}` delimiters
+   * and trims whitespace to preserve the previous contract.
    */
   private static extractExpressions(text: string): string[] {
-    const expressions: string[] = [];
-    let match;
-    
-    while ((match = this.EXPRESSION_PATTERN.exec(text)) !== null) {
-      expressions.push(match[1].trim());
-    }
-    
-    return expressions;
+    return extractBracketExpressions(text).map(match => match.slice(2, -2).trim());
   }
 
   /**

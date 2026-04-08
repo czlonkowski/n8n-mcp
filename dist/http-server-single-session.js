@@ -46,10 +46,10 @@ function logSecurityEvent(event, details) {
 }
 class SingleSessionHTTPServer {
     constructor(options) {
-        this.transports = {};
-        this.servers = {};
-        this.sessionMetadata = {};
-        this.sessionContexts = {};
+        this.transports = Object.create(null);
+        this.servers = Object.create(null);
+        this.sessionMetadata = Object.create(null);
+        this.sessionContexts = Object.create(null);
         this.contextSwitchLocks = new Map();
         this.consoleManager = new console_manager_1.ConsoleManager();
         this.sessionTimeout = parseInt(process.env.SESSION_TIMEOUT_MINUTES || '30', 10) * 60 * 1000;
@@ -165,7 +165,7 @@ class SingleSessionHTTPServer {
         return { message: 'An error occurred', code: 'UNKNOWN_ERROR' };
     }
     updateSessionAccess(sessionId) {
-        if (this.sessionMetadata[sessionId]) {
+        if (Object.prototype.hasOwnProperty.call(this.sessionMetadata, sessionId)) {
             this.sessionMetadata[sessionId].lastAccess = new Date();
         }
     }
@@ -226,7 +226,7 @@ class SingleSessionHTTPServer {
                 newInstanceId: newContext.instanceId
             });
             this.sessionContexts[sessionId] = newContext;
-            if (this.servers[sessionId]) {
+            if (Object.prototype.hasOwnProperty.call(this.servers, sessionId)) {
                 this.servers[sessionId].instanceContext = newContext;
             }
         }

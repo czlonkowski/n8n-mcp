@@ -79,16 +79,31 @@ function validateHTTPRequestTool(node) {
         }
     }
     if (node.parameters.url || node.parameters.body || node.parameters.headers) {
-        const placeholderRegex = /\{([^}]+)\}/g;
         const placeholders = new Set();
-        [node.parameters.url, node.parameters.body, JSON.stringify(node.parameters.headers || {})].forEach(text => {
-            if (text) {
-                let match;
-                while ((match = placeholderRegex.exec(text)) !== null) {
-                    placeholders.add(match[1]);
+        const extractPlaceholders = (text) => {
+            let cursor = 0;
+            while (cursor < text.length) {
+                const open = text.indexOf('{', cursor);
+                if (open === -1)
+                    return;
+                const close = text.indexOf('}', open + 1);
+                if (close === -1)
+                    return;
+                if (close > open + 1) {
+                    placeholders.add(text.slice(open + 1, close));
                 }
+                cursor = close + 1;
             }
-        });
+        };
+        for (const text of [
+            node.parameters.url,
+            node.parameters.body,
+            JSON.stringify(node.parameters.headers || {}),
+        ]) {
+            if (text) {
+                extractPlaceholders(text);
+            }
+        }
         if (placeholders.size > 0) {
             const definitions = node.parameters.placeholderDefinitions?.values || [];
             const definedNames = new Set(definitions.map((d) => d.name));

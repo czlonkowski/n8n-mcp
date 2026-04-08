@@ -71,6 +71,9 @@ const validation_schemas_1 = require("../utils/validation-schemas");
 const protocol_version_1 = require("../utils/protocol-version");
 const telemetry_1 = require("../telemetry");
 const startup_checkpoints_1 = require("../telemetry/startup-checkpoints");
+function escapeRegExp(input) {
+    return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 class N8NDocumentationMCPServer {
     constructor(instanceContext, earlyLogger, options) {
         this.db = null;
@@ -1804,7 +1807,7 @@ class N8NDocumentationMCPServer {
         else if (name_lower.startsWith(query_lower)) {
             score = 800;
         }
-        else if (new RegExp(`\\b${query_lower}\\b`, 'i').test(node.display_name)) {
+        else if (new RegExp(`\\b${escapeRegExp(query_lower)}\\b`, 'i').test(node.display_name)) {
             score = 700;
         }
         else if (name_lower.includes(query_lower)) {
@@ -1846,7 +1849,7 @@ class N8NDocumentationMCPServer {
             else if (name_lower.startsWith(query_lower)) {
                 score = 800;
             }
-            else if (new RegExp(`\\b${query_lower}\\b`, 'i').test(node.display_name)) {
+            else if (new RegExp(`\\b${escapeRegExp(query_lower)}\\b`, 'i').test(node.display_name)) {
                 score = 700;
             }
             else if (name_lower.includes(query_lower)) {

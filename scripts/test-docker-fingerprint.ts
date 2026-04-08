@@ -139,7 +139,13 @@ console.log('\nConsistent:', consistent ? '✓ YES' : '✗ NO');
 console.log('\n=== Environment Variable Override Test ===\n');
 
 if (process.env.N8N_MCP_USER_ID) {
-  console.log('Explicit user ID:', process.env.N8N_MCP_USER_ID);
+  // Intentionally log nothing derived from the env value — not even a
+  // masked prefix, because CodeQL's taint tracking follows string
+  // slicing and any substring still counts as "sensitive data in
+  // clear text". The only signal the developer needs here is "an
+  // override is set", which is what this line conveys.
+  // Addresses CodeQL js/clear-text-logging.
+  console.log('Explicit user ID is set (value redacted)');
   console.log('This would override the fingerprint');
 } else {
   console.log('No explicit user ID set');

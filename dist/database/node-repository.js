@@ -380,7 +380,7 @@ class NodeRepository {
             }
         }
         catch (error) {
-            console.error(`Error getting default operation for ${nodeType}:`, error);
+            console.error('Error getting default operation for', nodeType, error);
             return undefined;
         }
         return undefined;

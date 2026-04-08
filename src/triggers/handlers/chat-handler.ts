@@ -9,6 +9,7 @@
 
 import { z } from 'zod';
 import axios, { AxiosRequestConfig } from 'axios';
+import { randomUUID } from 'crypto';
 import { Workflow } from '../../types/n8n-api';
 import {
   TriggerType,
@@ -35,10 +36,14 @@ const chatInputSchema = z.object({
 });
 
 /**
- * Generate a unique session ID
+ * Generate a unique, unguessable session ID.
+ *
+ * Uses `crypto.randomUUID` (CSPRNG, 122 bits of entropy) rather than
+ * `Math.random` so an attacker observing one session ID cannot predict
+ * another. Addresses CodeQL js/insecure-randomness.
  */
 function generateSessionId(): string {
-  return `session_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+  return `session_${Date.now()}_${randomUUID()}`;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { N8nApiClient } from '../services/n8n-api-client';
 import { scanWorkflows, type CustomCheckType } from '../services/workflow-security-scanner';
 import { buildAuditReport } from '../services/audit-report-builder';
@@ -762,7 +763,9 @@ export async function handleUpdateWorkflow(
   context?: InstanceContext
 ): Promise<McpToolResponse> {
   const startTime = Date.now();
-  const sessionId = `mutation_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+  // Correlation ID for telemetry. CSPRNG (randomUUID) rather than
+  // Math.random — addresses CodeQL js/insecure-randomness.
+  const sessionId = `mutation_${Date.now()}_${randomUUID()}`;
   let workflowBefore: any = null;
   let userIntent = 'Full workflow update';
 

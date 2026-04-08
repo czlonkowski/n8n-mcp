@@ -126,20 +126,39 @@ export function validateHTTPRequestTool(node: WorkflowNode): ValidationIssue[] {
     }
   }
 
-  // 3. Validate placeholders match definitions
+  // 3. Validate placeholders match definitions.
+  //
+  // Linear indexOf scan instead of `/\{([^}]+)\}/g`: the greedy character
+  // class makes the regex polynomial on inputs like `{{{{{...` where no
+  // closing `}` is ever found. The manual scan is O(n) regardless of
+  // input shape. Addresses CodeQL js/polynomial-redos.
   if (node.parameters.url || node.parameters.body || node.parameters.headers) {
-    const placeholderRegex = /\{([^}]+)\}/g;
     const placeholders = new Set<string>();
 
-    // Extract placeholders from URL, body, headers
-    [node.parameters.url, node.parameters.body, JSON.stringify(node.parameters.headers || {})].forEach(text => {
-      if (text) {
-        let match;
-        while ((match = placeholderRegex.exec(text)) !== null) {
-          placeholders.add(match[1]);
+    const extractPlaceholders = (text: string): void => {
+      let cursor = 0;
+      while (cursor < text.length) {
+        const open = text.indexOf('{', cursor);
+        if (open === -1) return;
+        const close = text.indexOf('}', open + 1);
+        if (close === -1) return;
+        // Only record non-empty placeholder names.
+        if (close > open + 1) {
+          placeholders.add(text.slice(open + 1, close));
         }
+        cursor = close + 1;
       }
-    });
+    };
+
+    for (const text of [
+      node.parameters.url,
+      node.parameters.body,
+      JSON.stringify(node.parameters.headers || {}),
+    ]) {
+      if (text) {
+        extractPlaceholders(text);
+      }
+    }
 
     // If placeholders exist in URL/body/headers
     if (placeholders.size > 0) {

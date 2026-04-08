@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleUpdatePartialWorkflow = handleUpdatePartialWorkflow;
 const zod_1 = require("zod");
+const crypto_1 = require("crypto");
 const workflow_diff_engine_1 = require("../services/workflow-diff-engine");
 const handlers_n8n_manager_1 = require("./handlers-n8n-manager");
 const n8n_errors_1 = require("../utils/n8n-errors");
@@ -103,7 +104,7 @@ const workflowDiffSchema = zod_1.z.object({
 });
 async function handleUpdatePartialWorkflow(args, repository, context) {
     const startTime = Date.now();
-    const sessionId = `mutation_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const sessionId = `mutation_${Date.now()}_${(0, crypto_1.randomUUID)()}`;
     let workflowBefore = null;
     let validationBefore = null;
     let validationAfter = null;

@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.WorkflowValidator = exports.VALID_CONNECTION_TYPES = void 0;
 const crypto_1 = __importDefault(require("crypto"));
 const expression_validator_1 = require("./expression-validator");
+const expression_utils_1 = require("../utils/expression-utils");
 const expression_format_validator_1 = require("./expression-format-validator");
 const node_similarity_service_1 = require("./node-similarity-service");
 const node_type_normalizer_1 = require("../utils/node-type-normalizer");
@@ -1031,10 +1032,7 @@ class WorkflowValidator {
     countExpressionsInObject(obj) {
         let count = 0;
         if (typeof obj === 'string') {
-            const matches = obj.match(/\{\{[\s\S]+?\}\}/g);
-            if (matches) {
-                count += matches.length;
-            }
+            count += (0, expression_utils_1.extractBracketExpressions)(obj).length;
         }
         else if (Array.isArray(obj)) {
             for (const item of obj) {

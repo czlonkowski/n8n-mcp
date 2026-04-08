@@ -76,6 +76,45 @@ export function extractExpressionContent(value: string): string {
 }
 
 /**
+ * Extract all `{{...}}` expression substrings from a string using a
+ * linear-time scan.
+ *
+ * This replaces `value.match(/\{\{[\s\S]+?\}\}/g)` usages, which CodeQL
+ * flags as `js/polynomial-redos`: crafted inputs with many unbalanced
+ * `{{` / `}}` sequences can cause the regex engine to backtrack
+ * quadratically. Using `indexOf` is O(n) regardless of input shape.
+ *
+ * Returns the matched substrings including the `{{` and `}}` delimiters,
+ * matching the semantics of the regex-based `match()` it replaces.
+ * Handles multi-line expressions since `indexOf` is not line-sensitive.
+ */
+export function extractBracketExpressions(value: string): string[] {
+  if (typeof value !== 'string') return [];
+  const results: string[] = [];
+  let i = 0;
+  while (i < value.length) {
+    const start = value.indexOf('{{', i);
+    if (start === -1) break;
+    const end = value.indexOf('}}', start + 2);
+    if (end === -1) break;
+    results.push(value.slice(start, end + 2));
+    i = end + 2;
+  }
+  return results;
+}
+
+/**
+ * Check if a string contains at least one `{{...}}` expression. Linear
+ * equivalent of `/\{\{[\s\S]+?\}\}/.test(value)` without the ReDoS risk.
+ */
+export function hasBracketExpression(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const start = value.indexOf('{{');
+  if (start === -1) return false;
+  return value.indexOf('}}', start + 2) !== -1;
+}
+
+/**
  * Checks if a value is a mixed content expression
  *
  * Mixed content has both literal text and expressions:

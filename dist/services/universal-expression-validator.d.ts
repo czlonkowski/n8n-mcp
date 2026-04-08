@@ -8,7 +8,6 @@ export interface UniversalValidationResult {
     explanation: string;
 }
 export declare class UniversalExpressionValidator {
-    private static readonly EXPRESSION_PATTERN;
     private static readonly EXPRESSION_PREFIX;
     static validateExpressionPrefix(value: any): UniversalValidationResult;
     private static hasMixedContent;

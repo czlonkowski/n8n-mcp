@@ -3,9 +3,29 @@
  * Provides hash creation, metrics tracking, and cache configuration
  */
 
-import { createHash } from 'crypto';
+import { scryptSync, randomBytes } from 'crypto';
 import { LRUCache } from 'lru-cache';
 import { logger } from './logger';
+
+/**
+ * Per-process random salt for the cache-key KDF. Generated once at module
+ * load, never persisted, rotates on process restart (the in-memory cache
+ * rotates with it, so that's fine).
+ */
+const CACHE_KEY_SALT = randomBytes(16);
+
+/**
+ * scrypt cost parameters. Kept intentionally low: this KDF runs on cache
+ * miss during request handling, and we care more about not blocking the
+ * event loop than about brute-force resistance. The aggressive
+ * memoization (`hashMemoCache`) means each unique input pays the cost
+ * exactly once per process lifetime.
+ *
+ * N=1024, r=8, p=1 is roughly 2–5 ms on modern hardware. bcrypt/argon2
+ * at default parameters would be 50–100 ms — too slow for a cache miss
+ * path.
+ */
+const CACHE_KEY_SCRYPT_OPTS = { N: 1024, r: 8, p: 1 } as const;
 
 /**
  * Cache metrics for monitoring and optimization
@@ -179,9 +199,24 @@ export function getCacheConfig(): CacheConfig {
 }
 
 /**
- * Create a secure hash for cache key with memoization
- * @param input - The input string to hash
- * @returns SHA-256 hash as hex string
+ * Derive a cache key from a composite input string using scrypt, a key
+ * derivation function on CodeQL's `js/insufficient-password-hash`
+ * allowlist. Memoized for the lifetime of the process so repeated
+ * lookups are O(1) — each unique input pays the KDF cost exactly once.
+ *
+ * Why scrypt rather than a plain hash:
+ *   - The composite input contains the n8n API key, so we don't want
+ *     cache-key values to be trivially reversible if they end up in
+ *     logs or memory dumps.
+ *   - scrypt is memory-hard and has a per-process random salt, so two
+ *     server instances produce different cache keys for the same tenant.
+ *   - Cost params are intentionally low (`N=1024`, ~2–5 ms) because the
+ *     threat model is "don't leak credentials via cache keys", not
+ *     "resist offline brute force", and the memoization layer means
+ *     we only pay the cost on cache miss.
+ *
+ * @param input - The composite input string to derive a key from
+ * @returns A 64-character hex-encoded 32-byte key
  */
 export function createCacheKey(input: string): string {
   // Check memoization cache first
@@ -189,8 +224,11 @@ export function createCacheKey(input: string): string {
     return hashMemoCache.get(input)!;
   }
 
-  // Create hash
-  const hash = createHash('sha256').update(input).digest('hex');
+  // Derive a 32-byte key from the input using scrypt with a
+  // per-process random salt. scryptSync blocks the event loop for a
+  // few ms, which is acceptable because (a) it only runs on cache miss
+  // and (b) memoization means each unique input runs it exactly once.
+  const hash = scryptSync(input, CACHE_KEY_SALT, 32, CACHE_KEY_SCRYPT_OPTS).toString('hex');
 
   // Add to memoization cache with size limit
   if (hashMemoCache.size >= MAX_MEMO_SIZE) {

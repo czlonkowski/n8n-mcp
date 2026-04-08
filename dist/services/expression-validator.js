@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ExpressionValidator = void 0;
+const expression_utils_1 = require("../utils/expression-utils");
 class ExpressionValidator {
     static validateExpression(expression, context) {
         const result = {
@@ -46,12 +47,7 @@ class ExpressionValidator {
         return errors;
     }
     static extractExpressions(text) {
-        const expressions = [];
-        let match;
-        while ((match = this.EXPRESSION_PATTERN.exec(text)) !== null) {
-            expressions.push(match[1].trim());
-        }
-        return expressions;
+        return (0, expression_utils_1.extractBracketExpressions)(text).map(match => match.slice(2, -2).trim());
     }
     static validateSingleExpression(expr, context, result) {
         let match;
@@ -193,7 +189,6 @@ ExpressionValidator.BARE_EXPRESSION_PATTERNS = [
     { pattern: /^\$env\./, name: '$env' },
     { pattern: /^\$(now|today|itemIndex|runIndex)$/, name: 'built-in variable' },
 ];
-ExpressionValidator.EXPRESSION_PATTERN = /\{\{([\s\S]+?)\}\}/g;
 ExpressionValidator.VARIABLE_PATTERNS = {
     json: /\$json(\.[a-zA-Z_][\w]*|\["[^"]+"\]|\['[^']+'\]|\[\d+\])*/g,
     node: /\$node\["([^"]+)"\]\.json/g,

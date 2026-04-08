@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UniversalExpressionValidator = void 0;
+const expression_utils_1 = require("../utils/expression-utils");
 class UniversalExpressionValidator {
     static validateExpressionPrefix(value) {
         if (typeof value !== 'string') {
@@ -13,7 +14,7 @@ class UniversalExpressionValidator {
                 explanation: 'Not a string value'
             };
         }
-        const hasExpression = this.EXPRESSION_PATTERN.test(value);
+        const hasExpression = (0, expression_utils_1.hasBracketExpression)(value);
         if (!hasExpression) {
             return {
                 isValid: true,
@@ -52,7 +53,22 @@ class UniversalExpressionValidator {
         const content = value.startsWith(this.EXPRESSION_PREFIX)
             ? value.substring(1)
             : value;
-        const withoutExpressions = content.replace(/\{\{[\s\S]+?\}\}/g, '');
+        let withoutExpressions = '';
+        let cursor = 0;
+        while (cursor < content.length) {
+            const start = content.indexOf('{{', cursor);
+            if (start === -1) {
+                withoutExpressions += content.slice(cursor);
+                break;
+            }
+            withoutExpressions += content.slice(cursor, start);
+            const end = content.indexOf('}}', start + 2);
+            if (end === -1) {
+                withoutExpressions += content.slice(start);
+                break;
+            }
+            cursor = end + 2;
+        }
         return withoutExpressions.trim().length > 0;
     }
     static validateExpressionSyntax(value) {
@@ -79,7 +95,7 @@ class UniversalExpressionValidator {
                 explanation: `Unmatched expression brackets: ${openCount} opening, ${closeCount} closing`
             };
         }
-        const expressions = value.match(/\{\{[\s\S]+?\}\}/g) || [];
+        const expressions = (0, expression_utils_1.extractBracketExpressions)(value);
         for (const expr of expressions) {
             const content = expr.slice(2, -2).trim();
             if (!content) {
@@ -103,7 +119,7 @@ class UniversalExpressionValidator {
         };
     }
     static validateCommonPatterns(value) {
-        if (!this.EXPRESSION_PATTERN.test(value)) {
+        if (!(0, expression_utils_1.hasBracketExpression)(value)) {
             return {
                 isValid: true,
                 hasExpression: false,
@@ -113,7 +129,7 @@ class UniversalExpressionValidator {
                 explanation: 'No expression to validate'
             };
         }
-        const expressions = value.match(/\{\{[\s\S]+?\}\}/g) || [];
+        const expressions = (0, expression_utils_1.extractBracketExpressions)(value);
         const warnings = [];
         for (const expr of expressions) {
             const content = expr.slice(2, -2).trim();
@@ -177,7 +193,7 @@ class UniversalExpressionValidator {
         return results;
     }
     static getCorrectedValue(value) {
-        if (!this.EXPRESSION_PATTERN.test(value)) {
+        if (!(0, expression_utils_1.hasBracketExpression)(value)) {
             return value;
         }
         if (!value.startsWith(this.EXPRESSION_PREFIX)) {
@@ -187,6 +203,5 @@ class UniversalExpressionValidator {
     }
 }
 exports.UniversalExpressionValidator = UniversalExpressionValidator;
-UniversalExpressionValidator.EXPRESSION_PATTERN = /\{\{[\s\S]+?\}\}/;
 UniversalExpressionValidator.EXPRESSION_PREFIX = '=';
 //# sourceMappingURL=universal-expression-validator.js.map

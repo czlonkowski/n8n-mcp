@@ -213,13 +213,19 @@ class EnhancedConfigValidator extends config_validator_1.ConfigValidator {
             result.suggestions.push('Consider adding alwaysOutputData: true at node level (not in parameters) for better error handling. ' +
                 'This ensures the node produces output even when HTTP requests fail, allowing downstream error handling.');
         }
-        const lowerUrl = url.toLowerCase();
+        let host = '';
+        try {
+            host = new URL(url).hostname.toLowerCase();
+        }
+        catch {
+        }
+        const hostMatches = (suffix) => host === suffix || host.endsWith('.' + suffix);
         const isApiEndpoint = /^https?:\/\/api\./i.test(url) ||
             /\/api[\/\?]|\/api$/i.test(url) ||
             /\/rest[\/\?]|\/rest$/i.test(url) ||
-            lowerUrl.includes('supabase.co') ||
-            lowerUrl.includes('firebase') ||
-            lowerUrl.includes('googleapis.com') ||
+            hostMatches('supabase.co') ||
+            host.includes('firebase') ||
+            hostMatches('googleapis.com') ||
             /\.com\/v\d+/i.test(url);
         if (isApiEndpoint && !options.response?.response?.responseFormat) {
             result.suggestions.push('API endpoints should explicitly set options.response.response.responseFormat to "json" or "text" ' +

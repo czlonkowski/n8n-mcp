@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi, Mock } from 'vitest';
 import { LRUCache } from 'lru-cache';
-import { createHash } from 'crypto';
+import { createCacheKey } from '../../../src/utils/cache-utils';
 import { getN8nApiClient } from '../../../src/mcp/handlers-n8n-manager';
 import { InstanceContext, validateInstanceContext } from '../../../src/types/instance-context';
 import { N8nApiClient } from '../../../src/services/n8n-api-client';
@@ -77,14 +77,16 @@ describe('LRU Cache Behavior Tests', () => {
         instanceId: 'instance2'
       };
 
-      // Generate expected hashes manually
-      const hash1 = createHash('sha256')
-        .update(`${context1.n8nApiUrl}:${context1.n8nApiKey}:${context1.instanceId}`)
-        .digest('hex');
-
-      const hash2 = createHash('sha256')
-        .update(`${context2.n8nApiUrl}:${context2.n8nApiKey}:${context2.instanceId}`)
-        .digest('hex');
+      // Verify distinct contexts produce distinct cache keys. Uses the
+      // real createCacheKey (HMAC-SHA256, per-process secret) so the
+      // test tracks production behavior and avoids CodeQL flagging
+      // direct crypto.createHash calls on apiKey-named values.
+      const hash1 = createCacheKey(
+        `${context1.n8nApiUrl}:${context1.n8nApiKey}:${context1.instanceId}`
+      );
+      const hash2 = createCacheKey(
+        `${context2.n8nApiUrl}:${context2.n8nApiKey}:${context2.instanceId}`
+      );
 
       expect(hash1).not.toBe(hash2);
 

@@ -10,6 +10,8 @@ exports.getCacheStatistics = getCacheStatistics;
 const crypto_1 = require("crypto");
 const lru_cache_1 = require("lru-cache");
 const logger_1 = require("./logger");
+const CACHE_KEY_SALT = (0, crypto_1.randomBytes)(16);
+const CACHE_KEY_SCRYPT_OPTS = { N: 1024, r: 8, p: 1 };
 const hashMemoCache = new Map();
 const MAX_MEMO_SIZE = 1000;
 class CacheMetricsTracker {
@@ -93,7 +95,7 @@ function createCacheKey(input) {
     if (hashMemoCache.has(input)) {
         return hashMemoCache.get(input);
     }
-    const hash = (0, crypto_1.createHash)('sha256').update(input).digest('hex');
+    const hash = (0, crypto_1.scryptSync)(input, CACHE_KEY_SALT, 32, CACHE_KEY_SCRYPT_OPTS).toString('hex');
     if (hashMemoCache.size >= MAX_MEMO_SIZE) {
         const firstKey = hashMemoCache.keys().next().value;
         if (firstKey) {

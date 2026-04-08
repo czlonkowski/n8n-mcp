@@ -1029,9 +1029,7 @@ class WorkflowDiffEngine {
     normalizeNodeName(name) {
         return name
             .trim()
-            .replace(/\\\\/g, '\\')
-            .replace(/\\'/g, "'")
-            .replace(/\\"/g, '"')
+            .replace(/\\([\\'"])/g, '$1')
             .replace(/\s+/g, ' ');
     }
     findNode(workflow, nodeId, nodeName) {
@@ -1080,7 +1078,12 @@ class WorkflowDiffEngine {
         }
         for (let i = 0; i < keys.length - 1; i++) {
             const key = keys[i];
-            if (!(key in current) || typeof current[key] !== 'object' || current[key] === null) {
+            if (DANGEROUS_PATH_KEYS.has(key)) {
+                throw new Error(`Invalid property path: "${path}" contains a forbidden key`);
+            }
+            if (!Object.prototype.hasOwnProperty.call(current, key)
+                || typeof current[key] !== 'object'
+                || current[key] === null) {
                 if (value === null)
                     return;
                 current[key] = {};
@@ -1088,6 +1091,9 @@ class WorkflowDiffEngine {
             current = current[key];
         }
         const finalKey = keys[keys.length - 1];
+        if (DANGEROUS_PATH_KEYS.has(finalKey)) {
+            throw new Error(`Invalid property path: "${path}" contains a forbidden key`);
+        }
         if (value === null) {
             delete current[finalKey];
         }

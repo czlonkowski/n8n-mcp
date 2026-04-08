@@ -97,11 +97,7 @@ class N8nApiClient {
         }
     }
     async fetchVersionOnce() {
-        let version = (0, n8n_version_1.getCachedVersion)(this.baseUrl);
-        if (!version) {
-            version = await (0, n8n_version_1.fetchN8nVersion)(this.baseUrl);
-        }
-        return version;
+        return (0, n8n_version_1.getCachedVersion)(this.baseUrl) ?? await (0, n8n_version_1.fetchN8nVersion)(this.baseUrl);
     }
     getCachedVersionInfo() {
         return this.versionInfo;

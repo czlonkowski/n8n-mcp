@@ -216,7 +216,9 @@ describe('ChatHandler', () => {
       const response = await handler.execute(input, workflow, triggerInfo);
 
       expect(response.success).toBe(true);
-      expect(response.metadata?.sessionId).toMatch(/^session_\d+_[a-z0-9]+$/);
+      // Session IDs are `session_{timestamp}_{UUIDv4}`. UUIDs contain
+      // hyphens, so the charset is `[a-f0-9-]`.
+      expect(response.metadata?.sessionId).toMatch(/^session_\d+_[a-f0-9-]+$/);
     });
 
     it('should use trigger info to build chat URL', async () => {

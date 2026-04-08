@@ -1,11 +1,31 @@
 /**
  * Node-Specific Validators
- * 
+ *
  * Provides detailed validation logic for commonly used n8n nodes.
  * Each validator understands the specific requirements and patterns of its node.
  */
 
 import { ValidationError, ValidationWarning } from './config-validator';
+
+/**
+ * Upper bound on how much JS code we are willing to pattern-match against
+ * in a single validation pass. Several regexes below (detected by CodeQL
+ * `js/polynomial-redos`) are polynomial on crafted inputs with many
+ * unbalanced braces/parentheses. A hard length cap bounds the worst-case
+ * work to `O(MAX_CODE_LENGTH ^ k)`, which is a constant, and keeps
+ * validation predictable for genuinely large (but legitimate) Code nodes.
+ *
+ * n8n Code nodes in practice stay well under 100 KB; 200 KB gives
+ * substantial headroom without materially changing what gets validated.
+ */
+const MAX_CODE_LENGTH = 200_000;
+
+/**
+ * Upper bound for short user-supplied strings we pattern-match against
+ * (spreadsheet ranges, cell references, expressions). These are always
+ * tiny in practice — a few hundred chars at most — so 2 KB is generous.
+ */
+const MAX_SHORT_INPUT_LENGTH = 2_000;
 
 export interface NodeValidationContext {
   config: Record<string, any>;
@@ -399,9 +419,11 @@ export class NodeSpecificValidators {
       });
     }
     
-    // Validate A1 notation
+    // Validate A1 notation. Length guard caps CodeQL polynomial-ReDoS
+    // exposure: real spreadsheet ranges are tiny (< 100 chars); anything
+    // longer is almost certainly malformed and not worth regex-matching.
     const a1Pattern = /^('[^']+'|[^!]+)!([A-Z]+\d*:?[A-Z]*\d*|[A-Z]+:[A-Z]+|\d+:\d+)$/i;
-    if (!a1Pattern.test(range)) {
+    if (range.length <= MAX_SHORT_INPUT_LENGTH && !a1Pattern.test(range)) {
       warnings.push({
         type: 'inefficient',
         property: 'range',
@@ -1260,11 +1282,15 @@ export class NodeSpecificValidators {
     });
     
     // Common async/await issues
-    // Check for await inside a non-async function (but top-level await is fine)
+    // Check for await inside a non-async function (but top-level await is fine).
+    // Length guard caps CodeQL polynomial-ReDoS exposure: the `[^}]*await`
+    // tail can backtrack on crafted input with many unbalanced braces.
     const functionWithAwait = /function\s+\w*\s*\([^)]*\)\s*{[^}]*await/;
     const arrowWithAwait = /\([^)]*\)\s*=>\s*{[^}]*await/;
-    
-    if ((functionWithAwait.test(code) || arrowWithAwait.test(code)) && !code.includes('async')) {
+
+    if (code.length <= MAX_CODE_LENGTH
+        && (functionWithAwait.test(code) || arrowWithAwait.test(code))
+        && !code.includes('async')) {
       warnings.push({
         type: 'best_practice',
         message: 'Using await inside a non-async function',
@@ -1376,8 +1402,11 @@ export class NodeSpecificValidators {
       
       // Skip primitive return check when helper functions are present,
       // since we can't distinguish top-level vs nested returns without AST.
-      // Matches: function name(), const/let/var name = [async] function/arrow
-      const hasHelperFunctions = /(?:function\s+\w+\s*\(|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>|\w+\s*=>))/.test(code);
+      // Matches: function name(), const/let/var name = [async] function/arrow.
+      // Length guard caps CodeQL polynomial-ReDoS exposure on the
+      // alternation with nested `[^)]*` groups.
+      const hasHelperFunctions = code.length <= MAX_CODE_LENGTH
+        && /(?:function\s+\w+\s*\(|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>|\w+\s*=>))/.test(code);
       if (!hasHelperFunctions && /return\s+(true|false|null|undefined|\d+|['"`])/m.test(code)) {
         errors.push({
           type: 'invalid_value',
@@ -1567,13 +1596,16 @@ export class NodeSpecificValidators {
       }
     }
     
-    // Check for JMESPath filters with unquoted numeric literals (both JS and Python)
+    // Check for JMESPath filters with unquoted numeric literals (both JS and Python).
+    // Length guard: this scans the full Code-node body, which is bounded.
+    // Prevents CodeQL polynomial-ReDoS on crafted input with many unmatched
+    // `[` / `]` brackets around the filter pattern.
     const jmespathFunction = language === 'javaScript' ? '$jmespath' : '_jmespath';
-    if (code.includes(jmespathFunction + '(')) {
+    if (code.length <= MAX_CODE_LENGTH && code.includes(jmespathFunction + '(')) {
       // Look for filter expressions with comparison operators and numbers
       const filterPattern = /\[?\?[^[\]]*(?:>=?|<=?|==|!=)\s*(\d+(?:\.\d+)?)\s*\]/g;
       let match;
-      
+
       while ((match = filterPattern.exec(code)) !== null) {
         const number = match[1];
         // Check if the number is NOT wrapped in backticks

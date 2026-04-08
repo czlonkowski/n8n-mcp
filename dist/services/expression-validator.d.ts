@@ -13,7 +13,6 @@ interface ExpressionContext {
 }
 export declare class ExpressionValidator {
     private static readonly BARE_EXPRESSION_PATTERNS;
-    private static readonly EXPRESSION_PATTERN;
     private static readonly VARIABLE_PATTERNS;
     static validateExpression(expression: string, context: ExpressionContext): ExpressionValidationResult;
     private static checkSyntaxErrors;
