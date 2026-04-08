@@ -112,7 +112,7 @@ Add to Claude Desktop config:
 > **Note**: npx will download and run the latest version automatically. The package includes a pre-built database with all n8n node information.
 
 **Configuration file locations:**
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **macOS**: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 - **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
@@ -255,7 +255,7 @@ If you're running n8n locally (e.g., `http://localhost:5678` or Docker), you nee
 > 🔧 If you encounter any issues with Docker, check our [Docker Troubleshooting Guide](./docs/DOCKER_TROUBLESHOOTING.md).
 
 **Configuration file locations:**
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **macOS**: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 - **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
@@ -469,7 +469,7 @@ Deploy n8n-MCP to Railway's cloud platform with zero configuration:
 > 📚 **For detailed setup instructions, troubleshooting, and configuration examples, see our [Railway Deployment Guide](./docs/RAILWAY_DEPLOYMENT.md)**
 
 **Configuration file locations:**
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **macOS**: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 - **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
