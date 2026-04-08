@@ -39,6 +39,7 @@ const logger_1 = require("../utils/logger");
 const telemetry_cli_1 = require("../telemetry/telemetry-cli");
 const early_error_logger_1 = require("../telemetry/early-error-logger");
 const startup_checkpoints_1 = require("../telemetry/startup-checkpoints");
+const fs_1 = require("fs");
 process.on('uncaughtException', (error) => {
     if (process.env.MCP_MODE !== 'stdio') {
         console.error('Uncaught Exception:', error);
@@ -53,6 +54,23 @@ process.on('unhandledRejection', (reason, promise) => {
     logger_1.logger.error('Unhandled Rejection:', reason);
     process.exit(1);
 });
+function isContainerEnvironment() {
+    const dockerEnv = (process.env.IS_DOCKER || '').toLowerCase();
+    const containerEnv = (process.env.IS_CONTAINER || '').toLowerCase();
+    if (['true', '1', 'yes'].includes(dockerEnv)) {
+        return true;
+    }
+    if (['true', '1', 'yes'].includes(containerEnv)) {
+        return true;
+    }
+    try {
+        return (0, fs_1.existsSync)('/.dockerenv') || (0, fs_1.existsSync)('/run/.containerenv');
+    }
+    catch (error) {
+        logger_1.logger.debug('Container detection filesystem check failed:', error);
+        return false;
+    }
+}
 async function main() {
     const startTime = Date.now();
     const earlyLogger = early_error_logger_1.EarlyErrorLogger.getInstance();
@@ -127,7 +145,8 @@ async function main() {
                 process.on('SIGTERM', () => shutdown('SIGTERM'));
                 process.on('SIGINT', () => shutdown('SIGINT'));
                 process.on('SIGHUP', () => shutdown('SIGHUP'));
-                if (process.stdin.readable && !process.stdin.destroyed) {
+                const isContainer = isContainerEnvironment();
+                if (!isContainer && process.stdin.readable && !process.stdin.destroyed) {
                     try {
                         process.stdin.on('end', () => shutdown('STDIN_END'));
                         process.stdin.on('close', () => shutdown('STDIN_CLOSE'));

@@ -5,6 +5,7 @@ import { logger } from '../utils/logger';
 import { handleTelemetryCliIfPresent } from '../telemetry/telemetry-cli';
 import { EarlyErrorLogger } from '../telemetry/early-error-logger';
 import { STARTUP_CHECKPOINTS, findFailedCheckpoint, StartupCheckpoint } from '../telemetry/startup-checkpoints';
+import { existsSync } from 'fs';
 
 // Add error details to stderr for Claude Desktop debugging
 process.on('uncaughtException', (error) => {
@@ -22,6 +23,42 @@ process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection:', reason);
   process.exit(1);
 });
+
+/**
+ * Detects if running in a container environment (Docker, Podman, Kubernetes, etc.)
+ * Uses multiple detection methods for robustness:
+ * 1. Environment variables (IS_DOCKER, IS_CONTAINER with multiple formats)
+ * 2. Filesystem markers (/.dockerenv, /run/.containerenv)
+ *
+ * Containers manage their own lifecycle via signals (SIGTERM on `docker stop`),
+ * not via stdin close. Detached containers (`docker run -d` without `-i`) have
+ * stdin redirected from /dev/null, which would otherwise trigger immediate
+ * stdin-close shutdown — see the guarded block below and Issue #711 for the
+ * trade-off with stateless stdio clients.
+ */
+function isContainerEnvironment(): boolean {
+  // Check environment variables with multiple truthy formats
+  const dockerEnv = (process.env.IS_DOCKER || '').toLowerCase();
+  const containerEnv = (process.env.IS_CONTAINER || '').toLowerCase();
+
+  if (['true', '1', 'yes'].includes(dockerEnv)) {
+    return true;
+  }
+  if (['true', '1', 'yes'].includes(containerEnv)) {
+    return true;
+  }
+
+  // Fallback: Check filesystem markers
+  // /.dockerenv exists in Docker containers
+  // /run/.containerenv exists in Podman containers
+  try {
+    return existsSync('/.dockerenv') || existsSync('/run/.containerenv');
+  } catch (error) {
+    // If filesystem check fails, assume not in container
+    logger.debug('Container detection filesystem check failed:', error);
+    return false;
+  }
+}
 
 async function main() {
   // Initialize early error logger for pre-handshake error capture (v2.18.3)
@@ -133,19 +170,28 @@ async function main() {
         }
       };
 
-      // Handle termination signals (fixes Issue #277)
-      // Signal handlers are the fallback shutdown path; stdin close is the primary
-      // path for clients that signal shutdown by closing the pipe (Claude Desktop,
-      // stateless stdio clients like mcp-go / MCPJungle — see Issue #711).
+      // Handle termination signals (fixes Issue #277).
+      // Signal handling strategy:
+      // - Claude Desktop / local stdio clients: stdin close is the primary path,
+      //   signals are the fallback.
+      // - Detached containers (`docker run -d` without `-i`): stdin is redirected
+      //   from /dev/null so close fires immediately; shutdown is driven by
+      //   SIGTERM from `docker stop` instead.
+      // Issue #711's `npx n8n-mcp` repro is handled by `stdio-wrapper.ts`, which
+      // is the published bin entry after the release.yml fix — the wrapper
+      // registers stdin close unconditionally. Running `index.js` directly is
+      // the Docker path; keep the container guard so detached containers stay
+      // alive for their natural signal-based lifecycle.
       process.on('SIGTERM', () => shutdown('SIGTERM'));
       process.on('SIGINT', () => shutdown('SIGINT'));
       process.on('SIGHUP', () => shutdown('SIGHUP'));
 
-      // Handle stdio disconnect — PRIMARY shutdown mechanism (fixes Issue #711).
-      // Always register regardless of container detection: stdio MCP cannot
-      // function without an open stdin, so there is no legitimate "detached"
-      // scenario where we should ignore stdin close.
-      if (process.stdin.readable && !process.stdin.destroyed) {
+      // Handle stdio disconnect - PRIMARY shutdown mechanism for Claude Desktop.
+      // Skip in container environments (Docker, Kubernetes, Podman) to keep
+      // detached containers alive for their signal-based lifecycle.
+      const isContainer = isContainerEnvironment();
+
+      if (!isContainer && process.stdin.readable && !process.stdin.destroyed) {
         try {
           process.stdin.on('end', () => shutdown('STDIN_END'));
           process.stdin.on('close', () => shutdown('STDIN_CLOSE'));

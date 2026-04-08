@@ -9,31 +9,35 @@ import fs from 'fs';
  * "Container stdio path ignores stdin close; default npx process exits only
  * after SIGTERM"
  *
- * The original `src/mcp/index.ts` only registered stdin `end`/`close` handlers
- * when `isContainerEnvironment()` was false, so closing stdin in a container
- * would leave the process alive until a signal arrived. This test spawns the
- * compiled binary as a child process and asserts that stdin close terminates
- * the process in *every* environment (container detection or not).
+ * The published bin entry for `npx n8n-mcp` is `dist/mcp/stdio-wrapper.js`
+ * (after the release.yml fix in v2.47.5 — before that, the CI workflow
+ * shipped `dist/mcp/index.js` as the bin despite `package.json` specifying
+ * the wrapper). The wrapper registers stdin `end`/`close` handlers
+ * unconditionally, so closing stdin terminates the process in every
+ * environment, which is what Issue #711 was asking for.
+ *
+ * We deliberately do NOT spawn `dist/mcp/index.js` here: that path is used
+ * by the Docker entrypoint's root-switch code, which relies on the
+ * container guard in index.ts to keep detached containers alive for their
+ * signal-based lifecycle (see `docker-entrypoint.sh` line 122 and the
+ * `isContainerEnvironment()` guard in `src/mcp/index.ts`). Testing the
+ * wrapper matches the `npx` path real users hit.
  *
  * Notes:
- * - We exercise the compiled binary, not the source, because Issue #711 is
- *   specifically about the published CLI surface and its signal handling.
- * - We set `DISABLE_CONSOLE_OUTPUT=1` + `LOG_LEVEL=error` so the child doesn't
- *   write INFO logs to stderr and confuse test output.
- * - `N8N_MODE` / `MCP_MODE` default to stdio, which is what we want.
+ * - `DISABLE_CONSOLE_OUTPUT=1` + `LOG_LEVEL=error` keep the child quiet.
+ * - `MCP_MODE` is forced to stdio by the wrapper itself — no need to set it.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const INDEX_JS = path.join(REPO_ROOT, 'dist/mcp/index.js');
+const WRAPPER_JS = path.join(REPO_ROOT, 'dist/mcp/stdio-wrapper.js');
 const NODES_DB = path.join(REPO_ROOT, 'data/nodes.db');
 const SHUTDOWN_BUDGET_MS = 5_000;
 
 function spawnServer(env: Record<string, string>): ChildProcess {
-  return spawn(process.execPath, [INDEX_JS], {
+  return spawn(process.execPath, [WRAPPER_JS], {
     cwd: REPO_ROOT,
     env: {
       ...process.env,
-      MCP_MODE: 'stdio',
       DISABLE_CONSOLE_OUTPUT: 'true',
       LOG_LEVEL: 'error',
       ...env,
@@ -101,15 +105,15 @@ async function expectExitWithin(
   return result;
 }
 
-const distMissing = !fs.existsSync(INDEX_JS);
+const wrapperMissing = !fs.existsSync(WRAPPER_JS);
 const dbMissing = !fs.existsSync(NODES_DB);
 
-describe.skipIf(distMissing || dbMissing)('stdio shutdown on stdin close (Issue #711)', () => {
+describe.skipIf(wrapperMissing || dbMissing)('stdio shutdown on stdin close (Issue #711)', () => {
   beforeAll(() => {
-    if (distMissing) {
+    if (wrapperMissing) {
       // eslint-disable-next-line no-console
       console.warn(
-        `Skipping: ${INDEX_JS} not found. Run \`npm run build\` before the integration suite.`,
+        `Skipping: ${WRAPPER_JS} not found. Run \`npm run build\` before the integration suite.`,
       );
     }
     if (dbMissing) {
