@@ -15,7 +15,7 @@ import type { NodePropertyTypes } from 'n8n-workflow';
 import type { TypeStructure } from '../types/type-structures';
 
 /**
- * Complete type structure definitions for all 23 NodePropertyTypes
+ * Complete type structure definitions for all 22 NodePropertyTypes
  *
  * Each entry defines:
  * - type: Category (primitive/object/collection/special)
@@ -618,23 +618,6 @@ export const TYPE_STRUCTURES: Record<NodePropertyTypes, TypeStructure> = {
 			'Parses cURL command to populate fields',
 			'Used in HTTP Request node',
 			'One-time import feature',
-		],
-	},
-
-	icon: {
-		type: 'primitive',
-		jsType: 'string',
-		description: 'Icon identifier for visual representation',
-		example: 'fa:envelope',
-		examples: ['fa:envelope', 'fa:user', 'fa:cog', 'file:slack.svg'],
-		validation: {
-			allowEmpty: false,
-			allowExpressions: false,
-		},
-		notes: [
-			'References icon by name or file path',
-			'Supports Font Awesome icons (fa:) and file paths (file:)',
-			'Used for visual customization in UI',
 		],
 	},
 };

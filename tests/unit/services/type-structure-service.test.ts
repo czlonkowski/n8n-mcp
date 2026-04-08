@@ -58,9 +58,9 @@ describe('TypeStructureService', () => {
 	});
 
 	describe('getAllStructures', () => {
-		it('should return all 23 type structures', () => {
+		it('should return all 22 type structures', () => {
 			const structures = TypeStructureService.getAllStructures();
-			expect(Object.keys(structures)).toHaveLength(23);
+			expect(Object.keys(structures)).toHaveLength(22);
 		});
 
 		it('should return a copy not a reference', () => {
