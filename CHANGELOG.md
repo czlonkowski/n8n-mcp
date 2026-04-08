@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.47.5] - 2026-04-08
+
+### Fixed
+
+- **Stdio process now exits on stdin close in every environment (Issue #711, reported by @jbjardine).** The stdio entrypoint previously guarded stdin `end`/`close` handler registration behind a container-detection check, so `IS_DOCKER=true npx -y n8n-mcp </dev/null` stayed alive until SIGTERM arrived. This broke stateless stdio clients (e.g. `mark3labs/mcp-go`, MCPJungle) that close stdin to signal shutdown. The guard protected a non-functional scenario — stdio MCP cannot operate without an open stdin — so it was removed. Stdin handlers now register unconditionally and `isContainerEnvironment()` / the `fs.existsSync` import it relied on were deleted.
+- **Published bin entry finally routes through `stdio-wrapper.js` (Issue #693, reported by @gjenkins20).** Commit bc191b0 (v2.45.1) updated `package.json`, `scripts/publish-npm.sh`, and `scripts/publish-npm-quick.sh` to route the bin through the stdio wrapper, but missed `.github/workflows/release.yml:375` which hardcoded the old path. Every CI release from v2.45.1 through v2.47.4 therefore shipped `bin: dist/mcp/index.js` — the fix never reached users. `release.yml` is now consistent with the other three sources, and a static test in `tests/unit/bin-consistency.test.ts` guards against the same drift reoccurring.
+- **Telemetry CLI handler extracted to `src/telemetry/telemetry-cli.ts`** and called from both `src/mcp/index.ts` and `src/mcp/stdio-wrapper.ts`. This preserves `npx n8n-mcp telemetry enable|disable|status` (documented in `PRIVACY.md` and `README.md`) now that the published bin routes through the wrapper, and eliminates ~35 lines of duplication. The config manager is lazy-required so it stays off the stdio hot path when no CLI subcommand is present.
+
+### Notes
+
+- First-run telemetry banner is no longer printed on cold start via `npx n8n-mcp` because `stdio-wrapper.js` suppresses all `console.log` output before the server imports. This was already the behavior when users invoked the wrapper directly; it becomes user-visible now that the wrapper is the published bin. Run `npx n8n-mcp telemetry status` to see current telemetry state.
+- Added `tests/integration/mcp/stdio-shutdown.test.ts` with 3 regression cases that spawn the compiled binary and assert exit-on-stdin-close / exit-on-SIGTERM within a 500ms budget, covering the exact Issue #711 repro.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.47.4] - 2026-04-08
 
 ### Security

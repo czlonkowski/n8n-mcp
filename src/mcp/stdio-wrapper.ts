@@ -5,6 +5,18 @@
  * Ensures clean JSON-RPC communication by suppressing all non-JSON output
  */
 
+// Telemetry CLI fast path — must run BEFORE console suppression and MCP_MODE
+// setup, since these subcommands print status/help to stdout and exit.
+// The wrapper is the published bin entry (see package.json, Issue #693), so
+// this keeps `npx n8n-mcp telemetry ...` working — documented in PRIVACY.md
+// and README.md. Lazy-required so no telemetry code loads on the stdio hot
+// path when the wrapper is invoked without a subcommand.
+{
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { handleTelemetryCliIfPresent } = require('../telemetry/telemetry-cli');
+  handleTelemetryCliIfPresent(process.argv.slice(2));
+}
+
 // CRITICAL: Set environment BEFORE any imports to prevent any initialization logs
 process.env.MCP_MODE = 'stdio';
 process.env.DISABLE_CONSOLE_OUTPUT = 'true';

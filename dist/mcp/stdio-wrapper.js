@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+{
+    const { handleTelemetryCliIfPresent } = require('../telemetry/telemetry-cli');
+    handleTelemetryCliIfPresent(process.argv.slice(2));
+}
 process.env.MCP_MODE = 'stdio';
 process.env.DISABLE_CONSOLE_OUTPUT = 'true';
 process.env.LOG_LEVEL = 'error';

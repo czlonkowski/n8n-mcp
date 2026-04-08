@@ -36,10 +36,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const server_1 = require("./server");
 const logger_1 = require("../utils/logger");
-const config_manager_1 = require("../telemetry/config-manager");
+const telemetry_cli_1 = require("../telemetry/telemetry-cli");
 const early_error_logger_1 = require("../telemetry/early-error-logger");
 const startup_checkpoints_1 = require("../telemetry/startup-checkpoints");
-const fs_1 = require("fs");
 process.on('uncaughtException', (error) => {
     if (process.env.MCP_MODE !== 'stdio') {
         console.error('Uncaught Exception:', error);
@@ -54,23 +53,6 @@ process.on('unhandledRejection', (reason, promise) => {
     logger_1.logger.error('Unhandled Rejection:', reason);
     process.exit(1);
 });
-function isContainerEnvironment() {
-    const dockerEnv = (process.env.IS_DOCKER || '').toLowerCase();
-    const containerEnv = (process.env.IS_CONTAINER || '').toLowerCase();
-    if (['true', '1', 'yes'].includes(dockerEnv)) {
-        return true;
-    }
-    if (['true', '1', 'yes'].includes(containerEnv)) {
-        return true;
-    }
-    try {
-        return (0, fs_1.existsSync)('/.dockerenv') || (0, fs_1.existsSync)('/run/.containerenv');
-    }
-    catch (error) {
-        logger_1.logger.debug('Container detection filesystem check failed:', error);
-        return false;
-    }
-}
 async function main() {
     const startTime = Date.now();
     const earlyLogger = early_error_logger_1.EarlyErrorLogger.getInstance();
@@ -78,37 +60,7 @@ async function main() {
     try {
         earlyLogger.logCheckpoint(startup_checkpoints_1.STARTUP_CHECKPOINTS.PROCESS_STARTED);
         checkpoints.push(startup_checkpoints_1.STARTUP_CHECKPOINTS.PROCESS_STARTED);
-        const args = process.argv.slice(2);
-        if (args.length > 0 && args[0] === 'telemetry') {
-            const telemetryConfig = config_manager_1.TelemetryConfigManager.getInstance();
-            const action = args[1];
-            switch (action) {
-                case 'enable':
-                    telemetryConfig.enable();
-                    process.exit(0);
-                    break;
-                case 'disable':
-                    telemetryConfig.disable();
-                    process.exit(0);
-                    break;
-                case 'status':
-                    console.log(telemetryConfig.getStatus());
-                    process.exit(0);
-                    break;
-                default:
-                    console.log(`
-Usage: n8n-mcp telemetry [command]
-
-Commands:
-  enable   Enable anonymous telemetry
-  disable  Disable anonymous telemetry
-  status   Show current telemetry status
-
-Learn more: https://github.com/czlonkowski/n8n-mcp/blob/main/PRIVACY.md
-`);
-                    process.exit(args[1] ? 1 : 0);
-            }
-        }
+        (0, telemetry_cli_1.handleTelemetryCliIfPresent)(process.argv.slice(2));
         const mode = process.env.MCP_MODE || 'stdio';
         earlyLogger.logCheckpoint(startup_checkpoints_1.STARTUP_CHECKPOINTS.TELEMETRY_INITIALIZING);
         checkpoints.push(startup_checkpoints_1.STARTUP_CHECKPOINTS.TELEMETRY_INITIALIZING);
@@ -175,8 +127,7 @@ Learn more: https://github.com/czlonkowski/n8n-mcp/blob/main/PRIVACY.md
                 process.on('SIGTERM', () => shutdown('SIGTERM'));
                 process.on('SIGINT', () => shutdown('SIGINT'));
                 process.on('SIGHUP', () => shutdown('SIGHUP'));
-                const isContainer = isContainerEnvironment();
-                if (!isContainer && process.stdin.readable && !process.stdin.destroyed) {
+                if (process.stdin.readable && !process.stdin.destroyed) {
                     try {
                         process.stdin.on('end', () => shutdown('STDIN_END'));
                         process.stdin.on('close', () => shutdown('STDIN_CLOSE'));
