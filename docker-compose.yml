@@ -35,10 +35,19 @@ services:
       # N8N_API_KEY: ${N8N_API_KEY}
       # N8N_API_TIMEOUT: ${N8N_API_TIMEOUT:-30000}
       # N8N_API_MAX_RETRIES: ${N8N_API_MAX_RETRIES:-3}
+
+      # Optional: Self-signed certificate support
+      # Uncomment if your n8n instance uses a self-signed SSL certificate
+      # N8N_CERT_PATH: /app/certs/n8n.crt
     
     # Volumes for persistence
     volumes:
       - n8n-mcp-data:/app/data
+
+      # Optional: Mount certificate file for self-signed n8n instances
+      # Uncomment and adjust the path to your certificate file
+      # Example: ./certs/n8n.crt:/app/certs/n8n.crt:ro
+      # - /path/to/your/certificate.crt:/app/certs/n8n.crt:ro
     
     # Port mapping
     ports:

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
 import { logger } from '../utils/logger';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // n8n API configuration schema
 const n8nApiConfigSchema = z.object({
@@ -8,6 +10,8 @@ const n8nApiConfigSchema = z.object({
   N8N_API_KEY: z.string().min(1).optional(),
   N8N_API_TIMEOUT: z.coerce.number().positive().default(30000),
   N8N_API_MAX_RETRIES: z.coerce.number().positive().default(3),
+  N8N_CERT_PATH: z.string().optional(),
+  N8N_SKIP_SSL_VERIFICATION: z.string().transform(val => val === 'true').optional(),
 });
 
 // Track if we've loaded env vars
@@ -34,11 +38,36 @@ export function getN8nApiConfig() {
     return null;
   }
   
+  // Validate and read certificate if provided
+  let cert: Buffer | undefined;
+  if (config.N8N_CERT_PATH) {
+    try {
+      const certPath = path.resolve(config.N8N_CERT_PATH);
+      if (!fs.existsSync(certPath)) {
+        logger.error(`Certificate file not found: ${certPath}`);
+        throw new Error(`Certificate file not found: ${certPath}`);
+      }
+      cert = fs.readFileSync(path.resolve(config.N8N_CERT_PATH));
+      logger.info(`Custom SSL certificate loaded from: ${certPath}`);
+    } catch (error) {
+      logger.error(`Failed to load certificate from ${config.N8N_CERT_PATH}:`, error);
+      throw error;
+    }
+  }
+  
+  // Log warning if SSL verification is disabled
+  if (config.N8N_SKIP_SSL_VERIFICATION) {
+    logger.warn('⚠️  N8N_SKIP_SSL_VERIFICATION is enabled. SSL certificate verification is disabled.');
+    logger.warn('⚠️  This is insecure and should only be used for development purposes.');
+  }
+
   return {
     baseUrl: config.N8N_API_URL,
     apiKey: config.N8N_API_KEY,
     timeout: config.N8N_API_TIMEOUT,
     maxRetries: config.N8N_API_MAX_RETRIES,
+    cert,
+    skipSslVerification: config.N8N_SKIP_SSL_VERIFICATION,
   };
 }
 

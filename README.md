@@ -475,6 +475,125 @@ Deploy n8n-MCP to Railway's cloud platform with zero configuration:
 
 **Restart Claude Desktop after updating configuration** - That's it! 🎉
 
+## 🔐 SSL/TLS Configuration
+
+### Using Custom CA Certificates (Recommended)
+
+If your n8n instance uses a custom or self-signed SSL certificate, configure the `N8N_CERT_PATH` environment variable to point to your certificate file (PEM format):
+
+- For self-signed certificates: provide the server's certificate itself
+- For custom CA: provide the CA certificate that signed the server's certificate
+
+This approach maintains full SSL verification while trusting your specific certificate.
+
+### Using with npx
+
+Add the certificate path to your Claude Desktop configuration:
+
+```json
+{
+  "mcpServers": {
+    "n8n-mcp": {
+      "command": "npx",
+      "args": ["n8n-mcp"],
+      "env": {
+        "MCP_MODE": "stdio",
+        "LOG_LEVEL": "error",
+        "DISABLE_CONSOLE_OUTPUT": "true",
+        "N8N_API_URL": "https://your-n8n-instance.com",
+        "N8N_API_KEY": "your-api-key",
+        "N8N_CERT_PATH": "/path/to/your/certificate.crt"
+      }
+    }
+  }
+}
+```
+
+### Using with Docker
+
+Mount your certificate file as a volume and set the environment variable:
+
+```bash
+docker run -i --rm --init \
+  -v /path/to/your/certificate.crt:/app/certs/n8n.crt:ro \
+  -e MCP_MODE=stdio \
+  -e LOG_LEVEL=error \
+  -e DISABLE_CONSOLE_OUTPUT=true \
+  -e N8N_API_URL=https://your-n8n-instance.com \
+  -e N8N_API_KEY=your-api-key \
+  -e N8N_CERT_PATH=/app/certs/n8n.crt \
+  ghcr.io/czlonkowski/n8n-mcp:latest
+```
+
+For Claude Desktop configuration with Docker:
+
+```json
+{
+  "mcpServers": {
+    "n8n-mcp": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm", "--init",
+        "-v", "/path/to/your/certificate.crt:/app/certs/n8n.crt:ro",
+        "-e", "MCP_MODE=stdio",
+        "-e", "LOG_LEVEL=error",
+        "-e", "DISABLE_CONSOLE_OUTPUT=true",
+        "-e", "N8N_API_URL=https://your-n8n-instance.com",
+        "-e", "N8N_API_KEY=your-api-key",
+        "-e", "N8N_CERT_PATH=/app/certs/n8n.crt",
+        "ghcr.io/czlonkowski/n8n-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+### Using with docker-compose
+
+See the commented certificate configuration in `docker-compose.yml` and `docker-compose.n8n.yml`. Uncomment the relevant sections and adjust the certificate path.
+
+### Troubleshooting Certificate Issues
+
+Common issues and quick fixes:
+- **UNABLE_TO_VERIFY_LEAF_SIGNATURE** → Missing root certificate in your bundle
+- **SELF_SIGNED_CERT_IN_CHAIN** → Configure certificate as trusted CA or skip verification
+- **ERR_TLS_CERT_ALTNAME_INVALID** → Domain name doesn't match certificate
+
+📚 **For detailed solutions, see our [SSL Troubleshooting Guide](./docs/SSL_TROUBLESHOOTING.md)** which covers:
+- Complete error messages and solutions
+- How to create proper certificate bundles
+- Diagnostic commands and debugging tips
+- Solutions for Let's Encrypt, self-signed, and corporate certificates
+
+### Disabling SSL Verification (Development Only)
+
+⚠️ **WARNING**: This option completely disables SSL certificate verification and should ONLY be used for local development or testing environments.
+
+If you're unable to provide a valid certificate and need to connect to a development server, you can disable SSL verification:
+
+```json
+{
+  "mcpServers": {
+    "n8n-mcp": {
+      "command": "npx",
+      "args": ["n8n-mcp"],
+      "env": {
+        "MCP_MODE": "stdio",
+        "N8N_API_URL": "https://your-n8n-instance.com",
+        "N8N_API_KEY": "your-api-key",
+        "N8N_SKIP_SSL_VERIFICATION": "true"
+      }
+    }
+  }
+}
+```
+
+**Important Security Notes**:
+- Never use `N8N_SKIP_SSL_VERIFICATION` in production environments
+- This disables protection against man-in-the-middle attacks
+- Always prefer providing the correct certificate via `N8N_CERT_PATH`
+- The server will log warnings when SSL verification is disabled
+
 ## 🔧 n8n Integration
 
 Want to use n8n-MCP with your n8n instance? Check out our comprehensive [n8n Deployment Guide](./docs/N8N_DEPLOYMENT.md) for:

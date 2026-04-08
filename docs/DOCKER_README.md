@@ -66,6 +66,7 @@ docker run -d \
 | `AUTH_RATE_LIMIT_WINDOW` | Rate limit window in ms (v2.16.3+) | `900000` (15 min) | No |
 | `AUTH_RATE_LIMIT_MAX` | Max auth attempts per window (v2.16.3+) | `20` | No |
 | `WEBHOOK_SECURITY_MODE` | SSRF protection: `strict`/`moderate`/`permissive` (v2.16.3+) | `strict` | No |
+| `N8N_CERT_PATH` | Path to SSL certificate for self-signed n8n instances | - | No |
 
 *Either `AUTH_TOKEN` or `AUTH_TOKEN_FILE` must be set for HTTP mode. If both are set, `AUTH_TOKEN` takes precedence.
 
@@ -284,6 +285,7 @@ docker ps --format "table {{.Names}}\t{{.Status}}"
 docker inspect n8n-mcp | jq '.[0].State.Health'
 ```
 
+<<<<<<< HEAD
 ## 🔒 Security Features (v2.16.3+)
 
 ### Rate Limiting
@@ -375,6 +377,76 @@ your-domain.com {
 - Read-only root filesystem compatible
 - No unnecessary packages installed
 - Regular security updates via GitHub Actions
+
+## 🔐 SSL Certificate Configuration
+
+### Self-Signed Certificates
+
+If your n8n instance uses a self-signed SSL certificate, you need to mount the certificate file and configure the `N8N_CERT_PATH` environment variable:
+
+#### Basic Docker Run
+
+```bash
+# Run with mounted certificate
+docker run -d \
+  --name n8n-mcp \
+  -e MCP_MODE=http \
+  -e AUTH_TOKEN=your-secure-token \
+  -e N8N_API_URL=https://your-n8n-instance.com \
+  -e N8N_API_KEY=your-api-key \
+  -e N8N_CERT_PATH=/app/certs/n8n.crt \
+  -v /path/to/your/certificate.crt:/app/certs/n8n.crt:ro \
+  -p 3000:3000 \
+  ghcr.io/czlonkowski/n8n-mcp:latest
+```
+
+#### Docker Compose Configuration
+
+Add certificate configuration to your `docker-compose.yml`:
+
+```yaml
+services:
+  n8n-mcp:
+    image: ghcr.io/czlonkowski/n8n-mcp:latest
+    environment:
+      MCP_MODE: http
+      AUTH_TOKEN: ${AUTH_TOKEN}
+      N8N_API_URL: https://your-n8n-instance.com
+      N8N_API_KEY: ${N8N_API_KEY}
+      N8N_CERT_PATH: /app/certs/n8n.crt
+    volumes:
+      - n8n-mcp-data:/app/data
+      - /path/to/your/certificate.crt:/app/certs/n8n.crt:ro
+    ports:
+      - "3000:3000"
+```
+
+#### Certificate Troubleshooting
+
+**Common Issues:**
+
+1. **Certificate not found error:**
+   ```bash
+   # Verify the certificate is properly mounted
+   docker exec n8n-mcp ls -la /app/certs/
+   ```
+
+2. **Permission denied:**
+   ```bash
+   # Ensure certificate is readable
+   chmod 644 /path/to/your/certificate.crt
+   ```
+
+3. **Invalid certificate format:**
+   - Certificate must be in PEM format (.crt or .pem)
+   - Check with: `openssl x509 -in certificate.crt -text -noout`
+
+4. **Still can't connect:**
+   ```bash
+   # Test certificate directly
+   openssl s_client -connect your-n8n-instance.com:443 \
+     -CAfile /path/to/your/certificate.crt -showcerts
+   ```
 
 ## 📊 Resource Management
 

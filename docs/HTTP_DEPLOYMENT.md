@@ -135,6 +135,69 @@ Skip HTTP entirely and use stdio mode directly:
 
 💡 **Save your AUTH_TOKEN** - clients will need it to connect!
 
+### Self-Signed Certificates
+
+If your n8n instance uses a self-signed SSL certificate, you need to configure the `N8N_CERT_PATH` environment variable:
+
+#### Docker with Certificate
+
+```bash
+# 1. Create environment file with certificate path
+cat > .env << EOF
+AUTH_TOKEN=$(openssl rand -base64 32)
+USE_FIXED_HTTP=true
+MCP_MODE=http
+PORT=3000
+N8N_CERT_PATH=/app/certs/n8n.crt
+N8N_API_URL=https://your-n8n-instance.com
+N8N_API_KEY=your-api-key-here
+EOF
+
+# 2. Deploy with Docker and mount certificate
+docker run -d \
+  --name n8n-mcp \
+  --restart unless-stopped \
+  --env-file .env \
+  -v /path/to/your/certificate.crt:/app/certs/n8n.crt:ro \
+  -p 3000:3000 \
+  ghcr.io/czlonkowski/n8n-mcp:latest
+```
+
+#### Docker Compose with Certificate
+
+Add the following to your `docker-compose.yml`:
+
+```yaml
+services:
+  n8n-mcp:
+    image: ghcr.io/czlonkowski/n8n-mcp:latest
+    environment:
+      # ... other environment variables ...
+      N8N_CERT_PATH: /app/certs/n8n.crt
+    volumes:
+      - n8n-mcp-data:/app/data
+      - /path/to/your/certificate.crt:/app/certs/n8n.crt:ro
+```
+
+#### Local Development with Certificate
+
+```bash
+# Set the certificate path
+export N8N_CERT_PATH=/path/to/your/certificate.crt
+export N8N_API_URL=https://your-n8n-instance.com
+export N8N_API_KEY=your-api-key
+
+# Start the server
+npm run start:http
+```
+
+#### Certificate Troubleshooting
+
+- **Format**: Certificate must be in PEM format (.crt or .pem file)
+- **Permissions**: Ensure the certificate file is readable by the process
+- **Path**: Use absolute paths to avoid resolution issues
+- **Testing**: You can test the certificate with `openssl s_client -connect your-n8n-instance.com:443 -showcerts`
+
 ## ⚙️ Configuration
 
 ### Required Environment Variables
