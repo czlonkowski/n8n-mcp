@@ -119,7 +119,10 @@ export function getSupportedSettingsProperties(version: N8nVersionInfo): Set<str
  * Note: There's a security concern about this being unauthenticated (see n8n community),
  * but it's the only reliable way to get version info.
  */
-export async function fetchN8nVersion(baseUrl: string): Promise<N8nVersionInfo | null> {
+export async function fetchN8nVersion(
+  baseUrl: string,
+  headers?: Record<string, string>
+): Promise<N8nVersionInfo | null> {
   // Check cache first (with TTL)
   const cached = versionCache.get(baseUrl);
   if (cached && Date.now() - cached.fetchedAt < VERSION_CACHE_TTL_MS) {
@@ -136,6 +139,7 @@ export async function fetchN8nVersion(baseUrl: string): Promise<N8nVersionInfo |
 
     const response = await axios.get<N8nSettingsResponse>(settingsUrl, {
       timeout: 5000,
+      headers,
       validateStatus: (status: number) => status < 500,
     });
 

@@ -261,6 +261,37 @@ If you're running n8n locally (e.g., `http://localhost:5678` or Docker), you nee
 
 **Restart Claude Desktop after updating configuration** - That's it! 🎉
 
+### 🛡️ Cloudflare Access Authentication
+
+If your n8n instance is protected behind Cloudflare Access (Zero Trust), you can provide your service token credentials to allow n8n-MCP to authenticate and bypass the protection:
+
+**Environment Variables:**
+- `N8N_CF_CLIENT_ID`: Your Cloudflare Access Client ID
+- `N8N_CF_CLIENT_SECRET`: Your Cloudflare Access Client Secret
+
+**Example in Claude Desktop (Docker):**
+```json
+{
+  "mcpServers": {
+    "n8n-mcp": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm", "--init",
+        "-e", "MCP_MODE=stdio",
+        "-e", "N8N_API_URL=https://your-protected-n8n.com",
+        "-e", "N8N_API_KEY=your-api-key",
+        "-e", "N8N_CF_CLIENT_ID=your-cf-client-id",
+        "-e", "N8N_CF_CLIENT_SECRET=your-cf-client-secret",
+        "ghcr.io/czlonkowski/n8n-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+These headers will be automatically injected into all n8n API requests, webhook executions, and n8n version checks.
+
+
 ## 🔐 Privacy & Telemetry
 
 n8n-mcp collects anonymous usage statistics to improve the tool. [View our privacy policy](./PRIVACY.md).
