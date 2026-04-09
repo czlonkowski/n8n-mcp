@@ -47,6 +47,8 @@ export interface N8nApiClientConfig {
   apiKey: string;
   timeout?: number;
   maxRetries?: number;
+  cfClientId?: string;
+  cfClientSecret?: string;
 }
 
 export class N8nApiClient {
@@ -57,11 +59,15 @@ export class N8nApiClient {
   private versionPromise: Promise<N8nVersionInfo | null> | null = null;
   // SECURITY (GHSA-cmrh-wvq6-wm9r): cached pinned transport agents.
   private pinnedAgentsPromise: Promise<PinnedAgents> | null = null;
+  private cfClientId?: string;
+  private cfClientSecret?: string;
 
   constructor(config: N8nApiClientConfig) {
-    const { baseUrl, apiKey, timeout = 30000, maxRetries = 3 } = config;
+    const { baseUrl, apiKey, timeout = 30000, maxRetries = 3, cfClientId, cfClientSecret } = config;
 
     this.maxRetries = maxRetries;
+    this.cfClientId = cfClientId;
+    this.cfClientSecret = cfClientSecret;
 
     // SECURITY (GHSA-4ggg-h7ph-26qr): defense-in-depth baseUrl normalization.
     let normalizedBase: string;
@@ -85,13 +91,23 @@ export class N8nApiClient {
       ? normalizedBase
       : `${normalizedBase}/api/v1`;
 
+    const headers: Record<string, string> = {
+      'X-N8N-API-KEY': apiKey,
+      'Content-Type': 'application/json',
+    };
+
+    if (cfClientId) {
+      headers['CF-Access-Client-Id'] = cfClientId;
+    }
+    
+    if (cfClientSecret) {
+      headers['CF-Access-Client-Secret'] = cfClientSecret;
+    }
+
     this.client = axios.create({
       baseURL: apiUrl,
       timeout,
-      headers: {
-        'X-N8N-API-KEY': apiKey,
-        'Content-Type': 'application/json',
-      },
+      headers,
       // SECURITY (GHSA-cmrh-wvq6-wm9r): no redirect-following on the
       // authenticated client; pinned agent neutralizes cross-host hops anyway.
       maxRedirects: 0,
@@ -195,7 +211,16 @@ export class N8nApiClient {
     if (cached) return cached;
     // SECURITY (GHSA-cmrh-wvq6-wm9r): reuse the validated transport agents.
     const agents = await this.getPinnedAgents();
-    return await fetchN8nVersion(this.baseUrl, agents);
+
+    const cfHeaders: Record<string, string> = {};
+    if (this.cfClientId) cfHeaders['CF-Access-Client-Id'] = this.cfClientId;
+    if (this.cfClientSecret) cfHeaders['CF-Access-Client-Secret'] = this.cfClientSecret;
+
+    return await fetchN8nVersion(
+      this.baseUrl,
+      agents,
+      Object.keys(cfHeaders).length > 0 ? cfHeaders : undefined
+    );
   }
 
   /**
@@ -471,6 +496,8 @@ export class N8nApiClient {
         url: webhookPath,
         headers: {
           ...headers,
+          ...(this.cfClientId ? { 'CF-Access-Client-Id': this.cfClientId } : {}),
+          ...(this.cfClientSecret ? { 'CF-Access-Client-Secret': this.cfClientSecret } : {}),
           // Don't override API key header for webhook endpoints
           'X-N8N-API-KEY': undefined,
         },

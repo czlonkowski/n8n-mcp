@@ -8,6 +8,8 @@ const n8nApiConfigSchema = z.object({
   N8N_API_KEY: z.string().min(1).optional(),
   N8N_API_TIMEOUT: z.coerce.number().positive().default(30000),
   N8N_API_MAX_RETRIES: z.coerce.number().positive().default(3),
+  N8N_CF_CLIENT_SECRET: z.string().optional(),
+  N8N_CF_CLIENT_ID: z.string().optional()
 });
 
 // Track if we've loaded env vars
@@ -20,25 +22,27 @@ export function getN8nApiConfig() {
     dotenv.config();
     envLoaded = true;
   }
-  
+
   const result = n8nApiConfigSchema.safeParse(process.env);
-  
+
   if (!result.success) {
     return null;
   }
-  
+
   const config = result.data;
-  
+
   // Check if both URL and API key are provided
   if (!config.N8N_API_URL || !config.N8N_API_KEY) {
     return null;
   }
-  
+
   return {
     baseUrl: config.N8N_API_URL,
     apiKey: config.N8N_API_KEY,
     timeout: config.N8N_API_TIMEOUT,
     maxRetries: config.N8N_API_MAX_RETRIES,
+    cfClientId: config.N8N_CF_CLIENT_ID,
+    cfClientSecret: config.N8N_CF_CLIENT_SECRET,
   };
 }
 
@@ -57,6 +61,8 @@ export function getN8nApiConfigFromContext(context: {
   n8nApiKey?: string;
   n8nApiTimeout?: number;
   n8nApiMaxRetries?: number;
+  n8nCfClientId?: string;
+  n8nCfClientSecret?: string;
 }): N8nApiConfig | null {
   if (!context.n8nApiUrl || !context.n8nApiKey) {
     return null;
@@ -67,6 +73,8 @@ export function getN8nApiConfigFromContext(context: {
     apiKey: context.n8nApiKey,
     timeout: context.n8nApiTimeout ?? 30000,
     maxRetries: context.n8nApiMaxRetries ?? 3,
+    cfClientId: context.n8nCfClientId,
+    cfClientSecret: context.n8nCfClientSecret,
   };
 }
 
