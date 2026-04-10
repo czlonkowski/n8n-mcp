@@ -84,8 +84,6 @@ npm run test:integration    # Integration tests
 - **API Mocking**: MSW
 - **CI/CD**: Automated testing on all PRs with GitHub Actions
 
-For detailed testing documentation, see [Testing Architecture](./docs/testing-architecture.md).
-
 ## Automated Releases (For Maintainers)
 
 This project uses automated releases triggered by version changes:

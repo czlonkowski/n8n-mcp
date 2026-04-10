@@ -1,57 +1,44 @@
 # n8n-MCP Documentation
 
-Welcome to the n8n-MCP documentation. This directory contains comprehensive guides for installation, configuration, and troubleshooting.
+## Getting Started
+- [Self-Hosting Guide](./SELF_HOSTING.md) - npx, Docker, Railway, and local installation
+- [Claude Desktop Setup](./README_CLAUDE_SETUP.md) - Step-by-step Claude Desktop configuration
 
-## 📚 Documentation Index
+## Deployment
+- [n8n Deployment Guide](./N8N_DEPLOYMENT.md) - Production deployment with n8n
+- [HTTP Deployment](./HTTP_DEPLOYMENT.md) - Remote HTTP server setup
+- [Railway Deployment](./RAILWAY_DEPLOYMENT.md) - One-click cloud deployment
+- [Docker Troubleshooting](./DOCKER_TROUBLESHOOTING.md) - Common Docker issues and solutions
 
-### Getting Started
-- **[Installation Guide](./INSTALLATION.md)** - Comprehensive installation guide covering all methods
-- **[Claude Desktop Setup](./README_CLAUDE_SETUP.md)** - Step-by-step guide for Claude Desktop configuration
-- **[Quick Start Tutorial](../README.md)** - Basic overview and quick start instructions
+## IDE Setup
+- [Claude Code](./CLAUDE_CODE_SETUP.md)
+- [Visual Studio Code](./VS_CODE_PROJECT_SETUP.md)
+- [Cursor](./CURSOR_SETUP.md)
+- [Windsurf](./WINDSURF_SETUP.md)
+- [Codex](./CODEX_SETUP.md)
+- [Antigravity](./ANTIGRAVITY_SETUP.md)
 
-### Deployment
-- **[HTTP Deployment Guide](./HTTP_DEPLOYMENT.md)** - Deploy n8n-MCP as an HTTP server for remote access
-- **[Docker Deployment](./DOCKER_README.md)** - Complete Docker deployment and configuration guide
-- **[Release Guide](./RELEASE_GUIDE.md)** - How to create releases and manage Docker tags
+## Configuration
+- [Security & Hardening](./SECURITY_HARDENING.md) - Trust model, hardening options
+- [Database Configuration](./DATABASE_CONFIGURATION.md) - SQLite adapters, memory optimization
+- [Dependency Updates](./DEPENDENCY_UPDATES.md) - Keeping n8n packages in sync
 
-### Reference
-- **[Troubleshooting Guide](./TROUBLESHOOTING.md)** - Solutions for common issues and errors
-- **[HTTP Server Fix Documentation](./HTTP_SERVER_FINAL_FIX.md)** - Technical details of v2.3.2 HTTP server fixes
-- **[Docker Optimization Guide](./DOCKER_OPTIMIZATION_GUIDE.md)** - Reference for optimized Docker builds (~150MB)
-- **[Changelog](./CHANGELOG.md)** - Version history and release notes
+## Reference
+- [Workflow Diff Operations](./workflow-diff-examples.md) - Token-efficient workflow updates
+- [Automated Releases](./AUTOMATED_RELEASES.md) - Release process for maintainers
+- [Acknowledgments](./ACKNOWLEDGMENTS.md) - Credits and template attribution
 
-## 🚀 Quick Links
-
-### For Users
-- [Install n8n-MCP](./INSTALLATION.md)
-- [Configure Claude Desktop](./README_CLAUDE_SETUP.md)
-- [Deploy with Docker](./DOCKER_README.md)
-- [Troubleshoot Issues](./TROUBLESHOOTING.md)
-
-### For Developers
-- [HTTP Server Architecture](./HTTP_SERVER_FINAL_FIX.md)
-- [Docker Build Optimization](./DOCKER_OPTIMIZATION_GUIDE.md)
-- [Release Process](./RELEASE_GUIDE.md)
-
-## 📋 Environment Variables
-
-Key configuration options:
+## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MCP_MODE` | Server mode: `stdio` or `http` | `stdio` |
 | `AUTH_TOKEN` | Authentication token for HTTP mode | Required |
+| `DISABLED_TOOLS` | Comma-separated list of tools to disable | None |
 | `PORT` | HTTP server port | `3000` |
 | `LOG_LEVEL` | Logging verbosity | `info` |
 
-See [Installation Guide](./INSTALLATION.md#environment-configuration) for complete list.
+## Getting Help
 
-## 🆘 Getting Help
-
-1. Check the [Troubleshooting Guide](./TROUBLESHOOTING.md)
-2. Review [HTTP Server Fix Documentation](./HTTP_SERVER_FINAL_FIX.md) for v2.3.2 issues
-3. Open an issue on [GitHub](https://github.com/czlonkowski/n8n-mcp/issues)
-
-## 📝 License
-
-This project uses the Sustainable Use License. See [LICENSE](../LICENSE) for details.
+1. Check the [Docker Troubleshooting Guide](./DOCKER_TROUBLESHOOTING.md)
+2. Open an issue on [GitHub](https://github.com/czlonkowski/n8n-mcp/issues)
