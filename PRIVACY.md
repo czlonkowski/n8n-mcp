@@ -34,8 +34,21 @@ All collected data undergoes automatic sanitization:
 
 ## Opt-Out
 You can disable telemetry at any time:
+
+**npx:**
 ```bash
 npx n8n-mcp telemetry disable
+```
+
+**Docker:**
+```
+-e N8N_MCP_TELEMETRY_DISABLED=true
+```
+
+**docker-compose:**
+```yaml
+environment:
+  N8N_MCP_TELEMETRY_DISABLED: "true"
 ```
 
 To re-enable:
