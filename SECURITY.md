@@ -15,6 +15,8 @@ Only the latest release receives security patches. We recommend always running t
 3. If confirmed, we will develop and release a fix
 4. We will credit reporters in the advisory (unless they prefer otherwise)
 
+For the full incident response process, see our [Incident Response Plan](.github/INCIDENT_RESPONSE.md).
+
 ## Scope
 
 n8n-mcp is a proxy to the n8n REST API. The security boundary is n8n itself, not n8n-mcp. Reports about capabilities that are inherent to the n8n API (e.g., creating workflows with Code nodes) are out of scope, as n8n-mcp does not grant any capability beyond what the n8n API already provides.
