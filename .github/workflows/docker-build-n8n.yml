@@ -148,8 +148,8 @@ jobs:
           # Test health endpoint
           curl -f http://localhost:3000/health || exit 1
           
-          # Test MCP endpoint
-          curl -f http://localhost:3000/mcp || exit 1
+          # Test MCP endpoint (requires auth since v2.47.6)
+          curl -f -H "Authorization: Bearer test-token-minimum-32-chars-long" http://localhost:3000/mcp || exit 1
           
           # Cleanup
           docker stop n8n-mcp-test
