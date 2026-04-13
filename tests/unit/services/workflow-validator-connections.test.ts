@@ -527,6 +527,30 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       expect(inputErrors).toHaveLength(0);
     });
 
+    it('should flag connection targeting a trigger node input', async () => {
+      const workflow = {
+        nodes: [
+          { id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [0, 0], parameters: {} },
+          { id: '2', name: 'Set', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} },
+          { id: '3', name: 'Webhook2', type: 'n8n-nodes-base.webhook', position: [400, 0], parameters: {} },
+        ],
+        connections: {
+          'Webhook': {
+            main: [[{ node: 'Set', type: 'main', index: 0 }]]
+          },
+          'Set': {
+            main: [[{ node: 'Webhook2', type: 'main', index: 0 }]]
+          }
+        }
+      };
+
+      const result = await validator.validateWorkflow(workflow as any);
+
+      const inputErrors = result.errors.filter(e => e.code === 'INPUT_INDEX_OUT_OF_BOUNDS');
+      expect(inputErrors).toHaveLength(1);
+      expect(inputErrors[0].message).toContain('trigger nodes have no main inputs');
+    });
+
     it('should skip bounds check for non-Merge regular nodes (dynamic inputs)', async () => {
       // Non-Merge nodes can accept dynamic inputs (e.g., Code nodes with multiple
       // connections in production). We skip bounds checking for these since we

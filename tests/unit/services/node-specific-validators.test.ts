@@ -2010,15 +2010,44 @@ return [{"json": {"result": result}}]
           language: 'python',
           pythonCode: 'return "success"'
         };
-        
+
         NodeSpecificValidators.validateCode(context);
-        
+
         expect(context.errors).toContainEqual({
           type: 'invalid_value',
           property: 'pythonCode',
           message: 'Cannot return primitive values directly',
           fix: 'Return list of dicts: return [{"json": {"value": your_data}}]'
         });
+      });
+
+      it('should error on Python bare dict return in runOnceForAllItems mode', () => {
+        context.config = {
+          language: 'python',
+          mode: 'runOnceForAllItems',
+          pythonCode: 'return {"status": "ok"}'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        expect(context.errors).toContainEqual(expect.objectContaining({
+          message: 'Return value must be a list of dicts'
+        }));
+      });
+
+      it('should not error on Python bare dict return in runOnceForEachItem mode', () => {
+        context.config = {
+          language: 'python',
+          mode: 'runOnceForEachItem',
+          pythonCode: 'return {"status": "ok"}'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        const dictErrors = context.errors.filter(
+          (e: any) => e.message === 'Return value must be a list of dicts'
+        );
+        expect(dictErrors).toHaveLength(0);
       });
 
       it('should error on array of non-objects', () => {
