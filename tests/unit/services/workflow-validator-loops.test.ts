@@ -942,4 +942,126 @@ describe('WorkflowValidator - Loop Node Validation', () => {
       expect(result.statistics.totalNodes).toBe(100);
     });
   });
+
+  describe('Controlled loops with conditional nodes', () => {
+    it('should not flag pagination loop through IF node', async () => {
+      mockNodeRepository.getNode.mockReturnValue({
+        nodeType: 'nodes-base.httpRequest',
+        properties: []
+      });
+
+      const workflow = {
+        name: 'Pagination Loop',
+        nodes: [
+          { id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
+          { id: '2', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', position: [200, 0], parameters: {} },
+          { id: '3', name: 'IF Done', type: 'n8n-nodes-base.if', position: [400, 0], parameters: {} },
+          { id: '4', name: 'Wait', type: 'n8n-nodes-base.wait', position: [400, 200], parameters: {} },
+          { id: '5', name: 'Output', type: 'n8n-nodes-base.set', position: [600, 0], parameters: {} },
+        ],
+        connections: {
+          'Manual Trigger': { main: [[{ node: 'HTTP Request', type: 'main', index: 0 }]] },
+          'HTTP Request': { main: [[{ node: 'IF Done', type: 'main', index: 0 }]] },
+          'IF Done': {
+            main: [
+              [{ node: 'Output', type: 'main', index: 0 }],       // true → exit
+              [{ node: 'Wait', type: 'main', index: 0 }]          // false → continue loop
+            ]
+          },
+          'Wait': { main: [[{ node: 'HTTP Request', type: 'main', index: 0 }]] }  // back to HTTP
+        }
+      };
+
+      const result = await validator.validateWorkflow(workflow as any);
+
+      const cycleErrors = result.errors.filter(e => e.message?.includes('cycle'));
+      expect(cycleErrors).toHaveLength(0);
+    });
+
+    it('should not flag loop through Switch node', async () => {
+      mockNodeRepository.getNode.mockReturnValue({
+        nodeType: 'nodes-base.httpRequest',
+        properties: []
+      });
+
+      const workflow = {
+        name: 'Switch Loop',
+        nodes: [
+          { id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
+          { id: '2', name: 'Fetch', type: 'n8n-nodes-base.httpRequest', position: [200, 0], parameters: {} },
+          { id: '3', name: 'Check Status', type: 'n8n-nodes-base.switch', position: [400, 0], parameters: {} },
+          { id: '4', name: 'Done', type: 'n8n-nodes-base.set', position: [600, 0], parameters: {} },
+        ],
+        connections: {
+          'Manual Trigger': { main: [[{ node: 'Fetch', type: 'main', index: 0 }]] },
+          'Fetch': { main: [[{ node: 'Check Status', type: 'main', index: 0 }]] },
+          'Check Status': {
+            main: [
+              [{ node: 'Done', type: 'main', index: 0 }],    // output 0: done
+              [{ node: 'Fetch', type: 'main', index: 0 }]     // output 1: retry
+            ]
+          }
+        }
+      };
+
+      const result = await validator.validateWorkflow(workflow as any);
+
+      const cycleErrors = result.errors.filter(e => e.message?.includes('cycle'));
+      expect(cycleErrors).toHaveLength(0);
+    });
+
+    it('should not flag loop through Filter node', async () => {
+      mockNodeRepository.getNode.mockReturnValue({
+        nodeType: 'nodes-base.httpRequest',
+        properties: []
+      });
+
+      const workflow = {
+        name: 'Filter Loop',
+        nodes: [
+          { id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
+          { id: '2', name: 'Process', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} },
+          { id: '3', name: 'Filter', type: 'n8n-nodes-base.filter', position: [400, 0], parameters: {} },
+        ],
+        connections: {
+          'Manual Trigger': { main: [[{ node: 'Process', type: 'main', index: 0 }]] },
+          'Process': { main: [[{ node: 'Filter', type: 'main', index: 0 }]] },
+          'Filter': { main: [[{ node: 'Process', type: 'main', index: 0 }]] }  // loop back
+        }
+      };
+
+      const result = await validator.validateWorkflow(workflow as any);
+
+      const cycleErrors = result.errors.filter(e => e.message?.includes('cycle'));
+      expect(cycleErrors).toHaveLength(0);
+    });
+
+    it('should still flag pure cycle without conditional or loop nodes', async () => {
+      mockNodeRepository.getNode.mockReturnValue({
+        nodeType: 'nodes-base.set',
+        properties: []
+      });
+
+      const workflow = {
+        name: 'Pure Cycle',
+        nodes: [
+          { id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
+          { id: '2', name: 'Node1', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} },
+          { id: '3', name: 'Node2', type: 'n8n-nodes-base.httpRequest', position: [400, 0], parameters: {} },
+          { id: '4', name: 'Node3', type: 'n8n-nodes-base.code', position: [600, 0], parameters: {} },
+        ],
+        connections: {
+          'Manual Trigger': { main: [[{ node: 'Node1', type: 'main', index: 0 }]] },
+          'Node1': { main: [[{ node: 'Node2', type: 'main', index: 0 }]] },
+          'Node2': { main: [[{ node: 'Node3', type: 'main', index: 0 }]] },
+          'Node3': { main: [[{ node: 'Node1', type: 'main', index: 0 }]] }  // back to Node1 — no IF/Loop
+        }
+      };
+
+      const result = await validator.validateWorkflow(workflow as any);
+
+      const cycleErrors = result.errors.filter(e => e.message?.includes('cycle'));
+      expect(cycleErrors).toHaveLength(1);
+    });
+  });
 });

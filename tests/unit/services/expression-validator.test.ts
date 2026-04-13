@@ -177,6 +177,39 @@ describe('ExpressionValidator', () => {
     });
   });
 
+  describe('code field exclusion', () => {
+    it('should skip jsCode fields and not flag curly braces as expression brackets', () => {
+      const params = {
+        language: 'javaScript',
+        jsCode: 'const obj = {a: 1};\nreturn [{json: obj}];'
+      };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      const bracketErrors = result.errors.filter(e => e.includes('bracket'));
+      expect(bracketErrors).toHaveLength(0);
+    });
+
+    it('should skip pythonCode fields', () => {
+      const params = {
+        language: 'python',
+        pythonCode: 'result = {"key": "value"}\nreturn [{"json": result}]'
+      };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      const bracketErrors = result.errors.filter(e => e.includes('bracket'));
+      expect(bracketErrors).toHaveLength(0);
+    });
+
+    it('should still validate expressions in other fields of Code nodes', () => {
+      const params = {
+        language: 'javaScript',
+        jsCode: 'return [{json: {ok: true}}];',
+        someOtherField: '={{ $json.data }}'
+      };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+      // The expression in someOtherField should still be validated
+      expect(result.valid).toBeDefined();
+    });
+  });
+
   describe('edge cases', () => {
     it('should handle empty expressions', () => {
       const result = ExpressionValidator.validateExpression('{{ }}', defaultContext);

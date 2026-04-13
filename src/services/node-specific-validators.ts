@@ -1216,7 +1216,8 @@ export class NodeSpecificValidators {
     }
     
     // Check return statement and format
-    this.validateReturnStatement(code, language, errors, warnings, suggestions);
+    const mode = config.mode || 'runOnceForAllItems';
+    this.validateReturnStatement(code, language, errors, warnings, suggestions, mode);
     
     // Check n8n variable usage
     this.validateN8nVariables(code, language, warnings, suggestions, errors);
@@ -1372,7 +1373,8 @@ export class NodeSpecificValidators {
     language: string,
     errors: ValidationError[],
     warnings: ValidationWarning[],
-    suggestions: string[]
+    suggestions: string[],
+    mode: string = 'runOnceForAllItems'
   ): void {
     const hasReturn = /return\s+/.test(code);
     
@@ -1390,8 +1392,13 @@ export class NodeSpecificValidators {
     
     // JavaScript return format validation
     if (language === 'javaScript') {
+      // In runOnceForEachItem mode, bare objects and primitives are valid
+      // because n8n auto-wraps them in [{json: ...}].
+      // Only check return format in runOnceForAllItems mode (the default).
+      const isRunOncePerItem = mode === 'runOnceForEachItem';
+
       // Check for object return without array
-      if (/return\s+{(?!.*\[).*}\s*;?$/s.test(code) && !code.includes('json:')) {
+      if (!isRunOncePerItem && /return\s+{(?!.*\[).*}\s*;?$/s.test(code) && !code.includes('json:')) {
         errors.push({
           type: 'invalid_value',
           property: 'jsCode',
@@ -1399,7 +1406,7 @@ export class NodeSpecificValidators {
           fix: 'Wrap in array: return [{json: yourObject}]'
         });
       }
-      
+
       // Skip primitive return check when helper functions are present,
       // since we can't distinguish top-level vs nested returns without AST.
       // Matches: function name(), const/let/var name = [async] function/arrow.
@@ -1407,7 +1414,7 @@ export class NodeSpecificValidators {
       // alternation with nested `[^)]*` groups.
       const hasHelperFunctions = code.length <= MAX_CODE_LENGTH
         && /(?:function\s+\w+\s*\(|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>|\w+\s*=>))/.test(code);
-      if (!hasHelperFunctions && /return\s+(true|false|null|undefined|\d+|['"`])/m.test(code)) {
+      if (!isRunOncePerItem && !hasHelperFunctions && /return\s+(true|false|null|undefined|\d+|['"`])/m.test(code)) {
         errors.push({
           type: 'invalid_value',
           property: 'jsCode',
@@ -1437,8 +1444,10 @@ export class NodeSpecificValidators {
     
     // Python return format validation
     if (language === 'python') {
+      const isRunOncePerItem = mode === 'runOnceForEachItem';
+
       // Check for dict return without list
-      if (/return\s+{(?!.*\[).*}$/s.test(code)) {
+      if (!isRunOncePerItem && /return\s+{(?!.*\[).*}$/s.test(code)) {
         errors.push({
           type: 'invalid_value',
           property: 'pythonCode',
@@ -1446,9 +1455,9 @@ export class NodeSpecificValidators {
           fix: 'Wrap in list: return [{"json": your_dict}]'
         });
       }
-      
+
       // Check for primitive return
-      if (/return\s+(True|False|None|\d+|['"`])/m.test(code)) {
+      if (!isRunOncePerItem && /return\s+(True|False|None|\d+|['"`])/m.test(code)) {
         errors.push({
           type: 'invalid_value',
           property: 'pythonCode',

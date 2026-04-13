@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.47.7] - 2026-04-13
+
+### Fixed
+
+- **Multi-input Merge node false positive (Issue #721).** The strict validator hardcoded the Merge node's input count as 2, rejecting valid connections to inputs 2+ when `numberInputs` was set higher (e.g., combine mode with 4 inputs). The validator now reads the `numberInputs` parameter from the workflow node and skips input bounds checking entirely for non-Merge nodes, since many n8n nodes accept dynamic inputs that can't be determined from metadata alone.
+- **Code node return validation false positive (Issue #721).** The validator flagged `return {status: "ok"}` as "Return value must be an array of objects" even in `runOnceForEachItem` mode, where n8n auto-wraps bare objects. The return-format checks now respect the Code node's `mode` parameter for both JavaScript and Python.
+- **Controlled loop false positive (Issue #721).** Intentional pagination loops (e.g., HTTP Request → IF → Wait → HTTP Request) were flagged as "Workflow contains a cycle (infinite loop)" because the cycle detector only recognized SplitInBatches/Loop nodes as legitimate. It now also recognizes IF, Switch, and Filter nodes as conditional exit points that can bound a loop.
+- **Expression bracket scanning in Code node fields.** The expression validator scanned `jsCode`, `pythonCode`, and `functionCode` fields for unmatched `{{ }}` brackets, producing false positives on ordinary JavaScript/Python curly braces. These raw code fields are now excluded from expression bracket validation.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.47.6] - 2026-04-09
 
 ### Security
