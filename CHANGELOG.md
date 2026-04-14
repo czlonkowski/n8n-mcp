@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.47.8] - 2026-04-14
+
+### Fixed
+
+- **`n8n_create_workflow` / `n8n_update_full_workflow` failures from JSON-stringified array parameters (Issue #611, reported by @Mte90).** VS Code + GitHub Copilot and some other MCP clients serialize array/object tool arguments as JSON strings rather than native JSON types. This reliably affected workflows with 3+ nodes or complex nested parameters (e.g. `__rl` resource-locator objects, filter conditions), producing the error `"nodes must be an array, got string"` while 1-2 node payloads happened to slip through. The `n8n_update_partial_workflow` schema already preprocessed its `operations` field with `tryParseJson` (from the prior #600/#611 fix), but the create/update-full schemas did not — now they do. `nodes`, `connections`, and `settings` on both schemas, plus the `tags` filter on `n8n_list_workflows`, are wrapped with `z.preprocess(tryParseJson, ...)` so stringified JSON is parsed before Zod validation runs. The `tryParseJson` helper was relocated to sit next to its first usage rather than 2,400 lines below it.
+- **Silent JSON parse failures in `coerceStringifiedJsonParams` now log a warning.** The top-level client-bug workaround in `server.ts` had two `catch {}` blocks that swallowed parse errors without trace, so malformed or truncated JSON from buggy MCP clients presented only as downstream Zod errors. Both catch blocks now emit a `logger.warn` with the parse error, a 200-char value preview, and the length — enough to diagnose serialization bugs without digging into transport-level logs.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.47.7] - 2026-04-13
 
 ### Fixed

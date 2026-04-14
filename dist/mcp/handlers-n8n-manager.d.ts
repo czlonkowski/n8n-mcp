@@ -7,6 +7,7 @@ export declare function getInstanceCacheStatistics(): string;
 export declare function getInstanceCacheMetrics(): import("../utils/cache-utils").CacheMetrics;
 export declare function clearInstanceCache(): void;
 export declare function getN8nApiClient(context?: InstanceContext): N8nApiClient | null;
+export declare function tryParseJson(val: unknown): unknown;
 export declare function handleCreateWorkflow(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleGetWorkflow(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleGetWorkflowDetails(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
@@ -26,7 +27,6 @@ export declare function handleDiagnostic(request: any, context?: InstanceContext
 export declare function handleWorkflowVersions(args: unknown, repository: NodeRepository, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleDeployTemplate(args: unknown, templateService: TemplateService, repository: NodeRepository, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleTriggerWebhookWorkflow(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
-export declare function tryParseJson(val: unknown): unknown;
 export declare function handleCreateTable(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleListTables(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleGetTable(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;

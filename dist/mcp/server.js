@@ -877,7 +877,13 @@ class N8NDocumentationMCPServer {
                             coercedAny = true;
                         }
                     }
-                    catch { }
+                    catch (e) {
+                        logger_1.logger.warn(`Failed to parse string→${expectedType} for param "${key}" in tool "${toolName}"`, {
+                            error: e instanceof Error ? e.message : String(e),
+                            valuePreview: trimmed.substring(0, 200),
+                            valueLength: trimmed.length,
+                        });
+                    }
                     continue;
                 }
                 if (expectedType === 'array' && trimmed.startsWith('[')) {
@@ -888,7 +894,13 @@ class N8NDocumentationMCPServer {
                             coercedAny = true;
                         }
                     }
-                    catch { }
+                    catch (e) {
+                        logger_1.logger.warn(`Failed to parse string→${expectedType} for param "${key}" in tool "${toolName}"`, {
+                            error: e instanceof Error ? e.message : String(e),
+                            valuePreview: trimmed.substring(0, 200),
+                            valueLength: trimmed.length,
+                        });
+                    }
                     continue;
                 }
                 if (expectedType === 'number' || expectedType === 'integer') {

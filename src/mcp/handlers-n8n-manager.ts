@@ -371,12 +371,19 @@ function ensureApiConfigured(context?: InstanceContext): N8nApiClient {
   return client;
 }
 
+// MCP transports may serialize JSON objects/arrays as strings.
+// Parse them back, but return the original value on failure so Zod reports a proper type error.
+export function tryParseJson(val: unknown): unknown {
+  if (typeof val !== 'string') return val;
+  try { return JSON.parse(val); } catch { return val; }
+}
+
 // Zod schemas for input validation
 const createWorkflowSchema = z.object({
   name: z.string(),
-  nodes: z.array(z.any()),
-  connections: z.record(z.any()),
-  settings: z.object({
+  nodes: z.preprocess(tryParseJson, z.array(z.any())),
+  connections: z.preprocess(tryParseJson, z.record(z.any())),
+  settings: z.preprocess(tryParseJson, z.object({
     executionOrder: z.enum(['v0', 'v1']).optional(),
     timezone: z.string().optional(),
     saveDataErrorExecution: z.enum(['all', 'none']).optional(),
@@ -385,16 +392,16 @@ const createWorkflowSchema = z.object({
     saveExecutionProgress: z.boolean().optional(),
     executionTimeout: z.number().optional(),
     errorWorkflow: z.string().optional(),
-  }).optional(),
+  })).optional(),
   projectId: z.string().optional(),
 });
 
 const updateWorkflowSchema = z.object({
   id: z.string(),
   name: z.string().optional(),
-  nodes: z.array(z.any()).optional(),
-  connections: z.record(z.any()).optional(),
-  settings: z.any().optional(),
+  nodes: z.preprocess(tryParseJson, z.array(z.any())).optional(),
+  connections: z.preprocess(tryParseJson, z.record(z.any())).optional(),
+  settings: z.preprocess(tryParseJson, z.any()).optional(),
   createBackup: z.boolean().optional(),
   intent: z.string().optional(),
 });
@@ -403,7 +410,7 @@ const listWorkflowsSchema = z.object({
   limit: z.number().min(1).max(100).optional(),
   cursor: z.string().optional(),
   active: z.boolean().optional(),
-  tags: z.array(z.string()).optional(),
+  tags: z.preprocess(tryParseJson, z.array(z.string())).optional(),
   projectId: z.string().optional(),
   excludePinnedData: z.boolean().optional(),
 });
@@ -2755,13 +2762,6 @@ const listTablesSchema = z.object({
 const updateTableSchema = tableIdSchema.extend({
   name: z.string().min(1, 'New table name cannot be empty'),
 });
-
-// MCP transports may serialize JSON objects/arrays as strings.
-// Parse them back, but return the original value on failure so Zod reports a proper type error.
-export function tryParseJson(val: unknown): unknown {
-  if (typeof val !== 'string') return val;
-  try { return JSON.parse(val); } catch { return val; }
-}
 
 const coerceJsonArray = z.preprocess(tryParseJson, z.array(z.record(z.unknown())));
 const coerceJsonObject = z.preprocess(tryParseJson, z.record(z.unknown()));

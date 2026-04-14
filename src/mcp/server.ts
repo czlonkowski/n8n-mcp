@@ -1254,7 +1254,13 @@ export class N8NDocumentationMCPServer {
               coerced[key] = parsed;
               coercedAny = true;
             }
-          } catch { /* keep original */ }
+          } catch (e) {
+            logger.warn(`Failed to parse string→${expectedType} for param "${key}" in tool "${toolName}"`, {
+              error: e instanceof Error ? e.message : String(e),
+              valuePreview: trimmed.substring(0, 200),
+              valueLength: trimmed.length,
+            });
+          }
           continue;
         }
 
@@ -1265,7 +1271,13 @@ export class N8NDocumentationMCPServer {
               coerced[key] = parsed;
               coercedAny = true;
             }
-          } catch { /* keep original */ }
+          } catch (e) {
+            logger.warn(`Failed to parse string→${expectedType} for param "${key}" in tool "${toolName}"`, {
+              error: e instanceof Error ? e.message : String(e),
+              valuePreview: trimmed.substring(0, 200),
+              valueLength: trimmed.length,
+            });
+          }
           continue;
         }
 

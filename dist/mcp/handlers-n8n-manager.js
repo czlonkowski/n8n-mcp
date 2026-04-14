@@ -37,6 +37,7 @@ exports.getInstanceCacheStatistics = getInstanceCacheStatistics;
 exports.getInstanceCacheMetrics = getInstanceCacheMetrics;
 exports.clearInstanceCache = clearInstanceCache;
 exports.getN8nApiClient = getN8nApiClient;
+exports.tryParseJson = tryParseJson;
 exports.handleCreateWorkflow = handleCreateWorkflow;
 exports.handleGetWorkflow = handleGetWorkflow;
 exports.handleGetWorkflowDetails = handleGetWorkflowDetails;
@@ -56,7 +57,6 @@ exports.handleDiagnostic = handleDiagnostic;
 exports.handleWorkflowVersions = handleWorkflowVersions;
 exports.handleDeployTemplate = handleDeployTemplate;
 exports.handleTriggerWebhookWorkflow = handleTriggerWebhookWorkflow;
-exports.tryParseJson = tryParseJson;
 exports.handleCreateTable = handleCreateTable;
 exports.handleListTables = handleListTables;
 exports.handleGetTable = handleGetTable;
@@ -182,11 +182,21 @@ function ensureApiConfigured(context) {
     }
     return client;
 }
+function tryParseJson(val) {
+    if (typeof val !== 'string')
+        return val;
+    try {
+        return JSON.parse(val);
+    }
+    catch {
+        return val;
+    }
+}
 const createWorkflowSchema = zod_1.z.object({
     name: zod_1.z.string(),
-    nodes: zod_1.z.array(zod_1.z.any()),
-    connections: zod_1.z.record(zod_1.z.any()),
-    settings: zod_1.z.object({
+    nodes: zod_1.z.preprocess(tryParseJson, zod_1.z.array(zod_1.z.any())),
+    connections: zod_1.z.preprocess(tryParseJson, zod_1.z.record(zod_1.z.any())),
+    settings: zod_1.z.preprocess(tryParseJson, zod_1.z.object({
         executionOrder: zod_1.z.enum(['v0', 'v1']).optional(),
         timezone: zod_1.z.string().optional(),
         saveDataErrorExecution: zod_1.z.enum(['all', 'none']).optional(),
@@ -195,15 +205,15 @@ const createWorkflowSchema = zod_1.z.object({
         saveExecutionProgress: zod_1.z.boolean().optional(),
         executionTimeout: zod_1.z.number().optional(),
         errorWorkflow: zod_1.z.string().optional(),
-    }).optional(),
+    })).optional(),
     projectId: zod_1.z.string().optional(),
 });
 const updateWorkflowSchema = zod_1.z.object({
     id: zod_1.z.string(),
     name: zod_1.z.string().optional(),
-    nodes: zod_1.z.array(zod_1.z.any()).optional(),
-    connections: zod_1.z.record(zod_1.z.any()).optional(),
-    settings: zod_1.z.any().optional(),
+    nodes: zod_1.z.preprocess(tryParseJson, zod_1.z.array(zod_1.z.any())).optional(),
+    connections: zod_1.z.preprocess(tryParseJson, zod_1.z.record(zod_1.z.any())).optional(),
+    settings: zod_1.z.preprocess(tryParseJson, zod_1.z.any()).optional(),
     createBackup: zod_1.z.boolean().optional(),
     intent: zod_1.z.string().optional(),
 });
@@ -211,7 +221,7 @@ const listWorkflowsSchema = zod_1.z.object({
     limit: zod_1.z.number().min(1).max(100).optional(),
     cursor: zod_1.z.string().optional(),
     active: zod_1.z.boolean().optional(),
-    tags: zod_1.z.array(zod_1.z.string()).optional(),
+    tags: zod_1.z.preprocess(tryParseJson, zod_1.z.array(zod_1.z.string())).optional(),
     projectId: zod_1.z.string().optional(),
     excludePinnedData: zod_1.z.boolean().optional(),
 });
@@ -2104,16 +2114,6 @@ const listTablesSchema = zod_1.z.object({
 const updateTableSchema = tableIdSchema.extend({
     name: zod_1.z.string().min(1, 'New table name cannot be empty'),
 });
-function tryParseJson(val) {
-    if (typeof val !== 'string')
-        return val;
-    try {
-        return JSON.parse(val);
-    }
-    catch {
-        return val;
-    }
-}
 const coerceJsonArray = zod_1.z.preprocess(tryParseJson, zod_1.z.array(zod_1.z.record(zod_1.z.unknown())));
 const coerceJsonObject = zod_1.z.preprocess(tryParseJson, zod_1.z.record(zod_1.z.unknown()));
 const coerceJsonFilter = zod_1.z.preprocess(tryParseJson, dataTableFilterSchema);
