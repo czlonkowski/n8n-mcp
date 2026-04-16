@@ -5,7 +5,7 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
   category: 'workflow_management',
   essentials: {
     description: 'Manage n8n data tables and rows. Unified tool for table CRUD and row operations with filtering, pagination, and dry-run support.',
-    keyParameters: ['action', 'tableId', 'name', 'data', 'filter'],
+    keyParameters: ['action', 'tableId', 'name', 'columns', 'data', 'filter'],
     example: 'n8n_manage_datatable({action: "createTable", name: "Contacts", columns: [{name: "email", type: "string"}]})',
     performance: 'Fast (100-500ms)',
     tips: [
@@ -19,7 +19,7 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
   },
   full: {
     description: `**Table Actions:**
-- **createTable**: Create a new data table with optional typed columns
+- **createTable**: Create a new data table with one or more typed columns (columns are required)
 - **listTables**: List all data tables (paginated)
 - **getTable**: Get table details and column definitions by ID
 - **updateTable**: Rename an existing table (name only — column modifications not supported via API)
@@ -42,7 +42,7 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
       action: { type: 'string', required: true, description: 'Operation to perform' },
       tableId: { type: 'string', required: false, description: 'Data table ID (required for all except createTable and listTables)' },
       name: { type: 'string', required: false, description: 'For createTable/updateTable: table name' },
-      columns: { type: 'array', required: false, description: 'For createTable: column definitions [{name, type?}]. Types: string, number, boolean, date' },
+      columns: { type: 'array', required: false, description: 'For createTable (required, at least one): column definitions [{name, type?}]. Types: string, number, boolean, date' },
       data: { type: 'array|object', required: false, description: 'For insertRows: array of row objects. For updateRows/upsertRows: object with column values' },
       filter: { type: 'object', required: false, description: 'Filter: {type?: "and"|"or", filters: [{columnName, condition, value}]}' },
       limit: { type: 'number', required: false, description: 'For listTables/getRows: max results (1-100)' },
@@ -100,7 +100,7 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
       'deleteRows requires a filter — cannot delete all rows without one',
       'Column types cannot be changed after table creation via API',
       'updateTable can only rename the table (no column modifications via public API)',
-      'projectId cannot be set via the public API — use the n8n UI',
+      'createTable requires at least one column — schema cannot be changed after creation',
     ],
     relatedTools: ['n8n_create_workflow', 'n8n_list_workflows', 'n8n_health_check'],
   },

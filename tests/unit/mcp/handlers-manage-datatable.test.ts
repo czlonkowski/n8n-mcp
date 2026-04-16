@@ -132,27 +132,55 @@ describe('Data Table Handlers (n8n_manage_datatable)', () => {
       });
     });
 
-    it('should create data table with name only (no columns)', async () => {
+    it('should create data table in a specific project when projectId is provided', async () => {
       const createdTable = {
-        id: 'dt-456',
-        name: 'Empty Table',
+        id: 'dt-789',
+        name: 'Project Table',
+        projectId: 'proj-123',
       };
 
       mockApiClient.createDataTable.mockResolvedValue(createdTable);
 
       const result = await handlers.handleCreateTable({
-        name: 'Empty Table',
+        name: 'Project Table',
+        columns: [{ name: 'id', type: 'string' }],
+        projectId: 'proj-123',
       });
 
       expect(result).toEqual({
         success: true,
-        data: { id: 'dt-456', name: 'Empty Table' },
-        message: 'Data table "Empty Table" created with ID: dt-456',
+        data: { id: 'dt-789', name: 'Project Table' },
+        message: 'Data table "Project Table" created with ID: dt-789',
       });
 
       expect(mockApiClient.createDataTable).toHaveBeenCalledWith({
-        name: 'Empty Table',
+        name: 'Project Table',
+        columns: [{ name: 'id', type: 'string' }],
+        projectId: 'proj-123',
       });
+    });
+
+    it('should return Zod validation error when columns is missing', async () => {
+      const result = await handlers.handleCreateTable({
+        name: 'No Columns Table',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid input');
+      expect(result.details).toHaveProperty('errors');
+      expect(mockApiClient.createDataTable).not.toHaveBeenCalled();
+    });
+
+    it('should return Zod validation error when columns is an empty array', async () => {
+      const result = await handlers.handleCreateTable({
+        name: 'Empty Columns Table',
+        columns: [],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid input');
+      expect(result.details).toHaveProperty('errors');
+      expect(mockApiClient.createDataTable).not.toHaveBeenCalled();
     });
 
     it('should return error when API returns empty response (null)', async () => {
@@ -160,6 +188,7 @@ describe('Data Table Handlers (n8n_manage_datatable)', () => {
 
       const result = await handlers.handleCreateTable({
         name: 'Ghost Table',
+        columns: [{ name: 'id', type: 'string' }],
       });
 
       expect(result).toEqual({
@@ -174,6 +203,7 @@ describe('Data Table Handlers (n8n_manage_datatable)', () => {
 
       const result = await handlers.handleCreateTable({
         name: 'Broken Table',
+        columns: [{ name: 'id', type: 'string' }],
       });
 
       expect(result).toEqual({
@@ -195,6 +225,7 @@ describe('Data Table Handlers (n8n_manage_datatable)', () => {
 
       const result = await handlers.handleCreateTable({
         name: 'Test Table',
+        columns: [{ name: 'id', type: 'string' }],
       });
 
       expect(result).toEqual({
@@ -209,6 +240,7 @@ describe('Data Table Handlers (n8n_manage_datatable)', () => {
 
       const result = await handlers.handleCreateTable({
         name: 'Enterprise Table',
+        columns: [{ name: 'id', type: 'string' }],
       });
 
       expect(result.success).toBe(false);
@@ -222,6 +254,7 @@ describe('Data Table Handlers (n8n_manage_datatable)', () => {
 
       const result = await handlers.handleCreateTable({
         name: 'Error Table',
+        columns: [{ name: 'id', type: 'string' }],
       });
 
       expect(result).toEqual({

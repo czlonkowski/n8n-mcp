@@ -646,7 +646,7 @@ export class N8nApiClient {
     }
   }
 
-  async createDataTable(params: { name: string; columns?: DataTableColumn[] }): Promise<DataTable> {
+  async createDataTable(params: { name: string; columns?: DataTableColumn[]; projectId?: string }): Promise<DataTable> {
     try {
       const response = await this.client.post('/data-tables', params);
       return response.data;

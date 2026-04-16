@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.47.10] - 2026-04-16
+
+### Added
+
+- **`projectId` parameter on `n8n_manage_datatable` `createTable` (Issue #731, reported by @nesl247).** Tables can now be created directly in a specific n8n project instead of always landing in the default/personal project. The n8n public API (`POST /data-tables`) already accepts `projectId` as an optional body field — it was never wired through the MCP tool. `projectId` is threaded through the tool inputSchema, the Zod `createTableSchema`, and the `createDataTable` API client signature, matching the existing pattern on `n8n_create_workflow`. Workflows in team projects that rely on project-scoped data tables (e.g. queue-based processing) can now be fully automated via MCP.
+
+### Changed
+
+- **`columns` is now required (at least one) for `n8n_manage_datatable` `createTable`.** Previously the tool schema marked `columns` as optional, but the underlying n8n API rejects the call with `VALIDATION_ERROR: request/body must have required property 'columns'`. The Zod schema now enforces `.min(1, 'At least one column is required')` so the failure surfaces at the MCP boundary with a clear message instead of an opaque 400 from the API round-trip. Tool inputSchema description, `keyParameters`, `full.description`, parameter docs, and pitfalls are all updated to match.
+
+### Fixed
+
+- **Removed incorrect pitfall claiming `projectId` could not be set via the public API** in `n8n_manage_datatable` tool docs. The n8n API has always supported it; this documentation was misleading agents into manual UI workarounds.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.47.9] - 2026-04-16
 
 ### Changed

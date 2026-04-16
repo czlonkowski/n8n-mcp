@@ -2751,7 +2751,8 @@ const createTableSchema = z.object({
   columns: z.array(z.object({
     name: z.string().min(1, 'Column name cannot be empty'),
     type: z.enum(['string', 'number', 'boolean', 'date']).optional(),
-  })).optional(),
+  })).min(1, 'At least one column is required'),
+  projectId: z.string().optional(),
 });
 
 const listTablesSchema = z.object({
