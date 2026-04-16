@@ -545,6 +545,12 @@ class TemplateRepository {
         const result = this.db.prepare(query).get(...params);
         return result.count;
     }
+    hasMetadataCoverage() {
+        const row = this.db.prepare(`
+      SELECT 1 FROM templates WHERE metadata_json IS NOT NULL LIMIT 1
+    `).get();
+        return !!row;
+    }
     getAvailableCategories() {
         const results = this.db.prepare(`
       SELECT DISTINCT json_extract(value, '$') as category

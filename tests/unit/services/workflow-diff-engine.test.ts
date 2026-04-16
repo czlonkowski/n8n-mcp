@@ -1798,6 +1798,57 @@ describe('WorkflowDiffEngine', () => {
       expect(result.errors![0].message).toContain('Slack');
     });
 
+    it('should not duplicate edge when rewiring to an already-connected target (regression #7)', async () => {
+      // Setup: Webhook → HTTP Request (baseWorkflow) AND Webhook → Slack (parallel).
+      // Rewire from HTTP Request to Slack. Slack is already a target of Webhook,
+      // so the result should contain exactly one Slack edge (not two) and no
+      // HTTP Request edge.
+      const addSlackConn: AddConnectionOperation = {
+        type: 'addConnection',
+        source: 'Webhook',
+        target: 'Slack'
+      };
+
+      const rewire: any = {
+        type: 'rewireConnection',
+        source: 'Webhook',
+        from: 'HTTP Request',
+        to: 'Slack'
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [addSlackConn, rewire]
+      });
+
+      expect(result.success).toBe(true);
+      const webhookEdges = result.workflow!.connections['Webhook']['main'][0];
+      const slackEdges = webhookEdges.filter((c: any) => c.node === 'Slack');
+      const httpEdges = webhookEdges.filter((c: any) => c.node === 'HTTP Request');
+      expect(slackEdges).toHaveLength(1);
+      expect(httpEdges).toHaveLength(0);
+    });
+
+    it('should rewire correctly when source/from/to are passed as node IDs (regression #7)', async () => {
+      // baseWorkflow nodes have fixed ids: webhook-1, http-1, slack-1
+      const rewireById: any = {
+        type: 'rewireConnection',
+        source: 'webhook-1',
+        from: 'http-1',
+        to: 'slack-1'
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [rewireById]
+      });
+
+      expect(result.success).toBe(true);
+      const webhookEdges = result.workflow!.connections['Webhook']['main'][0];
+      expect(webhookEdges.some((c: any) => c.node === 'HTTP Request')).toBe(false);
+      expect(webhookEdges.some((c: any) => c.node === 'Slack')).toBe(true);
+    });
+
     it('should handle rewiring IF node branches correctly', async () => {
       // Add IF node with true/false branches
       const addIF: AddNodeOperation = {

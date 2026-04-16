@@ -2105,7 +2105,8 @@ const createTableSchema = zod_1.z.object({
     columns: zod_1.z.array(zod_1.z.object({
         name: zod_1.z.string().min(1, 'Column name cannot be empty'),
         type: zod_1.z.enum(['string', 'number', 'boolean', 'date']).optional(),
-    })).optional(),
+    })).min(1, 'At least one column is required'),
+    projectId: zod_1.z.string().optional(),
 });
 const listTablesSchema = zod_1.z.object({
     limit: zod_1.z.number().min(1).max(100).optional(),

@@ -569,6 +569,13 @@ class NodeRepository {
     `).all(normalizedType, fromVersion, toVersion);
         return rows.map(row => this.parsePropertyChangeRow(row));
     }
+    hasVersionMetadata(nodeType) {
+        const normalizedType = node_type_normalizer_1.NodeTypeNormalizer.normalizeToFullForm(nodeType);
+        const row = this.db.prepare(`
+      SELECT 1 FROM node_versions WHERE node_type = ? LIMIT 1
+    `).get(normalizedType);
+        return !!row;
+    }
     hasVersionUpgradePath(nodeType, fromVersion, toVersion) {
         const versions = this.getNodeVersions(nodeType);
         if (versions.length === 0)

@@ -101,6 +101,7 @@ export declare class NodeRepository {
     getPropertyChanges(nodeType: string, fromVersion: string, toVersion: string): any[];
     getBreakingChanges(nodeType: string, fromVersion: string, toVersion?: string): any[];
     getAutoMigratableChanges(nodeType: string, fromVersion: string, toVersion: string): any[];
+    hasVersionMetadata(nodeType: string): boolean;
     hasVersionUpgradePath(nodeType: string, fromVersion: string, toVersion: string): boolean;
     getVersionedNodesCount(): number;
     private parseNodeVersionRow;

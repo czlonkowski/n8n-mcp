@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.47.12] - 2026-04-17
+
+### Fixed
+
+- **`get_node` version modes no longer return `upgradeSafe: true` with no data (QA #1 + #12).** `versions`, `compare`, `breaking`, and `migrations` modes now check whether version metadata is populated for the node before computing their booleans. When metadata is missing, they return `{ available: false, reason: "Version metadata not populated…" }` instead of a confidently-zero response. Agents that previously saw `upgradeSafe: true` for a known-breaking HTTP Request v1 → v4 upgrade will now get an explicit "no data" signal. `getVersionSummary` also falls back to the node row's `version` field so `detail: standard` no longer reports `currentVersion: "unknown"` while `isVersioned: true` in the same response.
+- **`rewireConnection` no longer silently corrupts the connection map (QA #7).** `applyRewireConnection` now resolves `source` / `from` / `to` to concrete node objects up front, passes resolved names through to the inner remove/add calls, skips the add when `to` is already a target of `source` (previously caused a duplicated edge), and asserts an edge-count invariant that throws if the rewrite would leave the graph in an inconsistent state. Added regression tests for name-based rewire, ID-based rewire, and rewire-to-already-connected-target.
+- **`search_templates` `by_metadata` returns `available: false` when metadata is missing (QA #11).** Previously returned an empty `items: []` that callers couldn't distinguish from "no matches". Now returns `{ available: false, reason: "Template metadata has not been enriched yet…" }` when no templates have `metadata_json` populated, and `available: true` on hits. Callers get an actionable signal to fall back to `keyword`, `by_nodes`, or `patterns`.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.47.11] - 2026-04-16
 
 ### Security

@@ -67,6 +67,7 @@ export declare class TemplateService {
         requiredService?: string;
         targetAudience?: string;
     }, limit?: number, offset?: number): Promise<PaginatedResponse<TemplateInfo>>;
+    hasMetadataCoverage(): Promise<boolean>;
     getAvailableCategories(): Promise<string[]>;
     getAvailableTargetAudiences(): Promise<string[]>;
     getTemplatesByCategory(category: string, limit?: number, offset?: number): Promise<PaginatedResponse<TemplateInfo>>;

@@ -970,6 +970,18 @@ export class NodeRepository {
   }
 
   /**
+   * Whether any version metadata rows exist for this node type.
+   * Distinguishes "no known changes" from "no data" for get_node version modes.
+   */
+  hasVersionMetadata(nodeType: string): boolean {
+    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
+    const row = this.db.prepare(`
+      SELECT 1 FROM node_versions WHERE node_type = ? LIMIT 1
+    `).get(normalizedType) as any;
+    return !!row;
+  }
+
+  /**
    * Check if a version upgrade path exists between two versions
    */
   hasVersionUpgradePath(nodeType: string, fromVersion: string, toVersion: string): boolean {

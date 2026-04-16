@@ -1137,28 +1137,66 @@ export class WorkflowDiffEngine {
    * @param operation - Rewire operation specifying source, from, and to
    */
   private applyRewireConnection(workflow: Workflow, operation: RewireConnectionOperation): void {
+    // Resolve all three node refs up front so downstream calls never operate on
+    // half-resolved inputs. This prevents the silent-corruption case where an
+    // un-resolvable "from" caused removeConnection to no-op while addConnection
+    // still appended a duplicate edge to "to". Fail loudly instead.
+    const sourceNode = this.findNode(workflow, operation.source, operation.source);
+    const fromNode = this.findNode(workflow, operation.from, operation.from);
+    const toNode = this.findNode(workflow, operation.to, operation.to);
+    if (!sourceNode || !fromNode || !toNode) {
+      throw new Error(
+        `rewireConnection: unresolved node reference(s). ` +
+        `source=${JSON.stringify(operation.source)} (${sourceNode ? 'ok' : 'missing'}), ` +
+        `from=${JSON.stringify(operation.from)} (${fromNode ? 'ok' : 'missing'}), ` +
+        `to=${JSON.stringify(operation.to)} (${toNode ? 'ok' : 'missing'}). ` +
+        `Available nodes: ${workflow.nodes.map(n => `"${n.name}" (${n.id})`).join(', ')}`
+      );
+    }
+
     // Resolve smart parameters (branch, case) to technical parameters
     const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation);
 
-    // First, remove the old connection (source → from)
+    const slotEdges = (): Array<{ node: string }> =>
+      workflow.connections[sourceNode.name]?.[sourceOutput]?.[sourceIndex] ?? [];
+    const edgesToFromBefore = slotEdges().filter(c => c.node === fromNode.name).length;
+    const toAlreadyPresent = slotEdges().some(c => c.node === toNode.name);
+
+    // Remove source → from using resolved names (not raw op strings, which may
+    // be IDs that the inner apply would have to re-resolve).
     this.applyRemoveConnection(workflow, {
       type: 'removeConnection',
-      source: operation.source,
-      target: operation.from,
+      source: sourceNode.name,
+      target: fromNode.name,
       sourceOutput: sourceOutput,
       targetInput: operation.targetInput
     });
 
-    // Then, add the new connection (source → to)
-    this.applyAddConnection(workflow, {
-      type: 'addConnection',
-      source: operation.source,
-      target: operation.to,
-      sourceOutput: sourceOutput,
-      targetInput: operation.targetInput,
-      sourceIndex: sourceIndex,
-      targetIndex: 0 // Default target index for new connection
-    });
+    // Skip the add if "to" was already connected at this slot — otherwise a
+    // rewire where "to" is already a target would silently duplicate the edge.
+    if (!toAlreadyPresent) {
+      this.applyAddConnection(workflow, {
+        type: 'addConnection',
+        source: sourceNode.name,
+        target: toNode.name,
+        sourceOutput: sourceOutput,
+        targetInput: operation.targetInput,
+        sourceIndex: sourceIndex,
+        targetIndex: 0
+      });
+    }
+
+    // Invariant: the "from" edge must be gone; we never silently leave a
+    // corrupted map. If the assertion fails, unwinding is the caller's job
+    // (the diff engine's atomic rollback catches this).
+    const edgesToFromAfter = slotEdges().filter(c => c.node === fromNode.name).length;
+    if (edgesToFromAfter !== edgesToFromBefore - 1) {
+      throw new Error(
+        `rewireConnection invariant violated: expected "${sourceNode.name}" → "${fromNode.name}" ` +
+        `edge count to drop from ${edgesToFromBefore} to ${edgesToFromBefore - 1}, got ${edgesToFromAfter}. ` +
+        `Refusing to commit a corrupted connection map.`
+      );
+    }
   }
 
   // Metadata operation appliers

@@ -54,6 +54,7 @@ export declare class N8nApiClient {
     createDataTable(params: {
         name: string;
         columns?: DataTableColumn[];
+        projectId?: string;
     }): Promise<DataTable>;
     listDataTables(params?: DataTableListParams): Promise<{
         data: DataTable[];

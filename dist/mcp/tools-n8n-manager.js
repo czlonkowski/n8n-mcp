@@ -603,7 +603,7 @@ exports.n8nManagementTools = [
                 name: { type: 'string', description: 'For createTable: table name. For updateTable: new name (rename only — schema is immutable after creation)' },
                 columns: {
                     type: 'array',
-                    description: 'For createTable only: column definitions (schema is immutable after creation via public API)',
+                    description: 'For createTable (required, at least one): column definitions. Schema is immutable after creation via public API.',
                     items: {
                         type: 'object',
                         properties: {
@@ -625,6 +625,7 @@ exports.n8nManagementTools = [
                 returnType: { type: 'string', enum: ['count', 'id', 'all'], description: 'For insertRows: what to return (default: count)' },
                 returnData: { type: 'boolean', description: 'For updateRows/upsertRows/deleteRows: return affected rows (default: false)' },
                 dryRun: { type: 'boolean', description: 'For updateRows/upsertRows/deleteRows: preview without applying (default: false)' },
+                projectId: { type: 'string', description: 'For createTable: project ID to create the table in. If omitted, uses the default project.' },
             },
             required: ['action'],
         },

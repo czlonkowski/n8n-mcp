@@ -75,6 +75,7 @@ export declare class TemplateRepository {
         requiredService?: string;
         targetAudience?: string;
     }): number;
+    hasMetadataCoverage(): boolean;
     getAvailableCategories(): string[];
     getAvailableTargetAudiences(): string[];
     getTemplatesByCategory(category: string, limit?: number, offset?: number): StoredTemplate[];

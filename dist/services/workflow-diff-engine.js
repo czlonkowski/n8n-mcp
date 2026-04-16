@@ -835,23 +835,44 @@ class WorkflowDiffEngine {
         }
     }
     applyRewireConnection(workflow, operation) {
+        const sourceNode = this.findNode(workflow, operation.source, operation.source);
+        const fromNode = this.findNode(workflow, operation.from, operation.from);
+        const toNode = this.findNode(workflow, operation.to, operation.to);
+        if (!sourceNode || !fromNode || !toNode) {
+            throw new Error(`rewireConnection: unresolved node reference(s). ` +
+                `source=${JSON.stringify(operation.source)} (${sourceNode ? 'ok' : 'missing'}), ` +
+                `from=${JSON.stringify(operation.from)} (${fromNode ? 'ok' : 'missing'}), ` +
+                `to=${JSON.stringify(operation.to)} (${toNode ? 'ok' : 'missing'}). ` +
+                `Available nodes: ${workflow.nodes.map(n => `"${n.name}" (${n.id})`).join(', ')}`);
+        }
         const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation);
+        const slotEdges = () => workflow.connections[sourceNode.name]?.[sourceOutput]?.[sourceIndex] ?? [];
+        const edgesToFromBefore = slotEdges().filter(c => c.node === fromNode.name).length;
+        const toAlreadyPresent = slotEdges().some(c => c.node === toNode.name);
         this.applyRemoveConnection(workflow, {
             type: 'removeConnection',
-            source: operation.source,
-            target: operation.from,
+            source: sourceNode.name,
+            target: fromNode.name,
             sourceOutput: sourceOutput,
             targetInput: operation.targetInput
         });
-        this.applyAddConnection(workflow, {
-            type: 'addConnection',
-            source: operation.source,
-            target: operation.to,
-            sourceOutput: sourceOutput,
-            targetInput: operation.targetInput,
-            sourceIndex: sourceIndex,
-            targetIndex: 0
-        });
+        if (!toAlreadyPresent) {
+            this.applyAddConnection(workflow, {
+                type: 'addConnection',
+                source: sourceNode.name,
+                target: toNode.name,
+                sourceOutput: sourceOutput,
+                targetInput: operation.targetInput,
+                sourceIndex: sourceIndex,
+                targetIndex: 0
+            });
+        }
+        const edgesToFromAfter = slotEdges().filter(c => c.node === fromNode.name).length;
+        if (edgesToFromAfter !== edgesToFromBefore - 1) {
+            throw new Error(`rewireConnection invariant violated: expected "${sourceNode.name}" → "${fromNode.name}" ` +
+                `edge count to drop from ${edgesToFromBefore} to ${edgesToFromBefore - 1}, got ${edgesToFromAfter}. ` +
+                `Refusing to commit a corrupted connection map.`);
+        }
     }
     applyUpdateSettings(workflow, operation) {
         if (operation.settings && Object.keys(operation.settings).length > 0) {

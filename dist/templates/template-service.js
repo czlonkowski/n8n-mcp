@@ -164,6 +164,9 @@ class TemplateService {
             hasMore: offset + limit < total
         };
     }
+    async hasMetadataCoverage() {
+        return this.repository.hasMetadataCoverage();
+    }
     async getAvailableCategories() {
         return this.repository.getAvailableCategories();
     }

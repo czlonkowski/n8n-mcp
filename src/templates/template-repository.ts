@@ -804,6 +804,17 @@ export class TemplateRepository {
   }
   
   /**
+   * Whether any templates have metadata_json populated.
+   * Lets callers distinguish "metadata not yet enriched" from "no matches".
+   */
+  hasMetadataCoverage(): boolean {
+    const row = this.db.prepare(`
+      SELECT 1 FROM templates WHERE metadata_json IS NOT NULL LIMIT 1
+    `).get() as { 1?: number } | undefined;
+    return !!row;
+  }
+
+  /**
    * Get unique categories from metadata
    */
   getAvailableCategories(): string[] {

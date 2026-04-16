@@ -57,6 +57,7 @@ export declare class N8NDocumentationMCPServer {
     private handleInfoMode;
     private handleVersionMode;
     private getVersionSummary;
+    private versionMetadataUnavailable;
     private getVersionHistory;
     private compareVersions;
     private getBreakingChanges;

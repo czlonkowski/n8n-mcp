@@ -3134,9 +3134,12 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
 
     const versions = this.repository!.getNodeVersions(nodeType);
     const latest = this.repository!.getLatestNodeVersion(nodeType);
+    // Fall back to the node row's current version so callers don't see
+    // "unknown" when version history rows haven't been populated.
+    const nodeRow = latest ? null : this.repository!.getNode(nodeType);
 
     const summary: VersionSummary = {
-      currentVersion: latest?.version || 'unknown',
+      currentVersion: latest?.version ?? nodeRow?.version ?? 'unknown',
       totalVersions: versions.length,
       hasVersionHistory: versions.length > 0
     };
@@ -3148,13 +3151,35 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
   }
 
   /**
+   * Shape returned by version modes when no metadata rows have been populated.
+   * Callers MUST treat this as "no data" — not as "no breaking changes".
+   */
+  private versionMetadataUnavailable(nodeType: string, extra: Record<string, unknown> = {}): any {
+    const node = this.repository!.getNode(nodeType);
+    return {
+      nodeType,
+      available: false,
+      reason:
+        'Version metadata not populated for this node. Callers must not infer upgrade safety from this response.',
+      currentVersion: node?.version ?? null,
+      isVersioned: node?.isVersioned ?? false,
+      ...extra
+    };
+  }
+
+  /**
    * Get complete version history for a node
    */
   private getVersionHistory(nodeType: string): any {
+    if (!this.repository!.hasVersionMetadata(nodeType)) {
+      return this.versionMetadataUnavailable(nodeType, { totalVersions: 0, versions: [] });
+    }
+
     const versions = this.repository!.getNodeVersions(nodeType);
 
     return {
       nodeType,
+      available: true,
       totalVersions: versions.length,
       versions: versions.map(v => ({
         version: v.version,
@@ -3165,11 +3190,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         breakingChangesCount: (v.breakingChanges || []).length,
         deprecatedProperties: v.deprecatedProperties || [],
         addedProperties: v.addedProperties || []
-      })),
-      available: versions.length > 0,
-      message: versions.length === 0 ?
-        'No version history available. Version tracking may not be enabled for this node.' :
-        undefined
+      }))
     };
   }
 
@@ -3181,6 +3202,15 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     fromVersion: string,
     toVersion?: string
   ): any {
+    if (!this.repository!.hasVersionMetadata(nodeType)) {
+      return this.versionMetadataUnavailable(nodeType, {
+        fromVersion,
+        toVersion: toVersion ?? 'latest',
+        totalChanges: 0,
+        changes: []
+      });
+    }
+
     const latest = this.repository!.getLatestNodeVersion(nodeType);
     const targetVersion = toVersion || latest?.version;
 
@@ -3196,6 +3226,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
 
     return {
       nodeType,
+      available: true,
       fromVersion,
       toVersion: targetVersion,
       totalChanges: changes.length,
@@ -3221,6 +3252,17 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     fromVersion: string,
     toVersion?: string
   ): any {
+    if (!this.repository!.hasVersionMetadata(nodeType)) {
+      // Critical: do NOT return upgradeSafe: true when we have no data.
+      // Agents rely on this field to decide whether to proceed with an upgrade.
+      return this.versionMetadataUnavailable(nodeType, {
+        fromVersion,
+        toVersion: toVersion ?? 'latest',
+        totalBreakingChanges: 0,
+        changes: []
+      });
+    }
+
     const breakingChanges = this.repository!.getBreakingChanges(
       nodeType,
       fromVersion,
@@ -3229,6 +3271,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
 
     return {
       nodeType,
+      available: true,
       fromVersion,
       toVersion: toVersion || 'latest',
       totalBreakingChanges: breakingChanges.length,
@@ -3254,6 +3297,16 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     fromVersion: string,
     toVersion: string
   ): any {
+    if (!this.repository!.hasVersionMetadata(nodeType)) {
+      return this.versionMetadataUnavailable(nodeType, {
+        fromVersion,
+        toVersion,
+        autoMigratableChanges: 0,
+        totalChanges: 0,
+        migrations: []
+      });
+    }
+
     const migrations = this.repository!.getAutoMigratableChanges(
       nodeType,
       fromVersion,
@@ -3268,6 +3321,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
 
     return {
       nodeType,
+      available: true,
       fromVersion,
       toVersion,
       autoMigratableChanges: migrations.length,
@@ -4086,9 +4140,30 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
   }, limit: number = 20, offset: number = 0): Promise<any> {
     await this.ensureInitialized();
     if (!this.templateService) throw new Error('Template service not initialized');
-    
+
+    // If metadata hasn't been enriched for ANY template, every by_metadata
+    // query will return empty. Surface that explicitly instead of silently
+    // returning an empty items array — otherwise callers can't tell "no
+    // matches" apart from "feature not yet populated".
+    const metadataAvailable = await this.templateService.hasMetadataCoverage();
+    if (!metadataAvailable) {
+      return {
+        available: false,
+        reason:
+          'Template metadata has not been enriched yet. by_metadata search requires ' +
+          'running the metadata enrichment job (see scripts/fetch-templates). ' +
+          'Use searchMode "keyword", "by_nodes", or "patterns" in the meantime.',
+        filters,
+        items: [],
+        total: 0,
+        limit,
+        offset,
+        hasMore: false
+      };
+    }
+
     const result = await this.templateService.searchTemplatesByMetadata(filters, limit, offset);
-    
+
     // Build filter summary for feedback
     const filterSummary: string[] = [];
     if (filters.category) filterSummary.push(`category: ${filters.category}`);
@@ -4097,14 +4172,15 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     if (filters.minSetupMinutes) filterSummary.push(`min setup: ${filters.minSetupMinutes} min`);
     if (filters.requiredService) filterSummary.push(`service: ${filters.requiredService}`);
     if (filters.targetAudience) filterSummary.push(`audience: ${filters.targetAudience}`);
-    
+
     if (result.items.length === 0 && offset === 0) {
       // Get available categories and audiences for suggestions
       const availableCategories = await this.templateService.getAvailableCategories();
       const availableAudiences = await this.templateService.getAvailableTargetAudiences();
-      
+
       return {
         ...result,
+        available: true,
         message: `No templates found with filters: ${filterSummary.join(', ')}`,
         availableCategories: availableCategories.slice(0, 10),
         availableAudiences: availableAudiences.slice(0, 5),
@@ -4114,12 +4190,13 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     
     return {
       ...result,
+      available: true,
       filters,
       filterSummary: filterSummary.join(', '),
       tip: `Found ${result.total} templates matching filters. Showing ${result.items.length}. Each includes AI-generated metadata.`
     };
   }
-  
+
   private getTaskDescription(task: string): string {
     const descriptions: Record<string, string> = {
       'ai_automation': 'AI-powered workflows using OpenAI, LangChain, and other AI tools',

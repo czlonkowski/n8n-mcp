@@ -2308,18 +2308,34 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         }
         const versions = this.repository.getNodeVersions(nodeType);
         const latest = this.repository.getLatestNodeVersion(nodeType);
+        const nodeRow = latest ? null : this.repository.getNode(nodeType);
         const summary = {
-            currentVersion: latest?.version || 'unknown',
+            currentVersion: latest?.version ?? nodeRow?.version ?? 'unknown',
             totalVersions: versions.length,
             hasVersionHistory: versions.length > 0
         };
         this.cache.set(cacheKey, summary, 86400000);
         return summary;
     }
+    versionMetadataUnavailable(nodeType, extra = {}) {
+        const node = this.repository.getNode(nodeType);
+        return {
+            nodeType,
+            available: false,
+            reason: 'Version metadata not populated for this node. Callers must not infer upgrade safety from this response.',
+            currentVersion: node?.version ?? null,
+            isVersioned: node?.isVersioned ?? false,
+            ...extra
+        };
+    }
     getVersionHistory(nodeType) {
+        if (!this.repository.hasVersionMetadata(nodeType)) {
+            return this.versionMetadataUnavailable(nodeType, { totalVersions: 0, versions: [] });
+        }
         const versions = this.repository.getNodeVersions(nodeType);
         return {
             nodeType,
+            available: true,
             totalVersions: versions.length,
             versions: versions.map(v => ({
                 version: v.version,
@@ -2330,14 +2346,18 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
                 breakingChangesCount: (v.breakingChanges || []).length,
                 deprecatedProperties: v.deprecatedProperties || [],
                 addedProperties: v.addedProperties || []
-            })),
-            available: versions.length > 0,
-            message: versions.length === 0 ?
-                'No version history available. Version tracking may not be enabled for this node.' :
-                undefined
+            }))
         };
     }
     compareVersions(nodeType, fromVersion, toVersion) {
+        if (!this.repository.hasVersionMetadata(nodeType)) {
+            return this.versionMetadataUnavailable(nodeType, {
+                fromVersion,
+                toVersion: toVersion ?? 'latest',
+                totalChanges: 0,
+                changes: []
+            });
+        }
         const latest = this.repository.getLatestNodeVersion(nodeType);
         const targetVersion = toVersion || latest?.version;
         if (!targetVersion) {
@@ -2346,6 +2366,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         const changes = this.repository.getPropertyChanges(nodeType, fromVersion, targetVersion);
         return {
             nodeType,
+            available: true,
             fromVersion,
             toVersion: targetVersion,
             totalChanges: changes.length,
@@ -2363,9 +2384,18 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         };
     }
     getBreakingChanges(nodeType, fromVersion, toVersion) {
+        if (!this.repository.hasVersionMetadata(nodeType)) {
+            return this.versionMetadataUnavailable(nodeType, {
+                fromVersion,
+                toVersion: toVersion ?? 'latest',
+                totalBreakingChanges: 0,
+                changes: []
+            });
+        }
         const breakingChanges = this.repository.getBreakingChanges(nodeType, fromVersion, toVersion);
         return {
             nodeType,
+            available: true,
             fromVersion,
             toVersion: toVersion || 'latest',
             totalBreakingChanges: breakingChanges.length,
@@ -2383,10 +2413,20 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         };
     }
     getMigrations(nodeType, fromVersion, toVersion) {
+        if (!this.repository.hasVersionMetadata(nodeType)) {
+            return this.versionMetadataUnavailable(nodeType, {
+                fromVersion,
+                toVersion,
+                autoMigratableChanges: 0,
+                totalChanges: 0,
+                migrations: []
+            });
+        }
         const migrations = this.repository.getAutoMigratableChanges(nodeType, fromVersion, toVersion);
         const allChanges = this.repository.getPropertyChanges(nodeType, fromVersion, toVersion);
         return {
             nodeType,
+            available: true,
             fromVersion,
             toVersion,
             autoMigratableChanges: migrations.length,
@@ -3021,6 +3061,21 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         await this.ensureInitialized();
         if (!this.templateService)
             throw new Error('Template service not initialized');
+        const metadataAvailable = await this.templateService.hasMetadataCoverage();
+        if (!metadataAvailable) {
+            return {
+                available: false,
+                reason: 'Template metadata has not been enriched yet. by_metadata search requires ' +
+                    'running the metadata enrichment job (see scripts/fetch-templates). ' +
+                    'Use searchMode "keyword", "by_nodes", or "patterns" in the meantime.',
+                filters,
+                items: [],
+                total: 0,
+                limit,
+                offset,
+                hasMore: false
+            };
+        }
         const result = await this.templateService.searchTemplatesByMetadata(filters, limit, offset);
         const filterSummary = [];
         if (filters.category)
@@ -3040,6 +3095,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
             const availableAudiences = await this.templateService.getAvailableTargetAudiences();
             return {
                 ...result,
+                available: true,
                 message: `No templates found with filters: ${filterSummary.join(', ')}`,
                 availableCategories: availableCategories.slice(0, 10),
                 availableAudiences: availableAudiences.slice(0, 5),
@@ -3048,6 +3104,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         }
         return {
             ...result,
+            available: true,
             filters,
             filterSummary: filterSummary.join(', '),
             tip: `Found ${result.total} templates matching filters. Showing ${result.items.length}. Each includes AI-generated metadata.`
