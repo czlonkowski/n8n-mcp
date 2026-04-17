@@ -758,6 +758,14 @@ export class WorkflowDiffEngine {
   }
 
   private validateRewireConnection(workflow: Workflow, operation: RewireConnectionOperation): string | null {
+    // Reject from === to up front. If both resolve to the same node, the
+    // apply would remove source→from and then skip the add (because "to" is
+    // already present — which is "from"), leaving source disconnected.
+    // Safer to fail the op than to silently drop the edge.
+    if (operation.from === operation.to) {
+      return `rewireConnection: "from" and "to" must refer to different nodes (got "${operation.from}" for both).`;
+    }
+
     // Validate source node exists
     const sourceNode = this.findNode(workflow, operation.source, operation.source);
     if (!sourceNode) {
@@ -1174,13 +1182,30 @@ export class WorkflowDiffEngine {
       );
     }
 
+    // Catch the case where "from" and "to" are different strings (one ID, one
+    // name) that resolve to the same node. The string-level guard in the
+    // validator only covers identical inputs; this covers the aliased case.
+    if (fromNode.id === toNode.id) {
+      throw new Error(
+        `rewireConnection: "from" and "to" resolve to the same node "${fromNode.name}" (id: ${fromNode.id}). ` +
+        `A rewire requires a distinct target.`
+      );
+    }
+
     // Resolve smart parameters (branch, case) to technical parameters
     const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation);
 
-    const slotEdges = (): Array<{ node: string }> =>
-      workflow.connections[sourceNode.name]?.[sourceOutput]?.[sourceIndex] ?? [];
-    const edgesToFromBefore = slotEdges().filter(c => c.node === fromNode.name).length;
-    const toAlreadyPresent = slotEdges().some(c => c.node === toNode.name);
+    // Count edges to "from" across ALL sourceIndex slots on this output,
+    // because `applyRemoveConnection` filters by target node name across the
+    // entire output (not just the specific sourceIndex). A per-slot count
+    // would throw spuriously when multiple edges to "from" existed.
+    const totalFromEdges = (): number => {
+      const slots = workflow.connections[sourceNode.name]?.[sourceOutput] ?? [];
+      return slots.reduce((acc, slot) => acc + (slot ?? []).filter(c => c.node === fromNode.name).length, 0);
+    };
+    const fromEdgesBefore = totalFromEdges();
+    const toAlreadyPresent = (workflow.connections[sourceNode.name]?.[sourceOutput]?.[sourceIndex] ?? [])
+      .some(c => c.node === toNode.name);
 
     // Remove source → from using resolved names (not raw op strings, which may
     // be IDs that the inner apply would have to re-resolve).
@@ -1206,14 +1231,15 @@ export class WorkflowDiffEngine {
       });
     }
 
-    // Invariant: the "from" edge must be gone; we never silently leave a
-    // corrupted map. If the assertion fails, unwinding is the caller's job
-    // (the diff engine's atomic rollback catches this).
-    const edgesToFromAfter = slotEdges().filter(c => c.node === fromNode.name).length;
-    if (edgesToFromAfter !== edgesToFromBefore - 1) {
+    // Invariant: all edges to "from" on this output must now be gone, since
+    // applyRemoveConnection strips every match. If any remain, the map is
+    // corrupted — refuse to commit. The diff engine's atomic rollback
+    // surfaces the throw to the caller.
+    const fromEdgesAfter = totalFromEdges();
+    if (fromEdgesBefore > 0 && fromEdgesAfter !== 0) {
       throw new Error(
-        `rewireConnection invariant violated: expected "${sourceNode.name}" → "${fromNode.name}" ` +
-        `edge count to drop from ${edgesToFromBefore} to ${edgesToFromBefore - 1}, got ${edgesToFromAfter}. ` +
+        `rewireConnection invariant violated: "${sourceNode.name}" → "${fromNode.name}" ` +
+        `edges should have been removed (had ${fromEdgesBefore}, still have ${fromEdgesAfter}). ` +
         `Refusing to commit a corrupted connection map.`
       );
     }

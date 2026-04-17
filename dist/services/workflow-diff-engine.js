@@ -572,6 +572,9 @@ class WorkflowDiffEngine {
         return null;
     }
     validateRewireConnection(workflow, operation) {
+        if (operation.from === operation.to) {
+            return `rewireConnection: "from" and "to" must refer to different nodes (got "${operation.from}" for both).`;
+        }
         const sourceNode = this.findNode(workflow, operation.source, operation.source);
         if (!sourceNode) {
             const availableNodes = workflow.nodes
@@ -856,10 +859,18 @@ class WorkflowDiffEngine {
                 `to=${JSON.stringify(operation.to)} (${toNode ? 'ok' : 'missing'}). ` +
                 `Available nodes: ${workflow.nodes.map(n => `"${n.name}" (${n.id})`).join(', ')}`);
         }
+        if (fromNode.id === toNode.id) {
+            throw new Error(`rewireConnection: "from" and "to" resolve to the same node "${fromNode.name}" (id: ${fromNode.id}). ` +
+                `A rewire requires a distinct target.`);
+        }
         const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation);
-        const slotEdges = () => workflow.connections[sourceNode.name]?.[sourceOutput]?.[sourceIndex] ?? [];
-        const edgesToFromBefore = slotEdges().filter(c => c.node === fromNode.name).length;
-        const toAlreadyPresent = slotEdges().some(c => c.node === toNode.name);
+        const totalFromEdges = () => {
+            const slots = workflow.connections[sourceNode.name]?.[sourceOutput] ?? [];
+            return slots.reduce((acc, slot) => acc + (slot ?? []).filter(c => c.node === fromNode.name).length, 0);
+        };
+        const fromEdgesBefore = totalFromEdges();
+        const toAlreadyPresent = (workflow.connections[sourceNode.name]?.[sourceOutput]?.[sourceIndex] ?? [])
+            .some(c => c.node === toNode.name);
         this.applyRemoveConnection(workflow, {
             type: 'removeConnection',
             source: sourceNode.name,
@@ -878,10 +889,10 @@ class WorkflowDiffEngine {
                 targetIndex: 0
             });
         }
-        const edgesToFromAfter = slotEdges().filter(c => c.node === fromNode.name).length;
-        if (edgesToFromAfter !== edgesToFromBefore - 1) {
-            throw new Error(`rewireConnection invariant violated: expected "${sourceNode.name}" → "${fromNode.name}" ` +
-                `edge count to drop from ${edgesToFromBefore} to ${edgesToFromBefore - 1}, got ${edgesToFromAfter}. ` +
+        const fromEdgesAfter = totalFromEdges();
+        if (fromEdgesBefore > 0 && fromEdgesAfter !== 0) {
+            throw new Error(`rewireConnection invariant violated: "${sourceNode.name}" → "${fromNode.name}" ` +
+                `edges should have been removed (had ${fromEdgesBefore}, still have ${fromEdgesAfter}). ` +
                 `Refusing to commit a corrupted connection map.`);
         }
     }

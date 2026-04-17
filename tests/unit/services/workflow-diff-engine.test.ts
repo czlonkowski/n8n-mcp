@@ -1887,6 +1887,31 @@ describe('WorkflowDiffEngine', () => {
       expect(webhookEdges.some((c: any) => c.node === 'Slack')).toBe(true);
     });
 
+    it('rejects rewire when from and to are the same string (regression Copilot review)', async () => {
+      const rewire: any = {
+        type: 'rewireConnection',
+        source: 'Webhook',
+        from: 'HTTP Request',
+        to: 'HTTP Request'
+      };
+      const result = await diffEngine.applyDiff(baseWorkflow, { id: 'test-workflow', operations: [rewire] });
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toMatch(/must refer to different nodes/);
+    });
+
+    it('rejects rewire when from (ID) and to (name) resolve to the same node (regression Copilot review)', async () => {
+      const rewire: any = {
+        type: 'rewireConnection',
+        source: 'Webhook',
+        from: 'http-1',
+        to: 'HTTP Request'
+      };
+      const result = await diffEngine.applyDiff(baseWorkflow, { id: 'test-workflow', operations: [rewire] });
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toMatch(/resolve to the same node|must refer to different nodes/);
+    });
+
+
     it('should handle rewiring IF node branches correctly', async () => {
       // Add IF node with true/false branches
       const addIF: AddNodeOperation = {
