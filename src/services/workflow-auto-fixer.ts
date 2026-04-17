@@ -5,7 +5,7 @@
  * Converts validation results into diff operations that can be applied to fix the workflow.
  */
 
-import crypto from 'crypto';
+import { v5 as uuidv5 } from 'uuid';
 import { WorkflowValidationResult, VALID_CONNECTION_TYPES } from './workflow-validator';
 import { ExpressionFormatIssue } from './expression-format-validator';
 import { NodeSimilarityService } from './node-similarity-service';
@@ -171,7 +171,7 @@ export class WorkflowAutoFixer {
 
     // Process webhook path fixes (HIGH confidence)
     if (!fullConfig.fixTypes || fullConfig.fixTypes.includes('webhook-missing-path')) {
-      this.processWebhookPathFixes(validationResult, nodeMap, operations, fixes);
+      this.processWebhookPathFixes(validationResult, nodeMap, operations, fixes, workflow);
     }
 
     // Process tool variant corrections (HIGH confidence)
@@ -421,13 +421,31 @@ export class WorkflowAutoFixer {
   }
 
   /**
+   * Namespace UUID for webhook ID derivation. Any fixed v4 UUID works — it
+   * just needs to be stable across releases so derived IDs don't shift.
+   */
+  private static readonly WEBHOOK_ID_NAMESPACE = '6d8f5c4a-7b1e-4d2f-9a3c-8e5b1d2f6a7c';
+
+  /**
+   * Derive a stable UUID for a webhook's path+webhookId so preview and apply
+   * return the same value (QA #4). Previously `crypto.randomUUID()` was called
+   * in both, producing different UUIDs and breaking any downstream system that
+   * pre-configured against the preview.
+   */
+  private deriveStableWebhookId(workflowId: string | undefined, nodeId: string): string {
+    const seed = `${workflowId ?? 'new'}::${nodeId}`;
+    return uuidv5(seed, WorkflowAutoFixer.WEBHOOK_ID_NAMESPACE);
+  }
+
+  /**
    * Process webhook path fixes for webhook nodes missing path parameter
    */
   private processWebhookPathFixes(
     validationResult: WorkflowValidationResult,
     nodeMap: Map<string, WorkflowNode>,
     operations: WorkflowDiffOperation[],
-    fixes: FixOperation[]
+    fixes: FixOperation[],
+    workflow: Workflow
   ): void {
     for (const error of validationResult.errors) {
       // Check for webhook path required error
@@ -441,8 +459,9 @@ export class WorkflowAutoFixer {
         // Only fix webhook nodes
         if (!node.type?.includes('webhook')) continue;
 
-        // Generate a unique UUID for both path and webhookId
-        const webhookId = crypto.randomUUID();
+        // Derive a stable UUID keyed by workflow+node so preview and apply
+        // return the same value (QA #4).
+        const webhookId = this.deriveStableWebhookId(workflow.id, node.id || nodeName);
 
         // Check if we need to update typeVersion
         const currentTypeVersion = node.typeVersion || 1;

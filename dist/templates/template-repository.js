@@ -239,7 +239,7 @@ class TemplateRepository {
         const taskNodeMap = {
             'ai_automation': ['@n8n/n8n-nodes-langchain.openAi', '@n8n/n8n-nodes-langchain.agent', 'n8n-nodes-base.openAi'],
             'data_sync': ['n8n-nodes-base.googleSheets', 'n8n-nodes-base.postgres', 'n8n-nodes-base.mysql'],
-            'webhook_processing': ['n8n-nodes-base.webhook', 'n8n-nodes-base.httpRequest'],
+            'webhook_processing': ['n8n-nodes-base.webhook'],
             'email_automation': ['n8n-nodes-base.gmail', 'n8n-nodes-base.emailSend', 'n8n-nodes-base.emailReadImap'],
             'slack_integration': ['n8n-nodes-base.slack', 'n8n-nodes-base.slackTrigger'],
             'data_transformation': ['n8n-nodes-base.code', 'n8n-nodes-base.set', 'n8n-nodes-base.merge'],
@@ -314,7 +314,7 @@ class TemplateRepository {
         const taskNodeMap = {
             'ai_automation': ['@n8n/n8n-nodes-langchain.openAi', '@n8n/n8n-nodes-langchain.agent', 'n8n-nodes-base.openAi'],
             'data_sync': ['n8n-nodes-base.googleSheets', 'n8n-nodes-base.postgres', 'n8n-nodes-base.mysql'],
-            'webhook_processing': ['n8n-nodes-base.webhook', 'n8n-nodes-base.httpRequest'],
+            'webhook_processing': ['n8n-nodes-base.webhook'],
             'email_automation': ['n8n-nodes-base.gmail', 'n8n-nodes-base.emailSend', 'n8n-nodes-base.emailReadImap'],
             'slack_integration': ['n8n-nodes-base.slack', 'n8n-nodes-base.slackTrigger'],
             'data_transformation': ['n8n-nodes-base.code', 'n8n-nodes-base.set', 'n8n-nodes-base.merge'],

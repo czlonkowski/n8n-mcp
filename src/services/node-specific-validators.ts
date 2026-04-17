@@ -42,7 +42,17 @@ export class NodeSpecificValidators {
   static validateSlack(context: NodeValidationContext): void {
     const { config, errors, warnings, suggestions, autofix } = context;
     const { resource, operation } = config;
-    
+
+    // NOTE (QA #3, deferred): a hardcoded resource→operations map was
+    // considered here, but the real n8n Slack node exposes many more
+    // operations per resource than easy to keep in sync (e.g. `post`,
+    // `sendAndWait`, `getPermalink`, `search` for `message`). Rejecting
+    // based on a stale list produced false positives on valid configs.
+    // The proper fix is to derive the allowed set from the node's loaded
+    // `properties_schema` — tracked as a follow-up. Until then, the switch
+    // statements below perform operation-specific field checks for the
+    // operations we know about, and unknown operations are not rejected.
+
     // Message operations
     if (resource === 'message') {
       switch (operation) {
@@ -57,7 +67,7 @@ export class NodeSpecificValidators {
           break;
       }
     }
-    
+
     // Channel operations
     else if (resource === 'channel') {
       switch (operation) {
@@ -70,7 +80,7 @@ export class NodeSpecificValidators {
           break;
       }
     }
-    
+
     // User operations
     else if (resource === 'user') {
       if (operation === 'get' && !config.user) {

@@ -2309,9 +2309,12 @@ async function handleDeleteRows(args, context) {
             ...params,
         };
         const result = await client.deleteDataTableRows(tableId, queryParams);
+        const cleanedResult = params.dryRun && Array.isArray(result)
+            ? result.filter((row) => row?.dryRunState !== 'after')
+            : result;
         return {
             success: true,
-            data: result,
+            data: cleanedResult,
             message: params.dryRun ? 'Dry run: rows matched for deletion (no changes applied)' : 'Rows deleted successfully',
         };
     }

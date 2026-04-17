@@ -471,9 +471,20 @@ class WorkflowDiffEngine {
         return null;
     }
     validateMoveNode(workflow, operation) {
+        const operationAny = operation;
+        if (operationAny.newPosition !== undefined) {
+            return `Invalid parameter 'newPosition' for moveNode. Did you mean 'position'? Example: {type: "moveNode", nodeName: "My Node", position: [450, 600]}`;
+        }
         const node = this.findNode(workflow, operation.nodeId, operation.nodeName);
         if (!node) {
             return this.formatNodeNotFoundError(workflow, operation.nodeId || operation.nodeName || '', 'moveNode');
+        }
+        if (!operation.position) {
+            return `Missing required parameter 'position' for moveNode. Example: {type: "moveNode", nodeName: "${node.name}", position: [450, 600]}`;
+        }
+        if (!Array.isArray(operation.position) || operation.position.length !== 2 ||
+            typeof operation.position[0] !== 'number' || typeof operation.position[1] !== 'number') {
+            return `Invalid 'position' for moveNode. Must be [x, y] with two numbers. Got: ${JSON.stringify(operation.position)}`;
         }
         return null;
     }
@@ -915,9 +926,11 @@ class WorkflowDiffEngine {
     }
     applyActivateWorkflow(workflow, operation) {
         workflow._shouldActivate = true;
+        workflow._shouldDeactivate = false;
     }
     applyDeactivateWorkflow(workflow, operation) {
         workflow._shouldDeactivate = true;
+        workflow._shouldActivate = false;
     }
     validateTransferWorkflow(_workflow, operation) {
         if (!operation.destinationProjectId) {

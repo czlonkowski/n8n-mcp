@@ -625,10 +625,30 @@ export class WorkflowDiffEngine {
   }
 
   private validateMoveNode(workflow: Workflow, operation: MoveNodeOperation): string | null {
+    // Catch common parameter typos before any mutation (QA #6). Previously
+    // `newPosition` was silently accepted, position ended up undefined, and
+    // the only signal was a cryptic `position Required` from the final
+    // workflow-shape check — no mention of which op produced it. Reject
+    // even when `position` is also set, so callers don't carry a misleading
+    // alias through into their configs.
+    const operationAny = operation as any;
+    if (operationAny.newPosition !== undefined) {
+      return `Invalid parameter 'newPosition' for moveNode. Did you mean 'position'? Example: {type: "moveNode", nodeName: "My Node", position: [450, 600]}`;
+    }
+
     const node = this.findNode(workflow, operation.nodeId, operation.nodeName);
     if (!node) {
       return this.formatNodeNotFoundError(workflow, operation.nodeId || operation.nodeName || '', 'moveNode');
     }
+
+    if (!operation.position) {
+      return `Missing required parameter 'position' for moveNode. Example: {type: "moveNode", nodeName: "${node.name}", position: [450, 600]}`;
+    }
+    if (!Array.isArray(operation.position) || operation.position.length !== 2 ||
+        typeof operation.position[0] !== 'number' || typeof operation.position[1] !== 'number') {
+      return `Invalid 'position' for moveNode. Must be [x, y] with two numbers. Got: ${JSON.stringify(operation.position)}`;
+    }
+
     return null;
   }
 
@@ -1261,15 +1281,16 @@ export class WorkflowDiffEngine {
 
   // Workflow activation operation appliers
   private applyActivateWorkflow(workflow: Workflow, operation: ActivateWorkflowOperation): void {
-    // Set flag in workflow object to indicate activation intent
-    // The handler will call the API method after workflow update
+    // Activate / deactivate flags are mutually exclusive — clear the opposite
+    // so a batch like [activateWorkflow, deactivateWorkflow] ends with
+    // last-op-wins semantics instead of first-wins (QA #8).
     (workflow as any)._shouldActivate = true;
+    (workflow as any)._shouldDeactivate = false;
   }
 
   private applyDeactivateWorkflow(workflow: Workflow, operation: DeactivateWorkflowOperation): void {
-    // Set flag in workflow object to indicate deactivation intent
-    // The handler will call the API method after workflow update
     (workflow as any)._shouldDeactivate = true;
+    (workflow as any)._shouldActivate = false;
   }
 
   // Transfer operation — uses dedicated API call (PUT /workflows/{id}/transfer)

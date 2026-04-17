@@ -1,11 +1,8 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WorkflowAutoFixer = exports.CONNECTION_FIX_TYPES = void 0;
 exports.isNodeFormatIssue = isNodeFormatIssue;
-const crypto_1 = __importDefault(require("crypto"));
+const uuid_1 = require("uuid");
 const workflow_validator_1 = require("./workflow-validator");
 const node_similarity_service_1 = require("./node-similarity-service");
 const logger_1 = require("../utils/logger");
@@ -69,7 +66,7 @@ class WorkflowAutoFixer {
             this.processNodeTypeFixes(validationResult, nodeMap, operations, fixes);
         }
         if (!fullConfig.fixTypes || fullConfig.fixTypes.includes('webhook-missing-path')) {
-            this.processWebhookPathFixes(validationResult, nodeMap, operations, fixes);
+            this.processWebhookPathFixes(validationResult, nodeMap, operations, fixes, workflow);
         }
         if (!fullConfig.fixTypes || fullConfig.fixTypes.includes('tool-variant-correction')) {
             this.processToolVariantFixes(validationResult, nodeMap, workflow, operations, fixes);
@@ -238,7 +235,11 @@ class WorkflowAutoFixer {
             }
         }
     }
-    processWebhookPathFixes(validationResult, nodeMap, operations, fixes) {
+    deriveStableWebhookId(workflowId, nodeId) {
+        const seed = `${workflowId ?? 'new'}::${nodeId}`;
+        return (0, uuid_1.v5)(seed, WorkflowAutoFixer.WEBHOOK_ID_NAMESPACE);
+    }
+    processWebhookPathFixes(validationResult, nodeMap, operations, fixes, workflow) {
         for (const error of validationResult.errors) {
             if (error.message === 'Webhook path is required') {
                 const nodeName = error.nodeName || error.nodeId;
@@ -249,7 +250,7 @@ class WorkflowAutoFixer {
                     continue;
                 if (!node.type?.includes('webhook'))
                     continue;
-                const webhookId = crypto_1.default.randomUUID();
+                const webhookId = this.deriveStableWebhookId(workflow.id, node.id || nodeName);
                 const currentTypeVersion = node.typeVersion || 1;
                 const needsVersionUpdate = currentTypeVersion < 2.1;
                 fixes.push({
@@ -861,4 +862,5 @@ class WorkflowAutoFixer {
     }
 }
 exports.WorkflowAutoFixer = WorkflowAutoFixer;
+WorkflowAutoFixer.WEBHOOK_ID_NAMESPACE = '6d8f5c4a-7b1e-4d2f-9a3c-8e5b1d2f6a7c';
 //# sourceMappingURL=workflow-auto-fixer.js.map

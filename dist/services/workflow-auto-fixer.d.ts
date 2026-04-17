@@ -62,6 +62,8 @@ export declare class WorkflowAutoFixer {
     private processTypeVersionFixes;
     private processErrorOutputFixes;
     private processNodeTypeFixes;
+    private static readonly WEBHOOK_ID_NAMESPACE;
+    private deriveStableWebhookId;
     private processWebhookPathFixes;
     private processToolVariantFixes;
     private setNestedValue;

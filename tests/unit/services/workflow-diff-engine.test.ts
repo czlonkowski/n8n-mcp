@@ -1144,10 +1144,48 @@ describe('WorkflowDiffEngine', () => {
       };
 
       const result = await diffEngine.applyDiff(baseWorkflow, request);
-      
+
       expect(result.success).toBe(true);
       const movedNode = result.workflow!.nodes.find((n: any) => n.name === 'Webhook');
       expect(movedNode!.position).toEqual([100, 100]);
+    });
+
+    it('rejects newPosition typo pre-mutation with did-you-mean hint (regression #6)', async () => {
+      const op: any = { type: 'moveNode', nodeName: 'Webhook', newPosition: [450, 600] };
+      const result = await diffEngine.applyDiff(baseWorkflow, { id: 'test-workflow', operations: [op] });
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toMatch(/newPosition/);
+      expect(result.errors![0].message).toMatch(/Did you mean 'position'/);
+      const node = baseWorkflow.nodes.find(n => n.name === 'Webhook')!;
+      expect(node.position).not.toEqual([450, 600]);
+    });
+
+    it('rejects newPosition even when position is also provided (regression #6)', async () => {
+      const op: any = { type: 'moveNode', nodeName: 'Webhook', newPosition: [1, 2], position: [3, 4] };
+      const result = await diffEngine.applyDiff(baseWorkflow, { id: 'test-workflow', operations: [op] });
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toMatch(/newPosition/);
+    });
+
+    it('rejects missing position parameter for moveNode (regression #6)', async () => {
+      const op: any = { type: 'moveNode', nodeName: 'Webhook' };
+      const result = await diffEngine.applyDiff(baseWorkflow, { id: 'test-workflow', operations: [op] });
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toMatch(/Missing required parameter 'position'/);
+    });
+
+    it('rejects non-array position value for moveNode (regression #6)', async () => {
+      const op: any = { type: 'moveNode', nodeName: 'Webhook', position: 'not-an-array' };
+      const result = await diffEngine.applyDiff(baseWorkflow, { id: 'test-workflow', operations: [op] });
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toMatch(/Invalid 'position' for moveNode/);
+    });
+
+    it('rejects wrong-length position array for moveNode (regression #6)', async () => {
+      const op: any = { type: 'moveNode', nodeName: 'Webhook', position: [1, 2, 3] };
+      const result = await diffEngine.applyDiff(baseWorkflow, { id: 'test-workflow', operations: [op] });
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toMatch(/Invalid 'position' for moveNode/);
     });
   });
 
@@ -5383,6 +5421,34 @@ describe('WorkflowDiffEngine', () => {
 
       expect(result.success).toBe(true);
       expect(result.shouldDeactivate).toBe(true);
+    });
+
+    it('applies last-op-wins when activate+deactivate are batched together (regression #8)', async () => {
+      const workflowWithTrigger = createWorkflow('Test Workflow')
+        .addWebhookNode({ id: 'webhook-1', name: 'Webhook Trigger' })
+        .build() as Workflow;
+      const newConnections: any = {};
+      for (const [nodeId, outputs] of Object.entries(workflowWithTrigger.connections)) {
+        const node = workflowWithTrigger.nodes.find((n: any) => n.id === nodeId);
+        if (node) newConnections[node.name] = outputs;
+      }
+      workflowWithTrigger.connections = newConnections;
+
+      const lastWinsDeactivate = await diffEngine.applyDiff(workflowWithTrigger, {
+        id: 'test-workflow',
+        operations: [{ type: 'activateWorkflow' } as any, { type: 'deactivateWorkflow' } as any]
+      });
+      expect(lastWinsDeactivate.success).toBe(true);
+      expect(lastWinsDeactivate.shouldDeactivate).toBe(true);
+      expect(lastWinsDeactivate.shouldActivate).toBeFalsy();
+
+      const lastWinsActivate = await diffEngine.applyDiff(workflowWithTrigger, {
+        id: 'test-workflow',
+        operations: [{ type: 'deactivateWorkflow' } as any, { type: 'activateWorkflow' } as any]
+      });
+      expect(lastWinsActivate.success).toBe(true);
+      expect(lastWinsActivate.shouldActivate).toBe(true);
+      expect(lastWinsActivate.shouldDeactivate).toBeFalsy();
     });
 
     it('should combine activation with other operations', async () => {
