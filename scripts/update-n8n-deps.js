@@ -18,14 +18,33 @@ class N8nDependencyUpdater {
   }
 
   /**
-   * Get latest version of a package from npm
+   * Compare two semver-ish versions. Returns -1 / 0 / 1 (a<b, a==b, a>b).
+   * Enough for the "don't downgrade" guard; not a full semver parser.
    */
-  getLatestVersion(packageName) {
+  compareVersions(a, b) {
+    const parse = (v) => v.split('.').map((p) => parseInt(p, 10) || 0);
+    const [a1, a2, a3] = parse(a);
+    const [b1, b2, b3] = parse(b);
+    if (a1 !== b1) return a1 < b1 ? -1 : 1;
+    if (a2 !== b2) return a2 < b2 ? -1 : 1;
+    if (a3 !== b3) return a3 < b3 ? -1 : 1;
+    return 0;
+  }
+
+  /**
+   * Resolve the set of n8n sub-package versions compatible with the current
+   * `n8n@latest` release. The `n8n` meta package is the source of truth for
+   * which sub-package versions constitute "n8n X.Y.Z" — individual
+   * sub-packages (notably n8n-nodes-base, n8n-workflow) don't keep their
+   * `latest` dist-tag in sync, so querying each one's tag can return
+   * versions older than what n8n itself depends on.
+   */
+  getN8nDependencySet() {
     try {
-      const output = execSync(`npm view ${packageName} version`, { encoding: 'utf8' });
-      return output.trim();
+      const output = execSync('npm view n8n@latest dependencies --json', { encoding: 'utf8' });
+      return JSON.parse(output);
     } catch (error) {
-      console.error(`Failed to get version for ${packageName}:`, error.message);
+      console.error('Failed to resolve n8n@latest dependencies:', error.message);
       return null;
     }
   }
@@ -42,14 +61,14 @@ class N8nDependencyUpdater {
   /**
    * Check which packages need updates.
    *
-   * Each tracked package is checked independently against its own
-   * `latest` dist-tag on npm. The old strategy of deriving peer versions
-   * from the `n8n` meta package was removed when we dropped that dep.
+   * Versions are resolved from `n8n@latest`'s dependency pins rather than
+   * each sub-package's own `latest` dist-tag — n8n does not keep the
+   * per-package tags in sync, which previously caused this script to
+   * propose downgrades.
    */
   async checkForUpdates() {
     console.log('🔍 Checking for n8n dependency updates...\n');
 
-    const updates = [];
     const trackedDeps = [
       'n8n-nodes-base',
       'n8n-core',
@@ -57,16 +76,30 @@ class N8nDependencyUpdater {
       '@n8n/n8n-nodes-langchain',
     ];
 
+    const metaDeps = this.getN8nDependencySet();
+    if (!metaDeps) {
+      console.error('Aborting: could not resolve n8n@latest dependency set');
+      return [];
+    }
+
+    const updates = [];
     for (const dep of trackedDeps) {
       const currentVersion = this.getCurrentVersion(dep);
-      const latestVersion = this.getLatestVersion(dep);
+      const latestVersion = metaDeps[dep];
 
-      if (!currentVersion || !latestVersion) {
-        console.error(`Failed to resolve version for ${dep}`);
+      if (!currentVersion) {
+        console.error(`Failed to read current version for ${dep}`);
+        continue;
+      }
+      if (!latestVersion) {
+        console.error(`${dep} is not listed in n8n@latest dependencies — skipping`);
         continue;
       }
 
-      if (currentVersion !== latestVersion) {
+      const cmp = this.compareVersions(currentVersion, latestVersion);
+      if (cmp === 0) {
+        console.log(`✅ ${dep}: ${currentVersion} (up to date)`);
+      } else if (cmp < 0) {
         console.log(`📦 ${dep}: ${currentVersion} → ${latestVersion} (update available)`);
         updates.push({
           package: dep,
@@ -74,7 +107,7 @@ class N8nDependencyUpdater {
           latest: latestVersion,
         });
       } else {
-        console.log(`✅ ${dep}: ${currentVersion} (up to date)`);
+        console.log(`⏭️  ${dep}: ${currentVersion} is ahead of n8n@latest pin ${latestVersion} — skipping (no downgrade)`);
       }
     }
 
@@ -96,7 +129,7 @@ class N8nDependencyUpdater {
     
     for (const update of updates) {
       packageJson.dependencies[update.package] = `^${update.latest}`;
-      console.log(`   Updated ${update.package} to ^${update.latest}${update.reason ? ` (${update.reason})` : ''}`);
+      console.log(`   Updated ${update.package} to ^${update.latest}`);
     }
     
     fs.writeFileSync(
