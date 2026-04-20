@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { redactHeaders, summarizeMcpBody, REDACTED } from '../../../src/utils/redaction';
+import { redactHeaders, summarizeMcpBody, summarizeToolCallArgs, REDACTED } from '../../../src/utils/redaction';
 
 describe('redactHeaders', () => {
   it('redacts authorization header', () => {
@@ -119,5 +119,46 @@ describe('summarizeMcpBody', () => {
     expect(result).not.toHaveProperty('extra');
     expect(result).not.toHaveProperty('params');
     expect(JSON.stringify(result)).not.toContain('canary');
+  });
+});
+
+describe('summarizeToolCallArgs', () => {
+  it('omits values from objects but keeps the key list', () => {
+    const result = summarizeToolCallArgs({
+      action: 'create',
+      name: 'demo',
+      type: 'httpHeaderAuth',
+      data: { name: 'Authorization', value: 'Bearer DEMO_SECRET' },
+    });
+    expect(result.argsType).toBe('object');
+    expect(result.argsKeys).toEqual(['action', 'name', 'type', 'data']);
+    expect(result.hasNestedOutput).toBe(false);
+    expect(typeof result.size).toBe('number');
+    expect(JSON.stringify(result)).not.toContain('DEMO_SECRET');
+    expect(JSON.stringify(result)).not.toContain('Bearer');
+  });
+
+  it('flags hasNestedOutput when args includes output', () => {
+    const result = summarizeToolCallArgs({ output: '{"nested":true}' });
+    expect(result.hasNestedOutput).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('nested');
+  });
+
+  it('returns string type and size for string args without leaking content', () => {
+    const result = summarizeToolCallArgs('Bearer DEMO_SECRET');
+    expect(result.argsType).toBe('string');
+    expect(result.size).toBe('Bearer DEMO_SECRET'.length);
+    expect(JSON.stringify(result)).not.toContain('DEMO_SECRET');
+  });
+
+  it('returns argsType placeholder for undefined and null', () => {
+    expect(summarizeToolCallArgs(undefined)).toEqual({ argsType: 'undefined' });
+    expect(summarizeToolCallArgs(null)).toEqual({ argsType: 'null' });
+  });
+
+  it('returns argsType array for array args', () => {
+    const result = summarizeToolCallArgs(['secret-value']);
+    expect(result.argsType).toBe('array');
+    expect(JSON.stringify(result)).not.toContain('secret-value');
   });
 });

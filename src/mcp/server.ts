@@ -15,6 +15,7 @@ import { n8nManagementTools } from './tools-n8n-manager';
 import { makeToolsN8nFriendly } from './tools-n8n-friendly';
 import { getWorkflowExampleString } from './workflow-examples';
 import { logger } from '../utils/logger';
+import { summarizeToolCallArgs } from '../utils/redaction';
 import { NodeRepository } from '../database/node-repository';
 import { DatabaseAdapter, createDatabaseAdapter } from '../database/database-adapter';
 import { getSharedDatabase, releaseSharedDatabase, SharedDatabaseState } from '../database/shared-database';
@@ -686,16 +687,12 @@ export class N8NDocumentationMCPServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
       
-      // Enhanced logging for debugging tool calls
-      logger.info('Tool call received - DETAILED DEBUG', {
+      // SECURITY (GHSA-wg4g-395p-mqv3): log metadata only, not raw arg values.
+      logger.info('Tool call received', {
         toolName: name,
-        arguments: JSON.stringify(args, null, 2),
-        argumentsType: typeof args,
-        argumentsKeys: args ? Object.keys(args) : [],
-        hasNodeType: args && 'nodeType' in args,
-        hasConfig: args && 'config' in args,
-        configType: args && args.config ? typeof args.config : 'N/A',
-        rawRequest: JSON.stringify(request.params)
+        ...summarizeToolCallArgs(args),
+        hasNodeType: !!(args && typeof args === 'object' && 'nodeType' in args),
+        hasConfig: !!(args && typeof args === 'object' && 'config' in args),
       });
 
       // Check if tool is disabled via DISABLED_TOOLS environment variable
@@ -738,11 +735,13 @@ export class N8NDocumentationMCPServer {
           if (typeof possibleNestedData === 'string' && possibleNestedData.trim().startsWith('{')) {
             const parsed = JSON.parse(possibleNestedData);
             if (parsed && typeof parsed === 'object') {
+              // SECURITY (GHSA-wg4g-395p-mqv3): log key shape only, not values.
               logger.warn('Detected n8n nested output bug, attempting to extract actual arguments', {
-                originalArgs: args,
-                extractedArgs: parsed
+                toolName: name,
+                originalArgsKeys: Object.keys(args),
+                extractedArgsKeys: Object.keys(parsed),
               });
-              
+
               // Validate the extracted arguments match expected tool schema
               if (this.validateExtractedArgs(name, parsed)) {
                 // Use the extracted data as args
@@ -750,7 +749,7 @@ export class N8NDocumentationMCPServer {
               } else {
                 logger.warn('Extracted arguments failed validation, using original args', {
                   toolName: name,
-                  extractedArgs: parsed
+                  extractedArgsKeys: Object.keys(parsed),
                 });
               }
             }
@@ -776,7 +775,8 @@ export class N8NDocumentationMCPServer {
       }
 
       try {
-        logger.debug(`Executing tool: ${name}`, { args: processedArgs });
+        // SECURITY (GHSA-wg4g-395p-mqv3): log metadata only, not raw arg values.
+        logger.debug(`Executing tool: ${name}`, summarizeToolCallArgs(processedArgs));
         const startTime = Date.now();
         const result = await this.executeTool(name, processedArgs);
         const duration = Date.now() - startTime;
@@ -1152,8 +1152,8 @@ export class N8NDocumentationMCPServer {
       if (!(requiredField in args)) {
         logger.debug(`Extracted args missing required field: ${requiredField}`, {
           toolName,
-          extractedArgs: args,
-          required
+          extractedArgsKeys: Object.keys(args),
+          required,
         });
         return false;
       }
@@ -1172,11 +1172,11 @@ export class N8NDocumentationMCPServer {
             continue;
           }
           
+          // SECURITY (GHSA-wg4g-395p-mqv3): log type mismatch shape only, not the value.
           logger.debug(`Extracted args field type mismatch: ${fieldName}`, {
             toolName,
             expectedType,
             actualType,
-            fieldValue
           });
           return false;
         }
@@ -1306,9 +1306,10 @@ export class N8NDocumentationMCPServer {
     }
 
     if (coercedAny) {
+      // SECURITY (GHSA-wg4g-395p-mqv3): log key-level types only, never values.
       logger.warn(`Coerced mistyped params for tool "${toolName}"`, {
         original: Object.fromEntries(
-          Object.entries(args).map(([k, v]) => [k, `${typeof v}: ${typeof v === 'string' ? v.substring(0, 80) : v}`])
+          Object.entries(args).map(([k, v]) => [k, typeof v])
         ),
       });
     }
@@ -1328,12 +1329,8 @@ export class N8NDocumentationMCPServer {
       throw new Error(`Tool '${name}' is disabled via DISABLED_TOOLS environment variable`);
     }
 
-    // Log the tool call for debugging n8n issues
-    logger.info(`Tool execution: ${name}`, {
-      args: typeof args === 'object' ? JSON.stringify(args) : args,
-      argsType: typeof args,
-      argsKeys: typeof args === 'object' ? Object.keys(args) : 'not-object'
-    });
+    // SECURITY (GHSA-wg4g-395p-mqv3): log metadata only, not raw arg values.
+    logger.info(`Tool execution: ${name}`, summarizeToolCallArgs(args));
 
     // Validate that args is actually an object
     if (typeof args !== 'object' || args === null) {

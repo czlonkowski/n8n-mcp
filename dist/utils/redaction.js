@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.REDACTED = void 0;
 exports.redactHeaders = redactHeaders;
 exports.summarizeMcpBody = summarizeMcpBody;
+exports.summarizeToolCallArgs = summarizeToolCallArgs;
 const SENSITIVE_HEADER_NAMES = new Set([
     'authorization',
     'proxy-authorization',
@@ -35,6 +36,34 @@ function summarizeMcpBody(body) {
         method: typeof b.method === 'string' ? b.method : undefined,
         id: typeof b.id === 'string' || typeof b.id === 'number' ? b.id : undefined,
         hasParams: b.params !== undefined && b.params !== null,
+    };
+}
+function summarizeToolCallArgs(args) {
+    if (args === undefined || args === null) {
+        return { argsType: args === null ? 'null' : 'undefined' };
+    }
+    if (typeof args !== 'object' || Array.isArray(args)) {
+        let size;
+        if (typeof args === 'string')
+            size = args.length;
+        return {
+            argsType: Array.isArray(args) ? 'array' : typeof args,
+            ...(size !== undefined ? { size } : {}),
+        };
+    }
+    const keys = Object.keys(args);
+    let size;
+    try {
+        size = JSON.stringify(args).length;
+    }
+    catch {
+        size = undefined;
+    }
+    return {
+        argsType: 'object',
+        argsKeys: keys,
+        hasNestedOutput: keys.includes('output'),
+        ...(size !== undefined ? { size } : {}),
     };
 }
 //# sourceMappingURL=redaction.js.map

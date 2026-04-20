@@ -50,3 +50,35 @@ export function summarizeMcpBody(body: unknown): Record<string, unknown> {
     hasParams: b.params !== undefined && b.params !== null,
   };
 }
+
+/**
+ * Reduce MCP tool-call arguments to a safe metadata summary. Returns the type,
+ * the top-level key list, a hasNestedOutput flag for the n8n nested-output
+ * workaround, and an approximate serialized size. Never returns values.
+ */
+export function summarizeToolCallArgs(args: unknown): Record<string, unknown> {
+  if (args === undefined || args === null) {
+    return { argsType: args === null ? 'null' : 'undefined' };
+  }
+  if (typeof args !== 'object' || Array.isArray(args)) {
+    let size: number | undefined;
+    if (typeof args === 'string') size = args.length;
+    return {
+      argsType: Array.isArray(args) ? 'array' : typeof args,
+      ...(size !== undefined ? { size } : {}),
+    };
+  }
+  const keys = Object.keys(args as Record<string, unknown>);
+  let size: number | undefined;
+  try {
+    size = JSON.stringify(args).length;
+  } catch {
+    size = undefined;
+  }
+  return {
+    argsType: 'object',
+    argsKeys: keys,
+    hasNestedOutput: keys.includes('output'),
+    ...(size !== undefined ? { size } : {}),
+  };
+}

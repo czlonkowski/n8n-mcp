@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.47.13] - 2026-04-20
+
+### Security
+
+- Redact MCP tool-call arguments in server logs (GHSA-wg4g-395p-mqv3, CVSS 4.3 Medium). Reported by @Mirr2.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.47.12] - 2026-04-17
 
 Batch of ten fixes from the 2026-04-16 staging QA regression (release-blockers and polish items shipped together).

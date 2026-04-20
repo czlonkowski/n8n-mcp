@@ -48,6 +48,7 @@ const tools_n8n_manager_1 = require("./tools-n8n-manager");
 const tools_n8n_friendly_1 = require("./tools-n8n-friendly");
 const workflow_examples_1 = require("./workflow-examples");
 const logger_1 = require("../utils/logger");
+const redaction_1 = require("../utils/redaction");
 const node_repository_1 = require("../database/node-repository");
 const database_adapter_1 = require("../database/database-adapter");
 const shared_database_1 = require("../database/shared-database");
@@ -438,15 +439,11 @@ class N8NDocumentationMCPServer {
         });
         this.server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
             const { name, arguments: args } = request.params;
-            logger_1.logger.info('Tool call received - DETAILED DEBUG', {
+            logger_1.logger.info('Tool call received', {
                 toolName: name,
-                arguments: JSON.stringify(args, null, 2),
-                argumentsType: typeof args,
-                argumentsKeys: args ? Object.keys(args) : [],
-                hasNodeType: args && 'nodeType' in args,
-                hasConfig: args && 'config' in args,
-                configType: args && args.config ? typeof args.config : 'N/A',
-                rawRequest: JSON.stringify(request.params)
+                ...(0, redaction_1.summarizeToolCallArgs)(args),
+                hasNodeType: !!(args && typeof args === 'object' && 'nodeType' in args),
+                hasConfig: !!(args && typeof args === 'object' && 'config' in args),
             });
             const disabledTools = this.getDisabledTools();
             if (disabledTools.has(name)) {
@@ -482,8 +479,9 @@ class N8NDocumentationMCPServer {
                         const parsed = JSON.parse(possibleNestedData);
                         if (parsed && typeof parsed === 'object') {
                             logger_1.logger.warn('Detected n8n nested output bug, attempting to extract actual arguments', {
-                                originalArgs: args,
-                                extractedArgs: parsed
+                                toolName: name,
+                                originalArgsKeys: Object.keys(args),
+                                extractedArgsKeys: Object.keys(parsed),
                             });
                             if (this.validateExtractedArgs(name, parsed)) {
                                 processedArgs = parsed;
@@ -491,7 +489,7 @@ class N8NDocumentationMCPServer {
                             else {
                                 logger_1.logger.warn('Extracted arguments failed validation, using original args', {
                                     toolName: name,
-                                    extractedArgs: parsed
+                                    extractedArgsKeys: Object.keys(parsed),
                                 });
                             }
                         }
@@ -508,7 +506,7 @@ class N8NDocumentationMCPServer {
                 processedArgs = JSON.parse(JSON.stringify(processedArgs));
             }
             try {
-                logger_1.logger.debug(`Executing tool: ${name}`, { args: processedArgs });
+                logger_1.logger.debug(`Executing tool: ${name}`, (0, redaction_1.summarizeToolCallArgs)(processedArgs));
                 const startTime = Date.now();
                 const result = await this.executeTool(name, processedArgs);
                 const duration = Date.now() - startTime;
@@ -800,8 +798,8 @@ class N8NDocumentationMCPServer {
             if (!(requiredField in args)) {
                 logger_1.logger.debug(`Extracted args missing required field: ${requiredField}`, {
                     toolName,
-                    extractedArgs: args,
-                    required
+                    extractedArgsKeys: Object.keys(args),
+                    required,
                 });
                 return false;
             }
@@ -818,7 +816,6 @@ class N8NDocumentationMCPServer {
                         toolName,
                         expectedType,
                         actualType,
-                        fieldValue
                     });
                     return false;
                 }
@@ -931,7 +928,7 @@ class N8NDocumentationMCPServer {
         }
         if (coercedAny) {
             logger_1.logger.warn(`Coerced mistyped params for tool "${toolName}"`, {
-                original: Object.fromEntries(Object.entries(args).map(([k, v]) => [k, `${typeof v}: ${typeof v === 'string' ? v.substring(0, 80) : v}`])),
+                original: Object.fromEntries(Object.entries(args).map(([k, v]) => [k, typeof v])),
             });
         }
         return coerced;
@@ -942,11 +939,7 @@ class N8NDocumentationMCPServer {
         if (disabledTools.has(name)) {
             throw new Error(`Tool '${name}' is disabled via DISABLED_TOOLS environment variable`);
         }
-        logger_1.logger.info(`Tool execution: ${name}`, {
-            args: typeof args === 'object' ? JSON.stringify(args) : args,
-            argsType: typeof args,
-            argsKeys: typeof args === 'object' ? Object.keys(args) : 'not-object'
-        });
+        logger_1.logger.info(`Tool execution: ${name}`, (0, redaction_1.summarizeToolCallArgs)(args));
         if (typeof args !== 'object' || args === null) {
             throw new Error(`Invalid arguments for tool ${name}: expected object, got ${typeof args}`);
         }
