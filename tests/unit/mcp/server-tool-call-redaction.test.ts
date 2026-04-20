@@ -62,7 +62,7 @@ describe('server tool-call log redaction (GHSA-wg4g-395p-mqv3)', () => {
       // we only care about what was logged BEFORE the throw.
     });
 
-    expect(allLogPayloads()).not.toContain(SECRET);
+    // 'DEMO_SECRET' is a substring of SECRET, so this also rules out full-value leaks.
     expect(allLogPayloads()).not.toContain('DEMO_SECRET');
   });
 
@@ -72,7 +72,6 @@ describe('server tool-call log redaction (GHSA-wg4g-395p-mqv3)', () => {
       config: SECRET,
     });
 
-    expect(allLogPayloads()).not.toContain(SECRET);
     expect(allLogPayloads()).not.toContain('DEMO_SECRET');
   });
 
@@ -82,7 +81,6 @@ describe('server tool-call log redaction (GHSA-wg4g-395p-mqv3)', () => {
       extra: SECRET,
     });
 
-    expect(allLogPayloads()).not.toContain(SECRET);
     expect(allLogPayloads()).not.toContain('DEMO_SECRET');
   });
 
@@ -102,6 +100,6 @@ describe('server tool-call log redaction (GHSA-wg4g-395p-mqv3)', () => {
       argsType: 'object',
       argsKeys: ['action', 'name', 'data'],
     });
-    expect(JSON.stringify(executionLog[1])).not.toContain(SECRET);
+    expect(JSON.stringify(executionLog[1])).not.toContain('DEMO_SECRET');
   });
 });
