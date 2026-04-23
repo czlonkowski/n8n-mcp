@@ -7,8 +7,10 @@ description: |
   prioritize incoming issues.
 
 on:
+  roles: all
   issues:
     types: [opened, reopened]
+  skip-bots: [dependabot, github-actions, copilot]
   reaction: eyes
 
 permissions: read-all
@@ -16,14 +18,24 @@ permissions: read-all
 network: defaults
 
 safe-outputs:
+  report-failure-as-issue: false
   add-labels:
     max: 5
   add-comment:
+  noop:
+    report-as-issue: false
+  missing-tool:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
+  missing-data:
+    create-issue: false
 
 tools:
   web-fetch:
   github:
     toolsets: [issues]
+    read-only: true
     min-integrity: none # This workflow is allowed to examine and comment on any issues
 
 timeout-minutes: 10
@@ -70,9 +82,9 @@ You're a triage assistant for GitHub issues. Your task is to analyze issue #${{ 
 
 7. Apply the selected labels:
 
-   - Use the `update_issue` tool to apply the labels to the issue
+   - Emit the labels via the `add_labels` safe-output. The GitHub MCP server is read-only; do not attempt `update_issue` — it will be blocked and the labels will not be applied.
    - DO NOT communicate directly with users
-   - If no labels are clearly applicable, do not apply any labels
+   - If no labels are clearly applicable, do not emit any
 
 8. Add an issue comment to the issue with your analysis:
    - Start with "🎯 Agentic Issue Triage"
