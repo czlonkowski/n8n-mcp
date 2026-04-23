@@ -38,6 +38,8 @@ tools:
     read-only: true
     min-integrity: none # This workflow is allowed to examine and comment on any issues
 
+environment: agentic-triage
+
 timeout-minutes: 10
 source: githubnext/agentics/workflows/issue-triage.md@13377ddf7e35c2b6e47aa58f45acb228fba902c8
 ---
@@ -54,7 +56,7 @@ You're a triage assistant for GitHub issues. Your task is to analyze issue #${{ 
 
 3. Next, use the GitHub tools to gather additional context about the issue:
 
-   - Fetch the list of labels available in this repository. Use 'gh label list' bash command to fetch the labels. This will give you the labels you can use for triaging issues.
+   - Fetch the list of labels available in this repository using the `list_labels` tool. This will give you the labels you can use for triaging issues.
    - Fetch any comments on the issue using the `get_issue_comments` tool
    - Find similar issues if needed using the `search_issues` tool
    - List the issues to see other open issues in the repository using the `list_issues` tool
