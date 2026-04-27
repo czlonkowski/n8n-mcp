@@ -21,6 +21,7 @@ permissions:
 network: defaults
 
 safe-outputs:
+  environment: agentic-triage-passthrough
   report-failure-as-issue: false
   add-labels:
     max: 5
