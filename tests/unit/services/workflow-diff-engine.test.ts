@@ -1274,9 +1274,81 @@ describe('WorkflowDiffEngine', () => {
       };
 
       const result = await diffEngine.applyDiff(baseWorkflow, request);
-      
+
       expect(result.success).toBe(false);
       expect(result.errors![0].message).toContain('Connection already exists');
+    });
+
+    // Regression test for #738. The duplicate-connection check used to
+    // ignore sourceIndex, so two outputs of a Switch node fanning into
+    // the same target (a common pattern when several branches share a
+    // fallback / error handler) was rejected with
+    // "Connection already exists" even though
+    // (source, sourceIndex=N, target) didn't actually exist yet.
+    it('should allow connecting different sourceIndex outputs to the same target (#738)', async () => {
+      // Manually wire a "Switch -> HTTP Request" connection at sourceIndex 0
+      // so we can verify that a NEW connection at sourceIndex 1 to the same
+      // target is allowed.
+      baseWorkflow.connections['Slack'] = {
+        main: [
+          [{ node: 'HTTP Request', type: 'main', index: 0 }], // index 0
+          // index 1 is intentionally absent
+        ],
+      };
+
+      const operation: AddConnectionOperation = {
+        type: 'addConnection',
+        source: 'Slack',
+        target: 'HTTP Request',
+        sourceIndex: 1, // Different output index — must be permitted.
+      };
+
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [operation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      // The new connection is appended at index 1 alongside the
+      // pre-existing index-0 connection.
+      const slackConnections = result.workflow!.connections['Slack'].main;
+      expect(slackConnections[0]).toEqual([
+        { node: 'HTTP Request', type: 'main', index: 0 },
+      ]);
+      expect(slackConnections[1]).toEqual([
+        { node: 'HTTP Request', type: 'main', index: 0 },
+      ]);
+    });
+
+    // The duplicate check must STILL fire when the (source, sourceIndex,
+    // target) triple is genuinely a duplicate — re-adding the same edge
+    // at the same index is still an error.
+    it('should still reject duplicate connections at the same sourceIndex (#738)', async () => {
+      baseWorkflow.connections['Slack'] = {
+        main: [
+          [{ node: 'HTTP Request', type: 'main', index: 0 }],
+        ],
+      };
+
+      const operation: AddConnectionOperation = {
+        type: 'addConnection',
+        source: 'Slack',
+        target: 'HTTP Request',
+        sourceIndex: 0, // Same index that already has the edge.
+      };
+
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [operation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('Connection already exists');
+      expect(result.errors![0].message).toContain('sourceIndex=0');
     });
 
     it('should reject connection to non-existent source node', async () => {

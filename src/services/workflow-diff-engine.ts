@@ -697,15 +697,20 @@ export class WorkflowDiffEngine {
       return `Target node not found: "${operation.target}". Available nodes: ${availableNodes}. Tip: Use node ID for names with special characters (apostrophes, quotes).`;
     }
 
-    // Check if connection already exists
-    const sourceOutput = operation.sourceOutput || 'main';
+    // Check if a connection already exists *at the same sourceIndex*.
+    // For multi-output nodes (Switch, IF, etc.) the connection is keyed
+    // by (source, sourceOutput, sourceIndex, target) — two outputs of
+    // the same Switch can both legitimately fan into the same target
+    // node (e.g. several branches sharing a fallback / error handler).
+    // Without scoping the check to sourceIndex, the second branch was
+    // rejected with "Connection already exists" even though
+    // (source, sourceIndex=N, target) didn't actually exist yet (#738).
+    const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation);
     const existing = workflow.connections[sourceNode.name]?.[sourceOutput];
-    if (existing) {
-      const hasConnection = existing.some(connections =>
-        connections.some(c => c.node === targetNode.name)
-      );
+    if (existing && Array.isArray(existing[sourceIndex])) {
+      const hasConnection = existing[sourceIndex].some(c => c.node === targetNode.name);
       if (hasConnection) {
-        return `Connection already exists from "${sourceNode.name}" to "${targetNode.name}"`;
+        return `Connection already exists from "${sourceNode.name}" to "${targetNode.name}" at sourceIndex=${sourceIndex}`;
       }
     }
 
