@@ -199,14 +199,18 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
                 };
             }
         }
-        const structureErrors = diffResult.workflow ? (0, n8n_validation_1.validateWorkflowStructure)(diffResult.workflow) : [];
+        const skipValidation = process.env.SKIP_WORKFLOW_VALIDATION === 'true';
+        const structureErrors = !skipValidation && diffResult.workflow
+            ? (0, n8n_validation_1.validateWorkflowStructure)(diffResult.workflow)
+            : [];
         if (input.validateOnly) {
+            const operationsToApply = diffResult.operationsApplied ?? input.operations.length;
             return {
                 success: true,
                 message: diffResult.message,
                 data: {
                     valid: structureErrors.length === 0,
-                    operationsToApply: input.operations.length,
+                    operationsToApply,
                     ...(structureErrors.length > 0 ? { structureErrors } : {})
                 },
                 details: {
@@ -216,11 +220,9 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
         }
         if (diffResult.workflow) {
             if (structureErrors.length > 0) {
-                const skipValidation = process.env.SKIP_WORKFLOW_VALIDATION === 'true';
                 logger_1.logger.warn('Workflow structure validation failed after applying diff operations', {
                     workflowId: input.id,
-                    errors: structureErrors,
-                    blocking: !skipValidation
+                    errors: structureErrors
                 });
                 const errorTypes = new Set();
                 structureErrors.forEach(err => {
@@ -258,26 +260,20 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
                 const errorMessage = structureErrors.length === 1
                     ? `Workflow validation failed: ${structureErrors[0]}`
                     : `Workflow validation failed with ${structureErrors.length} structural issues`;
-                if (!skipValidation) {
-                    return {
-                        success: false,
-                        saved: false,
-                        error: errorMessage,
-                        details: {
-                            errors: structureErrors,
-                            errorCount: structureErrors.length,
-                            operationsApplied: diffResult.operationsApplied,
-                            applied: diffResult.applied,
-                            recoveryGuidance: recoverySteps,
-                            note: 'Operations were applied but created an invalid workflow structure. The workflow was NOT saved to n8n to prevent UI rendering errors.',
-                            autoSanitizationNote: 'Auto-sanitization runs on modified nodes during updates to fix operator structures and add missing metadata. However, it cannot fix all issues (e.g., broken connections, branch mismatches). Use the recovery guidance above to resolve remaining issues.'
-                        }
-                    };
-                }
-                logger_1.logger.info('Workflow validation skipped (SKIP_WORKFLOW_VALIDATION=true): Allowing workflow with validation warnings to proceed', {
-                    workflowId: input.id,
-                    warningCount: structureErrors.length
-                });
+                return {
+                    success: false,
+                    saved: false,
+                    error: errorMessage,
+                    details: {
+                        errors: structureErrors,
+                        errorCount: structureErrors.length,
+                        operationsApplied: diffResult.operationsApplied,
+                        applied: diffResult.applied,
+                        recoveryGuidance: recoverySteps,
+                        note: 'Operations were applied but created an invalid workflow structure. The workflow was NOT saved to n8n to prevent UI rendering errors.',
+                        autoSanitizationNote: 'Auto-sanitization runs on modified nodes during updates to fix operator structures and add missing metadata. However, it cannot fix all issues (e.g., broken connections, branch mismatches). Use the recovery guidance above to resolve remaining issues.'
+                    }
+                };
             }
         }
         try {
