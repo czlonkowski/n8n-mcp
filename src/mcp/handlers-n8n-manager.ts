@@ -3147,8 +3147,24 @@ export async function handleUpdateCredential(args: unknown, context?: InstanceCo
     if (type !== undefined) updatePayload.type = type;
     // Apply the same oAuth2 clientCredentials shim as the create path (#740) — n8n's
     // schema rejects the same payload shape on update, so re-saving an existing
-    // credential would re-trigger the bug without this.
-    if (data !== undefined) updatePayload.data = applyCredentialDataShims(type ?? '', data);
+    // credential would re-trigger the bug without this. When the caller omits `type`
+    // (common partial-update pattern) but `data.grantType === 'clientCredentials'`,
+    // fetch the existing credential to derive its type — otherwise the shim would
+    // silently skip and the update would fail.
+    if (data !== undefined) {
+      let derivedType = type;
+      if (derivedType === undefined && data?.grantType === 'clientCredentials') {
+        try {
+          const existing = await client.getCredential(id);
+          derivedType = existing?.type;
+        } catch {
+          // GET /credentials/:id may not be exposed by n8n's public API; falling
+          // back to listCredentials adds a costly round-trip. If the lookup fails,
+          // skip the shim — n8n will surface its own validation error.
+        }
+      }
+      updatePayload.data = applyCredentialDataShims(derivedType ?? '', data);
+    }
     const credential = await client.updateCredential(id, updatePayload);
     const { data: _sensitiveData, ...safeCred } = credential;
     return {

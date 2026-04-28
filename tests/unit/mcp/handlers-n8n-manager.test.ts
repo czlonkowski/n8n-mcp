@@ -1648,5 +1648,56 @@ describe('handlers-n8n-manager', () => {
       expect(updatePayload.data.additionalBodyProperties).toBe('');
       expect(updatePayload.data.serverUrl).toBe('');
     });
+
+    it('derives credential type from server when omitted on update (#740)', async () => {
+      // Common partial-update pattern: caller passes only `data` and relies on
+      // n8n to keep the existing type. Pre-fix the shim never fired.
+      mockApiClient.updateCredential = vi.fn().mockResolvedValue({
+        id: 'cred-100',
+        name: 'shim-derived',
+      });
+      mockApiClient.getCredential = vi.fn().mockResolvedValue({
+        id: 'cred-100',
+        name: 'shim-derived',
+        type: 'oAuth2Api',
+      });
+
+      await handlers.handleUpdateCredential({
+        action: 'update',
+        id: 'cred-100',
+        // type intentionally omitted
+        data: {
+          grantType: 'clientCredentials',
+          accessTokenUrl: 'https://login.example.com/token',
+          clientId: 'cid',
+          clientSecret: 'secret',
+          scope: 'https://example.com/.default',
+          authentication: 'header',
+        },
+      });
+
+      expect(mockApiClient.getCredential).toHaveBeenCalledWith('cred-100');
+      const updatePayload = mockApiClient.updateCredential.mock.calls[0][1];
+      expect(updatePayload.data.sendAdditionalBodyProperties).toBe(false);
+      expect(updatePayload.data.additionalBodyProperties).toBe('');
+      expect(updatePayload.data.serverUrl).toBe('');
+    });
+
+    it('skips the type-derivation fetch when data is not clientCredentials (avoids extra round-trip)', async () => {
+      mockApiClient.updateCredential = vi.fn().mockResolvedValue({
+        id: 'cred-101',
+        name: 'no-fetch',
+      });
+      mockApiClient.getCredential = vi.fn();
+
+      await handlers.handleUpdateCredential({
+        action: 'update',
+        id: 'cred-101',
+        // type omitted, but data is not a clientCredentials oAuth2 payload
+        data: { host: 'db.example.com' },
+      });
+
+      expect(mockApiClient.getCredential).not.toHaveBeenCalled();
+    });
   });
 });

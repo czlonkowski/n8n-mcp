@@ -2440,8 +2440,18 @@ async function handleUpdateCredential(args, context) {
             updatePayload.name = name;
         if (type !== undefined)
             updatePayload.type = type;
-        if (data !== undefined)
-            updatePayload.data = applyCredentialDataShims(type ?? '', data);
+        if (data !== undefined) {
+            let derivedType = type;
+            if (derivedType === undefined && data?.grantType === 'clientCredentials') {
+                try {
+                    const existing = await client.getCredential(id);
+                    derivedType = existing?.type;
+                }
+                catch {
+                }
+            }
+            updatePayload.data = applyCredentialDataShims(derivedType ?? '', data);
+        }
         const credential = await client.updateCredential(id, updatePayload);
         const { data: _sensitiveData, ...safeCred } = credential;
         return {
