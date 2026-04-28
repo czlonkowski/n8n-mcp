@@ -455,6 +455,9 @@ class EnhancedConfigValidator extends config_validator_1.ConfigValidator {
             return;
         }
         const normalizedNodeType = node_type_normalizer_1.NodeTypeNormalizer.normalizeToFullForm(nodeType);
+        if (!this.nodeRepository.getNode(normalizedNodeType)) {
+            return;
+        }
         const configWithDefaults = { ...config };
         if (configWithDefaults.operation === undefined && configWithDefaults.resource !== undefined) {
             const defaultOperation = this.nodeRepository.getDefaultOperationForResource(normalizedNodeType, configWithDefaults.resource);
@@ -465,25 +468,33 @@ class EnhancedConfigValidator extends config_validator_1.ConfigValidator {
         if (config.resource !== undefined) {
             result.errors = result.errors.filter(e => e.property !== 'resource');
             const validResources = this.nodeRepository.getNodeResources(normalizedNodeType);
-            const resourceIsValid = validResources.some(r => {
-                const resourceValue = typeof r === 'string' ? r : r.value;
-                return resourceValue === config.resource;
-            });
-            if (!resourceIsValid && config.resource !== '') {
-                let suggestions = [];
-                try {
-                    suggestions = this.resourceSimilarityService.findSimilarResources(normalizedNodeType, config.resource, 3);
-                }
-                catch (error) {
-                    console.error('Resource similarity service error:', error);
-                }
-                let errorMessage = `Invalid resource "${config.resource}" for node ${nodeType}.`;
-                let fix = '';
-                if (suggestions.length > 0) {
-                    const topSuggestion = suggestions[0];
-                    errorMessage += ` Did you mean "${topSuggestion.value}"?`;
-                    if (topSuggestion.confidence >= 0.8) {
-                        fix = `Change resource to "${topSuggestion.value}". ${topSuggestion.reason}`;
+            if (validResources.length > 0) {
+                const resourceIsValid = validResources.some(r => {
+                    const resourceValue = typeof r === 'string' ? r : r.value;
+                    return resourceValue === config.resource;
+                });
+                if (!resourceIsValid && config.resource !== '') {
+                    let suggestions = [];
+                    try {
+                        suggestions = this.resourceSimilarityService.findSimilarResources(normalizedNodeType, config.resource, 3);
+                    }
+                    catch (error) {
+                        console.error('Resource similarity service error:', error);
+                    }
+                    let errorMessage = `Invalid resource "${config.resource}" for node ${nodeType}.`;
+                    let fix = '';
+                    if (suggestions.length > 0) {
+                        const topSuggestion = suggestions[0];
+                        errorMessage += ` Did you mean "${topSuggestion.value}"?`;
+                        if (topSuggestion.confidence >= 0.8) {
+                            fix = `Change resource to "${topSuggestion.value}". ${topSuggestion.reason}`;
+                        }
+                        else {
+                            fix = `Valid resources: ${validResources.slice(0, 5).map(r => {
+                                const val = typeof r === 'string' ? r : r.value;
+                                return `"${val}"`;
+                            }).join(', ')}${validResources.length > 5 ? '...' : ''}`;
+                        }
                     }
                     else {
                         fix = `Valid resources: ${validResources.slice(0, 5).map(r => {
@@ -491,32 +502,28 @@ class EnhancedConfigValidator extends config_validator_1.ConfigValidator {
                             return `"${val}"`;
                         }).join(', ')}${validResources.length > 5 ? '...' : ''}`;
                     }
-                }
-                else {
-                    fix = `Valid resources: ${validResources.slice(0, 5).map(r => {
-                        const val = typeof r === 'string' ? r : r.value;
-                        return `"${val}"`;
-                    }).join(', ')}${validResources.length > 5 ? '...' : ''}`;
-                }
-                const error = {
-                    type: 'invalid_value',
-                    property: 'resource',
-                    message: errorMessage,
-                    fix
-                };
-                if (suggestions.length > 0 && suggestions[0].confidence >= 0.5) {
-                    error.suggestion = `Did you mean "${suggestions[0].value}"? ${suggestions[0].reason}`;
-                }
-                result.errors.push(error);
-                if (suggestions.length > 0) {
-                    for (const suggestion of suggestions) {
-                        result.suggestions.push(`Resource "${config.resource}" not found. Did you mean "${suggestion.value}"? ${suggestion.reason}`);
+                    const error = {
+                        type: 'invalid_value',
+                        property: 'resource',
+                        message: errorMessage,
+                        fix
+                    };
+                    if (suggestions.length > 0 && suggestions[0].confidence >= 0.5) {
+                        error.suggestion = `Did you mean "${suggestions[0].value}"? ${suggestions[0].reason}`;
+                    }
+                    result.errors.push(error);
+                    if (suggestions.length > 0) {
+                        for (const suggestion of suggestions) {
+                            result.suggestions.push(`Resource "${config.resource}" not found. Did you mean "${suggestion.value}"? ${suggestion.reason}`);
+                        }
                     }
                 }
             }
         }
         if (config.operation !== undefined || configWithDefaults.operation !== undefined) {
             result.errors = result.errors.filter(e => e.property !== 'operation');
+            if (this.nodeRepository.getNodeOperations(normalizedNodeType).length === 0)
+                return;
             const operationToValidate = configWithDefaults.operation || config.operation;
             const validOperations = this.nodeRepository.getNodeOperations(normalizedNodeType, config.resource);
             const operationIsValid = validOperations.some(op => {

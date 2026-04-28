@@ -526,12 +526,12 @@ class WorkflowDiffEngine {
                 .join(', ');
             return `Target node not found: "${operation.target}". Available nodes: ${availableNodes}. Tip: Use node ID for names with special characters (apostrophes, quotes).`;
         }
-        const sourceOutput = operation.sourceOutput || 'main';
+        const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation, { silent: true });
         const existing = workflow.connections[sourceNode.name]?.[sourceOutput];
         if (existing) {
-            const hasConnection = existing.some(connections => connections.some(c => c.node === targetNode.name));
-            if (hasConnection) {
-                return `Connection already exists from "${sourceNode.name}" to "${targetNode.name}"`;
+            const slot = existing[sourceIndex];
+            if (Array.isArray(slot) && slot.some(c => c.node === targetNode.name)) {
+                return `Connection already exists from "${sourceNode.name}" (output "${sourceOutput}", index ${sourceIndex}) to "${targetNode.name}"`;
             }
         }
         return null;
@@ -596,7 +596,7 @@ class WorkflowDiffEngine {
                 .join(', ');
             return `"To" node not found: "${operation.to}". Available nodes: ${availableNodes}. Tip: Use node ID for names with special characters.`;
         }
-        const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation);
+        const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation, { silent: true });
         const connections = workflow.connections[sourceNode.name]?.[sourceOutput];
         if (!connections) {
             return `No connections found from "${sourceNode.name}" on output "${sourceOutput}"`;
@@ -758,7 +758,7 @@ class WorkflowDiffEngine {
             return;
         node.disabled = true;
     }
-    resolveSmartParameters(workflow, operation) {
+    resolveSmartParameters(workflow, operation, options = {}) {
         const sourceNode = this.findNode(workflow, operation.source, operation.source);
         let sourceOutput = String(operation.sourceOutput ?? 'main');
         let sourceIndex = operation.sourceIndex ?? 0;
@@ -777,7 +777,7 @@ class WorkflowDiffEngine {
         if (operation.case !== undefined && operation.sourceIndex === undefined) {
             sourceIndex = operation.case;
         }
-        if (sourceNode && operation.sourceIndex !== undefined && operation.branch === undefined && operation.case === undefined) {
+        if (!options.silent && sourceNode && operation.sourceIndex !== undefined && operation.branch === undefined && operation.case === undefined) {
             if (sourceNode.type === 'n8n-nodes-base.if') {
                 this.warnings.push({
                     operation: -1,

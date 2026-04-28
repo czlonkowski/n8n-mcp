@@ -1380,9 +1380,16 @@ describe('EnhancedConfigValidator - Integration Tests', () => {
 
   beforeEach(() => {
     mockRepository = {
-      getNode: vi.fn(),
-      getNodeOperations: vi.fn().mockReturnValue([]),
-      getNodeResources: vi.fn().mockReturnValue([]),
+      // Return a non-null placeholder so the unknown-node guard in
+      // validateResourceAndOperation (Issue #739) lets validation continue —
+      // these integration tests exercise the validator on a "known" Slack node.
+      getNode: vi.fn().mockReturnValue({ nodeType: 'nodes-base.slack' }),
+      // Return non-empty schemas so the per-field "no schema → skip" guards
+      // (Issue #739) don't short-circuit. These integration tests verify the
+      // similarity service is called for invalid values; that path requires
+      // schema data to compare against.
+      getNodeOperations: vi.fn().mockReturnValue([{ value: 'send' }, { value: 'update' }]),
+      getNodeResources: vi.fn().mockReturnValue([{ value: 'message' }, { value: 'channel' }]),
       getOperationsForResource: vi.fn().mockReturnValue([]),
       getDefaultOperationForResource: vi.fn().mockReturnValue(undefined),
       getNodePropertyDefaults: vi.fn().mockReturnValue({})
@@ -1500,7 +1507,10 @@ describe('EnhancedConfigValidator - Integration Tests', () => {
 
   describe('integration with existing validation logic', () => {
     it('should work with minimal validation mode', () => {
-      mockRepository.getNodeResources.mockReturnValue([]);
+      // Schema must be non-empty so the per-field "no schema → skip" guard (Issue #739)
+      // doesn't short-circuit. The point of the test is that minimal mode still routes
+      // to the similarity service for invalid resources.
+      mockRepository.getNodeResources.mockReturnValue([{ value: 'message' }]);
       mockResourceService.findSimilarResources.mockReturnValue([{ value: 'message', confidence: 0.8, reason: 'Similar' }]);
       const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'invalidResource' }, [{ name: 'resource', type: 'options', required: true, options: [{ value: 'message', name: 'Message' }] }], 'minimal', 'ai-friendly');
       expect(mockResourceService.findSimilarResources).toHaveBeenCalled();
@@ -1677,6 +1687,35 @@ describe('EnhancedConfigValidator - Operation and Resource Validation', () => {
       const result = EnhancedConfigValidator.validateWithMode('nodes-base.slack', { resource: 'message', operation: 'send' }, node.properties, 'operation', 'ai-friendly');
       expect(result.errors.find(e => e.property === 'resource')).toBeUndefined();
       expect(result.errors.find(e => e.property === 'operation')).toBeUndefined();
+    });
+  });
+
+  describe('Unknown community nodes (Issue #739)', () => {
+    // Pre-fix, getNodeOperations() returned [] for unknown community nodes and the validator
+    // emitted "Invalid operation" for any non-empty operation value. Now we skip
+    // resource/operation validation entirely for nodes we have no schema for.
+    it('does not falsely flag a Puppeteer community node operation as invalid', () => {
+      const result = EnhancedConfigValidator.validateWithMode(
+        'n8n-nodes-puppeteer.puppeteer',
+        { operation: 'runCustomScript', scriptCode: "console.log('hi');" },
+        [{ name: 'operation', type: 'string' }],
+        'operation',
+        'ai-friendly'
+      );
+      expect(result.errors.find(e => e.property === 'operation')).toBeUndefined();
+      expect(result.errors.find(e => e.property === 'resource')).toBeUndefined();
+    });
+
+    it('still flags real typos on KNOWN nodes (regression guard)', () => {
+      const node = repository.getNode('nodes-base.slack');
+      const result = EnhancedConfigValidator.validateWithMode(
+        'nodes-base.slack',
+        { resource: 'message', operation: 'sendMessage' }, // sendMessage is not a real Slack op
+        node.properties,
+        'operation',
+        'ai-friendly'
+      );
+      expect(result.errors.find(e => e.property === 'operation')).toBeDefined();
     });
   });
 });

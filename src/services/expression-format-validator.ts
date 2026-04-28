@@ -308,6 +308,12 @@ export class ExpressionFormatValidator {
         // Skip special keys
         if (key.startsWith('__')) return;
 
+        // Skip raw code fields — they hold JavaScript / Python source, not n8n expressions.
+        // The bracket-balance check in UniversalExpressionValidator counts {{ vs }} occurrences
+        // and false-positives on JS object literals like `[{json:{x:1}}]` (#746).
+        // Mirrors the existing guard in expression-validator.ts.
+        if (key === 'jsCode' || key === 'pythonCode' || key === 'functionCode') return;
+
         const newPath = path ? `${path}.${key}` : key;
         this.validateRecursive(value, newPath, context, issues, visited, depth + 1);
       });

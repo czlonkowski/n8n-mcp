@@ -157,6 +157,8 @@ class ExpressionFormatValidator {
             Object.entries(obj).forEach(([key, value]) => {
                 if (key.startsWith('__'))
                     return;
+                if (key === 'jsCode' || key === 'pythonCode' || key === 'functionCode')
+                    return;
                 const newPath = path ? `${path}.${key}` : key;
                 this.validateRecursive(value, newPath, context, issues, visited, depth + 1);
             });

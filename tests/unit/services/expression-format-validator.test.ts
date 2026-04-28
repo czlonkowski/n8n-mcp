@@ -236,6 +236,63 @@ describe('ExpressionFormatValidator', () => {
       expect(issues[0].fieldPath).toBe('normal');
     });
 
+    describe('Code node raw source fields (Issue #746)', () => {
+      // Pre-fix, validateRecursive walked into jsCode/pythonCode and the universal expression
+      // validator counted {{ vs }} occurrences, false-positiving on JS object literals like
+      // `[{ json: { x: 1 }}]` that produce adjacent `}}` characters with no `{{` to match.
+      const codeContext = {
+        nodeType: 'n8n-nodes-base.code',
+        nodeName: 'Code',
+        nodeId: 'code-1'
+      };
+
+      it('does not flag jsCode containing template literals and compact `}}`', () => {
+        const parameters = {
+          jsCode: "const d='15', m='04', y='2026';\nreturn [{json:{iso:`${y}-${m}-${d}`}}];"
+        };
+        const issues = ExpressionFormatValidator.validateNodeParameters(parameters, codeContext);
+        expect(issues).toHaveLength(0);
+      });
+
+      it('does not flag pythonCode containing f-strings and compact `}}`', () => {
+        const parameters = {
+          pythonCode: "x = 1\nreturn [{'json': {'msg': f'{x} items'}}]"
+        };
+        const issues = ExpressionFormatValidator.validateNodeParameters(parameters, codeContext);
+        expect(issues).toHaveLength(0);
+      });
+
+      it('does not flag legacy functionCode field either', () => {
+        const parameters = {
+          functionCode: "return [{json:{x:1}}];"
+        };
+        const issues = ExpressionFormatValidator.validateNodeParameters(parameters, codeContext);
+        expect(issues).toHaveLength(0);
+      });
+
+      it('still validates ordinary expression fields on the same parameters object', () => {
+        const parameters = {
+          jsCode: "return [{json:{x:1}}];", // skipped
+          someExpressionField: '{{ $json.value }}' // missing = prefix — should still flag
+        };
+        const issues = ExpressionFormatValidator.validateNodeParameters(parameters, codeContext);
+        expect(issues.length).toBe(1);
+        expect(issues[0].fieldPath).toBe('someExpressionField');
+      });
+
+      it('skips jsCode even when nested under another object/array', () => {
+        // The recursion descends through arrays and nested objects, so the skip
+        // must apply wherever the key appears, not only at the top level.
+        const parameters = {
+          steps: [
+            { id: 'a', config: { jsCode: 'return [{json:{x:1}}];' } }
+          ]
+        };
+        const issues = ExpressionFormatValidator.validateNodeParameters(parameters, codeContext);
+        expect(issues).toHaveLength(0);
+      });
+    });
+
     it('should handle maximum recursion depth', () => {
       // Create a deeply nested object (105 levels deep, exceeding the limit of 100)
       let deepObject: any = { value: '{{ $json.data }}' };

@@ -697,15 +697,18 @@ export class WorkflowDiffEngine {
       return `Target node not found: "${operation.target}". Available nodes: ${availableNodes}. Tip: Use node ID for names with special characters (apostrophes, quotes).`;
     }
 
-    // Check if connection already exists
-    const sourceOutput = operation.sourceOutput || 'main';
+    // Check if connection already exists at the specific (sourceOutput, sourceIndex) slot.
+    // Resolving smart parameters here matches applyAddConnection's behavior so a duplicate
+    // is only flagged when the resolved triple (source, sourceOutput, sourceIndex, target)
+    // matches an existing edge. Without this, a Switch/IF node that already has an edge
+    // from output 0 to target T would falsely block adding output 1 → T (#738).
+    // silent: true so warnings are emitted by the apply phase only (avoids duplicates).
+    const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation, { silent: true });
     const existing = workflow.connections[sourceNode.name]?.[sourceOutput];
     if (existing) {
-      const hasConnection = existing.some(connections =>
-        connections.some(c => c.node === targetNode.name)
-      );
-      if (hasConnection) {
-        return `Connection already exists from "${sourceNode.name}" to "${targetNode.name}"`;
+      const slot = existing[sourceIndex];
+      if (Array.isArray(slot) && slot.some(c => c.node === targetNode.name)) {
+        return `Connection already exists from "${sourceNode.name}" (output "${sourceOutput}", index ${sourceIndex}) to "${targetNode.name}"`;
       }
     }
 
@@ -793,8 +796,9 @@ export class WorkflowDiffEngine {
       return `"To" node not found: "${operation.to}". Available nodes: ${availableNodes}. Tip: Use node ID for names with special characters.`;
     }
 
-    // Resolve smart parameters (branch, case) before validating connections
-    const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation);
+    // Resolve smart parameters (branch, case) before validating connections.
+    // silent: true so warnings are emitted by the apply phase only (avoids duplicates).
+    const { sourceOutput, sourceIndex } = this.resolveSmartParameters(workflow, operation, { silent: true });
 
     // Validate that connection from source to "from" exists at the specific index
     const connections = workflow.connections[sourceNode.name]?.[sourceOutput];
@@ -1020,7 +1024,8 @@ export class WorkflowDiffEngine {
    */
   private resolveSmartParameters(
     workflow: Workflow,
-    operation: AddConnectionOperation | RewireConnectionOperation
+    operation: AddConnectionOperation | RewireConnectionOperation,
+    options: { silent?: boolean } = {}
   ): { sourceOutput: string; sourceIndex: number } {
     const sourceNode = this.findNode(workflow, operation.source, operation.source);
 
@@ -1054,8 +1059,10 @@ export class WorkflowDiffEngine {
       sourceIndex = operation.case;
     }
 
-    // Validation: Warn if using sourceIndex with If/Switch nodes without smart parameters
-    if (sourceNode && operation.sourceIndex !== undefined && operation.branch === undefined && operation.case === undefined) {
+    // Validation: Warn if using sourceIndex with If/Switch nodes without smart parameters.
+    // Suppressed when called from validate path so warnings don't double-fire (apply phase
+    // calls this same helper and is responsible for the user-facing warning).
+    if (!options.silent && sourceNode && operation.sourceIndex !== undefined && operation.branch === undefined && operation.case === undefined) {
       if (sourceNode.type === 'n8n-nodes-base.if') {
         this.warnings.push({
           operation: -1,  // Not tied to specific operation index in request

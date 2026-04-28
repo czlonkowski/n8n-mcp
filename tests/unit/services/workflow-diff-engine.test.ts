@@ -1274,9 +1274,108 @@ describe('WorkflowDiffEngine', () => {
       };
 
       const result = await diffEngine.applyDiff(baseWorkflow, request);
-      
+
       expect(result.success).toBe(false);
       expect(result.errors![0].message).toContain('Connection already exists');
+    });
+
+    describe('Switch / multi-output → shared target (Issue #738)', () => {
+      // Reproduces the false-positive "Connection already exists" when wiring multiple
+      // Switch outputs to the same downstream node. Pre-fix the validator scanned ALL
+      // sourceIndex slots; now it only checks the resolved slot.
+      const buildSwitchToSharedTarget = (): Workflow => {
+        const wf = JSON.parse(JSON.stringify(baseWorkflow)) as Workflow;
+        wf.nodes.push({
+          id: 'switch-1',
+          name: 'Switch',
+          type: 'n8n-nodes-base.switch',
+          typeVersion: 3,
+          position: [600, 600],
+          parameters: {}
+        } as any);
+        wf.nodes.push({
+          id: 'merge-1',
+          name: 'Merge',
+          type: 'n8n-nodes-base.merge',
+          typeVersion: 3,
+          position: [900, 600],
+          parameters: {}
+        } as any);
+        // Pre-wire Switch output 0 to Merge so the slot 0 already has a connection.
+        wf.connections['Switch'] = {
+          main: [
+            [{ node: 'Merge', type: 'main', index: 0 }]
+          ]
+        };
+        return wf;
+      };
+
+      it('allows additional Switch outputs to wire to the same target via sourceIndex', async () => {
+        const workflow = buildSwitchToSharedTarget();
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [
+            { type: 'addConnection', source: 'Switch', target: 'Merge', sourceIndex: 1 },
+            { type: 'addConnection', source: 'Switch', target: 'Merge', sourceIndex: 2 }
+          ]
+        });
+
+        expect(result.success).toBe(true);
+        const switchMain = result.workflow!.connections['Switch'].main;
+        expect(switchMain[0][0].node).toBe('Merge');
+        expect(switchMain[1][0].node).toBe('Merge');
+        expect(switchMain[2][0].node).toBe('Merge');
+      });
+
+      it('allows additional Switch outputs to wire to the same target via case', async () => {
+        const workflow = buildSwitchToSharedTarget();
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [
+            { type: 'addConnection', source: 'Switch', target: 'Merge', case: 1 } as any,
+            { type: 'addConnection', source: 'Switch', target: 'Merge', case: 2 } as any
+          ]
+        });
+
+        expect(result.success).toBe(true);
+        const switchMain = result.workflow!.connections['Switch'].main;
+        expect(switchMain[1][0].node).toBe('Merge');
+        expect(switchMain[2][0].node).toBe('Merge');
+      });
+
+      it('still rejects an exact duplicate at the same (source, sourceIndex, target)', async () => {
+        const workflow = buildSwitchToSharedTarget();
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [
+            { type: 'addConnection', source: 'Switch', target: 'Merge', sourceIndex: 0 }
+          ]
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errors![0].message).toContain('Connection already exists');
+        expect(result.errors![0].message).toContain('index 0');
+      });
+
+      it('emits the Switch sourceIndex warning exactly once per operation', async () => {
+        // Guards against the silent-resolve regression: pre-fix, validate AND apply
+        // both pushed the same warning, so a single addConnection emitted 2 warnings.
+        const workflow = buildSwitchToSharedTarget();
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [
+            { type: 'addConnection', source: 'Switch', target: 'Merge', sourceIndex: 1 }
+          ]
+        });
+
+        expect(result.success).toBe(true);
+        const switchWarnings = (result.warnings || []).filter(w => w.message.includes('Switch'));
+        expect(switchWarnings.length).toBe(1);
+      });
     });
 
     it('should reject connection to non-existent source node', async () => {

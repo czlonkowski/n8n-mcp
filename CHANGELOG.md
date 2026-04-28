@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.48.0] - 2026-04-28
+
+Three validator/diff false-positive fixes that were blocking valid workflows from being authored or updated via the MCP tools.
+
+### Fixed
+
+- **`addConnection` no longer rejects multiple Switch outputs to the same target (#738, reported by @priyasogani8-star).** `validateAddConnection` was scanning every `sourceIndex` slot when checking for duplicates, so wiring Switch output 1 to a node that already had a connection from output 0 falsely failed with "Connection already exists". The check now resolves smart parameters (`branch`/`case`) the same way `applyAddConnection` does and only inspects the specific `(sourceOutput, sourceIndex)` slot. The error message now also includes the resolved index for clarity. Same change applied to `validateRewireConnection` to suppress duplicate sourceIndex warnings (validate + apply phases were both pushing them) — `resolveSmartParameters` gained an opt-in `silent` mode used only from validate.
+- **`validate_workflow` no longer false-flags operations on community nodes with empty schema (#739, reported by @priyasogani8-star).** `EnhancedConfigValidator.validateResourceAndOperation` was emitting `Invalid operation "X" for node ...` for any non-empty operation value when the node was missing or had empty operation metadata. The puppeteer community node (and similarly indexed packages) ARE in the local DB but with empty `operations`/`properties_schema` columns, so `getNodeOperations()` returned `[]` and any explicit operation was rejected. Three new guards: top-of-method early-exit when `getNode()` returns null, plus per-field skips when the node has zero resource schema or zero operation schema globally. Real typos on KNOWN nodes (e.g. `operation: "sendMessage"` on Slack) still surface correctly.
+- **`n8n_validate_workflow` no longer false-flags Code nodes with template literals or compact `}}` (#746, reported by @MarsSall).** `ExpressionFormatValidator.validateRecursive` walked into `jsCode`/`pythonCode` fields and fed the source to a bracket-balance check that miscounted `{{` vs `}}` on JS object literals like `[{json:{x:1}}]`. The validator now skips raw-code field keys (`jsCode`, `pythonCode`, `functionCode`) — mirrors the existing guard in `ExpressionValidator.validateParametersRecursive`. The skip applies wherever those keys appear in the parameters tree (top-level or nested).
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.47.14] - 2026-04-21
 
 ### Security
