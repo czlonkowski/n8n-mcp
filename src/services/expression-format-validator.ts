@@ -14,7 +14,12 @@ export interface ExpressionFormatIssue {
   fieldPath: string;
   currentValue: any;
   correctedValue: any;
-  issueType: 'missing-prefix' | 'needs-resource-locator' | 'invalid-rl-structure' | 'mixed-format';
+  issueType:
+    | 'missing-prefix'
+    | 'needs-resource-locator'
+    | 'invalid-rl-structure'
+    | 'mixed-format'
+    | 'missing-cached-result-name';
   explanation: string;
   severity: 'error' | 'warning';
   confidence?: number; // 0.0 to 1.0, only for node-specific recommendations
@@ -24,6 +29,7 @@ export interface ResourceLocatorField {
   __rl: true;
   value: string;
   mode: string;
+  cachedResultName?: string;
 }
 
 export interface ValidationContext {
@@ -115,6 +121,10 @@ export class ExpressionFormatValidator {
       : `${this.EXPRESSION_PREFIX}${value}`;
 
     if (needsResourceLocator) {
+      // Generated correction always uses mode: 'expression', which is a raw
+      // expression input in the n8n UI — there is no dropdown to populate, so
+      // cachedResultName is intentionally omitted (#715). The
+      // missing-cachedResultName warning below also skips this mode.
       return {
         __rl: true,
         value: correctedValue,
@@ -123,6 +133,42 @@ export class ExpressionFormatValidator {
     }
 
     return correctedValue;
+  }
+
+  /**
+   * n8n resource-locator modes that render a dropdown showing cachedResultName as
+   * the selected label. In `expression`/`url` modes the user types a raw
+   * expression / URL and there is no cached label to display, so the warning
+   * does not apply.
+   */
+  private static readonly MODES_USING_CACHED_NAME: ReadonlyArray<string> = ['id', 'list', 'name'];
+
+  /**
+   * Emit a warning when a __rl resource-locator field is well-formed but missing
+   * cachedResultName in a mode where the n8n UI renders a dropdown. The workflow
+   * runs fine, but the dropdown shows "Choose..." and downstream metadata fetches
+   * (e.g. Airtable column list) never fire — users see "No columns found" with
+   * no obvious cause (#715).
+   */
+  private static checkCachedResultName(
+    value: ResourceLocatorField,
+    path: string
+  ): ExpressionFormatIssue | null {
+    if (!this.MODES_USING_CACHED_NAME.includes(value.mode)) {
+      return null;
+    }
+    if (typeof value.cachedResultName === 'string' && value.cachedResultName !== '') {
+      return null;
+    }
+    return {
+      fieldPath: path,
+      currentValue: value,
+      correctedValue: { ...value, cachedResultName: '<set to the resource display name>' },
+      issueType: 'missing-cached-result-name',
+      explanation:
+        'resource locator is missing cachedResultName. The workflow will run, but the n8n UI dropdown will show "Choose..." instead of the selected value, and dependent metadata fetches (e.g. column lists) will not fire. Set cachedResultName to the human-readable display name of the resource. (#715)',
+      severity: 'warning'
+    };
   }
 
   /**
@@ -299,8 +345,11 @@ export class ExpressionFormatValidator {
         this.validateRecursive(item, newPath, context, issues, visited, depth + 1);
       });
     } else if (obj && typeof obj === 'object') {
-      // Skip resource locator internals if already validated
+      // Resource locator: do not recurse into __rl internals, but emit the
+      // missing-cachedResultName warning before short-circuiting (#715).
       if (this.isResourceLocator(obj)) {
+        const cachedNameIssue = this.checkCachedResultName(obj, path);
+        if (cachedNameIssue) issues.push(cachedNameIssue);
         return;
       }
 

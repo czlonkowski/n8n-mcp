@@ -64,6 +64,8 @@ describe('ExpressionFormatValidator', () => {
 
         expect(issue).toBeTruthy();
         expect(issue?.issueType).toBe('needs-resource-locator');
+        // Corrections use mode: 'expression' which renders a raw expression input,
+        // not a dropdown — so cachedResultName is intentionally omitted (#715).
         expect(issue?.correctedValue).toEqual({
           __rl: true,
           value: '={{ $vars.GITHUB_OWNER }}',
@@ -103,6 +105,71 @@ describe('ExpressionFormatValidator', () => {
         expect(issue).toBeTruthy();
         expect(issue?.issueType).toBe('needs-resource-locator');
         expect(issue?.severity).toBe('warning');
+      });
+    });
+
+    describe('Missing cachedResultName warning (Issue #715)', () => {
+      const airtableContext = {
+        nodeType: 'n8n-nodes-base.airtable',
+        nodeName: 'Airtable',
+        nodeId: 'airtable-1'
+      };
+
+      it('warns when a __rl field is missing cachedResultName', () => {
+        const params = {
+          base: { __rl: true, mode: 'id', value: 'appXYZ' },
+          table: { __rl: true, mode: 'id', value: 'tblABC' }
+        };
+        const issues = ExpressionFormatValidator.validateNodeParameters(params, airtableContext);
+        const cachedNameIssues = issues.filter(i => i.issueType === 'missing-cached-result-name');
+        expect(cachedNameIssues).toHaveLength(2);
+        expect(cachedNameIssues[0].severity).toBe('warning');
+        expect(cachedNameIssues[0].fieldPath).toBe('base');
+        expect(cachedNameIssues[1].fieldPath).toBe('table');
+        expect(cachedNameIssues[0].explanation).toMatch(/cachedResultName/);
+      });
+
+      it('does not warn when cachedResultName is present and non-empty', () => {
+        const params = {
+          base: { __rl: true, mode: 'id', value: 'appXYZ', cachedResultName: 'My Base' }
+        };
+        const issues = ExpressionFormatValidator.validateNodeParameters(params, airtableContext);
+        expect(issues.filter(i => i.issueType === 'missing-cached-result-name')).toHaveLength(0);
+      });
+
+      it('warns when cachedResultName is present but empty string', () => {
+        const params = {
+          base: { __rl: true, mode: 'id', value: 'appXYZ', cachedResultName: '' }
+        };
+        const issues = ExpressionFormatValidator.validateNodeParameters(params, airtableContext);
+        expect(issues.filter(i => i.issueType === 'missing-cached-result-name')).toHaveLength(1);
+      });
+
+      it('does NOT warn for mode: expression (raw expression input has no dropdown)', () => {
+        // Critical regression guard: validator.generateCorrection emits __rl with
+        // mode: 'expression' and no cachedResultName — re-validating that output
+        // must not produce a fresh warning (would cause an autofix loop).
+        const params = {
+          base: { __rl: true, mode: 'expression', value: '={{ $json.baseId }}' }
+        };
+        const issues = ExpressionFormatValidator.validateNodeParameters(params, airtableContext);
+        expect(issues.filter(i => i.issueType === 'missing-cached-result-name')).toHaveLength(0);
+      });
+
+      it('does NOT warn for mode: url (URL input has no dropdown)', () => {
+        const params = {
+          base: { __rl: true, mode: 'url', value: 'https://airtable.com/appXYZ' }
+        };
+        const issues = ExpressionFormatValidator.validateNodeParameters(params, airtableContext);
+        expect(issues.filter(i => i.issueType === 'missing-cached-result-name')).toHaveLength(0);
+      });
+
+      it('warns for mode: list (list selection also uses cached labels)', () => {
+        const params = {
+          base: { __rl: true, mode: 'list', value: 'appXYZ' }
+        };
+        const issues = ExpressionFormatValidator.validateNodeParameters(params, airtableContext);
+        expect(issues.filter(i => i.issueType === 'missing-cached-result-name')).toHaveLength(1);
       });
     });
 

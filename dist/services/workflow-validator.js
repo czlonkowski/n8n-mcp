@@ -1029,7 +1029,10 @@ class WorkflowValidator {
                 nodeId: node.id
             };
             const formatIssues = expression_format_validator_1.ExpressionFormatValidator.validateNodeParameters(node.parameters, formatContext);
-            formatIssues.forEach(issue => {
+            const filteredIssues = profile === 'minimal'
+                ? formatIssues.filter(i => i.issueType !== 'missing-cached-result-name')
+                : formatIssues;
+            filteredIssues.forEach(issue => {
                 const formattedMessage = expression_format_validator_1.ExpressionFormatValidator.formatErrorMessage(issue, formatContext);
                 if (issue.severity === 'error') {
                     result.errors.push({

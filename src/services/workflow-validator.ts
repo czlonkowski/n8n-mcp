@@ -1523,8 +1523,15 @@ export class WorkflowValidator {
         formatContext
       );
 
+      // Suppress missing-cachedResultName warnings at minimal profile only
+      // — the issue is UI-degrading, not runtime-blocking, so callers asking
+      // for the smallest possible result set don't need it (#715).
+      const filteredIssues = profile === 'minimal'
+        ? formatIssues.filter(i => i.issueType !== 'missing-cached-result-name')
+        : formatIssues;
+
       // Add format errors and warnings
-      formatIssues.forEach(issue => {
+      filteredIssues.forEach(issue => {
         const formattedMessage = ExpressionFormatValidator.formatErrorMessage(issue, formatContext);
 
         if (issue.severity === 'error') {

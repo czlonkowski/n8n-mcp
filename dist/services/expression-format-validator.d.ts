@@ -2,7 +2,7 @@ export interface ExpressionFormatIssue {
     fieldPath: string;
     currentValue: any;
     correctedValue: any;
-    issueType: 'missing-prefix' | 'needs-resource-locator' | 'invalid-rl-structure' | 'mixed-format';
+    issueType: 'missing-prefix' | 'needs-resource-locator' | 'invalid-rl-structure' | 'mixed-format' | 'missing-cached-result-name';
     explanation: string;
     severity: 'error' | 'warning';
     confidence?: number;
@@ -11,6 +11,7 @@ export interface ResourceLocatorField {
     __rl: true;
     value: string;
     mode: string;
+    cachedResultName?: string;
 }
 export interface ValidationContext {
     nodeType: string;
@@ -25,6 +26,8 @@ export declare class ExpressionFormatValidator {
     private static shouldUseResourceLocator;
     private static isResourceLocator;
     private static generateCorrection;
+    private static readonly MODES_USING_CACHED_NAME;
+    private static checkCachedResultName;
     static validateAndFix(value: any, fieldPath: string, context: ValidationContext): ExpressionFormatIssue | null;
     static validateNodeParameters(parameters: any, context: ValidationContext): ExpressionFormatIssue[];
     private static validateRecursive;

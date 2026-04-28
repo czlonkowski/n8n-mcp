@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.48.3] - 2026-04-28
+
+### Fixed
+
+- **Validator warning for `__rl` resourceLocator fields missing `cachedResultName` (#715, originally reported in #516 by @upsurge911-lgtm).** When a `__rl` field has `mode` and `value` but no `cachedResultName`, the workflow runs but the n8n UI shows "Choose..." in dropdowns and dependent metadata fetches (column lists, base names, etc.) never fire — users see "No columns found" with no obvious cause. Pre-fix the validator was completely silent on this. New `missing-cached-result-name` warning fires at `runtime`/`ai-friendly`/`strict` profiles (suppressed at `minimal`). The warning is gated to modes where the n8n UI renders a dropdown that displays the cached label (`id`, `list`, `name`) — modes with raw inputs (`expression`, `url`) are skipped to avoid false positives. The autofix half (live n8n API resolution + placeholder fallback) ships in a separate follow-up PR.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.48.2] - 2026-04-28
 
 ### Fixed

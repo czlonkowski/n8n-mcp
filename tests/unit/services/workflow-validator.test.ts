@@ -453,6 +453,29 @@ describe('WorkflowValidator', () => {
       expect(error?.message).toContain('Current (incorrect):');
       expect(error?.message).toContain('Fixed (correct):');
     });
+
+    it('emits missing-cachedResultName warning at runtime/ai-friendly/strict, suppresses at minimal (#715)', async () => {
+      const buildAirtableWorkflow = () => ({
+        nodes: [{
+          id: '1', name: 'Airtable', type: 'n8n-nodes-base.airtable', position: [0, 0], typeVersion: 2.1,
+          parameters: {
+            base: { __rl: true, mode: 'id', value: 'appXYZ' },     // missing cachedResultName
+            table: { __rl: true, mode: 'id', value: 'tblABC' }     // missing cachedResultName
+          }
+        }],
+        connections: {}
+      });
+
+      for (const profile of ['runtime', 'ai-friendly', 'strict'] as const) {
+        const result = await validator.validateWorkflow(buildAirtableWorkflow() as any, { profile });
+        const cachedNameWarnings = result.warnings.filter(w => w.message.includes('cachedResultName'));
+        expect(cachedNameWarnings.length, `profile=${profile}`).toBe(2);
+      }
+
+      const minimalResult = await validator.validateWorkflow(buildAirtableWorkflow() as any, { profile: 'minimal' });
+      const minimalCachedNameWarnings = minimalResult.warnings.filter(w => w.message.includes('cachedResultName'));
+      expect(minimalCachedNameWarnings).toHaveLength(0);
+    });
   });
 
   // ─── Error Handler Detection ───────────────────────────────────────
