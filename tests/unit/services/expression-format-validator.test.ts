@@ -438,6 +438,30 @@ describe('ExpressionFormatValidator', () => {
       expect(message).toContain('"value": "={{ $vars.OWNER }}"');
       expect(message).toContain('"mode": "expression"');
     });
+
+    it('uses "Suggested shape" label for missing-cachedResultName so the placeholder is not mistaken for a valid value', () => {
+      // The correctedValue carries a placeholder string that must be filled in;
+      // labeling it "Fixed (correct)" would be misleading (Copilot caught this).
+      const issue = {
+        fieldPath: 'base',
+        currentValue: { __rl: true, mode: 'id', value: 'appXYZ' },
+        correctedValue: {
+          __rl: true,
+          mode: 'id',
+          value: 'appXYZ',
+          cachedResultName: '<set to the resource display name>'
+        },
+        issueType: 'missing-cached-result-name' as const,
+        explanation: 'resource locator is missing cachedResultName.',
+        severity: 'warning' as const
+      };
+
+      const message = ExpressionFormatValidator.formatErrorMessage(issue, context);
+
+      expect(message).toContain('Suggested shape (replace the placeholder');
+      expect(message).not.toContain('Fixed (correct):');
+      expect(message).toContain('"cachedResultName": "<set to the resource display name>"');
+    });
   });
 
   describe('Real-world examples', () => {

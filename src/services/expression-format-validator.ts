@@ -383,7 +383,14 @@ export class ExpressionFormatValidator {
       message += `"${issue.fieldPath}": ${JSON.stringify(issue.currentValue, null, 2)}\n\n`;
     }
 
-    message += `Fixed (correct):\n`;
+    // For missing-cachedResultName the correctedValue carries a `<placeholder>`
+    // string that must be filled in by the caller — labeling it "Fixed (correct)"
+    // would be misleading, since copy-pasting the placeholder verbatim would not
+    // resolve the issue (the autofix half handles real resolution in PR 4b).
+    const fixedLabel = issue.issueType === 'missing-cached-result-name'
+      ? 'Suggested shape (replace the placeholder with the actual resource display name):'
+      : 'Fixed (correct):';
+    message += `${fixedLabel}\n`;
     if (typeof issue.correctedValue === 'string') {
       message += `"${issue.fieldPath}": "${issue.correctedValue}"`;
     } else {

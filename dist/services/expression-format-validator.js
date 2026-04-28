@@ -193,7 +193,10 @@ class ExpressionFormatValidator {
         else {
             message += `"${issue.fieldPath}": ${JSON.stringify(issue.currentValue, null, 2)}\n\n`;
         }
-        message += `Fixed (correct):\n`;
+        const fixedLabel = issue.issueType === 'missing-cached-result-name'
+            ? 'Suggested shape (replace the placeholder with the actual resource display name):'
+            : 'Fixed (correct):';
+        message += `${fixedLabel}\n`;
         if (typeof issue.correctedValue === 'string') {
             message += `"${issue.fieldPath}": "${issue.correctedValue}"`;
         }
