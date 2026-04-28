@@ -220,22 +220,6 @@ export async function handleUpdatePartialWorkflow(
         };
       }
     }
-    
-    // If validateOnly, return validation result
-    if (input.validateOnly) {
-      return {
-        success: true,
-        message: diffResult.message,
-        data: {
-          valid: true,
-          operationsToApply: input.operations.length
-        },
-        details: {
-          warnings: diffResult.warnings
-        }
-      };
-    }
-
     // Validate final workflow structure after applying all operations
     // This prevents creating workflows that pass operation-level validation
     // but fail workflow-level validation (e.g., UI can't render them)
@@ -292,6 +276,25 @@ export async function handleUpdatePartialWorkflow(
           ? `Workflow validation failed: ${structureErrors[0]}`
           : `Workflow validation failed with ${structureErrors.length} structural issues`;
 
+        // If validateOnly, return the structural validation result without saving
+        if (input.validateOnly) {
+          return {
+            success: true,
+            message: errorMessage,
+            data: {
+              valid: false,
+              operationsToApply: input.operations.length
+            },
+            details: {
+              errors: structureErrors,
+              errorCount: structureErrors.length,
+              warnings: diffResult.warnings,
+              recoveryGuidance: recoverySteps,
+              autoSanitizationNote: 'Auto-sanitization runs on modified nodes during updates to fix operator structures and add missing metadata. However, it cannot fix all issues (e.g., broken connections, branch mismatches). Use the recovery guidance above to resolve remaining issues.'
+            }
+          };
+        }
+
         // If validation is not skipped, return error and block the save
         if (!skipValidation) {
           return {
@@ -315,6 +318,21 @@ export async function handleUpdatePartialWorkflow(
           warningCount: structureErrors.length
         });
       }
+    }
+
+    // If validateOnly, return validation result after structural validation
+    if (input.validateOnly) {
+      return {
+        success: true,
+        message: diffResult.message,
+        data: {
+          valid: true,
+          operationsToApply: input.operations.length
+        },
+        details: {
+          warnings: diffResult.warnings
+        }
+      };
     }
 
     // Update workflow via API

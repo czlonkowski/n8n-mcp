@@ -199,19 +199,6 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
                 };
             }
         }
-        if (input.validateOnly) {
-            return {
-                success: true,
-                message: diffResult.message,
-                data: {
-                    valid: true,
-                    operationsToApply: input.operations.length
-                },
-                details: {
-                    warnings: diffResult.warnings
-                }
-            };
-        }
         if (diffResult.workflow) {
             const structureErrors = (0, n8n_validation_1.validateWorkflowStructure)(diffResult.workflow);
             if (structureErrors.length > 0) {
@@ -257,6 +244,23 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
                 const errorMessage = structureErrors.length === 1
                     ? `Workflow validation failed: ${structureErrors[0]}`
                     : `Workflow validation failed with ${structureErrors.length} structural issues`;
+                if (input.validateOnly) {
+                    return {
+                        success: true,
+                        message: errorMessage,
+                        data: {
+                            valid: false,
+                            operationsToApply: input.operations.length
+                        },
+                        details: {
+                            errors: structureErrors,
+                            errorCount: structureErrors.length,
+                            warnings: diffResult.warnings,
+                            recoveryGuidance: recoverySteps,
+                            autoSanitizationNote: 'Auto-sanitization runs on modified nodes during updates to fix operator structures and add missing metadata. However, it cannot fix all issues (e.g., broken connections, branch mismatches). Use the recovery guidance above to resolve remaining issues.'
+                        }
+                    };
+                }
                 if (!skipValidation) {
                     return {
                         success: false,
@@ -278,6 +282,19 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
                     warningCount: structureErrors.length
                 });
             }
+        }
+        if (input.validateOnly) {
+            return {
+                success: true,
+                message: diffResult.message,
+                data: {
+                    valid: true,
+                    operationsToApply: input.operations.length
+                },
+                details: {
+                    warnings: diffResult.warnings
+                }
+            };
         }
         try {
             const updatedWorkflow = await client.updateWorkflow(input.id, diffResult.workflow);

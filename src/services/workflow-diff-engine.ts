@@ -188,6 +188,7 @@ export class WorkflowDiffEngine {
             message: errors.length === 0
               ? 'Validation successful. All operations are valid.'
               : `Validation completed with ${errors.length} errors.`,
+            workflow: workflowCopy,
             errors: errors.length > 0 ? errors : undefined,
             warnings: this.warnings.length > 0 ? this.warnings : undefined,
             applied: appliedIndices,
@@ -296,7 +297,8 @@ export class WorkflowDiffEngine {
         if (request.validateOnly) {
           return {
             success: true,
-            message: 'Validation successful. Operations are valid but not applied.'
+            message: 'Validation successful. Operations are valid but not applied.',
+            workflow: workflowCopy
           };
         }
 
