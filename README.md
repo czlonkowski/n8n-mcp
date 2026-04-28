@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/czlonkowski-n8n-mcp-badge.png)](https://mseep.ai/app/czlonkowski-n8n-mcp)
+
 # n8n-MCP
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
