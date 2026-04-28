@@ -801,9 +801,11 @@ describe('WorkflowDiffEngine - Auto-Update Connection References on Node Rename'
       const result = await diffEngine.applyDiff(baseWorkflow, request);
 
       expect(result.success).toBe(true);
-      expect(result.workflow).toBeUndefined();
+      // Post #744: validateOnly returns the simulated post-diff workflow snapshot
+      // (a deep copy) so callers can run structural validation against it.
+      expect(result.workflow).toBeDefined();
 
-      // Original workflow should remain unchanged
+      // Original workflow should remain unchanged (the simulated workflow is a copy)
       const httpNode = baseWorkflow.nodes.find((n: WorkflowNode) => n.id === 'http-1');
       expect(httpNode?.name).toBe('HTTP Request');
       expect(baseWorkflow.connections['Webhook'].main[0][0].node).toBe('HTTP Request');

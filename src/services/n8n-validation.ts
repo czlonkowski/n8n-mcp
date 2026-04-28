@@ -12,8 +12,12 @@ export const workflowNodeSchema = z.object({
   type: z.string(),
   typeVersion: z.number(),
   position: z.tuple([z.number(), z.number()]),
-  parameters: z.record(z.unknown()),
-  credentials: z.record(z.unknown()).optional(),
+  // Two-arg z.record(keySchema, valueSchema) is unambiguous in both Zod 3 and Zod 4.
+  // Zod 4 reinterprets single-arg z.record(x) as z.record(keySchema=x), which causes
+  // node-name strings to be parsed as the key schema and fail with "Invalid key in
+  // record" (#744). The MCP SDK bundles Zod 4; pinning the resolution alone is fragile.
+  parameters: z.record(z.string(), z.unknown()),
+  credentials: z.record(z.string(), z.unknown()).optional(),
   disabled: z.boolean().optional(),
   notes: z.string().optional(),
   notesInFlow: z.boolean().optional(),
@@ -42,6 +46,7 @@ const connectionArraySchema = z.array(
  * connection types (ai_languageModel, ai_memory, etc.) without main connections.
  */
 export const workflowConnectionSchema = z.record(
+  z.string(), // explicit key schema — see workflowNodeSchema for the Zod 3/4 rationale (#744)
   z.object({
     main: connectionArraySchema.optional(),
     error: connectionArraySchema.optional(),

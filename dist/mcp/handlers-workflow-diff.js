@@ -199,13 +199,15 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
                 };
             }
         }
+        const structureErrors = diffResult.workflow ? (0, n8n_validation_1.validateWorkflowStructure)(diffResult.workflow) : [];
         if (input.validateOnly) {
             return {
                 success: true,
                 message: diffResult.message,
                 data: {
-                    valid: true,
-                    operationsToApply: input.operations.length
+                    valid: structureErrors.length === 0,
+                    operationsToApply: input.operations.length,
+                    ...(structureErrors.length > 0 ? { structureErrors } : {})
                 },
                 details: {
                     warnings: diffResult.warnings
@@ -213,7 +215,6 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
             };
         }
         if (diffResult.workflow) {
-            const structureErrors = (0, n8n_validation_1.validateWorkflowStructure)(diffResult.workflow);
             if (structureErrors.length > 0) {
                 const skipValidation = process.env.SKIP_WORKFLOW_VALIDATION === 'true';
                 logger_1.logger.warn('Workflow structure validation failed after applying diff operations', {

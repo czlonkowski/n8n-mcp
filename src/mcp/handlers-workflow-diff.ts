@@ -221,14 +221,25 @@ export async function handleUpdatePartialWorkflow(
       }
     }
     
-    // If validateOnly, return validation result
+    // Validate final workflow structure after applying all operations BEFORE the
+    // validateOnly early-return. Pre-fix the early-return ran first and `validateOnly: true`
+    // always reported `valid: true`, but `validateOnly: false` then ran structural validation
+    // and could fail — the two paths disagreed on validity. Now both paths see the same
+    // structural result. (#744)
+    //
+    // Validation can be skipped for specific integration tests that need to test
+    // n8n API behavior with edge case workflows by setting SKIP_WORKFLOW_VALIDATION=true.
+    const structureErrors = diffResult.workflow ? validateWorkflowStructure(diffResult.workflow) : [];
+
+    // If validateOnly, return the same structural-validity verdict the apply path would.
     if (input.validateOnly) {
       return {
         success: true,
         message: diffResult.message,
         data: {
-          valid: true,
-          operationsToApply: input.operations.length
+          valid: structureErrors.length === 0,
+          operationsToApply: input.operations.length,
+          ...(structureErrors.length > 0 ? { structureErrors } : {})
         },
         details: {
           warnings: diffResult.warnings
@@ -236,14 +247,10 @@ export async function handleUpdatePartialWorkflow(
       };
     }
 
-    // Validate final workflow structure after applying all operations
+    // Apply path: surface structural errors as a blocking save failure.
     // This prevents creating workflows that pass operation-level validation
-    // but fail workflow-level validation (e.g., UI can't render them)
-    //
-    // Validation can be skipped for specific integration tests that need to test
-    // n8n API behavior with edge case workflows by setting SKIP_WORKFLOW_VALIDATION=true
+    // but fail workflow-level validation (e.g., UI can't render them).
     if (diffResult.workflow) {
-      const structureErrors = validateWorkflowStructure(diffResult.workflow);
       if (structureErrors.length > 0) {
         const skipValidation = process.env.SKIP_WORKFLOW_VALIDATION === 'true';
 

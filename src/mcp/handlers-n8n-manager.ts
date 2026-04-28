@@ -382,7 +382,9 @@ export function tryParseJson(val: unknown): unknown {
 const createWorkflowSchema = z.object({
   name: z.string(),
   nodes: z.preprocess(tryParseJson, z.array(z.any())),
-  connections: z.preprocess(tryParseJson, z.record(z.any())),
+  // Two-arg z.record(keySchema, valueSchema) — see services/n8n-validation.ts for the
+  // Zod 3/4 compatibility rationale (#744).
+  connections: z.preprocess(tryParseJson, z.record(z.string(), z.any())),
   settings: z.preprocess(tryParseJson, z.object({
     executionOrder: z.enum(['v0', 'v1']).optional(),
     timezone: z.string().optional(),
@@ -400,7 +402,7 @@ const updateWorkflowSchema = z.object({
   id: z.string(),
   name: z.string().optional(),
   nodes: z.preprocess(tryParseJson, z.array(z.any())).optional(),
-  connections: z.preprocess(tryParseJson, z.record(z.any())).optional(),
+  connections: z.preprocess(tryParseJson, z.record(z.string(), z.any())).optional(),
   settings: z.preprocess(tryParseJson, z.any()).optional(),
   createBackup: z.boolean().optional(),
   intent: z.string().optional(),

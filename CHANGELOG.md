@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.48.1] - 2026-04-28
+
+### Fixed
+
+- **`n8n_update_partial_workflow` validateOnly path now matches the apply path (#744, reported by @Valirius).** Two interacting bugs:
+  - **Path divergence:** `validateOnly: true` returned the structural-validation early-exit BEFORE `validateWorkflowStructure` ran. Reporters could see a green `valid: true` from validate-only and then fail the apply call with a structural error. The structural check now runs in both paths, and the validate-only response includes the same `structureErrors` the apply path would surface, plus a `valid` boolean that reflects post-diff structural validity. The diff engine's `validateOnly` return now carries the simulated post-diff `workflow` so the handler has something to validate against.
+  - **Zod 4 record-key incompatibility:** Single-arg `z.record(valueSchema)` is reinterpreted by Zod 4 (bundled by `@modelcontextprotocol/sdk`) as `z.record(keySchema=valueSchema)`, causing node-name strings like `"W-05b Set Context"` to fail with `_zod` / `Invalid key in record`. All `z.record` calls in `n8n-validation.ts` (`workflowNodeSchema.parameters`, `.credentials`, `workflowConnectionSchema`) and `handlers-n8n-manager.ts` (`createWorkflowSchema.connections`, `updateWorkflowSchema.connections`) now use the explicit two-arg `z.record(z.string(), valueSchema)` form which is unambiguous in both Zod 3 and Zod 4.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.48.0] - 2026-04-28
 
 Three validator/diff false-positive fixes that were blocking valid workflows from being authored or updated via the MCP tools.

@@ -221,6 +221,53 @@ describe('handlers-workflow-diff', () => {
       expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
     });
 
+    it('reports valid=false in validateOnly when post-diff structure fails (#744)', async () => {
+      // Pre-fix the validateOnly early-return ran before validateWorkflowStructure
+      // and always returned valid: true, even when validateOnly: false would have failed.
+      // Now both paths produce the same structural verdict.
+      const brokenWorkflow = createTestWorkflow({
+        nodes: [
+          {
+            id: 'orphan-1',
+            name: 'Orphan',
+            type: 'n8n-nodes-base.set',
+            typeVersion: 1,
+            position: [100, 100],
+            parameters: {},
+          },
+        ],
+        // Connection points to a node that does not exist — validateWorkflowStructure
+        // flags this as a structural error.
+        connections: {
+          'Orphan': {
+            main: [[{ node: 'NonExistent', type: 'main', index: 0 }]],
+          },
+        },
+      });
+
+      mockApiClient.getWorkflow.mockResolvedValue(createTestWorkflow());
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: brokenWorkflow,
+        operationsApplied: 1,
+        message: 'Operations applied',
+        errors: [],
+        warnings: [],
+      });
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-workflow-id',
+        operations: [{ type: 'updateName', name: 'Anything' }],
+        validateOnly: true,
+      }, mockRepository);
+
+      expect(result.success).toBe(true);
+      const data = result.data as { valid: boolean; structureErrors?: string[] };
+      expect(data.valid).toBe(false);
+      expect(data.structureErrors).toBeDefined();
+      expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
+    });
+
     it('should handle multiple operations', async () => {
       const testWorkflow = createTestWorkflow();
       const diffRequest = {

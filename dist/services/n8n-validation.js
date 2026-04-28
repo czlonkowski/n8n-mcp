@@ -27,8 +27,8 @@ exports.workflowNodeSchema = zod_1.z.object({
     type: zod_1.z.string(),
     typeVersion: zod_1.z.number(),
     position: zod_1.z.tuple([zod_1.z.number(), zod_1.z.number()]),
-    parameters: zod_1.z.record(zod_1.z.unknown()),
-    credentials: zod_1.z.record(zod_1.z.unknown()).optional(),
+    parameters: zod_1.z.record(zod_1.z.string(), zod_1.z.unknown()),
+    credentials: zod_1.z.record(zod_1.z.string(), zod_1.z.unknown()).optional(),
     disabled: zod_1.z.boolean().optional(),
     notes: zod_1.z.string().optional(),
     notesInFlow: zod_1.z.boolean().optional(),
@@ -44,7 +44,7 @@ const connectionArraySchema = zod_1.z.array(zod_1.z.array(zod_1.z.object({
     type: zod_1.z.string(),
     index: zod_1.z.number(),
 })));
-exports.workflowConnectionSchema = zod_1.z.record(zod_1.z.object({
+exports.workflowConnectionSchema = zod_1.z.record(zod_1.z.string(), zod_1.z.object({
     main: connectionArraySchema.optional(),
     error: connectionArraySchema.optional(),
     ai_tool: connectionArraySchema.optional(),

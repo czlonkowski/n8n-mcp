@@ -181,10 +181,13 @@ export class WorkflowDiffEngine {
           logger.debug(`Auto-updated ${this.renameMap.size} node name references in connections (continueOnError mode)`);
         }
 
-        // If validateOnly flag is set, return success without applying
+        // If validateOnly flag is set, return success without applying.
+        // Include workflowCopy so the caller can run structural validation against
+        // the simulated post-diff result (#744).
         if (request.validateOnly) {
           return {
             success: errors.length === 0,
+            workflow: workflowCopy,
             message: errors.length === 0
               ? 'Validation successful. All operations are valid.'
               : `Validation completed with ${errors.length} errors.`,
@@ -292,10 +295,14 @@ export class WorkflowDiffEngine {
           logger.debug(`Sanitized ${this.modifiedNodeIds.size} modified nodes`);
         }
 
-        // If validateOnly flag is set, return success without applying
+        // If validateOnly flag is set, return success without applying.
+        // Include the post-diff workflowCopy so the caller (handlers-workflow-diff)
+        // can run structural validation against the simulated result — without it
+        // both validate and apply paths cannot agree on validity (#744).
         if (request.validateOnly) {
           return {
             success: true,
+            workflow: workflowCopy,
             message: 'Validation successful. Operations are valid but not applied.'
           };
         }

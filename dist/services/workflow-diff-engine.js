@@ -106,6 +106,7 @@ class WorkflowDiffEngine {
                 if (request.validateOnly) {
                     return {
                         success: errors.length === 0,
+                        workflow: workflowCopy,
                         message: errors.length === 0
                             ? 'Validation successful. All operations are valid.'
                             : `Validation completed with ${errors.length} errors.`,
@@ -205,6 +206,7 @@ class WorkflowDiffEngine {
                 if (request.validateOnly) {
                     return {
                         success: true,
+                        workflow: workflowCopy,
                         message: 'Validation successful. Operations are valid but not applied.'
                     };
                 }

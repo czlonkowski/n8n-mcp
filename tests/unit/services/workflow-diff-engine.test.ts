@@ -2978,10 +2978,12 @@ describe('WorkflowDiffEngine', () => {
       };
 
       const result = await diffEngine.applyDiff(baseWorkflow, request);
-      
+
       expect(result.success).toBe(true);
       expect(result.message).toContain('Validation successful');
-      expect(result.workflow).toBeUndefined();
+      // Post #744: validateOnly returns the simulated post-diff workflow so callers
+      // can run structural validation. Original workflow is unchanged.
+      expect(result.workflow).toBeDefined();
     });
 
     it('should return validation errors in validateOnly mode', async () => {
@@ -4057,7 +4059,8 @@ describe('WorkflowDiffEngine', () => {
 
         const result = await diffEngine.applyDiff(workflow, request);
 
-        expect(result.workflow).toBeUndefined();
+        // Post #744: validateOnly + continueOnError returns the simulated post-diff workflow
+        expect(result.workflow).toBeDefined();
         expect(result.message).toContain('Validation completed');
         expect(result.applied).toEqual([0, 2]);
         expect(result.failed).toEqual([1]);
@@ -4587,7 +4590,8 @@ describe('WorkflowDiffEngine', () => {
         const result = await diffEngine.applyDiff(workflow, request);
 
         expect(result.success).toBe(true);
-        expect(result.workflow).toBeUndefined();
+        // Post #744: validateOnly returns the simulated post-diff workflow snapshot
+        expect(result.workflow).toBeDefined();
         expect(result.message).toContain('Validation successful');
         expect(result.message).toContain('not applied');
       });
@@ -4713,7 +4717,8 @@ describe('WorkflowDiffEngine', () => {
         expect(result.success).toBe(false);
         expect(result.message).toContain('Validation completed');
         expect(result.errors).toHaveLength(2);
-        expect(result.workflow).toBeUndefined();
+        // Post #744: validateOnly returns the simulated post-diff workflow even on errors
+        expect(result.workflow).toBeDefined();
       });
 
 

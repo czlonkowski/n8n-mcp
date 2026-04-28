@@ -149,6 +149,22 @@ describe('n8n-validation', () => {
 
         expect(() => workflowConnectionSchema.parse(invalidConnections)).toThrow();
       });
+
+      it('accepts node names with spaces and hyphens as connection keys (#744)', () => {
+        // Pre-fix, the single-arg z.record(valueSchema) form was reinterpreted as
+        // z.record(keySchema=valueSchema) by Zod 4 (bundled by @modelcontextprotocol/sdk),
+        // causing node-name strings like "W-05b Set Context" to fail with "Invalid key
+        // in record". The two-arg form locks the key schema to z.string() in both Zods.
+        const connections = {
+          'W-05b Webhook Trigger': {
+            main: [[{ node: 'W-05b Set Context', type: 'main', index: 0 }]],
+          },
+          'W-05b Set Context': {
+            main: [[{ node: 'W-05b Respond To Webhook', type: 'main', index: 0 }]],
+          },
+        };
+        expect(() => workflowConnectionSchema.parse(connections)).not.toThrow();
+      });
     });
 
     describe('workflowSettingsSchema', () => {
