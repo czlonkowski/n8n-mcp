@@ -12,8 +12,8 @@ export const workflowNodeSchema = z.object({
   type: z.string(),
   typeVersion: z.number(),
   position: z.tuple([z.number(), z.number()]),
-  parameters: z.record(z.unknown()),
-  credentials: z.record(z.unknown()).optional(),
+  parameters: z.record(z.string(), z.unknown()),
+  credentials: z.record(z.string(), z.unknown()).optional(),
   disabled: z.boolean().optional(),
   notes: z.string().optional(),
   notesInFlow: z.boolean().optional(),
@@ -42,6 +42,7 @@ const connectionArraySchema = z.array(
  * connection types (ai_languageModel, ai_memory, etc.) without main connections.
  */
 export const workflowConnectionSchema = z.record(
+  z.string(),
   z.object({
     main: connectionArraySchema.optional(),
     error: connectionArraySchema.optional(),
