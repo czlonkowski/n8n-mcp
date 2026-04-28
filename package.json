@@ -1,6 +1,6 @@
 {
   "name": "n8n-mcp",
-  "version": "2.48.3",
+  "version": "2.49.0",
   "description": "Integration between n8n workflow automation and Model Context Protocol (MCP)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -156,21 +156,21 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.28.0",
-    "@n8n/n8n-nodes-langchain": "2.16.1",
+    "@n8n/n8n-nodes-langchain": "2.18.3",
     "@supabase/supabase-js": "^2.57.4",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "express-rate-limit": "^7.1.5",
     "form-data": "^4.0.5",
     "lru-cache": "^11.2.1",
-    "n8n-core": "2.16.1",
-    "n8n-nodes-base": "2.16.0",
-    "n8n-workflow": "2.16.0",
+    "n8n-core": "2.18.3",
+    "n8n-nodes-base": "2.18.3",
+    "n8n-workflow": "2.18.3",
     "openai": "^4.77.0",
     "sql.js": "^1.13.0",
     "tslib": "^2.6.2",
     "uuid": "^10.0.0",
-    "zod": "3.24.1"
+    "zod": "3.25.67"
   },
   "optionalDependencies": {
     "@rollup/rollup-darwin-arm64": "^4.50.0",

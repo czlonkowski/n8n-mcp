@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.49.0] - 2026-04-28
+
+### Changed
+
+- **Updated n8n to 2.18.4** (from 2.16.1). All four n8n packages bumped to the versions pinned by `n8n@stable`:
+  - `n8n-nodes-base`: 2.16.0 → 2.18.3
+  - `n8n-core`: 2.16.1 → 2.18.3
+  - `n8n-workflow`: 2.16.0 → 2.18.3
+  - `@n8n/n8n-nodes-langchain`: 2.16.1 → 2.18.3
+  - Pins are now exact (no caret) to prevent npm from auto-resolving to `2.19.0`, which `n8n@stable` does not yet endorse and which would also force a different `zod` peer.
+- **Bumped `zod` to 3.25.67** (from 3.24.1) to satisfy the new `zod` peer dependency declared by `n8n-core@2.18.3` and `n8n-workflow@2.18.3` — the same version `n8n@stable` itself depends on.
+- **Rebuilt node database**: 1,588 nodes total — 820 core (675 from `n8n-nodes-base` + 145 from `@n8n/n8n-nodes-langchain`) + 768 community (668 verified + 100 from npm). Community READMEs refreshed via `generate:docs:readme-only` (763/768 with READMEs, 581/768 with AI summaries — the AI-summary backfill for newly-added community nodes runs separately via the local LLM step).
+- **README badges and node counts updated** to reflect the new n8n version, node totals, and current passing-test count (`5,418`).
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.48.3] - 2026-04-28
 
 ### Fixed

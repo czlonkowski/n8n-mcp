@@ -1,6 +1,6 @@
 # n8n Update Process - Quick Reference
 
-## ⚡ Recommended Fast Workflow (2026-03-25)
+## ⚡ Recommended Fast Workflow (verified 2026-04-28)
 
 **CRITICAL FIRST STEP**: Check existing releases to avoid version conflicts!
 
@@ -47,20 +47,20 @@ node dist/scripts/generate-community-docs.js --summary-only --skip-existing-summ
 # 9. Create feature branch
 git checkout -b update/n8n-X.X.X
 
-# 7. Update version in package.json (must be HIGHER than latest release!)
+# 10. Update version in package.json (must be HIGHER than latest release!)
 # Edit: "version": "2.XX.X" (not the version from the release list!)
 
-# 8. Update CHANGELOG.md
+# 11. Update CHANGELOG.md
 # - Change version number to match package.json
 # - Update date to today
 # - Update dependency versions
 # - Include community node refresh counts
 
-# 9. Update README badge and node counts
+# 12. Update README badge and node counts
 # Edit line 8: Change n8n version badge to new n8n version
 # Update total node count in description (core + community)
 
-# 10. Commit and push
+# 13. Commit and push
 git add -A
 git commit -m "chore: update n8n to X.X.X and bump version to 2.XX.X
 
@@ -81,10 +81,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 git push -u origin update/n8n-X.X.X
 
-# 11. Create PR
+# 14. Create PR
 gh pr create --title "chore: update n8n to X.X.X" --body "Updates n8n and all related dependencies to the latest versions..."
 
-# 12. After PR is merged, verify release triggered
+# 15. After PR is merged, verify release triggered
 gh release list | head -1
 # If the new version appears, you're done!
 # If not, the version might have already been released - bump version again and create new PR
@@ -122,7 +122,7 @@ npm run update:all
 This single command will:
 1. ✅ Check for n8n updates and ask for confirmation
 2. ✅ Update all n8n dependencies to latest compatible versions
-3. ✅ Run all 1,182 tests (933 unit + 249 integration)
+3. ✅ Run all ~5,418 tests (~4,661 unit + ~757 integration)
 4. ✅ Validate critical nodes
 5. ✅ Build the project
 6. ✅ Bump the version
@@ -164,7 +164,7 @@ git commit -m "chore: update n8n to vX.X.X
 - Updated @n8n/n8n-nodes-langchain from X.X.X to X.X.X
 - Rebuilt node database with XXX nodes
 - Sanitized XXX workflow templates (if present)
-- All 1,182 tests passing (933 unit, 249 integration)
+- All ~5,418 tests passing (~4,661 unit, ~757 integration)
 - All validation tests passing
 
 🤖 Generated with [Claude Code](https://claude.ai/code)
@@ -203,9 +203,9 @@ This command:
 - Confirms everything is working correctly
 
 ### `npm test`
-- Runs all 1,182 tests
-- Unit tests: 933 tests across 30 files
-- Integration tests: 249 tests across 14 files
+- Runs ~5,418 tests
+- Unit tests: ~4,661 tests across ~140 files
+- Integration tests: ~757 tests across ~56 files
 - Must pass before publishing!
 
 ## Important Notes
