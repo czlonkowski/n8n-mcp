@@ -2392,12 +2392,33 @@ async function handleGetCredential(args, context) {
         return handleCrudError(error);
     }
 }
+function applyCredentialDataShims(type, data) {
+    if (!data || type !== 'oAuth2Api' || data.grantType !== 'clientCredentials') {
+        return data;
+    }
+    const shimmed = { ...data };
+    if ('useDynamicClientRegistration' in shimmed && !shimmed.useDynamicClientRegistration) {
+        delete shimmed.useDynamicClientRegistration;
+    }
+    if (!('sendAdditionalBodyProperties' in shimmed)) {
+        shimmed.sendAdditionalBodyProperties = false;
+    }
+    if (!('additionalBodyProperties' in shimmed)) {
+        shimmed.additionalBodyProperties = '';
+    }
+    const dcrActive = shimmed.useDynamicClientRegistration === true;
+    if (!dcrActive && !('serverUrl' in shimmed)) {
+        shimmed.serverUrl = '';
+    }
+    return shimmed;
+}
 async function handleCreateCredential(args, context) {
     try {
         const client = ensureApiConfigured(context);
         const { name, type, data } = createCredentialSchema.parse(args);
+        const shimmedData = applyCredentialDataShims(type, data);
         logger_1.logger.info(`Creating credential: name="${name}", type="${type}"`);
-        const credential = await client.createCredential({ name, type, data });
+        const credential = await client.createCredential({ name, type, data: shimmedData });
         const { data: _sensitiveData, ...safeCred } = credential;
         return {
             success: true,
@@ -2420,7 +2441,7 @@ async function handleUpdateCredential(args, context) {
         if (type !== undefined)
             updatePayload.type = type;
         if (data !== undefined)
-            updatePayload.data = data;
+            updatePayload.data = applyCredentialDataShims(type ?? '', data);
         const credential = await client.updateCredential(id, updatePayload);
         const { data: _sensitiveData, ...safeCred } = credential;
         return {
@@ -2481,8 +2502,8 @@ async function handleAuditInstance(args, context) {
         const warnings = [];
         let builtinAudit = null;
         let builtinAuditMs = 0;
+        const auditStart = Date.now();
         try {
-            const auditStart = Date.now();
             builtinAudit = await client.generateAudit({
                 categories: input.categories,
                 daysAbandonedWorkflow: input.daysAbandonedWorkflow,
@@ -2490,10 +2511,19 @@ async function handleAuditInstance(args, context) {
             builtinAuditMs = Date.now() - auditStart;
         }
         catch (auditError) {
-            builtinAuditMs = Date.now() - totalStart;
-            const msg = auditError?.statusCode === 404
-                ? 'Built-in audit endpoint not available on this n8n version.'
-                : `Built-in audit failed: ${auditError?.message || 'unknown error'}`;
+            builtinAuditMs = Date.now() - auditStart;
+            const status = auditError?.statusCode;
+            const reason = auditError?.message || 'unknown error';
+            let msg;
+            if (status === 404) {
+                msg = 'Built-in audit endpoint not available on this n8n version.';
+            }
+            else if (status !== undefined) {
+                msg = `Built-in audit failed (HTTP ${status}): ${reason}`;
+            }
+            else {
+                msg = `Built-in audit failed (no response from n8n): ${reason}`;
+            }
             warnings.push(msg);
             logger_1.logger.warn(`Audit: ${msg}`);
         }

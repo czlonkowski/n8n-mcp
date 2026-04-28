@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.48.2] - 2026-04-28
+
+### Fixed
+
+- **`n8n_audit_instance` error message now distinguishes server-side from client-side failures (#736, reported by @waltho1123-cloud).** Pre-fix the warning was always `Built-in audit failed: <message>`, hiding HTTP status. The reporter's Zeabur deployment generates the `Invalid URL` string inside n8n's own audit code (likely from missing `N8N_PROTOCOL`/`N8N_HOST` env vars) and returned it as the response body — but the warning made it look like a client bug. Three new shapes: `endpoint not available` (404, unchanged); `Built-in audit failed (HTTP <status>): <reason>` for any other status; `Built-in audit failed (no response from n8n): <reason>` when no status was returned (timeouts, ECONNREFUSED). Also fixed a long-standing nit where the error path computed `builtinAuditMs` against `totalStart` instead of `auditStart`.
+- **`n8n_manage_credentials` accepts `oAuth2Api` + `clientCredentials` payloads (#740, reported by @bwsnwl).** n8n's upstream Ajv schema for `oAuth2Api` has a known bug: the `if/then/else` on `useDynamicClientRegistration` uses `properties.x.enum` to test value, which evaluates true vacuously when the field is absent — so both `then` branches fire simultaneously and there is no payload shape that satisfies the schema for a plain `clientCredentials` grant. New `applyCredentialDataShims` helper normalizes the payload for that specific combination: strips `useDynamicClientRegistration` when falsy, injects `sendAdditionalBodyProperties: false`, `additionalBodyProperties: ''`, and `serverUrl: ''` (only when the DCR branch fires spuriously — explicit `useDynamicClientRegistration: true` callers are left alone so n8n surfaces real missing-field errors). Applied symmetrically on both create and update paths. Will be removed once n8n fixes the schema upstream.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.48.1] - 2026-04-28
 
 ### Fixed

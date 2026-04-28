@@ -1487,4 +1487,166 @@ describe('handlers-n8n-manager', () => {
       expect(sentNodes[0].credentials).toEqual({ postgresApi: { id: 'cred-123', name: 'My Postgres' } });
     });
   });
+
+  describe('handleAuditInstance — error message surfacing (#736)', () => {
+    beforeEach(() => {
+      mockApiClient.generateAudit = vi.fn();
+      mockApiClient.listAllWorkflows = vi.fn().mockResolvedValue([]);
+    });
+
+    it('includes the HTTP status when n8n responds with a server error', async () => {
+      const apiError: any = new Error('Invalid URL');
+      apiError.statusCode = 500;
+      mockApiClient.generateAudit.mockRejectedValue(apiError);
+
+      const result = await handlers.handleAuditInstance({ includeCustomScan: false });
+
+      expect(result.success).toBe(true);
+      expect(result.data.report).toContain('Built-in audit failed (HTTP 500): Invalid URL');
+    });
+
+    it('reports "no response from n8n" when the error has no status code', async () => {
+      mockApiClient.generateAudit.mockRejectedValue(new Error('connect ECONNREFUSED'));
+
+      const result = await handlers.handleAuditInstance({ includeCustomScan: false });
+
+      expect(result.data.report).toContain('Built-in audit failed (no response from n8n): connect ECONNREFUSED');
+    });
+
+    it('keeps the special-case 404 message for older n8n versions', async () => {
+      const notFound: any = new Error('Not Found');
+      notFound.statusCode = 404;
+      mockApiClient.generateAudit.mockRejectedValue(notFound);
+
+      const result = await handlers.handleAuditInstance({ includeCustomScan: false });
+
+      expect(result.data.report).toContain('Built-in audit endpoint not available on this n8n version.');
+    });
+  });
+
+  describe('handleCreateCredential — oAuth2 clientCredentials shim (#740)', () => {
+    beforeEach(() => {
+      mockApiClient.createCredential = vi.fn().mockResolvedValue({
+        id: 'cred-1',
+        name: 'shim-test',
+      });
+    });
+
+    function callCreateOAuth2(extra: Record<string, any> = {}) {
+      return handlers.handleCreateCredential({
+        action: 'create',
+        name: 'shim-test',
+        type: 'oAuth2Api',
+        data: {
+          grantType: 'clientCredentials',
+          accessTokenUrl: 'https://login.example.com/token',
+          clientId: 'cid',
+          clientSecret: 'secret',
+          scope: 'https://example.com/.default',
+          authentication: 'header',
+          ...extra,
+        },
+      });
+    }
+
+    it('strips useDynamicClientRegistration: false and injects required defaults', async () => {
+      await callCreateOAuth2({ useDynamicClientRegistration: false });
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData).not.toHaveProperty('useDynamicClientRegistration');
+      expect(sentData.sendAdditionalBodyProperties).toBe(false);
+      expect(sentData.additionalBodyProperties).toBe('');
+      // serverUrl is required by the spuriously-fired DCR branch when
+      // useDynamicClientRegistration is absent — empty string satisfies it.
+      expect(sentData.serverUrl).toBe('');
+    });
+
+    it('injects required defaults when useDynamicClientRegistration is absent', async () => {
+      await callCreateOAuth2();
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData.sendAdditionalBodyProperties).toBe(false);
+      expect(sentData.additionalBodyProperties).toBe('');
+      expect(sentData.serverUrl).toBe('');
+    });
+
+    it('does not strip useDynamicClientRegistration when explicitly true', async () => {
+      await callCreateOAuth2({ useDynamicClientRegistration: true, serverUrl: 'https://dcr.example.com' });
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData.useDynamicClientRegistration).toBe(true);
+      // Caller-supplied serverUrl must be preserved, not overwritten with the empty default.
+      expect(sentData.serverUrl).toBe('https://dcr.example.com');
+    });
+
+    it('does not shim other grant types', async () => {
+      await handlers.handleCreateCredential({
+        action: 'create',
+        name: 'auth-code',
+        type: 'oAuth2Api',
+        data: {
+          grantType: 'authorizationCode',
+          authUrl: 'https://example.com/auth',
+          accessTokenUrl: 'https://example.com/token',
+          clientId: 'cid',
+          clientSecret: 'secret',
+        },
+      });
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData).not.toHaveProperty('sendAdditionalBodyProperties');
+      expect(sentData).not.toHaveProperty('additionalBodyProperties');
+    });
+
+    it('does not shim non-oAuth2Api credential types', async () => {
+      await handlers.handleCreateCredential({
+        action: 'create',
+        name: 'pg',
+        type: 'postgres',
+        data: { host: 'db.example.com' },
+      });
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData).toEqual({ host: 'db.example.com' });
+    });
+
+    it('does NOT inject serverUrl when DCR is explicitly enabled (lets n8n surface real missing-field error)', async () => {
+      // Caller opted into Dynamic Client Registration but forgot serverUrl.
+      // Pre-fix this would silently inject "" and n8n would error with an
+      // "invalid empty URL" message that hides the real problem.
+      await callCreateOAuth2({ useDynamicClientRegistration: true });
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData).not.toHaveProperty('serverUrl');
+      expect(sentData.useDynamicClientRegistration).toBe(true);
+    });
+
+    it('applies the same shim on the update path (#740)', async () => {
+      mockApiClient.updateCredential = vi.fn().mockResolvedValue({
+        id: 'cred-99',
+        name: 'shim-update',
+      });
+
+      await handlers.handleUpdateCredential({
+        action: 'update',
+        id: 'cred-99',
+        type: 'oAuth2Api',
+        data: {
+          grantType: 'clientCredentials',
+          accessTokenUrl: 'https://login.example.com/token',
+          clientId: 'cid',
+          clientSecret: 'secret',
+          scope: 'https://example.com/.default',
+          authentication: 'header',
+          useDynamicClientRegistration: false,
+        },
+      });
+
+      const updatePayload = mockApiClient.updateCredential.mock.calls[0][1];
+      expect(updatePayload.data).not.toHaveProperty('useDynamicClientRegistration');
+      expect(updatePayload.data.sendAdditionalBodyProperties).toBe(false);
+      expect(updatePayload.data.additionalBodyProperties).toBe('');
+      expect(updatePayload.data.serverUrl).toBe('');
+    });
+  });
 });

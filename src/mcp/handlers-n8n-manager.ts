@@ -3070,12 +3070,62 @@ export async function handleGetCredential(args: unknown, context?: InstanceConte
   }
 }
 
+/**
+ * Workaround for n8n's oAuth2Api credential schema (#740).
+ *
+ * The upstream Ajv schema has two interacting bugs that make `clientCredentials`
+ * grant unusable as-is:
+ *   1. `additionalProperties: false` at the root with `useDynamicClientRegistration`
+ *      missing from `properties`, so sending it triggers an "additional property"
+ *      rejection.
+ *   2. The `if/then/else` on `useDynamicClientRegistration` uses
+ *      `properties.x.enum` to test value, which evaluates true vacuously when the
+ *      field is absent — so both `then` branches fire simultaneously, and `serverUrl`
+ *      (a Dynamic Client Registration field) becomes required even on plain
+ *      client-credentials flows that have no DCR involvement.
+ *
+ * The shim normalizes data for that specific combination so the Ajv schema is
+ * satisfied: strip the rejected `useDynamicClientRegistration` field, inject
+ * the `sendAdditionalBodyProperties` / `additionalBodyProperties` defaults
+ * the schema's grant-type `then` branch requires, and inject `serverUrl: ''`
+ * to satisfy the spuriously-fired DCR `then` branch.
+ *
+ * Filed upstream against n8n. Remove this shim when their schema is fixed.
+ */
+function applyCredentialDataShims(
+  type: string,
+  data: Record<string, any> | undefined
+): Record<string, any> | undefined {
+  if (!data || type !== 'oAuth2Api' || data.grantType !== 'clientCredentials') {
+    return data;
+  }
+  const shimmed: Record<string, any> = { ...data };
+  if ('useDynamicClientRegistration' in shimmed && !shimmed.useDynamicClientRegistration) {
+    delete shimmed.useDynamicClientRegistration;
+  }
+  if (!('sendAdditionalBodyProperties' in shimmed)) {
+    shimmed.sendAdditionalBodyProperties = false;
+  }
+  if (!('additionalBodyProperties' in shimmed)) {
+    shimmed.additionalBodyProperties = '';
+  }
+  // Only inject serverUrl when the DCR branch fires spuriously (DCR is absent/false).
+  // If the caller explicitly opted into DCR (true), let n8n surface a real
+  // "missing serverUrl" error rather than masking it with our empty-string default.
+  const dcrActive = shimmed.useDynamicClientRegistration === true;
+  if (!dcrActive && !('serverUrl' in shimmed)) {
+    shimmed.serverUrl = '';
+  }
+  return shimmed;
+}
+
 export async function handleCreateCredential(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
   try {
     const client = ensureApiConfigured(context);
     const { name, type, data } = createCredentialSchema.parse(args);
+    const shimmedData = applyCredentialDataShims(type, data);
     logger.info(`Creating credential: name="${name}", type="${type}"`);
-    const credential = await client.createCredential({ name, type, data });
+    const credential = await client.createCredential({ name, type, data: shimmedData });
     const { data: _sensitiveData, ...safeCred } = credential;
     return {
       success: true,
@@ -3095,7 +3145,10 @@ export async function handleUpdateCredential(args: unknown, context?: InstanceCo
     const updatePayload: Record<string, any> = {};
     if (name !== undefined) updatePayload.name = name;
     if (type !== undefined) updatePayload.type = type;
-    if (data !== undefined) updatePayload.data = data;
+    // Apply the same oAuth2 clientCredentials shim as the create path (#740) — n8n's
+    // schema rejects the same payload shape on update, so re-saving an existing
+    // credential would re-trigger the bug without this.
+    if (data !== undefined) updatePayload.data = applyCredentialDataShims(type ?? '', data);
     const credential = await client.updateCredential(id, updatePayload);
     const { data: _sensitiveData, ...safeCred } = credential;
     return {
@@ -3162,18 +3215,29 @@ export async function handleAuditInstance(args: unknown, context?: InstanceConte
     // Phase A: n8n built-in audit
     let builtinAudit: any = null;
     let builtinAuditMs = 0;
+    const auditStart = Date.now();
     try {
-      const auditStart = Date.now();
       builtinAudit = await client.generateAudit({
         categories: input.categories,
         daysAbandonedWorkflow: input.daysAbandonedWorkflow,
       });
       builtinAuditMs = Date.now() - auditStart;
     } catch (auditError: any) {
-      builtinAuditMs = Date.now() - totalStart;
-      const msg = auditError?.statusCode === 404
-        ? 'Built-in audit endpoint not available on this n8n version.'
-        : `Built-in audit failed: ${auditError?.message || 'unknown error'}`;
+      builtinAuditMs = Date.now() - auditStart;
+      // Surface HTTP status in the warning so users can tell server-side errors
+      // (n8n internal failures, missing N8N_HOST/N8N_PROTOCOL env, etc.) apart
+      // from client-side ones. Pre-fix the message hid this and the bare
+      // "Invalid URL" string from n8n's response body looked like a client bug. (#736)
+      const status = auditError?.statusCode;
+      const reason = auditError?.message || 'unknown error';
+      let msg: string;
+      if (status === 404) {
+        msg = 'Built-in audit endpoint not available on this n8n version.';
+      } else if (status !== undefined) {
+        msg = `Built-in audit failed (HTTP ${status}): ${reason}`;
+      } else {
+        msg = `Built-in audit failed (no response from n8n): ${reason}`;
+      }
       warnings.push(msg);
       logger.warn(`Audit: ${msg}`);
     }
