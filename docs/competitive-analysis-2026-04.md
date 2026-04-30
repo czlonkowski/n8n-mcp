@@ -423,7 +423,7 @@ This is the strongest "production users must use n8n-mcp" argument, so it deserv
 
 | Server | `search_nodes` query | `get_node_types` / `get_node` lookup |
 |---|---|---|
-| Official `n8n-offical-mcp` | `search_nodes(["playwright"])` → `"No nodes found. Try a different search term."` | `get_node_types(["n8n-nodes-playwright.playwright"])` → `"Node type 'n8n-nodes-playwright.playwright' not found. Use search_node to find the correct node ID."` |
+| Official `n8n-official-mcp` | `search_nodes(["playwright"])` → `"No nodes found. Try a different search term."` | `get_node_types(["n8n-nodes-playwright.playwright"])` → `"Node type 'n8n-nodes-playwright.playwright' not found. Use search_node to find the correct node ID."` |
 | n8n-mcp-staging | `search_nodes("playwright")` → returns the node: `{nodeType, displayName: "playwright", category: "Community", package: "n8n-nodes-playwright", version: "0.2.21", isCommunity: true, npmDownloads: 10000}` | `get_node("n8n-nodes-playwright.playwright")` → returns full node info including `versionNotice: "⚠️ Use typeVersion: 0.2.21 when creating this node"`, `hasCredentials: true`, `developmentStyle: "declarative"` |
 
 **Same result confirmed for two more community nodes:** `n8n-nodes-evolution-api-v2.evolutionapiv2` and `n8n-nodes-difyai.difyai` — both return "Node type not found" on official; both return full info on n8n-mcp.
@@ -436,18 +436,18 @@ n8n-mcp's database currently indexes **768 community nodes** (668 verified + 100
 
 ---
 
-## 6. Validator comparison (24 codes vs 4 profiles)
+## 6. Validator comparison (26 codes vs 4 profiles)
 
 ### 6.1 Official server
 
 Single validator at `packages/@n8n/workflow-sdk/src/validation/index.ts` with a `strictMode: boolean` flag and granular toggles (`allowDisconnectedNodes`, `allowNoTrigger`, `validateSchema`). **No named profiles.** Most schema errors are downgraded to **warnings** — the source comment is explicit: *"Report as WARNING (non-blocking) to maintain backwards compatibility."*
 
-24 error codes implemented:
+26 error codes implemented:
 `NO_NODES, MISSING_TRIGGER, DISCONNECTED_NODE, MISSING_PARAMETER, INVALID_CONNECTION, CIRCULAR_REFERENCE, INVALID_EXPRESSION, AGENT_STATIC_PROMPT, AGENT_NO_SYSTEM_MESSAGE, HARDCODED_CREDENTIALS, SET_CREDENTIAL_FIELD, MERGE_SINGLE_INPUT, TOOL_NO_PARAMETERS, FROM_AI_IN_NON_TOOL, MISSING_EXPRESSION_PREFIX, INVALID_PARAMETER, INVALID_INPUT_INDEX, SUBNODE_NOT_CONNECTED, SUBNODE_PARAMETER_MISMATCH, UNSUPPORTED_SUBNODE_INPUT, MISSING_REQUIRED_INPUT, INVALID_OUTPUT_FOR_MODE, MAX_NODES_EXCEEDED, INVALID_EXPRESSION_PATH, PARTIAL_EXPRESSION_PATH, INVALID_DATE_METHOD`.
 
 **Live probe results — comprehensive validator gap matrix:**
 
-The official validator was tested against 14 deliberately invalid configurations. n8n-mcp was tested against the same configurations (translated to JSON where the SDK couldn't express them).
+The official validator was tested against 15 deliberately invalid configurations. n8n-mcp was tested against the same configurations (translated to JSON where the SDK couldn't express them).
 
 | # | Probe | Official `validate_workflow` | n8n-mcp `validate_workflow` |
 |---|---|---|---|
