@@ -82,7 +82,7 @@ The official server's `update_workflow` re-sends the entire SDK code on every ch
 
 #### Per-edit cost (single "add a node mid-flow" edit)
 
-| Workflow size | Initial CREATE (SDK / JSON) | Single-edit official `update_workflow` | Single-edit n8n-mcp `update_partial_workflow` | **Edit ratio** |
+| Workflow size | Initial CREATE (SDK / JSON) | Single-edit official `update_workflow` | Single-edit n8n-mcp `n8n_update_partial_workflow` | **Edit ratio** |
 |---|---|---|---|---|
 | **4 nodes** | 2,400 / 2,400 chars | 2,400 chars (full SDK + new node) | 370 chars (4 ops) | **6.5×** |
 | **15 nodes** | 5,333 / 5,342 chars | 5,820 chars (full SDK + new node) | 388 chars (4 ops) | **15×** |
@@ -316,9 +316,9 @@ Measured reality (last 90 days, daily tool-usage aggregates):
 ### 4.2 n8n-mcp + SaaS
 
 - **Self-hosted:** stdio + single-session HTTP server, persistent session state (sessions persist on disk across deployments; users don't restart MCP clients).
-- **SaaS at n8n-mcp.com:** multi-tenant. **OAuth 2.0** with Auth0, dynamic client registration via `oauth_dynamic_clients` table, refresh token flow, `oauth_tokens` for Claude Desktop. Two-tier API keys:
-  - User-facing: `nmcp_xxx` (SHA-256 hashed in `api_keys` table)
-  - Server-internal: encrypted n8n instance credentials (AES-256-GCM in `n8n_instances`) — **users never expose their n8n API key to the AI client**
+- **SaaS at n8n-mcp.com:** multi-tenant. **OAuth 2.0** with Auth0, including dynamic client registration (RFC 7591) and refresh token flow for Claude Desktop. Two-tier API keys:
+  - User-facing: `nmcp_xxx` (SHA-256 hashed at rest)
+  - Server-internal: encrypted n8n instance credentials (AES-256-GCM at rest) — **users never expose their n8n API key to the AI client**
 - Tiered plans with per-user `daily_limit` and `per_minute_limit` quotas.
 
 The SaaS effectively closes the OAuth + no-token-management gap. Self-hosted n8n-mcp users still pass an n8n API key to the server; SaaS users do not.
@@ -371,7 +371,7 @@ The SDK ships standalone CLIs (`json-to-code`, `code-to-json`) — meaning users
 2. **Community-node blind spot.** Verified live — see §5.5.
 3. **No partial validation.** Cannot validate a single node — `validate_workflow` requires the full `export default workflow(...)`.
 4. **Code is opaque to humans.** PRs against agent-authored workflows look like full rewrites; diffs are unreadable.
-5. **AST-interpreter foot-guns.** The SDK's Acorn-based AST interpreter intercepts certain JS identifiers as "security violations." Real-world bug: a workflow with a const variable named `fetch` (perfectly valid n8n node reference) is rejected with *"Security violation: 'Access to 'fetch' is not allowed' is not allowed"* and cannot be saved at all. See §6.4 Workflow 4 for the verbatim error. Common variable names like `process`, `require`, `import`, `eval`, etc. likely have similar collisions. The agent has to learn these blocklist names empirically — they're not in `get_sdk_reference`.
+5. **AST-interpreter foot-guns.** The SDK's Acorn-based AST interpreter intercepts certain JS identifiers as "security violations." Real-world bug: a workflow with a const variable named `fetch` (perfectly valid n8n node reference) is rejected with the verbatim error *"Security violation: 'Access to 'fetch' is not allowed' is not allowed"* (sic — the official message duplicates "is not allowed") and cannot be saved at all. See §6.4 Workflow 4 for the verbatim error. Common variable names like `process`, `require`, `import`, `eval`, etc. likely have similar collisions. The agent has to learn these blocklist names empirically — they're not in `get_sdk_reference`.
 
 ### 5.5 Community-node coverage — verified
 
@@ -387,7 +387,7 @@ This is the strongest "production users must use n8n-mcp" argument, so it deserv
 
 | Server | `search_nodes` query | `get_node_types` / `get_node` lookup |
 |---|---|---|
-| Official `n8n-official-mcp` | `search_nodes(["playwright"])` → `"No nodes found. Try a different search term."` | `get_node_types(["n8n-nodes-playwright.playwright"])` → `"Node type 'n8n-nodes-playwright.playwright' not found. Use search_node to find the correct node ID."` |
+| Official `n8n-official-mcp` | `search_nodes(["playwright"])` → `"No nodes found. Try a different search term."` | `get_node_types(["n8n-nodes-playwright.playwright"])` → `"Node type 'n8n-nodes-playwright.playwright' not found. Use search_node to find the correct node ID."` *(verbatim; the official error message says `search_node` though the tool is registered as `search_nodes`)* |
 | n8n-mcp-staging | `search_nodes("playwright")` → returns the node: `{nodeType, displayName: "playwright", category: "Community", package: "n8n-nodes-playwright", version: "0.2.21", isCommunity: true, npmDownloads: 10000}` | `get_node("n8n-nodes-playwright.playwright")` → returns full node info including `versionNotice: "⚠️ Use typeVersion: 0.2.21 when creating this node"`, `hasCredentials: true`, `developmentStyle: "declarative"` |
 
 The same pattern reproduces across other widely-used community nodes — any package not in the built-in node registry returns "Node type not found" on the official server.
@@ -453,7 +453,7 @@ To verify the validator gap isn't an artifact of one cherry-picked workflow, bot
 
 Across five representative workflow archetypes, the official validator returned `0/0` on three cases, failed to parse one case at all, and was not re-run on the post-edit case. n8n-mcp surfaced 2 errors and 28 actionable warnings across the same five — including one real production bug that the engine had silently accepted at save time. The categorical pattern is consistent with the gap matrix in §6.1: actionable issues that the official validator either accepts as valid or downgrades to warnings.
 
-**One concrete parse-failure mode worth highlighting**: in workflow #4 above, the SDK's AST sandbox rejected an agent's `const fetch = node({...})` declaration with *"Security violation: 'Access to 'fetch' is not allowed' is not allowed"*, blocking save entirely. The agent had given the `Fetch Data` HTTP node a const named `fetch` — a routine choice — but `fetch` is a reserved identifier in the SDK's sandbox, and `get_sdk_reference` does not list the reserved set. n8n-mcp doesn't have an equivalent foot-gun because it works on workflow JSON, where node names are user-facing strings, not JS identifiers.
+**One concrete parse-failure mode worth highlighting**: in workflow #4 above, the SDK's AST sandbox rejected an agent's `const fetch = node({...})` declaration with *"Security violation: 'Access to 'fetch' is not allowed' is not allowed"* (sic), blocking save entirely. The agent had given the `Fetch Data` HTTP node a const named `fetch` — a routine choice — but `fetch` is a reserved identifier in the SDK's sandbox, and `get_sdk_reference` does not list the reserved set. n8n-mcp doesn't have an equivalent foot-gun because it works on workflow JSON, where node names are user-facing strings, not JS identifiers.
 
 ---
 
