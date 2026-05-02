@@ -11,6 +11,22 @@ import type { MetadataRequest } from '../templates/metadata-generator';
 dotenv.config();
 
 /**
+ * Redact userinfo and query parameters from a URL before logging — operators
+ * sometimes embed bearer tokens or signed query params in N8N_MCP_LLM_BASE_URL.
+ * Returns the input unchanged if it isn't a parseable URL.
+ */
+function redactUrl(url: string | undefined): string {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    const port = u.port ? `:${u.port}` : '';
+    return `${u.protocol}//${u.hostname}${port}${u.pathname}`;
+  } catch {
+    return '<redacted>';
+  }
+}
+
+/**
  * Extract node configurations from a template workflow
  */
 function extractNodeConfigs(
@@ -256,7 +272,7 @@ async function fetchTemplates(
   console.log(`${modeEmoji} ${modeText} n8n workflow templates...\n`);
   
   if (generateMetadata) {
-    const provider = process.env.N8N_MCP_LLM_BASE_URL ? `local (${process.env.N8N_MCP_LLM_BASE_URL})` : 'OpenAI';
+    const provider = process.env.N8N_MCP_LLM_BASE_URL ? `local (${redactUrl(process.env.N8N_MCP_LLM_BASE_URL)})` : 'OpenAI';
     console.log(`🤖 Metadata generation enabled (${provider})\n`);
   }
   
@@ -399,10 +415,14 @@ async function generateTemplateMetadata(db: any, service: TemplateService) {
       if (raw && concurrency !== parsed) {
         console.log(`⚠️  Invalid N8N_MCP_LLM_CONCURRENCY="${raw}" — falling back to ${concurrency}`);
       }
-      console.log(`🏠 Local LLM mode: ${process.env.N8N_MCP_LLM_BASE_URL} (concurrency ${concurrency})`);
+      console.log(`🏠 Local LLM mode: ${redactUrl(process.env.N8N_MCP_LLM_BASE_URL)} (concurrency ${concurrency})`);
+      // OpenAI SDK requires a non-empty apiKey, so unset falls back to the
+      // conventional 'not-needed' sentinel that vLLM/Ollama ignore. Anyone
+      // running behind a gateway that validates Bearer tokens must set
+      // N8N_MCP_LLM_API_KEY explicitly.
       processor = new SequentialMetadataProcessor({
         baseURL: process.env.N8N_MCP_LLM_BASE_URL!,
-        apiKey: process.env.N8N_MCP_LLM_API_KEY || 'EMPTY',
+        apiKey: process.env.N8N_MCP_LLM_API_KEY || 'not-needed',
         model: process.env.N8N_MCP_LLM_MODEL || 'Qwen/Qwen3.5-9B',
         concurrency
       });

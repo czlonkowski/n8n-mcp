@@ -42,6 +42,18 @@ const path = __importStar(require("path"));
 const zlib = __importStar(require("zlib"));
 const dotenv = __importStar(require("dotenv"));
 dotenv.config();
+function redactUrl(url) {
+    if (!url)
+        return '';
+    try {
+        const u = new URL(url);
+        const port = u.port ? `:${u.port}` : '';
+        return `${u.protocol}//${u.hostname}${port}${u.pathname}`;
+    }
+    catch {
+        return '<redacted>';
+    }
+}
 function extractNodeConfigs(templateId, templateName, templateViews, workflowCompressed, metadata) {
     try {
         const decompressed = zlib.gunzipSync(Buffer.from(workflowCompressed, 'base64'));
@@ -197,7 +209,7 @@ async function fetchTemplates(mode = 'rebuild', generateMetadata = false, metada
     const modeText = mode === 'rebuild' ? 'Rebuilding' : 'Updating';
     console.log(`${modeEmoji} ${modeText} n8n workflow templates...\n`);
     if (generateMetadata) {
-        const provider = process.env.N8N_MCP_LLM_BASE_URL ? `local (${process.env.N8N_MCP_LLM_BASE_URL})` : 'OpenAI';
+        const provider = process.env.N8N_MCP_LLM_BASE_URL ? `local (${redactUrl(process.env.N8N_MCP_LLM_BASE_URL)})` : 'OpenAI';
         console.log(`🤖 Metadata generation enabled (${provider})\n`);
     }
     const dataDir = './data';
@@ -301,10 +313,10 @@ async function generateTemplateMetadata(db, service) {
             if (raw && concurrency !== parsed) {
                 console.log(`⚠️  Invalid N8N_MCP_LLM_CONCURRENCY="${raw}" — falling back to ${concurrency}`);
             }
-            console.log(`🏠 Local LLM mode: ${process.env.N8N_MCP_LLM_BASE_URL} (concurrency ${concurrency})`);
+            console.log(`🏠 Local LLM mode: ${redactUrl(process.env.N8N_MCP_LLM_BASE_URL)} (concurrency ${concurrency})`);
             processor = new SequentialMetadataProcessor({
                 baseURL: process.env.N8N_MCP_LLM_BASE_URL,
-                apiKey: process.env.N8N_MCP_LLM_API_KEY || 'EMPTY',
+                apiKey: process.env.N8N_MCP_LLM_API_KEY || 'not-needed',
                 model: process.env.N8N_MCP_LLM_MODEL || 'Qwen/Qwen3.5-9B',
                 concurrency
             });
