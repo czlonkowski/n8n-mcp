@@ -294,6 +294,22 @@ export class PerformanceMonitor {
  */
 export class TestDataGenerator {
   /**
+   * Monotonic counter for unique template ids. `Math.random()` over a small range
+   * (the original generator used 0..100000) collides via the birthday paradox
+   * when callers generate hundreds of rows, producing UNIQUE-constraint flakes
+   * in CI on tables that key off `workflow_id`.
+   */
+  private static templateIdCounter = 100_000;
+
+  /**
+   * Resets the monotonic template id counter. Call from a `beforeEach` if a test
+   * needs deterministic ids across runs.
+   */
+  static resetTemplateIds(start = 100_000): void {
+    this.templateIdCounter = start;
+  }
+
+  /**
    * Generates a mock node object with default values and custom overrides.
    * 
    * @param overrides - Properties to override in the generated node
@@ -355,7 +371,7 @@ export class TestDataGenerator {
    */
   static generateTemplate(overrides: any = {}): any {
     return {
-      id: Math.floor(Math.random() * 100000),
+      id: ++TestDataGenerator.templateIdCounter,
       name: `Test Workflow ${Math.random().toString(36).substr(2, 9)}`,
       totalViews: Math.floor(Math.random() * 1000),
       nodeTypes: ['n8n-nodes-base.webhook', 'n8n-nodes-base.httpRequest'],
