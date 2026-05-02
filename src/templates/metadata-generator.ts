@@ -33,9 +33,9 @@ export interface MetadataResult {
 export class MetadataGenerator {
   private client: OpenAI;
   private model: string;
-  
-  constructor(apiKey: string, model: string = 'gpt-5-mini-2025-08-07') {
-    this.client = new OpenAI({ apiKey });
+
+  constructor(apiKey: string, model: string = 'gpt-5-mini-2025-08-07', baseURL?: string) {
+    this.client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
     this.model = model;
   }
   
@@ -281,6 +281,70 @@ export class MetadataGenerator {
     };
   }
   
+  /**
+   * Build the prompt body shared by batch and direct paths.
+   */
+  buildChatRequest(template: MetadataRequest) {
+    const nodesSummary = this.summarizeNodes(template.nodes);
+    const sanitizedName = this.sanitizeInput(template.name, Math.max(200, template.name.length));
+    const sanitizedDescription = template.description
+      ? this.sanitizeInput(template.description, 500)
+      : '';
+
+    const context = [
+      `Template: ${sanitizedName}`,
+      sanitizedDescription ? `Description: ${sanitizedDescription}` : '',
+      `Nodes Used (${template.nodes.length}): ${nodesSummary}`,
+      template.workflow ? `Workflow has ${template.workflow.nodes?.length || 0} nodes with ${Object.keys(template.workflow.connections || {}).length} connections` : ''
+    ].filter(Boolean).join('\n');
+
+    return {
+      model: this.model,
+      max_completion_tokens: 3000,
+      response_format: {
+        type: 'json_schema',
+        json_schema: this.getJsonSchema()
+      } as any,
+      messages: [
+        {
+          role: 'system' as const,
+          content: [
+            'You extract metadata about n8n workflow templates. Output ONLY the JSON the schema demands. Never echo the input.',
+            'categories: 1–5 broad domains (e.g. "AI/ML", "Communication", "Data Processing", "DevOps", "Marketing"). Never include the words "Template:", "Description:", or any prompt header.',
+            'use_cases: short noun phrases describing what users do with this workflow.',
+            'required_services: external SaaS / APIs / databases the workflow connects to. Do NOT list n8n itself, the runtime, or generic categories.',
+            'key_features: capabilities the workflow demonstrates.',
+            'target_audience: 1–3 user roles (e.g. "developers", "marketers", "ops engineers"). Use short noun phrases.'
+          ].join('\n')
+        },
+        { role: 'user' as const, content: context }
+      ]
+    };
+  }
+
+  /**
+   * Generate metadata for one template via direct (non-batch) chat completion.
+   * Used for OpenAI-compatible servers (vLLM, Ollama) that don't implement /v1/batches.
+   */
+  async generateDirect(template: MetadataRequest): Promise<MetadataResult> {
+    try {
+      const req = this.buildChatRequest(template);
+      const completion = await this.client.chat.completions.create(req);
+      const content = completion.choices[0]?.message?.content;
+      if (!content) throw new Error('No content in response');
+      const metadata = JSON.parse(content);
+      const validated = TemplateMetadataSchema.parse(metadata);
+      return { templateId: template.templateId, metadata: validated };
+    } catch (error) {
+      logger.error(`Error generating metadata for template ${template.templateId}:`, error);
+      return {
+        templateId: template.templateId,
+        metadata: this.getDefaultMetadata(),
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
   /**
    * Generate metadata for a single template (for testing)
    */

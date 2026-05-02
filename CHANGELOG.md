@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.50.0] - 2026-05-02
+
+### Added
+
+- **Local LLM support for template metadata generation.** `fetch:templates --metadata-only` now routes to any OpenAI-compatible server (vLLM, Ollama, llama.cpp's `/v1`) when `N8N_MCP_LLM_BASE_URL` is set, falling back to OpenAI's Batch API otherwise. New `SequentialMetadataProcessor` issues direct `chat.completions.create` calls with configurable concurrency, since vLLM and friends do not implement OpenAI's `/v1/batches` endpoint. New env vars: `N8N_MCP_LLM_BASE_URL`, `N8N_MCP_LLM_MODEL` (default `Qwen/Qwen3.5-9B`), `N8N_MCP_LLM_API_KEY` (defaults to `EMPTY` for keyless local servers), `N8N_MCP_LLM_CONCURRENCY` (default 40). The cloud Batch path is unchanged.
+- **Stronger, leak-resistant prompt** for template metadata. The system message now spells out what each schema field means (categories, use_cases, required_services, key_features, target_audience) and explicitly forbids echoing prompt headers, which fixes a class of failures where smaller open-source models occasionally emitted `Template: ...` strings into the `categories` array. Used by both the cloud and local paths.
+
+### Changed
+
+- **Template store refreshed from n8n.io.** The templates table was rebuilt against the current API: 2,352 templates, 156 ranked node configurations across the most-popular nodes. Previous rebuild dated 2025-12-24.
+- **Template metadata regenerated end-to-end** against a local Qwen3.5-9B vLLM instance: 2,351/2,352 templates carry fresh `metadata_json` (99.96% coverage). One template (4334) skipped due to a tokenizer encoding edge case in its source content.
+
+### Notes
+
+- Community nodes remain untouched: 768 community + 820 base = 1,588 total in `nodes`. Template fetch only drops the `templates` and `templates_fts` tables — never `nodes`.
+- A backup of the pre-fetch database lives at `/tmp/nodes-pre-template-update-20260502-093230.db` on the maintainer's machine.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.49.0] - 2026-04-28
 
 ### Changed

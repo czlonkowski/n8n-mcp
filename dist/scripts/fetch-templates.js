@@ -180,8 +180,9 @@ async function fetchTemplates(mode = 'rebuild', generateMetadata = false, metada
     }
     if (metadataOnly) {
         console.log('🤖 Metadata-only mode: Generating metadata for existing templates...\n');
-        if (!process.env.OPENAI_API_KEY) {
-            console.error('❌ OPENAI_API_KEY not set in environment');
+        const useLocal = !!process.env.N8N_MCP_LLM_BASE_URL;
+        if (!useLocal && !process.env.OPENAI_API_KEY) {
+            console.error('❌ Set OPENAI_API_KEY (cloud) or N8N_MCP_LLM_BASE_URL (local OpenAI-compatible server)');
             process.exit(1);
         }
         const db = await (0, database_adapter_1.createDatabaseAdapter)('./data/nodes.db');
@@ -196,7 +197,8 @@ async function fetchTemplates(mode = 'rebuild', generateMetadata = false, metada
     const modeText = mode === 'rebuild' ? 'Rebuilding' : 'Updating';
     console.log(`${modeEmoji} ${modeText} n8n workflow templates...\n`);
     if (generateMetadata) {
-        console.log('🤖 Metadata generation enabled (using OpenAI)\n');
+        const provider = process.env.N8N_MCP_LLM_BASE_URL ? `local (${process.env.N8N_MCP_LLM_BASE_URL})` : 'OpenAI';
+        console.log(`🤖 Metadata generation enabled (${provider})\n`);
     }
     const dataDir = './data';
     if (!fs.existsSync(dataDir)) {
@@ -261,12 +263,12 @@ async function fetchTemplates(mode = 'rebuild', generateMetadata = false, metada
         });
         console.log('');
         await extractTemplateConfigs(db, service);
-        if (generateMetadata && process.env.OPENAI_API_KEY) {
+        if (generateMetadata && (process.env.OPENAI_API_KEY || process.env.N8N_MCP_LLM_BASE_URL)) {
             console.log('\n🤖 Generating metadata for templates...');
             await generateTemplateMetadata(db, service);
         }
-        else if (generateMetadata && !process.env.OPENAI_API_KEY) {
-            console.log('\n⚠️  Metadata generation requested but OPENAI_API_KEY not set');
+        else if (generateMetadata) {
+            console.log('\n⚠️  Metadata generation requested but neither OPENAI_API_KEY nor N8N_MCP_LLM_BASE_URL set');
         }
     }
     catch (error) {
@@ -279,8 +281,8 @@ async function fetchTemplates(mode = 'rebuild', generateMetadata = false, metada
 }
 async function generateTemplateMetadata(db, service) {
     try {
-        const { BatchProcessor } = await Promise.resolve().then(() => __importStar(require('../templates/batch-processor')));
         const repository = service.repository;
+        const useLocal = !!process.env.N8N_MCP_LLM_BASE_URL;
         const limit = parseInt(process.env.METADATA_LIMIT || '0');
         const templatesWithoutMetadata = limit > 0
             ? repository.getTemplatesWithoutMetadata(limit)
@@ -290,18 +292,33 @@ async function generateTemplateMetadata(db, service) {
             return;
         }
         console.log(`Found ${templatesWithoutMetadata.length} templates without metadata`);
-        const batchSize = parseInt(process.env.OPENAI_BATCH_SIZE || '50');
-        console.log(`Processing in batches of ${batchSize} templates each`);
-        if (batchSize > 100) {
-            console.log(`⚠️  Large batch size (${batchSize}) may take longer to process`);
-            console.log(`   Consider using OPENAI_BATCH_SIZE=50 for faster results`);
+        let processor;
+        if (useLocal) {
+            const { SequentialMetadataProcessor } = await Promise.resolve().then(() => __importStar(require('../templates/sequential-processor')));
+            const concurrency = parseInt(process.env.N8N_MCP_LLM_CONCURRENCY || '40');
+            console.log(`🏠 Local LLM mode: ${process.env.N8N_MCP_LLM_BASE_URL} (concurrency ${concurrency})`);
+            processor = new SequentialMetadataProcessor({
+                baseURL: process.env.N8N_MCP_LLM_BASE_URL,
+                apiKey: process.env.N8N_MCP_LLM_API_KEY || 'EMPTY',
+                model: process.env.N8N_MCP_LLM_MODEL || 'Qwen/Qwen3.5-9B',
+                concurrency
+            });
         }
-        const processor = new BatchProcessor({
-            apiKey: process.env.OPENAI_API_KEY,
-            model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-            batchSize: batchSize,
-            outputDir: './temp/batch'
-        });
+        else {
+            const { BatchProcessor } = await Promise.resolve().then(() => __importStar(require('../templates/batch-processor')));
+            const batchSize = parseInt(process.env.OPENAI_BATCH_SIZE || '50');
+            console.log(`Processing in batches of ${batchSize} templates each`);
+            if (batchSize > 100) {
+                console.log(`⚠️  Large batch size (${batchSize}) may take longer to process`);
+                console.log(`   Consider using OPENAI_BATCH_SIZE=50 for faster results`);
+            }
+            processor = new BatchProcessor({
+                apiKey: process.env.OPENAI_API_KEY,
+                model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+                batchSize: batchSize,
+                outputDir: './temp/batch'
+            });
+        }
         const requests = templatesWithoutMetadata.map((t) => {
             let workflow = undefined;
             try {
