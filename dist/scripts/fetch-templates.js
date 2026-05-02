@@ -295,7 +295,12 @@ async function generateTemplateMetadata(db, service) {
         let processor;
         if (useLocal) {
             const { SequentialMetadataProcessor } = await Promise.resolve().then(() => __importStar(require('../templates/sequential-processor')));
-            const concurrency = parseInt(process.env.N8N_MCP_LLM_CONCURRENCY || '40');
+            const raw = process.env.N8N_MCP_LLM_CONCURRENCY;
+            const parsed = raw ? parseInt(raw, 10) : NaN;
+            const concurrency = Number.isFinite(parsed) && parsed > 0 ? parsed : 40;
+            if (raw && concurrency !== parsed) {
+                console.log(`⚠️  Invalid N8N_MCP_LLM_CONCURRENCY="${raw}" — falling back to ${concurrency}`);
+            }
             console.log(`🏠 Local LLM mode: ${process.env.N8N_MCP_LLM_BASE_URL} (concurrency ${concurrency})`);
             processor = new SequentialMetadataProcessor({
                 baseURL: process.env.N8N_MCP_LLM_BASE_URL,

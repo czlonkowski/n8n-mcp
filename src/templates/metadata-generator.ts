@@ -105,49 +105,16 @@ export class MetadataGenerator {
   }
   
   /**
-   * Create a batch request for a single template
+   * Create a batch request for a single template. Shares the chat body with
+   * {@link buildChatRequest} so the leak-resistant system prompt applies to
+   * the OpenAI Batch API path too.
    */
   createBatchRequest(template: MetadataRequest): any {
-    // Extract node information for analysis
-    const nodesSummary = this.summarizeNodes(template.nodes);
-    
-    // Sanitize template name and description to prevent prompt injection
-    // Allow longer names for test scenarios but still sanitize content
-    const sanitizedName = this.sanitizeInput(template.name, Math.max(200, template.name.length));
-    const sanitizedDescription = template.description ? 
-      this.sanitizeInput(template.description, 500) : '';
-    
-    // Build context for the AI with sanitized inputs
-    const context = [
-      `Template: ${sanitizedName}`,
-      sanitizedDescription ? `Description: ${sanitizedDescription}` : '',
-      `Nodes Used (${template.nodes.length}): ${nodesSummary}`,
-      template.workflow ? `Workflow has ${template.workflow.nodes?.length || 0} nodes with ${Object.keys(template.workflow.connections || {}).length} connections` : ''
-    ].filter(Boolean).join('\n');
-    
     return {
       custom_id: `template-${template.templateId}`,
       method: 'POST',
       url: '/v1/chat/completions',
-      body: {
-        model: this.model,
-        // temperature removed - batch API only supports default (1.0) for this model
-        max_completion_tokens: 3000,
-        response_format: {
-          type: 'json_schema',
-          json_schema: this.getJsonSchema()
-        },
-        messages: [
-          {
-            role: 'system',
-            content: `Analyze n8n workflow templates and extract metadata. Be concise.`
-          },
-          {
-            role: 'user',
-            content: context
-          }
-        ]
-      }
+      body: this.buildChatRequest(template)
     };
   }
   

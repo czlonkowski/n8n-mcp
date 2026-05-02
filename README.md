@@ -9,19 +9,19 @@
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fczlonkowski%2Fn8n--mcp-green.svg)](https://github.com/czlonkowski/n8n-mcp/pkgs/container/n8n-mcp)
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/n8n-mcp?referralCode=n8n-mcp)
 
-A Model Context Protocol (MCP) server that provides AI assistants with comprehensive access to n8n node documentation, properties, and operations. Deploy in minutes to give Claude and other AI assistants deep knowledge about n8n's 1,588 workflow automation nodes (820 core + 768 community).
+A Model Context Protocol (MCP) server that provides AI assistants with comprehensive access to n8n node documentation, properties, and operations. Deploy in minutes to give Claude and other AI assistants deep knowledge about n8n's 1,650 workflow automation nodes (820 core + 830 community).
 
 ## Overview
 
 n8n-MCP serves as a bridge between n8n's workflow automation platform and AI models, enabling them to understand and work with n8n nodes effectively. It provides structured access to:
 
-- **1,505 n8n nodes** - 812 core nodes + 693 community nodes (605 verified)
+- **1,650 n8n nodes** - 820 core nodes + 830 community nodes (741 verified)
 - **Node properties** - 99% coverage with detailed schemas
 - **Node operations** - 63.6% coverage of available actions
 - **Documentation** - 87% coverage from official n8n docs (including AI nodes)
 - **AI tools** - 265 AI-capable tool variants detected with full documentation
-- **Real-world examples** - 2,646 pre-extracted configurations from popular templates
-- **Template library** - 2,709 workflow templates with 100% metadata coverage
+- **Real-world examples** - 156 ranked configurations extracted from popular templates
+- **Template library** - 2,352 workflow templates with 99.96% AI metadata coverage
 - **Community nodes** - Search verified community integrations with `source` filter
 
 ## Support This Project
@@ -102,7 +102,7 @@ CRITICAL: Execute tools without commentary. Only respond AFTER all tools complet
 When operations are independent, execute them in parallel for maximum performance.
 
 ### 3. Templates First
-ALWAYS check templates before building from scratch (2,709 available).
+ALWAYS check templates before building from scratch (2,352 available).
 
 ### 4. Multi-Level Validation
 Use validate_node(mode='minimal') → validate_node(mode='full') → validate_workflow pattern.
@@ -298,7 +298,7 @@ Use the same four-parameter format:
 ### Core Behavior
 1. **Silent execution** - No commentary between tools
 2. **Parallel by default** - Execute independent operations simultaneously
-3. **Templates first** - Always check before building (2,709 available)
+3. **Templates first** - Always check before building (2,352 available)
 4. **Multi-level validation** - Quick check → Full validation → Workflow validation
 5. **Never trust defaults** - Explicitly configure ALL parameters
 

@@ -83,38 +83,11 @@ class MetadataGenerator {
         };
     }
     createBatchRequest(template) {
-        const nodesSummary = this.summarizeNodes(template.nodes);
-        const sanitizedName = this.sanitizeInput(template.name, Math.max(200, template.name.length));
-        const sanitizedDescription = template.description ?
-            this.sanitizeInput(template.description, 500) : '';
-        const context = [
-            `Template: ${sanitizedName}`,
-            sanitizedDescription ? `Description: ${sanitizedDescription}` : '',
-            `Nodes Used (${template.nodes.length}): ${nodesSummary}`,
-            template.workflow ? `Workflow has ${template.workflow.nodes?.length || 0} nodes with ${Object.keys(template.workflow.connections || {}).length} connections` : ''
-        ].filter(Boolean).join('\n');
         return {
             custom_id: `template-${template.templateId}`,
             method: 'POST',
             url: '/v1/chat/completions',
-            body: {
-                model: this.model,
-                max_completion_tokens: 3000,
-                response_format: {
-                    type: 'json_schema',
-                    json_schema: this.getJsonSchema()
-                },
-                messages: [
-                    {
-                        role: 'system',
-                        content: `Analyze n8n workflow templates and extract metadata. Be concise.`
-                    },
-                    {
-                        role: 'user',
-                        content: context
-                    }
-                ]
-            }
+            body: this.buildChatRequest(template)
         };
     }
     sanitizeInput(input, maxLength) {

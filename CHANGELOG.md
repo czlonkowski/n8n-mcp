@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Local LLM support for template metadata generation.** `fetch:templates --metadata-only` now routes to any OpenAI-compatible server (vLLM, Ollama, llama.cpp's `/v1`) when `N8N_MCP_LLM_BASE_URL` is set, falling back to OpenAI's Batch API otherwise. New `SequentialMetadataProcessor` issues direct `chat.completions.create` calls with configurable concurrency, since vLLM and friends do not implement OpenAI's `/v1/batches` endpoint. New env vars: `N8N_MCP_LLM_BASE_URL`, `N8N_MCP_LLM_MODEL` (default `Qwen/Qwen3.5-9B`), `N8N_MCP_LLM_API_KEY` (defaults to `EMPTY` for keyless local servers), `N8N_MCP_LLM_CONCURRENCY` (default 40). The cloud Batch path is unchanged.
-- **Stronger, leak-resistant prompt** for template metadata. The system message now spells out what each schema field means (categories, use_cases, required_services, key_features, target_audience) and explicitly forbids echoing prompt headers, which fixes a class of failures where smaller open-source models occasionally emitted `Template: ...` strings into the `categories` array. Used by both the cloud and local paths.
+- **Stronger, leak-resistant prompt** for template metadata. The system message now spells out what each schema field means (categories, use_cases, required_services, key_features, target_audience) and explicitly forbids echoing prompt headers, which fixes a class of failures where smaller open-source models occasionally emitted `Template: ...` strings into the `categories` array. `createBatchRequest()` now delegates to `buildChatRequest()`, so the cloud Batch path picks up the new prompt too — both paths share the same body verbatim.
 
 ### Changed
 

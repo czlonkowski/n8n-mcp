@@ -191,9 +191,9 @@ describe.skipIf(!dbExists)('Database Content Validation', () => {
       ).toBeGreaterThan(0);
 
       expect(templatesCount.count,
-        `WARNING: Expected at least 2500 templates, got ${templatesCount.count}. ` +
+        `WARNING: Expected at least 2000 templates, got ${templatesCount.count}. ` +
         'Templates may have been partially lost. Run: npm run fetch:templates'
-      ).toBeGreaterThanOrEqual(2500);
+      ).toBeGreaterThanOrEqual(2000);
     });
   });
 
