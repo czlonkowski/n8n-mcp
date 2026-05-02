@@ -18,10 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Template store refreshed from n8n.io.** The templates table was rebuilt against the current API: 2,352 templates, 156 ranked node configurations across the most-popular nodes. Previous rebuild dated 2025-12-24.
 - **Template metadata regenerated end-to-end** against a local Qwen3.5-9B vLLM instance: 2,351/2,352 templates carry fresh `metadata_json` (99.96% coverage). One template (4334) skipped due to a tokenizer encoding edge case in its source content.
+- **Community node store refreshed** from the n8n Strapi verified list and the top-100 npm packages: **830 community nodes** (was 768, +62 new). Existing READMEs and AI summaries preserved through the upsert. Total nodes in DB: 1,650 (820 base + 830 community).
+- **Community AI documentation summaries regenerated** against the same local Qwen3.5-9B instance: **825/830 nodes** with both `npm_readme` and `ai_documentation_summary` (99.4% coverage). The 5 misses are npm packages that publish no README on npmjs, so there is no source text to summarise.
 
 ### Notes
 
-- Community nodes remain untouched: 768 community + 820 base = 1,588 total in `nodes`. Template fetch only drops the `templates` and `templates_fts` tables — never `nodes`.
+- Template fetch only drops the `templates` and `templates_fts` tables — never `nodes`. Community nodes were verified intact at 768 mid-run before the separate community refresh added the 62 new ones.
 - A backup of the pre-fetch database lives at `/tmp/nodes-pre-template-update-20260502-093230.db` on the maintainer's machine.
 
 Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
