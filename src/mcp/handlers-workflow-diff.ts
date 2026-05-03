@@ -325,7 +325,58 @@ export async function handleUpdatePartialWorkflow(
 
     // Update workflow via API
     try {
-      const updatedWorkflow = await client.updateWorkflow(input.id, diffResult.workflow!);
+      // Rollback-on-error: if the PUT fails, n8n may still have persisted the
+      // body before failing (e.g. an unsupported typeVersion trips the
+      // activation step within the same PUT, but the body is already saved).
+      // Re-PUT the workflowBefore snapshot to restore the prior state. The
+      // snapshot is captured earlier in this handler for telemetry and is
+      // safe to reuse here.
+      let updatedWorkflow;
+      try {
+        updatedWorkflow = await client.updateWorkflow(input.id, diffResult.workflow!);
+      } catch (updateError) {
+        if (workflowBefore && !input.validateOnly) {
+          let rollbackPerformed = false;
+          let rollbackErrorMessage: string | undefined;
+          try {
+            await client.updateWorkflow(input.id, workflowBefore);
+            rollbackPerformed = true;
+            logger.warn('updateWorkflow failed; rolled back to prior state', {
+              workflowId: input.id,
+              originalError: updateError instanceof Error ? updateError.message : String(updateError),
+            });
+          } catch (rollbackErr) {
+            rollbackErrorMessage = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+            logger.error('updateWorkflow failed AND rollback failed', {
+              workflowId: input.id,
+              originalError: updateError instanceof Error ? updateError.message : String(updateError),
+              rollbackError: rollbackErrorMessage,
+            });
+          }
+
+          // Re-throw with rollback context attached so the outer N8nApiError
+          // catch (below) surfaces it with the user-friendly formatting.
+          if (updateError instanceof N8nApiError) {
+            const augmentedDetails: Record<string, unknown> = {
+              ...((updateError.details as Record<string, unknown>) ?? {}),
+              rollbackPerformed,
+              ...(rollbackErrorMessage ? { rollbackError: rollbackErrorMessage } : {}),
+            };
+            const suffix = rollbackPerformed
+              ? ' (workflow restored to prior state)'
+              : (rollbackErrorMessage
+                  ? ' (rollback also failed; workflow may be in a broken state — try n8n_workflow_versions for a backup)'
+                  : '');
+            throw new N8nApiError(
+              `${updateError.message}${suffix}`,
+              updateError.statusCode,
+              updateError.code,
+              augmentedDetails,
+            );
+          }
+        }
+        throw updateError;
+      }
 
       // Handle tag operations via dedicated API (#599)
       let tagWarnings: string[] = [];

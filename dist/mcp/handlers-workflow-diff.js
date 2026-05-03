@@ -277,7 +277,46 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
             }
         }
         try {
-            const updatedWorkflow = await client.updateWorkflow(input.id, diffResult.workflow);
+            let updatedWorkflow;
+            try {
+                updatedWorkflow = await client.updateWorkflow(input.id, diffResult.workflow);
+            }
+            catch (updateError) {
+                if (workflowBefore && !input.validateOnly) {
+                    let rollbackPerformed = false;
+                    let rollbackErrorMessage;
+                    try {
+                        await client.updateWorkflow(input.id, workflowBefore);
+                        rollbackPerformed = true;
+                        logger_1.logger.warn('updateWorkflow failed; rolled back to prior state', {
+                            workflowId: input.id,
+                            originalError: updateError instanceof Error ? updateError.message : String(updateError),
+                        });
+                    }
+                    catch (rollbackErr) {
+                        rollbackErrorMessage = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+                        logger_1.logger.error('updateWorkflow failed AND rollback failed', {
+                            workflowId: input.id,
+                            originalError: updateError instanceof Error ? updateError.message : String(updateError),
+                            rollbackError: rollbackErrorMessage,
+                        });
+                    }
+                    if (updateError instanceof n8n_errors_1.N8nApiError) {
+                        const augmentedDetails = {
+                            ...(updateError.details ?? {}),
+                            rollbackPerformed,
+                            ...(rollbackErrorMessage ? { rollbackError: rollbackErrorMessage } : {}),
+                        };
+                        const suffix = rollbackPerformed
+                            ? ' (workflow restored to prior state)'
+                            : (rollbackErrorMessage
+                                ? ' (rollback also failed; workflow may be in a broken state — try n8n_workflow_versions for a backup)'
+                                : '');
+                        throw new n8n_errors_1.N8nApiError(`${updateError.message}${suffix}`, updateError.statusCode, updateError.code, augmentedDetails);
+                    }
+                }
+                throw updateError;
+            }
             let tagWarnings = [];
             if (diffResult.tagsToAdd?.length || diffResult.tagsToRemove?.length) {
                 try {

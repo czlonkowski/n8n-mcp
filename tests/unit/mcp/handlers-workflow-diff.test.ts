@@ -409,7 +409,10 @@ describe('handlers-workflow-diff', () => {
       });
     });
 
-    it('should handle API errors during update', async () => {
+    it('should roll back to prior state when n8n PUT fails after persisting body', async () => {
+      // n8n's PUT can fail AFTER persisting the body (e.g. unsupported
+      // typeVersion trips the activation step). The handler should re-PUT
+      // the prior snapshot to restore state.
       const testWorkflow = createTestWorkflow();
       const validationError = new N8nValidationError('Invalid workflow structure', {
         field: 'connections',
@@ -424,21 +427,70 @@ describe('handlers-workflow-diff', () => {
         message: 'Success',
         errors: [],
       });
-      mockApiClient.updateWorkflow.mockRejectedValue(validationError);
+      // First call (mutation) rejects; second call (rollback) resolves.
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockResolvedValueOnce(testWorkflow);
 
       const result = await handleUpdatePartialWorkflow({
         id: 'test-id',
         operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
       }, mockRepository);
 
+      // updateWorkflow called twice: once with mutated body, once with snapshot.
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(mockApiClient.updateWorkflow).toHaveBeenNthCalledWith(2, 'test-id', testWorkflow);
+
       expect(result).toEqual({
         success: false,
-        error: 'Invalid request: Invalid workflow structure',
+        error: 'Invalid request: Invalid workflow structure (workflow restored to prior state)',
         code: 'VALIDATION_ERROR',
         details: {
           field: 'connections',
           message: 'Invalid connection configuration',
+          rollbackPerformed: true,
         },
+      });
+    });
+
+    it('should report rollback failure when both PUTs fail', async () => {
+      // If the rollback PUT also fails, surface BOTH errors so the caller
+      // knows the workflow may be in a broken state.
+      const testWorkflow = createTestWorkflow();
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+      const rollbackFailure = new N8nServerError('n8n unreachable', 503);
+
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: testWorkflow,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockRejectedValueOnce(rollbackFailure);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('Invalid request: Invalid workflow structure');
+      expect(result.error).toContain('rollback also failed');
+      expect(result.error).toContain('n8n_workflow_versions');
+      expect(result.details).toMatchObject({
+        field: 'connections',
+        message: 'Invalid connection configuration',
+        rollbackPerformed: false,
+        rollbackError: 'n8n unreachable',
       });
     });
 
