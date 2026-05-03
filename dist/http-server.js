@@ -220,6 +220,7 @@ async function startFixedHTTPServer() {
                 userAgent: req.get('user-agent'),
                 reason: 'no_auth_header'
             });
+            res.setHeader('WWW-Authenticate', (0, auth_1.buildBearerChallenge)('no_auth_header'));
             res.status(401).json({
                 jsonrpc: '2.0',
                 error: {
@@ -237,6 +238,7 @@ async function startFixedHTTPServer() {
                 reason: 'invalid_auth_format',
                 headerPrefix: authHeader.substring(0, Math.min(authHeader.length, 10)) + '...'
             });
+            res.setHeader('WWW-Authenticate', (0, auth_1.buildBearerChallenge)('invalid_auth_format'));
             res.status(401).json({
                 jsonrpc: '2.0',
                 error: {
@@ -256,6 +258,7 @@ async function startFixedHTTPServer() {
                 userAgent: req.get('user-agent'),
                 reason: 'invalid_token'
             });
+            res.setHeader('WWW-Authenticate', (0, auth_1.buildBearerChallenge)('invalid_token'));
             res.status(401).json({
                 jsonrpc: '2.0',
                 error: {

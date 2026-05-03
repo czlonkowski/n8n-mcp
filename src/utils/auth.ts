@@ -1,5 +1,41 @@
 import crypto from 'crypto';
 
+/**
+ * Why authentication failed for a request. Used to pick the correct RFC 6750
+ * Bearer challenge to send back in WWW-Authenticate.
+ *
+ * - `no_auth_header`     no Authorization header at all
+ * - `invalid_auth_format` Authorization header present but not a Bearer token
+ * - `invalid_token`      Bearer token did not match the configured secret
+ */
+export type AuthFailureReason = 'no_auth_header' | 'invalid_auth_format' | 'invalid_token';
+
+/**
+ * Build an RFC 6750-compliant WWW-Authenticate challenge for Bearer auth.
+ *
+ * Per RFC 6750 §3, when the request lacks any authentication information
+ * the resource server SHOULD NOT include an error code (the client may not
+ * have known auth was required). Errors are signalled only when credentials
+ * were sent but rejected.
+ *
+ * @see https://datatracker.ietf.org/doc/html/rfc6750#section-3
+ * @see https://github.com/czlonkowski/n8n-mcp/issues/604
+ */
+export function buildBearerChallenge(
+  reason: AuthFailureReason,
+  realm: string = 'n8n-mcp'
+): string {
+  // realm is quoted-string (RFC 7235 §2.2) — escape backslash and double-quote.
+  const escapedRealm = realm.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  if (reason === 'no_auth_header') {
+    return `Bearer realm="${escapedRealm}"`;
+  }
+  if (reason === 'invalid_auth_format') {
+    return `Bearer realm="${escapedRealm}", error="invalid_request", error_description="Bearer token required"`;
+  }
+  return `Bearer realm="${escapedRealm}", error="invalid_token", error_description="Invalid bearer token"`;
+}
+
 export class AuthManager {
   private validTokens: Set<string>;
   private tokenExpiry: Map<string, number>;

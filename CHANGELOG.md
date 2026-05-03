@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Advertise the Bearer auth scheme on `401` responses (#604).** HTTP-mode `/mcp`, `/sse`, and `/messages` now return an RFC 6750-compliant `WWW-Authenticate` challenge alongside the existing JSON-RPC `-32001` error body. Missing-credentials responses use `Bearer realm="n8n-mcp"` (no `error=` keyword, per RFC 6750 §3); rejected credentials use `error="invalid_request"` for non-Bearer schemes and `error="invalid_token"` for bad bearer secrets. Lets MCP scanners and OAuth-discovery clients distinguish "auth required" from "endpoint unreachable" without reading the JSON body.
+
 ## [2.50.4] - 2026-05-05
 
 ### Fixed

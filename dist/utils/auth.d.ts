@@ -1,3 +1,5 @@
+export type AuthFailureReason = 'no_auth_header' | 'invalid_auth_format' | 'invalid_token';
+export declare function buildBearerChallenge(reason: AuthFailureReason, realm?: string): string;
 export declare class AuthManager {
     private validTokens;
     private tokenExpiry;

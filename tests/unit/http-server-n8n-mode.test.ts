@@ -415,6 +415,65 @@ describe('HTTP Server n8n Mode', () => {
     });
   });
 
+  describe('WWW-Authenticate header (issue #604, RFC 6750 §3)', () => {
+    // Issue #604: an MCP scanner reported AUTH_REQUIRED_BUT_NOT_ADVERTISED —
+    // 401 responses returned no challenge header, so clients couldn't see
+    // which auth scheme was required. RFC 6750 §3 requires a Bearer challenge.
+
+    it('advertises Bearer realm when no Authorization header is sent', async () => {
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('post', '/mcp');
+      const { req, res } = createMockReqRes();
+      req.method = 'POST';
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'WWW-Authenticate',
+        'Bearer realm="n8n-mcp"'
+      );
+    });
+
+    it('signals invalid_request when scheme is wrong', async () => {
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('post', '/mcp');
+      const { req, res } = createMockReqRes();
+      req.method = 'POST';
+      req.headers = { authorization: 'Basic sometoken' };
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      const setHeaderCalls = (res.setHeader as any).mock.calls;
+      const challenge = setHeaderCalls.find((c: [string, string]) => c[0] === 'WWW-Authenticate')?.[1];
+      expect(challenge).toContain('Bearer realm="n8n-mcp"');
+      expect(challenge).toContain('error="invalid_request"');
+    });
+
+    it('signals invalid_token when bearer credentials are rejected', async () => {
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('post', '/mcp');
+      const { req, res } = createMockReqRes();
+      req.method = 'POST';
+      req.headers = { authorization: 'Bearer not-the-real-token' };
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      const setHeaderCalls = (res.setHeader as any).mock.calls;
+      const challenge = setHeaderCalls.find((c: [string, string]) => c[0] === 'WWW-Authenticate')?.[1];
+      expect(challenge).toContain('Bearer realm="n8n-mcp"');
+      expect(challenge).toContain('error="invalid_token"');
+    });
+  });
+
   describe('Normal Mode Behavior', () => {
     it('should maintain standard behavior for health endpoint', async () => {
       // Test both with and without N8N_MODE

@@ -212,6 +212,7 @@ class SingleSessionHTTPServer {
                 userAgent: req.get('user-agent'),
                 reason
             });
+            res.setHeader('WWW-Authenticate', (0, auth_1.buildBearerChallenge)(reason));
             res.status(401).json({
                 jsonrpc: '2.0',
                 error: { code: -32001, message: 'Unauthorized' },
@@ -227,6 +228,7 @@ class SingleSessionHTTPServer {
                 userAgent: req.get('user-agent'),
                 reason: 'invalid_token'
             });
+            res.setHeader('WWW-Authenticate', (0, auth_1.buildBearerChallenge)('invalid_token'));
             res.status(401).json({
                 jsonrpc: '2.0',
                 error: { code: -32001, message: 'Unauthorized' },

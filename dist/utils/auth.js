@@ -4,7 +4,18 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthManager = void 0;
+exports.buildBearerChallenge = buildBearerChallenge;
 const crypto_1 = __importDefault(require("crypto"));
+function buildBearerChallenge(reason, realm = 'n8n-mcp') {
+    const escapedRealm = realm.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    if (reason === 'no_auth_header') {
+        return `Bearer realm="${escapedRealm}"`;
+    }
+    if (reason === 'invalid_auth_format') {
+        return `Bearer realm="${escapedRealm}", error="invalid_request", error_description="Bearer token required"`;
+    }
+    return `Bearer realm="${escapedRealm}", error="invalid_token", error_description="Invalid bearer token"`;
+}
 class AuthManager {
     constructor() {
         this.validTokens = new Set();
