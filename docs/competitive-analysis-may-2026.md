@@ -32,7 +32,7 @@ The fundamental architectural divergence: **the official server makes the LLM au
 | Pin-data testing | Official | Official has the cleaner `prepare_test_pin_data`; n8n-mcp's pattern is simpler |
 | In-process / no n8n API token in self-hosted | Official | True for self-host on official; n8n-mcp SaaS users do not manage tokens either |
 
-**Strategic read:** the official MCP is best for users authoring fresh workflows from scratch on built-in nodes inside one n8n cloud account. n8n-mcp is best for **iterative editing**, **validation rigor**, **templating**, **audit**, **community nodes**, **fleet/multi-instance work**, and **anyone running a real production n8n with custom packages**.
+**Strategic read:** the official MCP is best for users authoring fresh workflows from scratch on built-in nodes inside one n8n cloud account. n8n-mcp is best for use cases involving **iterative editing**, **validation rigor**, **templating**, **audit**, **community-node workflows**, **fleet/multi-instance work**, and **self-hosted instances with custom node packages installed**.
 
 **Why iteration matters most — three numbers from production telemetry (see §3.3 for full details):**
 1. **6.21:1 update-to-create ratio** across 84,034 users in 90 days — iteration is the dominant pattern, not greenfield authoring.
@@ -56,6 +56,8 @@ The cost projection in §3.3 is computed from the production mutation distributi
 If you find a factual error or want to challenge a measurement, please open an issue or PR against this repository. Methodology questions are welcomed.
 
 Where this analysis omits implementation-level detail of n8n-mcp's own internals, the omission is deliberate: the goal is to characterize the architectural divergence and its measurable effects, not to publish a regression suite or a feature inventory. Curious readers and contributors can find the full implementation in the open-source repository.
+
+**A note on n8n's MCP release status.** n8n's MCP server is currently in preview release as an MVP, shipped early for product validation. The n8n team has confirmed that additional functionality is in active development, including a lighter edit tool that would directly address the per-edit cost gap measured in §3. This analysis describes the architectural divergence and measurable effects as of late April 2026; the official server's capabilities will evolve, and several of the gaps discussed below may close in subsequent releases. Where the comparison turns on architectural choice rather than feature completeness, the structural argument will hold; where it turns on missing surfaces (templates, audit, community-node coverage), n8n's roadmap may close the gap on its own timeline.
 
 ---
 
