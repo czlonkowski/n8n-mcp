@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.50.3] - 2026-05-04
+
+### Fixed
+
+- `n8n_update_partial_workflow` now rolls back the prior workflow snapshot when n8n persists a body before failing (e.g. unsupported `typeVersion` trips the activation step inside the same PUT), preventing silent corruption of active workflows. Reported and originally fixed by @pybe (#769, closes #770).
+- The rollback no longer fires (and no longer claims `(workflow restored to prior state)`) when n8n rejected the PUT before persisting. The handler now compares `versionId` / `versionCounter` / `updatedAt` from a fresh GET to detect whether persistence actually happened.
+- Rollback-failure responses include `details.priorVersionId` so callers can recover the right snapshot via `n8n_workflow_versions`.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.50.2] - 2026-05-04
 
 ### Security

@@ -45,6 +45,18 @@ const workflow_versioning_service_1 = require("../services/workflow-versioning-s
 const workflow_validator_1 = require("../services/workflow-validator");
 const enhanced_config_validator_1 = require("../services/enhanced-config-validator");
 let cachedValidator = null;
+function compareVersions(a, b) {
+    if (a.versionId !== undefined && b.versionId !== undefined) {
+        return a.versionId === b.versionId ? 'same' : 'changed';
+    }
+    if (a.versionCounter !== undefined && b.versionCounter !== undefined) {
+        return a.versionCounter === b.versionCounter ? 'same' : 'changed';
+    }
+    if (a.updatedAt !== undefined && b.updatedAt !== undefined) {
+        return a.updatedAt === b.updatedAt ? 'same' : 'changed';
+    }
+    return 'unknown';
+}
 function getValidator(repository) {
     if (!cachedValidator) {
         cachedValidator = new workflow_validator_1.WorkflowValidator(repository, enhanced_config_validator_1.EnhancedConfigValidator);
@@ -283,6 +295,28 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
             }
             catch (updateError) {
                 if (workflowBefore && !input.validateOnly) {
+                    let serverState = null;
+                    try {
+                        serverState = await client.getWorkflow(input.id);
+                    }
+                    catch (getErr) {
+                        logger_1.logger.debug('Post-failure GET failed; falling back to best-effort rollback', getErr);
+                    }
+                    const versionState = serverState
+                        ? compareVersions(serverState, workflowBefore)
+                        : 'unknown';
+                    if (versionState === 'same') {
+                        logger_1.logger.debug('PUT failed before persisting; skipping rollback', {
+                            workflowId: input.id,
+                        });
+                        if (updateError instanceof n8n_errors_1.N8nApiError) {
+                            throw new n8n_errors_1.N8nApiError(updateError.message, updateError.statusCode, updateError.code, {
+                                ...(updateError.details ?? {}),
+                                rollbackPerformed: false,
+                            });
+                        }
+                        throw updateError;
+                    }
                     let rollbackPerformed = false;
                     let rollbackErrorMessage;
                     try {
@@ -306,6 +340,7 @@ async function handleUpdatePartialWorkflow(args, repository, context) {
                             ...(updateError.details ?? {}),
                             rollbackPerformed,
                             ...(rollbackErrorMessage ? { rollbackError: rollbackErrorMessage } : {}),
+                            ...(workflowBefore.versionId ? { priorVersionId: workflowBefore.versionId } : {}),
                         };
                         const suffix = rollbackPerformed
                             ? ' (workflow restored to prior state)'

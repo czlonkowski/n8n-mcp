@@ -411,18 +411,23 @@ describe('handlers-workflow-diff', () => {
 
     it('should roll back to prior state when n8n PUT fails after persisting body', async () => {
       // n8n's PUT can fail AFTER persisting the body (e.g. unsupported
-      // typeVersion trips the activation step). The handler should re-PUT
-      // the prior snapshot to restore state.
-      const testWorkflow = createTestWorkflow();
+      // typeVersion trips the activation step). The handler GETs the server
+      // state, sees versionId moved past the snapshot, and re-PUTs the
+      // prior snapshot to restore state.
+      const before = createTestWorkflow({ versionId: 'v1' });
+      const afterPersist = createTestWorkflow({ versionId: 'v2' });
       const validationError = new N8nValidationError('Invalid workflow structure', {
         field: 'connections',
         message: 'Invalid connection configuration',
       });
 
-      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      // 1st GET = pre-mutation snapshot; 2nd GET = post-failure state (persisted, new versionId).
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(afterPersist);
       mockDiffEngine.applyDiff.mockResolvedValue({
         success: true,
-        workflow: testWorkflow,
+        workflow: before,
         operationsApplied: 1,
         message: 'Success',
         errors: [],
@@ -430,7 +435,7 @@ describe('handlers-workflow-diff', () => {
       // First call (mutation) rejects; second call (rollback) resolves.
       mockApiClient.updateWorkflow
         .mockRejectedValueOnce(validationError)
-        .mockResolvedValueOnce(testWorkflow);
+        .mockResolvedValueOnce(before);
 
       const result = await handleUpdatePartialWorkflow({
         id: 'test-id',
@@ -439,7 +444,7 @@ describe('handlers-workflow-diff', () => {
 
       // updateWorkflow called twice: once with mutated body, once with snapshot.
       expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
-      expect(mockApiClient.updateWorkflow).toHaveBeenNthCalledWith(2, 'test-id', testWorkflow);
+      expect(mockApiClient.updateWorkflow).toHaveBeenNthCalledWith(2, 'test-id', before);
 
       expect(result).toEqual({
         success: false,
@@ -449,24 +454,183 @@ describe('handlers-workflow-diff', () => {
           field: 'connections',
           message: 'Invalid connection configuration',
           rollbackPerformed: true,
+          priorVersionId: 'v1',
         },
       });
     });
 
+    it('should NOT roll back when n8n rejected the PUT before persisting', async () => {
+      // If versionId is unchanged after the failed PUT, the body never
+      // persisted. Rolling back would be a wasted PUT and the
+      // "(restored to prior state)" suffix would mislead the caller.
+      const before = createTestWorkflow({ versionId: 'v1' });
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+
+      // Both GETs return the same versionId — no persistence happened.
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(before);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: before,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow.mockRejectedValueOnce(validationError);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      // Only the original PUT — no rollback PUT.
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({
+        success: false,
+        error: 'Invalid request: Invalid workflow structure',
+        code: 'VALIDATION_ERROR',
+        details: {
+          field: 'connections',
+          message: 'Invalid connection configuration',
+          rollbackPerformed: false,
+        },
+      });
+    });
+
+    it('should detect persistence via versionCounter when versionId is unavailable', async () => {
+      // Older n8n responses may omit versionId but still expose versionCounter
+      // (n8n 1.118.1+). Rollback must still trigger on that signal alone, and
+      // priorVersionId should be omitted from details since the snapshot has
+      // no versionId to surface.
+      const before = createTestWorkflow({ versionCounter: 5 });
+      const afterPersist = createTestWorkflow({ versionCounter: 6 });
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(afterPersist);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: before,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockResolvedValueOnce(before);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(result.error).toContain('(workflow restored to prior state)');
+      expect(result.details).toMatchObject({ rollbackPerformed: true });
+      // No versionId on the snapshot → no priorVersionId in details.
+      expect((result.details as Record<string, unknown>).priorVersionId).toBeUndefined();
+    });
+
+    it('should attempt rollback when version fields are unavailable on both sides', async () => {
+      // Some n8n versions may strip versionId / versionCounter / updatedAt
+      // entirely from the GET response. With no comparable signal we cannot
+      // determine whether the body persisted, so rollback must fire as a
+      // safety net — the silent-corruption bug class is far worse than a
+      // redundant PUT.
+      const base = createTestWorkflow();
+      const { versionId, versionCounter, updatedAt, createdAt, ...rest } = base as any;
+      const noVersionFields = rest;
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(noVersionFields)
+        .mockResolvedValueOnce(noVersionFields);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: noVersionFields,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockResolvedValueOnce(noVersionFields);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(result.error).toContain('(workflow restored to prior state)');
+      expect(result.details).toMatchObject({ rollbackPerformed: true });
+    });
+
+    it('should attempt rollback when post-failure GET itself fails', async () => {
+      // If we can't determine server state, fall back to best-effort
+      // rollback so we don't lose the safety net for the typeVersion
+      // class of bug reported in #770.
+      const before = createTestWorkflow({ versionId: 'v1' });
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+
+      // 1st GET succeeds (snapshot); 2nd GET (post-failure check) rejects.
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockRejectedValueOnce(new N8nServerError('n8n unreachable', 503));
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: before,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockResolvedValueOnce(before);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('(workflow restored to prior state)');
+      expect(result.details).toMatchObject({ rollbackPerformed: true, priorVersionId: 'v1' });
+    });
+
     it('should report rollback failure when both PUTs fail', async () => {
       // If the rollback PUT also fails, surface BOTH errors so the caller
-      // knows the workflow may be in a broken state.
-      const testWorkflow = createTestWorkflow();
+      // knows the workflow may be in a broken state. priorVersionId points
+      // at the snapshot to recover via n8n_workflow_versions.
+      const before = createTestWorkflow({ versionId: 'v1' });
+      const afterPersist = createTestWorkflow({ versionId: 'v2' });
       const validationError = new N8nValidationError('Invalid workflow structure', {
         field: 'connections',
         message: 'Invalid connection configuration',
       });
       const rollbackFailure = new N8nServerError('n8n unreachable', 503);
 
-      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(afterPersist);
       mockDiffEngine.applyDiff.mockResolvedValue({
         success: true,
-        workflow: testWorkflow,
+        workflow: before,
         operationsApplied: 1,
         message: 'Success',
         errors: [],
@@ -491,6 +655,7 @@ describe('handlers-workflow-diff', () => {
         message: 'Invalid connection configuration',
         rollbackPerformed: false,
         rollbackError: 'n8n unreachable',
+        priorVersionId: 'v1',
       });
     });
 
