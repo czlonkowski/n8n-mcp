@@ -103,7 +103,7 @@ describe('AuthManager', () => {
     });
   });
 
-  describe('buildBearerChallenge (issue #604, RFC 6750 §3)', () => {
+  describe('buildBearerChallenge', () => {
     it('omits error code when no credentials were sent', () => {
       // RFC 6750 §3: when the request lacks any authentication information,
       // the resource server SHOULD NOT include an error code.

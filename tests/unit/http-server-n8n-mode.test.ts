@@ -415,10 +415,9 @@ describe('HTTP Server n8n Mode', () => {
     });
   });
 
-  describe('WWW-Authenticate header (issue #604, RFC 6750 §3)', () => {
-    // Issue #604: an MCP scanner reported AUTH_REQUIRED_BUT_NOT_ADVERTISED —
-    // 401 responses returned no challenge header, so clients couldn't see
-    // which auth scheme was required. RFC 6750 §3 requires a Bearer challenge.
+  describe('WWW-Authenticate header', () => {
+    // RFC 6750 §3 requires a Bearer challenge on every 401 from a
+    // Bearer-protected resource so clients can see which scheme is required.
 
     it('advertises Bearer realm when no Authorization header is sent', async () => {
       server = new SingleSessionHTTPServer();
