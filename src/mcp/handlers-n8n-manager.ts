@@ -987,10 +987,13 @@ export async function handleListWorkflows(args: unknown, context?: InstanceConte
 
     const response = await client.listWorkflows({
       limit: input.limit || 100,
-      cursor: input.cursor,
+      // Coerce empty strings to undefined so axios omits them from the
+      // query string. The n8n API rejects empty optional query params
+      // (e.g. `?cursor=`) with VALIDATION_ERROR. See issue #774.
+      cursor: input.cursor || undefined,
       active: input.active,
       tags: tagsParam as any,  // API expects string, not array
-      projectId: input.projectId,
+      projectId: input.projectId || undefined,
       excludePinnedData: input.excludePinnedData ?? true
     });
     
@@ -1603,10 +1606,13 @@ export async function handleListExecutions(args: unknown, context?: InstanceCont
     
     const response = await client.listExecutions({
       limit: input.limit || 100,
-      cursor: input.cursor,
-      workflowId: input.workflowId,
-      projectId: input.projectId,
-      status: input.status as ExecutionStatus | undefined,
+      // Coerce empty strings to undefined so axios omits them from the
+      // query string. The n8n API rejects empty optional query params
+      // (e.g. `?cursor=`, `?workflowId=`) with VALIDATION_ERROR. See issue #774.
+      cursor: input.cursor || undefined,
+      workflowId: input.workflowId || undefined,
+      projectId: input.projectId || undefined,
+      status: (input.status || undefined) as ExecutionStatus | undefined,
       includeData: input.includeData || false
     });
     
