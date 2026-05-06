@@ -67,8 +67,8 @@ export const n8nManageCredentialsDoc: ToolDocumentation = {
       },
     },
     returns: `Depends on action:
-- list: Array of credentials with id, name, type, createdAt, updatedAt. With includeUsage=true, each credential also has usedIn (array of {id, name, active}) and usageCount (number of distinct workflows).
-- get: Credential object with id, name, type, createdAt, updatedAt. With includeUsage=true, also includes usedIn and usageCount.
+- list: { credentials: [{id, name, type, createdAt, updatedAt}], count: number, nextCursor?: string }. With includeUsage=true, each credential also has usedIn (array of {id, name, active}) and usageCount (number of distinct workflows), and the response may include usageScanError if the workflow scan failed (base credentials still returned).
+- get: Credential object with id, name, type, createdAt, updatedAt. With includeUsage=true, also includes usedIn and usageCount; if the workflow scan fails, usageScanError is set on the response and usedIn/usageCount are omitted.
 - create: Created credential object with id, name, type
 - update: Updated credential object
 - delete: Success confirmation message
