@@ -708,6 +708,21 @@ describe('WorkflowSanitizer', () => {
       expect(JSON.stringify(second.nodes)).toBe(JSON.stringify(first.nodes));
     });
 
+    it('Bearer pattern stops at quotes and delimiters, preserving surrounding syntax', () => {
+      const wf = {
+        nodes: [{
+          id: '1', name: 'Code', type: 'n8n-nodes-base.code',
+          position: [0, 0] as [number, number], typeVersion: 2,
+          parameters: { jsCode: "const headers = { auth: 'Bearer my-secret-token-1234567890', other: 'x' };" },
+        }],
+        connections: {},
+      };
+      const out = (WorkflowSanitizer.sanitizeWorkflow(wf).nodes[0].parameters as any).jsCode;
+      expect(out).toContain("'Bearer [REDACTED]'");
+      expect(out).toContain("', other: 'x'");
+      expect(out).not.toContain('my-secret-token');
+    });
+
     it('does not re-redact existing [REDACTED_*] placeholders', () => {
       const wf = {
         nodes: [{
