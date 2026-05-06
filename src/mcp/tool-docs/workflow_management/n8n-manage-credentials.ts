@@ -12,6 +12,7 @@ export const n8nManageCredentialsDoc: ToolDocumentation = {
       'Always use getSchema first to discover required fields before creating credentials',
       'Credential data values are never logged for security',
       'Use with n8n_audit_instance to fix security findings',
+      'Pass includeUsage:true on list/get to see which workflows reference each credential',
       'Actions: list, get, create, update, delete, getSchema',
     ]
   },
@@ -22,8 +23,8 @@ export const n8nManageCredentialsDoc: ToolDocumentation = {
 - **getSchema**: Retrieve the schema for a credential type, showing all required and optional fields with their types and descriptions. Always call this before creating credentials to know the exact field names and formats.
 
 **Read Operations:**
-- **list**: List all credentials with their names, types, and IDs. Does not return credential data values.
-- **get**: Get a specific credential by ID, including its metadata and data fields.
+- **list**: List all credentials with their names, types, and IDs. Does not return credential data values. Pass \`includeUsage: true\` to also include the workflows referencing each credential.
+- **get**: Get a specific credential by ID, including its metadata. Pass \`includeUsage: true\` to also include the workflows referencing this credential.
 
 **Write Operations:**
 - **create**: Create a new credential with a name, type, and data fields. Requires name, type, and data.
@@ -59,10 +60,15 @@ export const n8nManageCredentialsDoc: ToolDocumentation = {
         required: false,
         description: 'Credential data fields as key-value pairs. Use getSchema to discover required fields (required for create, optional for update)',
       },
+      includeUsage: {
+        type: 'boolean',
+        required: false,
+        description: 'For list/get: when true, also return the workflows that reference each credential (workflow id, name, active). Triggers a full workflow scan; slower on large instances. Default: false.',
+      },
     },
     returns: `Depends on action:
-- list: Array of credentials with id, name, type, createdAt, updatedAt
-- get: Full credential object with id, name, type, and data fields
+- list: Array of credentials with id, name, type, createdAt, updatedAt. With includeUsage=true, each credential also has usedIn (array of {id, name, active}) and usageCount (number of distinct workflows).
+- get: Credential object with id, name, type, createdAt, updatedAt. With includeUsage=true, also includes usedIn and usageCount.
 - create: Created credential object with id, name, type
 - update: Updated credential object
 - delete: Success confirmation message
@@ -71,7 +77,9 @@ export const n8nManageCredentialsDoc: ToolDocumentation = {
       '// Discover schema before creating\nn8n_manage_credentials({action: "getSchema", type: "httpHeaderAuth"})',
       '// Create an HTTP header auth credential\nn8n_manage_credentials({action: "create", name: "My API Key", type: "httpHeaderAuth", data: {name: "X-API-Key", value: "sk-abc123"}})',
       '// List all credentials\nn8n_manage_credentials({action: "list"})',
+      '// List credentials with the workflows that use each one\nn8n_manage_credentials({action: "list", includeUsage: true})',
       '// Get a specific credential\nn8n_manage_credentials({action: "get", id: "123"})',
+      '// Get a credential with the workflows that reference it\nn8n_manage_credentials({action: "get", id: "123", includeUsage: true})',
       '// Update credential data\nn8n_manage_credentials({action: "update", id: "123", data: {value: "new-secret-value"}})',
       '// Rename a credential\nn8n_manage_credentials({action: "update", id: "123", name: "Renamed Credential"})',
       '// Delete a credential\nn8n_manage_credentials({action: "delete", id: "123"})',
@@ -100,6 +108,7 @@ export const n8nManageCredentialsDoc: ToolDocumentation = {
       'OAuth2 credentials may require browser-based authorization flow that cannot be completed via API alone',
       'The list action does not return credential data values for security',
       'Requires N8N_API_URL and N8N_API_KEY to be configured',
+      'includeUsage scans all workflows the API exposes (capped at 5000); archived workflows are excluded by n8n. A "no usages" result does not guarantee the credential is unused.',
     ],
     relatedTools: ['n8n_audit_instance', 'n8n_create_workflow', 'n8n_update_partial_workflow', 'n8n_health_check'],
   }

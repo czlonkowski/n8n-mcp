@@ -2324,10 +2324,47 @@ async function handleDeleteRows(args, context) {
         return handleCrudError(error);
     }
 }
-const listCredentialsSchema = zod_1.z.object({}).passthrough();
+const listCredentialsSchema = zod_1.z.object({
+    includeUsage: zod_1.z.boolean().optional(),
+}).passthrough();
 const getCredentialSchema = zod_1.z.object({
     id: zod_1.z.string({ required_error: 'Credential ID is required' }),
+    includeUsage: zod_1.z.boolean().optional(),
 });
+async function buildCredentialUsageMap(client) {
+    const usage = new Map();
+    const workflows = await client.listAllWorkflows();
+    for (const wf of workflows) {
+        if (!wf.id)
+            continue;
+        const entry = {
+            id: wf.id,
+            name: wf.name,
+            active: wf.active ?? false,
+        };
+        const seenForThisWorkflow = new Set();
+        for (const node of wf.nodes ?? []) {
+            if (!node.credentials)
+                continue;
+            for (const credConfig of Object.values(node.credentials)) {
+                const credId = credConfig?.id;
+                if (typeof credId !== 'string' || credId === '')
+                    continue;
+                if (seenForThisWorkflow.has(credId))
+                    continue;
+                seenForThisWorkflow.add(credId);
+                const list = usage.get(credId);
+                if (list) {
+                    list.push(entry);
+                }
+                else {
+                    usage.set(credId, [entry]);
+                }
+            }
+        }
+    }
+    return usage;
+}
 const createCredentialSchema = zod_1.z.object({
     name: zod_1.z.string({ required_error: 'Credential name is required' }),
     type: zod_1.z.string({ required_error: 'Credential type is required' }),
@@ -2348,14 +2385,29 @@ const getCredentialSchemaTypeSchema = zod_1.z.object({
 async function handleListCredentials(args, context) {
     try {
         const client = ensureApiConfigured(context);
-        listCredentialsSchema.parse(args);
+        const { includeUsage } = listCredentialsSchema.parse(args);
         const result = await client.listCredentials();
+        let credentials = result.data;
+        let usageScanError;
+        if (includeUsage) {
+            try {
+                const usageMap = await buildCredentialUsageMap(client);
+                credentials = result.data.map((cred) => {
+                    const usedIn = (cred.id ? usageMap.get(cred.id) : undefined) ?? [];
+                    return { ...cred, usedIn, usageCount: usedIn.length };
+                });
+            }
+            catch (scanError) {
+                usageScanError = scanError instanceof Error ? scanError.message : String(scanError);
+            }
+        }
         return {
             success: true,
             data: {
-                credentials: result.data,
-                count: result.data.length,
+                credentials,
+                count: credentials.length,
                 nextCursor: result.nextCursor || undefined,
+                ...(usageScanError ? { usageScanError } : {}),
             },
         };
     }
@@ -2366,7 +2418,7 @@ async function handleListCredentials(args, context) {
 async function handleGetCredential(args, context) {
     try {
         const client = ensureApiConfigured(context);
-        const { id } = getCredentialSchema.parse(args);
+        const { id, includeUsage } = getCredentialSchema.parse(args);
         let credential;
         try {
             credential = await client.getCredential(id);
@@ -2385,9 +2437,21 @@ async function handleGetCredential(args, context) {
             }
         }
         const { data: _sensitiveData, ...safeCred } = credential;
+        let enriched = safeCred;
+        let usageScanError;
+        if (includeUsage) {
+            try {
+                const usageMap = await buildCredentialUsageMap(client);
+                const usedIn = usageMap.get(id) ?? [];
+                enriched = { ...safeCred, usedIn, usageCount: usedIn.length };
+            }
+            catch (scanError) {
+                usageScanError = scanError instanceof Error ? scanError.message : String(scanError);
+            }
+        }
         return {
             success: true,
-            data: safeCred,
+            data: usageScanError ? { ...enriched, usageScanError } : enriched,
         };
     }
     catch (error) {

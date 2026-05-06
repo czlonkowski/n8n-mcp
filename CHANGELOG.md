@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.51.0] - 2026-05-06
+
+### Added
+
+- **`n8n_manage_credentials` now reports which workflows reference each credential.** Pass `includeUsage: true` to `action: "list"` or `action: "get"` to attach a `usedIn: [{id, name, active}]` array and a `usageCount` to every credential. The reverse index is built client-side by scanning workflows (n8n's public API has no native lookup), deduplicated per workflow, and capped at the same 5000-workflow limit `n8n_audit_instance` uses. Default behavior is unchanged — no extra API calls when the flag is omitted. If the workflow scan fails the response degrades to base credentials with a `usageScanError` field rather than failing the whole call.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.50.5] - 2026-05-05
 
 ### Fixed

@@ -1746,4 +1746,221 @@ describe('handlers-n8n-manager', () => {
       expect(mockApiClient.getCredential).not.toHaveBeenCalled();
     });
   });
+
+  describe('credential usage enrichment (includeUsage)', () => {
+    const credA = { id: 'cred-A', name: 'BaseLinker API', type: 'httpHeaderAuth' };
+    const credB = { id: 'cred-B', name: 'Slack Bot', type: 'slackApi' };
+    const credC = { id: 'cred-C', name: 'Unused Key', type: 'httpHeaderAuth' };
+
+    const wfUsesA = {
+      id: 'wf-1',
+      name: 'BaseLinker Sync',
+      active: true,
+      nodes: [
+        {
+          id: 'n1',
+          name: 'HTTP Request',
+          type: 'n8n-nodes-base.httpRequest',
+          credentials: { httpHeaderAuth: { id: 'cred-A', name: 'BaseLinker API' } },
+        },
+        // Second reference to the same credential — must dedupe to one workflow entry.
+        {
+          id: 'n2',
+          name: 'Another HTTP',
+          type: 'n8n-nodes-base.httpRequest',
+          credentials: { httpHeaderAuth: { id: 'cred-A', name: 'BaseLinker API' } },
+        },
+      ],
+    };
+    const wfUsesAandB = {
+      id: 'wf-2',
+      name: 'BaseLinker + Slack',
+      active: false,
+      nodes: [
+        {
+          id: 'n1',
+          type: 'n8n-nodes-base.httpRequest',
+          credentials: { httpHeaderAuth: { id: 'cred-A' } },
+        },
+        {
+          id: 'n2',
+          type: 'n8n-nodes-base.slack',
+          credentials: { slackApi: { id: 'cred-B' } },
+        },
+      ],
+    };
+    const wfNoCreds = {
+      id: 'wf-3',
+      name: 'Plain Webhook',
+      active: true,
+      nodes: [{ id: 'n1', type: 'n8n-nodes-base.webhook' }],
+    };
+
+    beforeEach(() => {
+      mockApiClient.listCredentials = vi.fn().mockResolvedValue({
+        data: [credA, credB, credC],
+        nextCursor: null,
+      });
+      mockApiClient.getCredential = vi.fn();
+      mockApiClient.listAllWorkflows = vi.fn().mockResolvedValue([
+        wfUsesA,
+        wfUsesAandB,
+        wfNoCreds,
+      ]);
+    });
+
+    it('list without includeUsage does not scan workflows or change shape', async () => {
+      const result = await handlers.handleListCredentials({ action: 'list' });
+
+      expect(mockApiClient.listAllWorkflows).not.toHaveBeenCalled();
+      expect(result.success).toBe(true);
+      expect(result.data.credentials).toEqual([credA, credB, credC]);
+      expect(result.data.credentials[0]).not.toHaveProperty('usedIn');
+    });
+
+    it('list with includeUsage attaches deduplicated workflow refs and counts', async () => {
+      const result = await handlers.handleListCredentials({
+        action: 'list',
+        includeUsage: true,
+      });
+
+      expect(mockApiClient.listAllWorkflows).toHaveBeenCalledTimes(1);
+      const byId = Object.fromEntries(
+        result.data.credentials.map((c: any) => [c.id, c])
+      );
+
+      expect(byId['cred-A'].usageCount).toBe(2);
+      expect(byId['cred-A'].usedIn).toEqual([
+        { id: 'wf-1', name: 'BaseLinker Sync', active: true },
+        { id: 'wf-2', name: 'BaseLinker + Slack', active: false },
+      ]);
+
+      expect(byId['cred-B'].usageCount).toBe(1);
+      expect(byId['cred-B'].usedIn).toEqual([
+        { id: 'wf-2', name: 'BaseLinker + Slack', active: false },
+      ]);
+
+      expect(byId['cred-C'].usageCount).toBe(0);
+      expect(byId['cred-C'].usedIn).toEqual([]);
+    });
+
+    it('get with includeUsage enriches a single credential', async () => {
+      mockApiClient.getCredential.mockResolvedValue(credA);
+
+      const result = await handlers.handleGetCredential({
+        action: 'get',
+        id: 'cred-A',
+        includeUsage: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.usageCount).toBe(2);
+      expect(result.data.usedIn).toEqual([
+        { id: 'wf-1', name: 'BaseLinker Sync', active: true },
+        { id: 'wf-2', name: 'BaseLinker + Slack', active: false },
+      ]);
+    });
+
+    it('get without includeUsage skips the workflow scan', async () => {
+      mockApiClient.getCredential.mockResolvedValue(credA);
+
+      const result = await handlers.handleGetCredential({
+        action: 'get',
+        id: 'cred-A',
+      });
+
+      expect(mockApiClient.listAllWorkflows).not.toHaveBeenCalled();
+      expect(result.data).not.toHaveProperty('usedIn');
+      expect(result.data).not.toHaveProperty('usageCount');
+    });
+
+    it('ignores nodes with malformed credential refs (empty id, missing id, missing wf.id)', async () => {
+      mockApiClient.listAllWorkflows.mockResolvedValue([
+        {
+          id: 'wf-bad-1',
+          name: 'Empty cred id',
+          active: true,
+          nodes: [{ id: 'n', type: 'x', credentials: { httpHeaderAuth: { id: '' } } }],
+        },
+        {
+          id: 'wf-bad-2',
+          name: 'Missing cred id',
+          active: true,
+          nodes: [{ id: 'n', type: 'x', credentials: { httpHeaderAuth: { name: 'no id' } } }],
+        },
+        {
+          // Workflow without an id should be skipped entirely.
+          name: 'Draft no id',
+          active: true,
+          nodes: [{ id: 'n', type: 'x', credentials: { httpHeaderAuth: { id: 'cred-A' } } }],
+        },
+        wfUsesA,
+      ]);
+
+      const result = await handlers.handleListCredentials({
+        action: 'list',
+        includeUsage: true,
+      });
+
+      const byId = Object.fromEntries(
+        result.data.credentials.map((c: any) => [c.id, c])
+      );
+      expect(byId['cred-A'].usageCount).toBe(1);
+      expect(byId['cred-A'].usedIn).toEqual([
+        { id: 'wf-1', name: 'BaseLinker Sync', active: true },
+      ]);
+    });
+
+    it('defaults workflow.active to false when omitted', async () => {
+      mockApiClient.listAllWorkflows.mockResolvedValue([
+        {
+          id: 'wf-no-active',
+          name: 'Active omitted',
+          // active intentionally omitted
+          nodes: [{ id: 'n', type: 'x', credentials: { httpHeaderAuth: { id: 'cred-A' } } }],
+        },
+      ]);
+
+      const result = await handlers.handleListCredentials({
+        action: 'list',
+        includeUsage: true,
+      });
+
+      const byId = Object.fromEntries(
+        result.data.credentials.map((c: any) => [c.id, c])
+      );
+      expect(byId['cred-A'].usedIn).toEqual([
+        { id: 'wf-no-active', name: 'Active omitted', active: false },
+      ]);
+    });
+
+    it('list degrades gracefully when the workflow scan fails', async () => {
+      mockApiClient.listAllWorkflows.mockRejectedValue(new Error('network down'));
+
+      const result = await handlers.handleListCredentials({
+        action: 'list',
+        includeUsage: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.credentials).toEqual([credA, credB, credC]);
+      expect(result.data.usageScanError).toBe('network down');
+    });
+
+    it('get degrades gracefully when the workflow scan fails', async () => {
+      mockApiClient.getCredential.mockResolvedValue(credA);
+      mockApiClient.listAllWorkflows.mockRejectedValue(new Error('boom'));
+
+      const result = await handlers.handleGetCredential({
+        action: 'get',
+        id: 'cred-A',
+        includeUsage: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.id).toBe('cred-A');
+      expect(result.data.usageScanError).toBe('boom');
+      expect(result.data).not.toHaveProperty('usedIn');
+    });
+  });
 });

@@ -647,6 +647,7 @@ exports.n8nManagementTools = [
                 name: { type: 'string', description: 'Credential name (required for create)' },
                 type: { type: 'string', description: 'Credential type e.g. httpHeaderAuth, httpBasicAuth, oAuth2Api (required for create, getSchema)' },
                 data: { type: 'object', description: 'Credential data fields - use getSchema to discover required fields (required for create, optional for update)' },
+                includeUsage: { type: 'boolean', description: 'For list/get: also return workflows that reference each credential (id, name, active). Triggers a full workflow scan, slower on large instances. Default: false.' },
             },
             required: ['action'],
         },
