@@ -39,20 +39,61 @@ export class WorkflowSanitizer {
     { pattern: /https?:\/\/[^\s/]+\/webhook\/[^\s]+/g, placeholder: '[REDACTED_WEBHOOK]' },
     { pattern: /https?:\/\/[^\s/]+\/hook\/[^\s]+/g, placeholder: '[REDACTED_WEBHOOK]' },
 
+    // Self-hosted n8n hostnames — Gap 5 (customer-identifying topology)
+    { pattern: /https?:\/\/n8n\.[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:[/?#][^\s"'<>]*)?/gi, placeholder: '[REDACTED_N8N_HOST_URL]' },
+
+    // Supabase project URLs — Gap 6 (20-char project ref . supabase.co)
+    { pattern: /https?:\/\/[a-z]{20}\.supabase\.co(?:[/?#][^\s"'<>]*)?/gi, placeholder: '[REDACTED_SUPABASE_URL]' },
+
     // URLs with authentication - MUST BE BEFORE BEARER TOKENS
     { pattern: /https?:\/\/[^:]+:[^@]+@[^\s/]+/g, placeholder: '[REDACTED_URL_WITH_AUTH]' },
     { pattern: /wss?:\/\/[^:]+:[^@]+@[^\s/]+/g, placeholder: '[REDACTED_URL_WITH_AUTH]' },
     { pattern: /(?:postgres|mysql|mongodb|redis):\/\/[^:]+:[^@]+@[^\s]+/g, placeholder: '[REDACTED_URL_WITH_AUTH]' }, // Database protocols - includes port and path
 
-    // API keys and tokens - ORDER MATTERS!
-    // More specific patterns first, then general patterns
-    { pattern: /sk-[a-zA-Z0-9]{16,}/g, placeholder: '[REDACTED_APIKEY]' }, // OpenAI keys
-    { pattern: /Bearer\s+[^\s]+/gi, placeholder: 'Bearer [REDACTED]', preservePrefix: true }, // Bearer tokens
-    { pattern: /\b[a-zA-Z0-9_-]{32,}\b/g, placeholder: '[REDACTED_TOKEN]' }, // Long tokens (32+ chars)
-    { pattern: /\b[a-zA-Z0-9_-]{20,31}\b/g, placeholder: '[REDACTED]' }, // Short tokens (20-31 chars)
+    // Bearer tokens — placed before provider/JWT/long-token patterns so that
+    // "Bearer <secret>" is consumed as one unit and the prefix is preserved.
+    { pattern: /Bearer\s+[^\s]+/gi, placeholder: 'Bearer [REDACTED]', preservePrefix: true },
 
-    // Email addresses (optional - uncomment if needed)
-    // { pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, placeholder: '[REDACTED_EMAIL]' },
+    // Generic JWT (catches Supabase anon + service_role + any other JWT). Three base64url segments, dot-separated.
+    { pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, placeholder: '[REDACTED_JWT]' },
+
+    // Supabase secrets and publishable keys
+    { pattern: /\bsb_secret_[A-Za-z0-9_-]{20,}\b/g, placeholder: '[REDACTED_SUPABASE_KEY]' },
+    { pattern: /\bsb_publishable_[A-Za-z0-9_-]{20,}\b/g, placeholder: '[REDACTED_SUPABASE_KEY]' },
+
+    // OpenAI / OpenRouter — sk-proj- and sk-or- BEFORE the generic sk- below
+    { pattern: /\bsk-proj-[A-Za-z0-9_-]{40,}\b/g, placeholder: '[REDACTED_LLM_API_KEY]' },
+    { pattern: /\bsk-or-(?:v1-)?[A-Za-z0-9-]{40,}\b/g, placeholder: '[REDACTED_LLM_API_KEY]' },
+
+    // Stripe (sk_test/live, rk_test/live)
+    { pattern: /\b(?:sk|rk)_(?:test|live)_[A-Za-z0-9]{24,}\b/g, placeholder: '[REDACTED_STRIPE_KEY]' },
+
+    // GitHub PATs (fine-grained + classic)
+    { pattern: /\bgithub_pat_[A-Za-z0-9_]{50,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bghp_[A-Za-z0-9]{36,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+
+    // GitLab PAT
+    { pattern: /\bglpat-[A-Za-z0-9_-]{20,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+
+    // Hugging Face, Notion, GoHighLevel, Slack
+    { pattern: /\bhf_[A-Za-z0-9]{30,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bntn_[A-Za-z0-9]{40,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bpit-[a-f0-9-]{36}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bxox[bpaors]-[A-Za-z0-9-]{10,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+
+    // AWS access key id
+    { pattern: /\bAKIA[A-Z0-9]{16}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+
+    // Generic OpenAI sk- (unchanged regex; placeholder upgraded to type-aware)
+    { pattern: /\bsk-[A-Za-z0-9]{16,}\b/g, placeholder: '[REDACTED_LLM_API_KEY]' },
+
+    // PII — emails and phones in free-text node parameters
+    { pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, placeholder: '[REDACTED_EMAIL]' },
+    { pattern: /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, placeholder: '[REDACTED_PHONE]' },
+
+    // Generic token fallbacks (idempotency-safe via negative lookahead)
+    { pattern: /\b(?!REDACTED)[A-Za-z0-9_-]{32,}\b/g, placeholder: '[REDACTED_TOKEN]' }, // Long tokens (32+ chars)
+    { pattern: /\b(?!REDACTED)[A-Za-z0-9_-]{20,31}\b/g, placeholder: '[REDACTED]' }, // Short tokens (20-31 chars)
   ];
 
   private static readonly SENSITIVE_FIELDS = [
@@ -250,11 +291,6 @@ export class WorkflowSanitizer {
       // Skip webhook patterns - already handled above
       if (patternDef.placeholder.includes('WEBHOOK')) {
         continue;
-      }
-
-      // Skip if already sanitized with a placeholder to prevent double-redaction
-      if (sanitized.includes('[REDACTED')) {
-        break;
       }
 
       // Special handling for URL with auth - preserve path after credentials
