@@ -893,5 +893,20 @@ describe('WorkflowSanitizer', () => {
       expect(out).not.toMatch(/\d{3}.*\d{3}.*\d{4}/);
       expect((out.match(/\[REDACTED_PHONE\]/g) || []).length).toBeGreaterThanOrEqual(2);
     });
+
+    it('does not misclassify UUIDs as phone numbers', () => {
+      const wf = {
+        nodes: [{
+          id: '1', name: 'Code', type: 'n8n-nodes-base.code',
+          position: [0, 0] as [number, number], typeVersion: 2,
+          parameters: { jsCode: "const id = 'a1b2c3d4-1234-5678-9abc-123456789012';" },
+        }],
+        connections: {},
+      };
+      const out = (WorkflowSanitizer.sanitizeWorkflow(wf).nodes[0].parameters as any).jsCode;
+      expect(out).not.toContain('[REDACTED_PHONE]');
+      // The UUID will be redacted by the long-token (32+ char) fallback as
+      // [REDACTED_TOKEN] — that's correct behaviour. Phone redaction must not fire.
+    });
   });
 });

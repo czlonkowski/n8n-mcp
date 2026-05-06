@@ -38,7 +38,9 @@ export class WorkflowSanitizer {
     { pattern: /https?:\/\/[^\s/]+\/webhook\/[^\s]+/g, placeholder: '[REDACTED_WEBHOOK]' },
     { pattern: /https?:\/\/[^\s/]+\/hook\/[^\s]+/g, placeholder: '[REDACTED_WEBHOOK]' },
 
-    // Self-hosted n8n hostnames — Gap 5 (customer-identifying topology)
+    // Self-hosted n8n hostnames — Gap 5 (customer-identifying topology).
+    // Requires a label after `n8n.` so `https://n8n.io/...` (public docs) is
+    // intentionally NOT matched.
     { pattern: /https?:\/\/n8n\.[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:[/?#][^\s"'<>]*)?/gi, placeholder: '[REDACTED_N8N_HOST_URL]' },
 
     // Supabase project URLs — Gap 6 (20-char project ref . supabase.co)
@@ -56,9 +58,8 @@ export class WorkflowSanitizer {
     // Generic JWT (catches Supabase anon + service_role + any other JWT). Three base64url segments, dot-separated.
     { pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, placeholder: '[REDACTED_JWT]' },
 
-    // Supabase secrets and publishable keys
-    { pattern: /\bsb_secret_[A-Za-z0-9_-]{20,}\b/g, placeholder: '[REDACTED_SUPABASE_KEY]' },
-    { pattern: /\bsb_publishable_[A-Za-z0-9_-]{20,}\b/g, placeholder: '[REDACTED_SUPABASE_KEY]' },
+    // Supabase secret and publishable keys
+    { pattern: /\bsb_(?:secret|publishable)_[A-Za-z0-9_-]{20,}\b/g, placeholder: '[REDACTED_SUPABASE_KEY]' },
 
     // OpenAI / OpenRouter — sk-proj- and sk-or- BEFORE the generic sk- below
     { pattern: /\bsk-proj-[A-Za-z0-9_-]{40,}\b/g, placeholder: '[REDACTED_LLM_API_KEY]' },
@@ -88,7 +89,9 @@ export class WorkflowSanitizer {
 
     // PII — emails and phones in free-text node parameters
     { pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, placeholder: '[REDACTED_EMAIL]' },
-    { pattern: /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, placeholder: '[REDACTED_PHONE]' },
+    // Lookbehind/lookahead reject digit-or-hyphen neighbours so UUIDs and other
+    // hex-with-hyphen IDs aren't misclassified as phone numbers.
+    { pattern: /(?<![\d-])(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?![\d-])/g, placeholder: '[REDACTED_PHONE]' },
 
     // Generic token fallbacks (idempotency-safe via negative lookahead)
     { pattern: /\b(?!REDACTED)[A-Za-z0-9_-]{32,}\b/g, placeholder: '[REDACTED_TOKEN]' }, // Long tokens (32+ chars)

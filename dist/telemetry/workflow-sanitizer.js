@@ -223,8 +223,7 @@ WorkflowSanitizer.SENSITIVE_PATTERNS = [
     { pattern: /(?:postgres|mysql|mongodb|redis):\/\/[^:]+:[^@]+@[^\s]+/g, placeholder: '[REDACTED_URL_WITH_AUTH]' },
     { pattern: /Bearer\s+[^\s]+/gi, placeholder: 'Bearer [REDACTED]' },
     { pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, placeholder: '[REDACTED_JWT]' },
-    { pattern: /\bsb_secret_[A-Za-z0-9_-]{20,}\b/g, placeholder: '[REDACTED_SUPABASE_KEY]' },
-    { pattern: /\bsb_publishable_[A-Za-z0-9_-]{20,}\b/g, placeholder: '[REDACTED_SUPABASE_KEY]' },
+    { pattern: /\bsb_(?:secret|publishable)_[A-Za-z0-9_-]{20,}\b/g, placeholder: '[REDACTED_SUPABASE_KEY]' },
     { pattern: /\bsk-proj-[A-Za-z0-9_-]{40,}\b/g, placeholder: '[REDACTED_LLM_API_KEY]' },
     { pattern: /\bsk-or-(?:v1-)?[A-Za-z0-9-]{40,}\b/g, placeholder: '[REDACTED_LLM_API_KEY]' },
     { pattern: /\b(?:sk|rk)_(?:test|live)_[A-Za-z0-9]{24,}\b/g, placeholder: '[REDACTED_STRIPE_KEY]' },
@@ -238,7 +237,7 @@ WorkflowSanitizer.SENSITIVE_PATTERNS = [
     { pattern: /\bAKIA[A-Z0-9]{16}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
     { pattern: /\bsk-[A-Za-z0-9]{16,}\b/g, placeholder: '[REDACTED_LLM_API_KEY]' },
     { pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, placeholder: '[REDACTED_EMAIL]' },
-    { pattern: /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, placeholder: '[REDACTED_PHONE]' },
+    { pattern: /(?<![\d-])(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?![\d-])/g, placeholder: '[REDACTED_PHONE]' },
     { pattern: /\b(?!REDACTED)[A-Za-z0-9_-]{32,}\b/g, placeholder: '[REDACTED_TOKEN]' },
     { pattern: /\b(?!REDACTED)[A-Za-z0-9_-]{20,31}\b/g, placeholder: '[REDACTED]' },
 ];
