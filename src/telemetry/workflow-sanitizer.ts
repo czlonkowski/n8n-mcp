@@ -30,7 +30,6 @@ interface SanitizedWorkflow {
 interface PatternDefinition {
   pattern: RegExp;
   placeholder: string;
-  preservePrefix?: boolean; // For patterns like "Bearer [REDACTED]"
 }
 
 export class WorkflowSanitizer {
@@ -52,7 +51,7 @@ export class WorkflowSanitizer {
 
     // Bearer tokens — placed before provider/JWT/long-token patterns so that
     // "Bearer <secret>" is consumed as one unit and the prefix is preserved.
-    { pattern: /Bearer\s+[^\s]+/gi, placeholder: 'Bearer [REDACTED]', preservePrefix: true },
+    { pattern: /Bearer\s+[^\s]+/gi, placeholder: 'Bearer [REDACTED]' },
 
     // Generic JWT (catches Supabase anon + service_role + any other JWT). Three base64url segments, dot-separated.
     { pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, placeholder: '[REDACTED_JWT]' },
