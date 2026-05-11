@@ -52,12 +52,17 @@ export const telemetryEventSchema = z.object({
   created_at: z.string().datetime().optional()
 });
 
-// SECURITY (GHSA-f3rg-xqjj-cj9w): strict shape for sanitized workflow nodes so the
-// validator rejects payloads whose top-level node fields drift from the sanitizer's
-// output. Mirrors workflowNodeSchema in src/services/n8n-validation.ts minus
-// `credentials` (deleted by WorkflowSanitizer.sanitizeNode) and uses .strict() so
-// any future leak via an unknown node-level key surfaces as a validation failure
-// rather than silently propagating to Supabase.
+// SECURITY (GHSA-f3rg-xqjj-cj9w): strict allow-list for sanitized workflow
+// nodes so the validator rejects payloads whose node-level fields drift from
+// the sanitizer's output. Maintained independently from `workflowNodeSchema`
+// in `src/services/n8n-validation.ts` — derivation via `.omit().extend()`
+// would silently widen this allow-list every time the general schema gains a
+// field, defeating the purpose of `.strict()`. Differences vs. that schema:
+// omits `credentials` (deleted by `WorkflowSanitizer.sanitizeNode`), adds
+// `onError` and `webhookId` (legitimate post-sanitization node fields not
+// yet covered by `workflowNodeSchema`), and applies `.strict()` so an unknown
+// node-level key surfaces as a validation failure rather than silently
+// propagating to Supabase.
 const sanitizedNodeSchema = z.object({
   id: z.string(),
   name: z.string(),
