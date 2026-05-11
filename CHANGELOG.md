@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.51.3] - 2026-05-11
+
+### Security
+
+- Fix workflow-telemetry URL path and query-string leak (GHSA-f3rg-xqjj-cj9w). `WorkflowSanitizer` previously replaced only the hostname of `url`, `endpoint`, and `webhook` field values with `[domain]` and left the path and query string intact, allowing customer IDs in URL paths, tenant identifiers, signed-request parameters, and tokens shorter than the 20-character generic-token threshold to reach the `telemetry_workflows` and `workflow_mutations` Supabase tables. `sanitizeObject` now fully redacts URL-named fields to `[REDACTED_URL]` regardless of value type, the dead hostname-only branch in `sanitizeString` is removed, and `event-validator.ts` replaces `nodes: z.array(z.any())` with a `.strict()` per-node schema that rejects unknown top-level node keys as defense-in-depth. The mutation telemetry path (`sanitizeWorkflowRaw`) shares the same code path and is fixed automatically. Reported by @u-ktdi.
+
+### Notes
+
+- **Telemetry output format changed.** Anyone consuming the local telemetry analytics will see `[REDACTED_URL]` in place of the previous `https://[domain]/<path>?<query>` and `[REDACTED_URL_WITH_AUTH]` placeholders for `url`, `endpoint`, `webhook`, and similarly-named fields. Pattern-specific placeholders (`[REDACTED_SUPABASE_URL]`, `[REDACTED_N8N_HOST_URL]`, `[REDACTED_WEBHOOK]`, etc.) still apply to free-text node parameters that happen to contain those URLs (e.g. `jsCode`, `systemMessage`).
+- The webhook short-circuit in `sanitizeString` (returns `https://[webhook-url]` when a string value contains `/webhook/` or `/hook/`) remains for non-URL-named fields whose value embeds a webhook URL.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.51.2] - 2026-05-11
 
 ### Security

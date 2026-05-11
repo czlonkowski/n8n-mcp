@@ -36,6 +36,25 @@ exports.telemetryEventSchema = zod_1.z.object({
     properties: eventPropertiesSchema,
     created_at: zod_1.z.string().datetime().optional()
 });
+const sanitizedNodeSchema = zod_1.z.object({
+    id: zod_1.z.string(),
+    name: zod_1.z.string(),
+    type: zod_1.z.string(),
+    typeVersion: zod_1.z.number(),
+    position: zod_1.z.tuple([zod_1.z.number(), zod_1.z.number()]),
+    parameters: zod_1.z.record(zod_1.z.string(), zod_1.z.unknown()),
+    disabled: zod_1.z.boolean().optional(),
+    notes: zod_1.z.string().optional(),
+    notesInFlow: zod_1.z.boolean().optional(),
+    continueOnFail: zod_1.z.boolean().optional(),
+    retryOnFail: zod_1.z.boolean().optional(),
+    maxTries: zod_1.z.number().optional(),
+    waitBetweenTries: zod_1.z.number().optional(),
+    alwaysOutputData: zod_1.z.boolean().optional(),
+    executeOnce: zod_1.z.boolean().optional(),
+    onError: zod_1.z.enum(['continueRegularOutput', 'continueErrorOutput', 'stopWorkflow']).optional(),
+    webhookId: zod_1.z.string().optional(),
+}).strict();
 exports.workflowTelemetrySchema = zod_1.z.object({
     user_id: zod_1.z.string().min(1).max(64),
     workflow_hash: zod_1.z.string().min(1).max(64),
@@ -45,7 +64,7 @@ exports.workflowTelemetrySchema = zod_1.z.object({
     has_webhook: zod_1.z.boolean(),
     complexity: zod_1.z.enum(['simple', 'medium', 'complex']),
     sanitized_workflow: zod_1.z.object({
-        nodes: zod_1.z.array(zod_1.z.any()).max(1000),
+        nodes: zod_1.z.array(sanitizedNodeSchema).max(1000),
         connections: zod_1.z.record(zod_1.z.any())
     }),
     created_at: zod_1.z.string().datetime().optional()

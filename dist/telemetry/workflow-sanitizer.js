@@ -55,7 +55,7 @@ class WorkflowSanitizer {
             return value;
         }
         if (typeof value === 'string') {
-            return this.sanitizeString(value, '');
+            return this.sanitizeString(value);
         }
         return this.sanitizeObject(value);
     }
@@ -76,28 +76,19 @@ class WorkflowSanitizer {
         }
         const sanitized = {};
         for (const [key, value] of Object.entries(obj)) {
+            const lowerKey = key.toLowerCase();
             const isSensitive = this.isSensitiveField(key);
-            const isUrlField = key.toLowerCase().includes('url') ||
-                key.toLowerCase().includes('endpoint') ||
-                key.toLowerCase().includes('webhook');
-            if (typeof value === 'object' && value !== null) {
-                if (isSensitive && !isUrlField) {
-                    sanitized[key] = '[REDACTED]';
-                }
-                else {
-                    sanitized[key] = this.sanitizeObject(value);
-                }
+            const isUrlField = lowerKey.includes('url') ||
+                lowerKey.includes('endpoint') ||
+                lowerKey.includes('webhook');
+            if (isSensitive) {
+                sanitized[key] = isUrlField ? '[REDACTED_URL]' : '[REDACTED]';
+            }
+            else if (typeof value === 'object' && value !== null) {
+                sanitized[key] = this.sanitizeObject(value);
             }
             else if (typeof value === 'string') {
-                if (isSensitive && !isUrlField) {
-                    sanitized[key] = '[REDACTED]';
-                }
-                else {
-                    sanitized[key] = this.sanitizeString(value, key);
-                }
-            }
-            else if (isSensitive) {
-                sanitized[key] = '[REDACTED]';
+                sanitized[key] = this.sanitizeString(value);
             }
             else {
                 sanitized[key] = value;
@@ -105,7 +96,7 @@ class WorkflowSanitizer {
         }
         return sanitized;
     }
-    static sanitizeString(value, fieldName) {
+    static sanitizeString(value) {
         if (value.includes('/webhook/') || value.includes('/hook/')) {
             return 'https://[webhook-url]';
         }
@@ -134,22 +125,6 @@ class WorkflowSanitizer {
                 continue;
             }
             sanitized = sanitized.replace(patternDef.pattern, patternDef.placeholder);
-        }
-        if (fieldName.toLowerCase().includes('url') ||
-            fieldName.toLowerCase().includes('endpoint')) {
-            if (sanitized.startsWith('http://') || sanitized.startsWith('https://')) {
-                if (sanitized.includes('[REDACTED_URL_WITH_AUTH]')) {
-                    return sanitized;
-                }
-                if (sanitized.includes('[REDACTED]')) {
-                    return sanitized;
-                }
-                const urlParts = sanitized.split('/');
-                if (urlParts.length > 2) {
-                    urlParts[2] = '[domain]';
-                    sanitized = urlParts.join('/');
-                }
-            }
         }
         return sanitized;
     }

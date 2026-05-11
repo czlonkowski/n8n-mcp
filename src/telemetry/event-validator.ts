@@ -52,6 +52,32 @@ export const telemetryEventSchema = z.object({
   created_at: z.string().datetime().optional()
 });
 
+// SECURITY (GHSA-f3rg-xqjj-cj9w): strict shape for sanitized workflow nodes so the
+// validator rejects payloads whose top-level node fields drift from the sanitizer's
+// output. Mirrors workflowNodeSchema in src/services/n8n-validation.ts minus
+// `credentials` (deleted by WorkflowSanitizer.sanitizeNode) and uses .strict() so
+// any future leak via an unknown node-level key surfaces as a validation failure
+// rather than silently propagating to Supabase.
+const sanitizedNodeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  type: z.string(),
+  typeVersion: z.number(),
+  position: z.tuple([z.number(), z.number()]),
+  parameters: z.record(z.string(), z.unknown()),
+  disabled: z.boolean().optional(),
+  notes: z.string().optional(),
+  notesInFlow: z.boolean().optional(),
+  continueOnFail: z.boolean().optional(),
+  retryOnFail: z.boolean().optional(),
+  maxTries: z.number().optional(),
+  waitBetweenTries: z.number().optional(),
+  alwaysOutputData: z.boolean().optional(),
+  executeOnce: z.boolean().optional(),
+  onError: z.enum(['continueRegularOutput', 'continueErrorOutput', 'stopWorkflow']).optional(),
+  webhookId: z.string().optional(),
+}).strict();
+
 // Schema for workflow telemetry
 export const workflowTelemetrySchema = z.object({
   user_id: z.string().min(1).max(64),
@@ -62,7 +88,7 @@ export const workflowTelemetrySchema = z.object({
   has_webhook: z.boolean(),
   complexity: z.enum(['simple', 'medium', 'complex']),
   sanitized_workflow: z.object({
-    nodes: z.array(z.any()).max(1000),
+    nodes: z.array(sanitizedNodeSchema).max(1000),
     connections: z.record(z.any())
   }),
   created_at: z.string().datetime().optional()

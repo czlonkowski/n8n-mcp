@@ -29,7 +29,11 @@ describe('WorkflowSanitizer', () => {
       expect(sanitized.nodes[0].parameters.headers.Authorization).toBe('[REDACTED]');
     });
 
-    it('should sanitize webhook URLs but keep structure', () => {
+    it('should redact webhook URL fields and keep other fields', () => {
+      // Post-GHSA-f3rg-xqjj-cj9w: URL-named fields are fully redacted regardless
+      // of value, so we no longer try to preserve the `https://[webhook-url]`
+      // shape. The webhook short-circuit in sanitizeString still applies to
+      // non-URL-named fields whose value embeds a /webhook/ URL (see below).
       const workflow = {
         nodes: [
           {
@@ -49,9 +53,28 @@ describe('WorkflowSanitizer', () => {
 
       const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
 
-      expect(sanitized.nodes[0].parameters.webhookUrl).toBe('https://[webhook-url]');
+      expect(sanitized.nodes[0].parameters.webhookUrl).toBe('[REDACTED_URL]');
       expect(sanitized.nodes[0].parameters.method).toBe('POST'); // Method should remain
       expect(sanitized.nodes[0].parameters.path).toBe('my-webhook'); // Path should remain
+    });
+
+    it('redacts /webhook/ URLs embedded in non-URL-named fields', () => {
+      const workflow = {
+        nodes: [
+          {
+            id: '1',
+            name: 'Note',
+            type: 'n8n-nodes-base.set',
+            position: [100, 100],
+            parameters: {
+              note: 'Trigger fires at https://n8n.example.com/webhook/abc-def-ghi when ready.'
+            }
+          }
+        ],
+        connections: {}
+      };
+      const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
+      expect(sanitized.nodes[0].parameters.note).toBe('https://[webhook-url]');
     });
 
     it('should remove credentials entirely', () => {
@@ -84,7 +107,7 @@ describe('WorkflowSanitizer', () => {
       expect(sanitized.nodes[0].parameters.text).toBe('Hello World'); // Text should remain
     });
 
-    it('should sanitize URLs in parameters', () => {
+    it('should fully redact URL-like fields (GHSA-f3rg-xqjj-cj9w)', () => {
       const workflow = {
         nodes: [
           {
@@ -104,9 +127,87 @@ describe('WorkflowSanitizer', () => {
 
       const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
 
-      expect(sanitized.nodes[0].parameters.url).toBe('https://[domain]/endpoint');
-      expect(sanitized.nodes[0].parameters.endpoint).toBe('https://[domain]/api');
-      expect(sanitized.nodes[0].parameters.baseUrl).toBe('https://[domain]');
+      expect(sanitized.nodes[0].parameters.url).toBe('[REDACTED_URL]');
+      expect(sanitized.nodes[0].parameters.endpoint).toBe('[REDACTED_URL]');
+      expect(sanitized.nodes[0].parameters.baseUrl).toBe('[REDACTED_URL]');
+    });
+
+    it('GHSA-f3rg-xqjj-cj9w: does not leak URL paths or query strings', () => {
+      // Verbatim reproduction of the advisory PoC. Confirms that:
+      //   - customer/tenant identifiers in URL paths
+      //   - short query-string secrets (< 20 chars; under the generic-token threshold)
+      //   - signed/short tokens hidden in query strings
+      // never reach the telemetry payload.
+      const workflow = {
+        nodes: [
+          {
+            id: '1',
+            name: 'HTTP',
+            type: 'n8n-nodes-base.httpRequest',
+            typeVersion: 4,
+            position: [0, 0] as [number, number],
+            parameters: {
+              url: 'https://api.example.com/v1/customer/123?api_key=shortsecret&tenant=acme',
+              endpoint: 'https://internal.example.local/v2/users?token=abcd123456789012345',
+              headers: { Authorization: 'Bearer abcdefghijklmnop' }
+            }
+          }
+        ],
+        connections: {}
+      };
+
+      const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
+      const params = sanitized.nodes[0].parameters;
+      const serialized = JSON.stringify(params);
+
+      expect(params.url).toBe('[REDACTED_URL]');
+      expect(params.endpoint).toBe('[REDACTED_URL]');
+      expect(params.headers.Authorization).toBe('[REDACTED]');
+
+      // Nothing from the original path/query string should survive anywhere.
+      for (const leak of [
+        'customer/123',
+        'shortsecret',
+        'tenant=acme',
+        'v2/users',
+        'abcd123456789012345',
+        'api.example.com',
+        'internal.example.local'
+      ]) {
+        expect(serialized).not.toContain(leak);
+      }
+    });
+
+    it('GHSA-f3rg-xqjj-cj9w: redacts short OAuth codes and signed query parameters', () => {
+      const workflow = {
+        nodes: [
+          {
+            id: '1',
+            name: 'OAuth',
+            type: 'n8n-nodes-base.httpRequest',
+            position: [0, 0] as [number, number],
+            parameters: {
+              url: 'https://oauth.example.com/callback?code=4/0AY0e&state=xyz',
+              callbackUrl: 'https://s3.amazonaws.com/bucket/file.pdf?X-Amz-Signature=abc123'
+            }
+          }
+        ],
+        connections: {}
+      };
+
+      const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
+      const serialized = JSON.stringify(sanitized.nodes[0].parameters);
+
+      for (const leak of [
+        'code=4/0AY0e',
+        'state=xyz',
+        'X-Amz-Signature',
+        'bucket/file.pdf',
+        'oauth.example.com',
+        's3.amazonaws.com'
+      ]) {
+        expect(serialized).not.toContain(leak);
+      }
     });
 
     it('should calculate workflow metrics correctly', () => {
@@ -480,8 +581,10 @@ describe('WorkflowSanitizer', () => {
       expect(params.secret_token).toBe('[REDACTED]');
       expect(params.authKey).toBe('[REDACTED]');
       expect(params.clientSecret).toBe('[REDACTED]');
-      expect(params.webhookUrl).toBe('https://hooks.example.com/services/T00000000/B00000000/[REDACTED]');
-      expect(params.databaseUrl).toBe('[REDACTED_URL_WITH_AUTH]');
+      // Post-GHSA-f3rg-xqjj-cj9w: URL-named fields are fully redacted to
+      // [REDACTED_URL] regardless of pattern matches inside the value.
+      expect(params.webhookUrl).toBe('[REDACTED_URL]');
+      expect(params.databaseUrl).toBe('[REDACTED_URL]');
       expect(params.connectionString).toBe('[REDACTED]');
 
       // Safe values should remain
@@ -862,7 +965,11 @@ describe('WorkflowSanitizer', () => {
       expect(out).toContain('[REDACTED_SUPABASE_URL]');
     });
 
-    it('keeps Supabase URL redaction even when in a non-credential url field (no [domain] swap)', () => {
+    it('redacts Supabase URLs in url fields (no path or project-ref leak)', () => {
+      // Post-GHSA-f3rg-xqjj-cj9w: url-named fields are fully redacted at the
+      // field-name layer, so even the Supabase-specific pattern is short-
+      // circuited. What matters is that no fragment of the original URL
+      // survives.
       const wf = {
         nodes: [{
           id: '1', name: 'HTTP', type: 'n8n-nodes-base.httpRequest',
@@ -872,7 +979,10 @@ describe('WorkflowSanitizer', () => {
         connections: {},
       };
       const out = (WorkflowSanitizer.sanitizeWorkflow(wf).nodes[0].parameters as any).url;
-      expect(out).toContain('[REDACTED_SUPABASE_URL]');
+      expect(out).toBe('[REDACTED_URL]');
+      expect(out).not.toContain('supabase.co');
+      expect(out).not.toContain('abcdefghijklmnopqrst');
+      expect(out).not.toContain('rest/v1/x');
     });
   });
 

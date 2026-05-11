@@ -107,9 +107,9 @@ describe('TelemetryEventTracker', () => {
   describe('trackWorkflowCreation()', () => {
     const mockWorkflow = {
       nodes: [
-        { id: '1', type: 'webhook', name: 'Webhook', position: [0, 0] as [number, number], parameters: {} },
-        { id: '2', type: 'httpRequest', name: 'HTTP Request', position: [100, 0] as [number, number], parameters: {} },
-        { id: '3', type: 'set', name: 'Set', position: [200, 0] as [number, number], parameters: {} }
+        { id: '1', type: 'webhook', name: 'Webhook', typeVersion: 1, position: [0, 0] as [number, number], parameters: {} },
+        { id: '2', type: 'httpRequest', name: 'HTTP Request', typeVersion: 1, position: [100, 0] as [number, number], parameters: {} },
+        { id: '3', type: 'set', name: 'Set', typeVersion: 1, position: [200, 0] as [number, number], parameters: {} }
       ],
       connections: {
         '1': { main: [[{ node: '2', type: 'main', index: 0 }]] }

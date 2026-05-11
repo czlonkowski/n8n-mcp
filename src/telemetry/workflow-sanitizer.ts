@@ -205,7 +205,7 @@ export class WorkflowSanitizer {
       return value as T;
     }
     if (typeof value === 'string') {
-      return this.sanitizeString(value, '') as unknown as T;
+      return this.sanitizeString(value) as unknown as T;
     }
     return this.sanitizeObject(value) as T;
   }
@@ -242,34 +242,26 @@ export class WorkflowSanitizer {
     const sanitized: any = {};
 
     for (const [key, value] of Object.entries(obj)) {
-      // Check if field name is sensitive
+      const lowerKey = key.toLowerCase();
       const isSensitive = this.isSensitiveField(key);
-      const isUrlField = key.toLowerCase().includes('url') ||
-                         key.toLowerCase().includes('endpoint') ||
-                         key.toLowerCase().includes('webhook');
+      const isUrlField = lowerKey.includes('url') ||
+                         lowerKey.includes('endpoint') ||
+                         lowerKey.includes('webhook');
 
-      // Recursively sanitize nested objects (unless it's a sensitive non-URL field)
-      if (typeof value === 'object' && value !== null) {
-        if (isSensitive && !isUrlField) {
-          // For sensitive object fields (like 'authentication'), redact completely
-          sanitized[key] = '[REDACTED]';
-        } else {
-          sanitized[key] = this.sanitizeObject(value);
-        }
+      // SECURITY (GHSA-f3rg-xqjj-cj9w): URL-like fields (url, endpoint, webhook)
+      // are fully redacted rather than partially sanitized, because preserving
+      // the path or query string leaks customer IDs, tenant identifiers, signed
+      // request parameters, and tokens shorter than the generic-token threshold.
+      if (isSensitive) {
+        sanitized[key] = isUrlField ? '[REDACTED_URL]' : '[REDACTED]';
       }
-      // Sanitize string values
+      // Recursively sanitize non-sensitive nested objects
+      else if (typeof value === 'object' && value !== null) {
+        sanitized[key] = this.sanitizeObject(value);
+      }
+      // Pattern-sanitize non-sensitive strings
       else if (typeof value === 'string') {
-        // For sensitive fields (except URL fields), use generic redaction
-        if (isSensitive && !isUrlField) {
-          sanitized[key] = '[REDACTED]';
-        } else {
-          // For URL fields or non-sensitive fields, use pattern-specific sanitization
-          sanitized[key] = this.sanitizeString(value, key);
-        }
-      }
-      // For non-string sensitive fields, redact completely
-      else if (isSensitive) {
-        sanitized[key] = '[REDACTED]';
+        sanitized[key] = this.sanitizeString(value);
       }
       // Keep other types as-is
       else {
@@ -283,7 +275,7 @@ export class WorkflowSanitizer {
   /**
    * Sanitize string values
    */
-  private static sanitizeString(value: string, fieldName: string): string {
+  private static sanitizeString(value: string): string {
     // First check if this is a webhook URL
     if (value.includes('/webhook/') || value.includes('/hook/')) {
       return 'https://[webhook-url]';
@@ -322,27 +314,6 @@ export class WorkflowSanitizer {
 
       // Apply pattern with its specific placeholder
       sanitized = sanitized.replace(patternDef.pattern, patternDef.placeholder);
-    }
-
-    // Additional sanitization for specific field types
-    if (fieldName.toLowerCase().includes('url') ||
-        fieldName.toLowerCase().includes('endpoint')) {
-      // Keep URL structure but remove domain details
-      if (sanitized.startsWith('http://') || sanitized.startsWith('https://')) {
-        // If value has been redacted with URL_WITH_AUTH, preserve it
-        if (sanitized.includes('[REDACTED_URL_WITH_AUTH]')) {
-          return sanitized; // Already properly sanitized with path preserved
-        }
-        // If value has other redactions, leave it as is
-        if (sanitized.includes('[REDACTED]')) {
-          return sanitized;
-        }
-        const urlParts = sanitized.split('/');
-        if (urlParts.length > 2) {
-          urlParts[2] = '[domain]';
-          sanitized = urlParts.join('/');
-        }
-      }
     }
 
     return sanitized;
