@@ -500,9 +500,9 @@ class SingleSessionHTTPServer {
                             return;
                         }
                         logger_1.logger.warn('handleRequest: Session removed between check and use (TOCTOU)', { sessionId });
-                        res.status(400).json({
+                        res.status(404).json({
                             jsonrpc: '2.0',
-                            error: { code: -32000, message: 'Bad Request: Session not found or expired' },
+                            error: { code: -32000, message: 'Session not found or expired' },
                             id: req.body?.id || null,
                         });
                         return;
@@ -531,13 +531,15 @@ class SingleSessionHTTPServer {
                     };
                     logger_1.logger.warn('handleRequest: Invalid request - no session ID and not initialize', errorDetails);
                     let errorMessage = 'Bad Request: No valid session ID provided and not an initialize request';
+                    let statusCode = 400;
                     if (sessionId && !this.isValidSessionId(sessionId)) {
                         errorMessage = 'Bad Request: Invalid session ID format';
                     }
                     else if (sessionId && !this.transports[sessionId]) {
-                        errorMessage = 'Bad Request: Session not found or expired';
+                        errorMessage = 'Session not found or expired';
+                        statusCode = 404;
                     }
-                    res.status(400).json({
+                    res.status(statusCode).json({
                         jsonrpc: '2.0',
                         error: {
                             code: -32000,

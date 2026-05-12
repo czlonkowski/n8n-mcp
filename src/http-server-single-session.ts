@@ -737,9 +737,9 @@ export class SingleSessionHTTPServer {
               return;
             }
             logger.warn('handleRequest: Session removed between check and use (TOCTOU)', { sessionId });
-            res.status(400).json({
+            res.status(404).json({
               jsonrpc: '2.0',
-              error: { code: -32000, message: 'Bad Request: Session not found or expired' },
+              error: { code: -32000, message: 'Session not found or expired' },
               id: req.body?.id || null,
             });
             return;
@@ -768,7 +768,9 @@ export class SingleSessionHTTPServer {
             return;
           }
 
-          // Only return 400 for actual requests that need a valid session
+          // Missing or malformed session IDs are bad requests. A valid-looking
+          // but unknown session ID means the session was terminated, and MCP
+          // clients use 404 as the signal to initialize a new session.
           const errorDetails = {
             hasSessionId: !!sessionId,
             isInitialize: isInitialize,
@@ -779,13 +781,15 @@ export class SingleSessionHTTPServer {
           logger.warn('handleRequest: Invalid request - no session ID and not initialize', errorDetails);
 
           let errorMessage = 'Bad Request: No valid session ID provided and not an initialize request';
+          let statusCode = 400;
           if (sessionId && !this.isValidSessionId(sessionId)) {
             errorMessage = 'Bad Request: Invalid session ID format';
           } else if (sessionId && !this.transports[sessionId]) {
-            errorMessage = 'Bad Request: Session not found or expired';
+            errorMessage = 'Session not found or expired';
+            statusCode = 404;
           }
 
-          res.status(400).json({
+          res.status(statusCode).json({
             jsonrpc: '2.0',
             error: {
               code: -32000,
