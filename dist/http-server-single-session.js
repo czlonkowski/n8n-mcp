@@ -389,7 +389,10 @@ class SingleSessionHTTPServer {
                         return;
                     }
                     logger_1.logger.info('handleRequest: Creating new transport for initialize request');
-                    if (instanceContext?.instanceId) {
+                    let sessionIdToUse;
+                    const isMultiTenantEnabled = process.env.ENABLE_MULTI_TENANT === 'true';
+                    const sessionStrategy = process.env.MULTI_TENANT_SESSION_STRATEGY || 'instance';
+                    if (isMultiTenantEnabled && sessionStrategy === 'instance' && instanceContext?.instanceId) {
                         const sessionsToRemove = [];
                         for (const [existingSessionId, context] of Object.entries(this.sessionContexts)) {
                             if (context?.instanceId === instanceContext.instanceId) {
@@ -408,9 +411,6 @@ class SingleSessionHTTPServer {
                             await this.removeSession(oldSessionId, 'instance_reconnect');
                         }
                     }
-                    let sessionIdToUse;
-                    const isMultiTenantEnabled = process.env.ENABLE_MULTI_TENANT === 'true';
-                    const sessionStrategy = process.env.MULTI_TENANT_SESSION_STRATEGY || 'instance';
                     if (isMultiTenantEnabled && sessionStrategy === 'instance' && instanceContext?.instanceId) {
                         const configHash = (0, crypto_1.createHash)('sha256')
                             .update(JSON.stringify({

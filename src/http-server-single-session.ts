@@ -595,9 +595,16 @@ export class SingleSessionHTTPServer {
           // For initialize requests: always create new transport and server
           logger.info('handleRequest: Creating new transport for initialize request');
 
-          // EAGER CLEANUP: Remove existing sessions for the same instance
-          // This prevents memory buildup when clients reconnect without proper cleanup
-          if (instanceContext?.instanceId) {
+          // Generate session ID based on multi-tenant configuration
+          let sessionIdToUse: string;
+
+          const isMultiTenantEnabled = process.env.ENABLE_MULTI_TENANT === 'true';
+          const sessionStrategy = process.env.MULTI_TENANT_SESSION_STRATEGY || 'instance';
+
+          // EAGER CLEANUP: Remove existing sessions for the same instance only
+          // when instance-scoped sessions are requested. Shared strategy allows
+          // multiple MCP clients to use the same tenant/instance concurrently.
+          if (isMultiTenantEnabled && sessionStrategy === 'instance' && instanceContext?.instanceId) {
             const sessionsToRemove: string[] = [];
             for (const [existingSessionId, context] of Object.entries(this.sessionContexts)) {
               if (context?.instanceId === instanceContext.instanceId) {
@@ -617,12 +624,6 @@ export class SingleSessionHTTPServer {
               await this.removeSession(oldSessionId, 'instance_reconnect');
             }
           }
-
-          // Generate session ID based on multi-tenant configuration
-          let sessionIdToUse: string;
-
-          const isMultiTenantEnabled = process.env.ENABLE_MULTI_TENANT === 'true';
-          const sessionStrategy = process.env.MULTI_TENANT_SESSION_STRATEGY || 'instance';
 
           if (isMultiTenantEnabled && sessionStrategy === 'instance' && instanceContext?.instanceId) {
             // In multi-tenant mode with instance strategy, create session per instance
