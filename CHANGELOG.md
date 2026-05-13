@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.52.0] - 2026-05-13
+
+### Changed
+
+- **Updated n8n dependencies to 2.20.x.** `n8n-nodes-base` 2.18.3 → 2.20.4, `n8n-core` 2.18.3 → 2.20.3, `n8n-workflow` 2.18.3 → 2.20.0, `@n8n/n8n-nodes-langchain` 2.18.3 → 2.20.4. Database rebuilt against the new packages; community node rows preserved across the rebuild.
+
+### Fixed
+
+- **Community nodes: stop advertising npm package version as `typeVersion` (#781).** For community nodes, `get_node` previously returned the npm package version (e.g. `"0.2.21"`) in the `version` field and emitted `versionNotice: "Use typeVersion: 0.2.21 when creating this node"`. The advertised value is not a valid JS number — assigning `typeVersion: 0.2` produced workflows that n8n's runtime rendered as red/broken nodes even though both `validate_workflow` and `n8n_validate_workflow` reported them as valid. The community-node parser no longer falls back to the npm package version when the descriptor's version is missing (Strapi path) and never seeds the npm version as `typeVersion` (npm-only path); both default to `1`, which is what declarative community nodes register at runtime. The `get_node` response coerces `version` to a finite number and, for community nodes, surfaces `isCommunity: true`, `npmVersion`, a community-aware `versionNotice`, and a `metadata.versionCoerced` audit field whenever stale seed data has to be resolved on the fly. The shipped `data/nodes.db` is migrated in place: 118 community rows whose stored `version` was a multi-dot semver or contained letters were reset to `'1'`. `WorkflowValidator.validateAllNodes` now rejects non-finite typeVersions (including `NaN`) with an explicit "must be a finite non-negative number" message, parses comma-separated and array-form `nodeInfo.version` strings before min/max comparisons, and falls back to suggesting `typeVersion: 1` when the database version is unparseable. Reported by @czlonkowski.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.51.3] - 2026-05-11
 
 ### Security

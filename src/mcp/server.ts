@@ -35,6 +35,7 @@ import { getToolDocumentation, getToolsOverview } from './tools-documentation';
 import { PROJECT_VERSION } from '../utils/version';
 import { getNodeTypeAlternatives, getWorkflowNodeType } from '../utils/node-utils';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
+import { parseTypeVersion } from '../utils/typeversion';
 import { ToolValidation, Validator, ValidationError } from '../utils/validation-schemas';
 import {
   negotiateProtocolVersion,
@@ -2832,8 +2833,17 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     // Get operations (already parsed by repository)
     const operations = node.operations || [];
     
-    // Get the latest version - this is important for AI to use correct typeVersion
-    const latestVersion = node.version ?? '1';
+    // Resolve typeVersion. The DB stores version as TEXT and may contain stale npm
+    // package strings (e.g. "0.2.21") for community nodes seeded before #781 was fixed.
+    // Coerce to a finite number so AI clients always receive a value usable as
+    // `typeVersion: <number>` in workflow JSON.
+    const isCommunityNode = (node as any).isCommunity === true;
+    const parsedVersion = parseTypeVersion(node.version);
+    const latestVersion: number = parsedVersion ?? 1;
+    const versionWasCoerced = parsedVersion === null && node.version != null;
+    const versionNotice = isCommunityNode
+      ? `⚠️ Use typeVersion: ${latestVersion} when creating this node. Community node typeVersion comes from the node descriptor (typically 1) and is independent of the npm package version.`
+      : `⚠️ Use typeVersion: ${latestVersion} when creating this node`;
 
     const result: any = {
       nodeType: node.nodeType,
@@ -2843,8 +2853,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
       category: node.category,
       version: latestVersion,
       isVersioned: node.isVersioned ?? false,
-      // Prominent warning to use the correct typeVersion
-      versionNotice: `⚠️ Use typeVersion: ${latestVersion} when creating this node`,
+      versionNotice,
       requiredProperties: essentials.required,
       commonProperties: essentials.common,
       operations: operations.map((op: any) => ({
@@ -2864,6 +2873,20 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         developmentStyle: node.developmentStyle ?? 'programmatic'
       }
     };
+
+    if (isCommunityNode) {
+      result.isCommunity = true;
+      const npmVersion = (node as any).npmVersion;
+      if (npmVersion) result.npmVersion = npmVersion;
+      // Surface stale-DB cases so callers don't silently inherit bad seed data.
+      if (versionWasCoerced) {
+        result.metadata.versionCoerced = {
+          stored: node.version,
+          resolved: latestVersion,
+          reason: 'Stored version is not a valid typeVersion (likely an npm package version). Defaulted to 1.',
+        };
+      }
+    }
 
     // Add tool variant guidance if applicable
     const toolVariantInfo = this.buildToolVariantGuidance(node);

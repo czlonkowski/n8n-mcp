@@ -68,6 +68,7 @@ const tools_documentation_1 = require("./tools-documentation");
 const version_1 = require("../utils/version");
 const node_utils_1 = require("../utils/node-utils");
 const node_type_normalizer_1 = require("../utils/node-type-normalizer");
+const typeversion_1 = require("../utils/typeversion");
 const validation_schemas_1 = require("../utils/validation-schemas");
 const protocol_version_1 = require("../utils/protocol-version");
 const telemetry_1 = require("../telemetry");
@@ -2113,7 +2114,13 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         const allProperties = node.properties || [];
         const essentials = property_filter_1.PropertyFilter.getEssentials(allProperties, node.nodeType);
         const operations = node.operations || [];
-        const latestVersion = node.version ?? '1';
+        const isCommunityNode = node.isCommunity === true;
+        const parsedVersion = (0, typeversion_1.parseTypeVersion)(node.version);
+        const latestVersion = parsedVersion ?? 1;
+        const versionWasCoerced = parsedVersion === null && node.version != null;
+        const versionNotice = isCommunityNode
+            ? `⚠️ Use typeVersion: ${latestVersion} when creating this node. Community node typeVersion comes from the node descriptor (typically 1) and is independent of the npm package version.`
+            : `⚠️ Use typeVersion: ${latestVersion} when creating this node`;
         const result = {
             nodeType: node.nodeType,
             workflowNodeType: (0, node_utils_1.getWorkflowNodeType)(node.package ?? 'n8n-nodes-base', node.nodeType),
@@ -2122,7 +2129,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
             category: node.category,
             version: latestVersion,
             isVersioned: node.isVersioned ?? false,
-            versionNotice: `⚠️ Use typeVersion: ${latestVersion} when creating this node`,
+            versionNotice,
             requiredProperties: essentials.required,
             commonProperties: essentials.common,
             operations: operations.map((op) => ({
@@ -2141,6 +2148,19 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
                 developmentStyle: node.developmentStyle ?? 'programmatic'
             }
         };
+        if (isCommunityNode) {
+            result.isCommunity = true;
+            const npmVersion = node.npmVersion;
+            if (npmVersion)
+                result.npmVersion = npmVersion;
+            if (versionWasCoerced) {
+                result.metadata.versionCoerced = {
+                    stored: node.version,
+                    resolved: latestVersion,
+                    reason: 'Stored version is not a valid typeVersion (likely an npm package version). Defaulted to 1.',
+                };
+            }
+        }
         const toolVariantInfo = this.buildToolVariantGuidance(node);
         if (toolVariantInfo) {
             result.toolVariantInfo = toolVariantInfo;

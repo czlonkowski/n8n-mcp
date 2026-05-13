@@ -10,6 +10,7 @@ const expression_utils_1 = require("../utils/expression-utils");
 const expression_format_validator_1 = require("./expression-format-validator");
 const node_similarity_service_1 = require("./node-similarity-service");
 const node_type_normalizer_1 = require("../utils/node-type-normalizer");
+const typeversion_1 = require("../utils/typeversion");
 const logger_1 = require("../utils/logger");
 const ai_node_validator_1 = require("./ai-node-validator");
 const ai_tool_validators_1 = require("./ai-tool-validators");
@@ -309,36 +310,37 @@ class WorkflowValidator {
                     continue;
                 }
                 if (nodeInfo.isVersioned) {
-                    if (!node.typeVersion) {
+                    const maxVersion = (0, typeversion_1.parseTypeVersion)(nodeInfo.version);
+                    if (node.typeVersion === undefined || node.typeVersion === null) {
                         result.errors.push({
                             type: 'error',
                             nodeId: node.id,
                             nodeName: node.name,
-                            message: `Missing required property 'typeVersion'. Add typeVersion: ${nodeInfo.version || 1}`
+                            message: `Missing required property 'typeVersion'. Add typeVersion: ${maxVersion ?? 1}`
                         });
                     }
-                    else if (typeof node.typeVersion !== 'number' || node.typeVersion < 0) {
+                    else if (typeof node.typeVersion !== 'number' || !Number.isFinite(node.typeVersion) || node.typeVersion < 0) {
                         result.errors.push({
                             type: 'error',
                             nodeId: node.id,
                             nodeName: node.name,
-                            message: `Invalid typeVersion: ${node.typeVersion}. Must be a non-negative number`
+                            message: `Invalid typeVersion: ${node.typeVersion}. Must be a finite non-negative number`
                         });
                     }
-                    else if (nodeInfo.version && node.typeVersion < nodeInfo.version) {
+                    else if (maxVersion !== null && node.typeVersion < maxVersion) {
                         result.warnings.push({
                             type: 'warning',
                             nodeId: node.id,
                             nodeName: node.name,
-                            message: `Outdated typeVersion: ${node.typeVersion}. Latest is ${nodeInfo.version}`
+                            message: `Outdated typeVersion: ${node.typeVersion}. Latest is ${maxVersion}`
                         });
                     }
-                    else if (nodeInfo.version && node.typeVersion > nodeInfo.version) {
+                    else if (maxVersion !== null && node.typeVersion > maxVersion) {
                         result.errors.push({
                             type: 'error',
                             nodeId: node.id,
                             nodeName: node.name,
-                            message: `typeVersion ${node.typeVersion} exceeds maximum supported version ${nodeInfo.version}`
+                            message: `typeVersion ${node.typeVersion} exceeds maximum supported version ${maxVersion}`
                         });
                     }
                 }
