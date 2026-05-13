@@ -27,7 +27,8 @@ describe('TelemetryBatchProcessor', () => {
     error,
     status: error ? 400 : 200,
     statusText: error ? 'Bad Request' : 'OK',
-    count: null
+    count: null,
+    success: !error,
   });
 
   beforeEach(() => {

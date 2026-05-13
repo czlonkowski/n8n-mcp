@@ -50,7 +50,10 @@ jobs:
           cache: 'npm'
       
       - name: Install dependencies
-        run: npm ci
+        # --legacy-peer-deps: n8n-nodes-base 2.20.x pulls in mappersmith with a `diff`
+        # peer that conflicts with ts-node's `diff@^4`; npm 7+ strict resolution leaves
+        # the lock internally inconsistent. Match local dev (.npmrc legacy-peer-deps=true).
+        run: npm ci --legacy-peer-deps
       
       # Verify test environment setup
       - name: Verify test environment
