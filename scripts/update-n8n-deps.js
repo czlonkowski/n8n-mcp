@@ -128,8 +128,11 @@ class N8nDependencyUpdater {
     const packageJson = JSON.parse(fs.readFileSync(this.packageJsonPath, 'utf8'));
     
     for (const update of updates) {
-      packageJson.dependencies[update.package] = `^${update.latest}`;
-      console.log(`   Updated ${update.package} to ^${update.latest}`);
+      // Exact pin (no caret) so a fresh `npm install` after a future minor release
+      // can't slip in a different node set than the database was rebuilt against.
+      // The DB rebuild step assumes these versions are reproducible.
+      packageJson.dependencies[update.package] = update.latest;
+      console.log(`   Updated ${update.package} to ${update.latest}`);
     }
     
     fs.writeFileSync(

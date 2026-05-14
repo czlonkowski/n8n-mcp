@@ -292,7 +292,7 @@ describe('WorkflowValidator', () => {
       expect(result.errors.some(e => e.message.includes('Invalid typeVersion') && e.message.includes('finite'))).toBe(true);
     });
 
-    it('skips min/max comparison when nodeInfo.version is an unparseable string', async () => {
+    it('skips min/max comparison and warns when nodeInfo.version is unparseable', async () => {
       vi.mocked(mockNodeRepository.getNode).mockImplementation((nodeType: string) => {
         if (nodeType === 'nodes-base.communityFoo') {
           return { type: 'nodes-base.communityFoo', displayName: 'Community Foo', package: 'n8n-nodes-base', version: '0.2.21', isVersioned: true, outputs: ['main'], properties: [] };
@@ -300,9 +300,29 @@ describe('WorkflowValidator', () => {
         return nodeTypes[nodeType] || null;
       });
       const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Foo', type: 'n8n-nodes-base.communityFoo', position: [100, 100], parameters: {}, typeVersion: 1 }], connections: {} } as any);
-      // Should not raise spurious "Outdated" / "exceeds maximum" errors comparing against NaN.
+      // No spurious "Outdated" / "exceeds maximum" errors comparing against NaN…
       expect(result.errors.some(e => e.message.includes('exceeds maximum'))).toBe(false);
       expect(result.warnings.some(w => w.message.includes('Outdated typeVersion'))).toBe(false);
+      // …but a heads-up that the comparison was skipped, so callers don't think a
+      // bogus typeVersion was actually accepted.
+      expect(result.warnings.some(w => w.message.includes('Cannot validate typeVersion') && w.message.includes('"0.2.21"'))).toBe(true);
+    });
+
+    it('does not emit the unparseable-version warning when typeVersion is in a valid range too high', async () => {
+      // The warning fires whenever stored version is unparseable, regardless of
+      // user typeVersion — that is the whole point: caller should know the
+      // min/max guarantee did not run, even if their typeVersion happens to be high.
+      vi.mocked(mockNodeRepository.getNode).mockImplementation((nodeType: string) => {
+        if (nodeType === 'nodes-base.communityFoo') {
+          return { type: 'nodes-base.communityFoo', displayName: 'Community Foo', package: 'n8n-nodes-base', version: '0.2.21', isVersioned: true, outputs: ['main'], properties: [] };
+        }
+        return nodeTypes[nodeType] || null;
+      });
+      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Foo', type: 'n8n-nodes-base.communityFoo', position: [100, 100], parameters: {}, typeVersion: 999 }], connections: {} } as any);
+      expect(result.warnings.some(w => w.message.includes('Cannot validate typeVersion'))).toBe(true);
+      // typeVersion: 999 still passes typeof/finite checks, so no error — the warning
+      // is the signal that we couldn't enforce the upper bound.
+      expect(result.errors.some(e => e.message.includes('exceeds maximum'))).toBe(false);
     });
 
     it('parses comma-separated nodeInfo.version arrays for the max comparison', async () => {

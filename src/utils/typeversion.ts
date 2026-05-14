@@ -17,7 +17,9 @@ export function parseTypeVersion(value: unknown): number | null {
   if (value == null) return null;
 
   if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
+    // Reject negatives so this helper agrees with isValidTypeVersion and the
+    // workflow validator's typeof-and-non-negative check. typeVersion 0 is valid.
+    return Number.isFinite(value) && value >= 0 ? value : null;
   }
 
   if (Array.isArray(value)) {
@@ -49,7 +51,7 @@ export function parseTypeVersion(value: unknown): number | null {
     if ((trimmed.match(/\./g) || []).length > 1) return null;
 
     const n = Number(trimmed);
-    return Number.isFinite(n) ? n : null;
+    return Number.isFinite(n) && n >= 0 ? n : null;
   }
 
   return null;

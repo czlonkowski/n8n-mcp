@@ -502,6 +502,17 @@ export class WorkflowValidator {
           // safe comparisons. If we can't, skip the min/max checks rather than silently
           // comparing against NaN.
           const maxVersion = parseTypeVersion(nodeInfo.version);
+          if (maxVersion === null && nodeInfo.version != null) {
+            // Stale seed data: stored version isn't a valid typeVersion. We can't
+            // tell whether `node.typeVersion` is in range, so surface the gap rather
+            // than silently passing it through.
+            result.warnings.push({
+              type: 'warning',
+              nodeId: node.id,
+              nodeName: node.name,
+              message: `Cannot validate typeVersion for ${node.type}: stored version "${nodeInfo.version}" is not a valid typeVersion. Min/max checks were skipped — re-sync this node or verify typeVersion against the node descriptor manually.`
+            });
+          }
 
           // Check if typeVersion is missing. Use an explicit nullish check so that
           // a literal 0 isn't treated as missing, and so that NaN falls through to

@@ -14,6 +14,11 @@ describe('parseTypeVersion', () => {
       expect(parseTypeVersion(Infinity)).toBeNull();
       expect(parseTypeVersion(-Infinity)).toBeNull();
     });
+
+    it('rejects negative numbers (consistency with isValidTypeVersion / validator)', () => {
+      expect(parseTypeVersion(-1)).toBeNull();
+      expect(parseTypeVersion(-0.5)).toBeNull();
+    });
   });
 
   describe('arrays', () => {
@@ -58,6 +63,11 @@ describe('parseTypeVersion', () => {
       expect(parseTypeVersion('0.2.21')).toBeNull();
       expect(parseTypeVersion('2.1.17-rc.31')).toBeNull();
       expect(parseTypeVersion('1.0.0')).toBeNull();
+    });
+
+    it('rejects negative numeric strings', () => {
+      expect(parseTypeVersion('-1')).toBeNull();
+      expect(parseTypeVersion('-0.5')).toBeNull();
     });
 
     it('rejects empty and whitespace strings', () => {

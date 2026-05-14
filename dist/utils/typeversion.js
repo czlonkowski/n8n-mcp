@@ -6,7 +6,7 @@ function parseTypeVersion(value) {
     if (value == null)
         return null;
     if (typeof value === 'number') {
-        return Number.isFinite(value) ? value : null;
+        return Number.isFinite(value) && value >= 0 ? value : null;
     }
     if (Array.isArray(value)) {
         let max = null;
@@ -35,7 +35,7 @@ function parseTypeVersion(value) {
         if ((trimmed.match(/\./g) || []).length > 1)
             return null;
         const n = Number(trimmed);
-        return Number.isFinite(n) ? n : null;
+        return Number.isFinite(n) && n >= 0 ? n : null;
     }
     return null;
 }

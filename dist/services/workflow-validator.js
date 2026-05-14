@@ -311,6 +311,14 @@ class WorkflowValidator {
                 }
                 if (nodeInfo.isVersioned) {
                     const maxVersion = (0, typeversion_1.parseTypeVersion)(nodeInfo.version);
+                    if (maxVersion === null && nodeInfo.version != null) {
+                        result.warnings.push({
+                            type: 'warning',
+                            nodeId: node.id,
+                            nodeName: node.name,
+                            message: `Cannot validate typeVersion for ${node.type}: stored version "${nodeInfo.version}" is not a valid typeVersion. Min/max checks were skipped — re-sync this node or verify typeVersion against the node descriptor manually.`
+                        });
+                    }
                     if (node.typeVersion === undefined || node.typeVersion === null) {
                         result.errors.push({
                             type: 'error',
