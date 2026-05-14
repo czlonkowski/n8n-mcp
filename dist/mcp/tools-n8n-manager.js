@@ -74,7 +74,7 @@ exports.n8nManagementTools = [
     },
     {
         name: 'n8n_get_workflow',
-        description: `Get workflow by ID with different detail levels. Use mode='full' for complete workflow, 'details' for metadata+stats, 'structure' for nodes/connections only, 'minimal' for id/name/active/tags.`,
+        description: `Get workflow by ID with different detail levels. n8n has a draft/publish model: the workflow body holds the draft (latest edits); use mode='active' to see the published graph that is actually running. Modes: 'full' (draft + metadata), 'details' (full + execution stats), 'active' (published graph only), 'structure' (nodes/connections topology), 'minimal' (id/name/active/tags).`,
         inputSchema: {
             type: 'object',
             properties: {
@@ -84,9 +84,9 @@ exports.n8nManagementTools = [
                 },
                 mode: {
                     type: 'string',
-                    enum: ['full', 'details', 'structure', 'minimal'],
+                    enum: ['full', 'details', 'structure', 'minimal', 'active'],
                     default: 'full',
-                    description: 'Detail level: full=complete workflow, details=full+execution stats, structure=nodes/connections topology, minimal=metadata only'
+                    description: 'Detail level: full=draft + metadata (activeVersionId pointer kept, heavy activeVersion payload stripped), details=full+execution stats, active=published graph (errors if workflow has no live version), structure=nodes/connections topology, minimal=metadata only'
                 }
             },
             required: ['id']
@@ -96,6 +96,9 @@ exports.n8nManagementTools = [
             readOnlyHint: true,
             idempotentHint: true,
             openWorldHint: true,
+        },
+        _meta: {
+            'anthropic/maxResultSizeChars': 500000,
         },
     },
     {

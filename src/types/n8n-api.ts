@@ -54,6 +54,26 @@ export interface WorkflowSettings {
   errorWorkflow?: string;
 }
 
+/**
+ * n8n's draft/publish model surfaces the currently-published version of a workflow
+ * alongside the working draft. `nodes`/`connections` on the workflow itself are the
+ * draft (latest edits in the editor); `activeVersion.nodes`/`activeVersion.connections`
+ * are the published graph that actually runs.
+ */
+export interface ActiveWorkflowVersion {
+  versionId: string;
+  workflowId?: string;
+  nodes: WorkflowNode[];
+  connections: WorkflowConnection;
+  name?: string | null;
+  description?: string | null;
+  authors?: string | null;
+  autosaved?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  workflowPublishHistory?: Array<Record<string, unknown>>;
+}
+
 export interface Workflow {
   id?: string;
   name: string;
@@ -69,6 +89,8 @@ export interface Workflow {
   createdAt?: string;
   versionId?: string;
   versionCounter?: number; // Added: n8n 1.118.1+ returns this in GET responses
+  activeVersionId?: string | null; // n8n draft/publish: pointer to the published version
+  activeVersion?: ActiveWorkflowVersion | null; // n8n draft/publish: published graph (heavy, omitted from GET responses by default)
   meta?: {
     instanceId?: string;
   };

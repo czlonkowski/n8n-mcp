@@ -49,6 +49,9 @@ export interface ToolDefinition {
     ui?: {
       resourceUri?: string;
     };
+    /** Claude Code per-tool override for the default result-size cap (see code.claude.com/docs/en/mcp). */
+    'anthropic/maxResultSizeChars'?: number;
+    [key: string]: unknown;
   };
 }
 

@@ -1483,6 +1483,8 @@ export class N8NDocumentationMCPServer {
             return n8nHandlers.handleGetWorkflowStructure(args, this.instanceContext);
           case 'minimal':
             return n8nHandlers.handleGetWorkflowMinimal(args, this.instanceContext);
+          case 'active':
+            return n8nHandlers.handleGetWorkflowActive(args, this.instanceContext);
           case 'full':
           default:
             return n8nHandlers.handleGetWorkflow(args, this.instanceContext);

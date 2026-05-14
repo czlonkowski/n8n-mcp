@@ -341,6 +341,26 @@ describe('UIAppRegistry', () => {
         expect(tools[1]._meta).toBeUndefined();
         expect(tools[2]._meta?.ui?.resourceUri).toBe('ui://n8n-mcp/validation-summary');
       });
+
+      it('preserves pre-existing _meta keys when injecting UI metadata (e.g. anthropic size annotation)', () => {
+        // Tools may set _meta directly on their definition (for instance to opt
+        // a single tool above the Claude Code per-tool size cap). Injection
+        // must merge, not overwrite, so those keys survive.
+        const tools: any[] = [
+          {
+            name: 'n8n_create_workflow',
+            description: 'Create',
+            inputSchema: { type: 'object', properties: {} },
+            _meta: { 'anthropic/maxResultSizeChars': 500000 },
+          },
+        ];
+        UIAppRegistry.injectToolMeta(tools);
+        expect(tools[0]._meta).toEqual({
+          'anthropic/maxResultSizeChars': 500000,
+          ui: { resourceUri: 'ui://n8n-mcp/operation-result' },
+          'ui/resourceUri': 'ui://n8n-mcp/operation-result',
+        });
+      });
     });
 
     describe('after loading without HTML', () => {

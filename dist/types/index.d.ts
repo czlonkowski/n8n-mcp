@@ -35,6 +35,8 @@ export interface ToolDefinition {
         ui?: {
             resourceUri?: string;
         };
+        'anthropic/maxResultSizeChars'?: number;
+        [key: string]: unknown;
     };
 }
 export interface ResourceDefinition {

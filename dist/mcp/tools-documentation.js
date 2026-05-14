@@ -125,7 +125,7 @@ When working with Code nodes, always start by calling the relevant guide:
 
 **n8n API Tools** (15 tools, requires N8N_API_URL configuration)
 - n8n_create_workflow - Create new workflows
-- n8n_get_workflow - Get workflow with mode='full'/'details'/'structure'/'minimal'
+- n8n_get_workflow - Get workflow with mode='full' (draft) / 'details' / 'active' (published graph) / 'structure' / 'minimal'
 - n8n_update_full_workflow - Full workflow replacement
 - n8n_update_partial_workflow - Incremental diff-based updates
 - n8n_delete_workflow - Delete workflow

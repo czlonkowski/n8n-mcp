@@ -43,6 +43,19 @@ export interface WorkflowSettings {
     executionTimeout?: number;
     errorWorkflow?: string;
 }
+export interface ActiveWorkflowVersion {
+    versionId: string;
+    workflowId?: string;
+    nodes: WorkflowNode[];
+    connections: WorkflowConnection;
+    name?: string | null;
+    description?: string | null;
+    authors?: string | null;
+    autosaved?: boolean;
+    createdAt?: string;
+    updatedAt?: string;
+    workflowPublishHistory?: Array<Record<string, unknown>>;
+}
 export interface Workflow {
     id?: string;
     name: string;
@@ -58,6 +71,8 @@ export interface Workflow {
     createdAt?: string;
     versionId?: string;
     versionCounter?: number;
+    activeVersionId?: string | null;
+    activeVersion?: ActiveWorkflowVersion | null;
     meta?: {
         instanceId?: string;
     };

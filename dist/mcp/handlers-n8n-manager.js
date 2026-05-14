@@ -43,6 +43,7 @@ exports.handleGetWorkflow = handleGetWorkflow;
 exports.handleGetWorkflowDetails = handleGetWorkflowDetails;
 exports.handleGetWorkflowStructure = handleGetWorkflowStructure;
 exports.handleGetWorkflowMinimal = handleGetWorkflowMinimal;
+exports.handleGetWorkflowActive = handleGetWorkflowActive;
 exports.handleUpdateWorkflow = handleUpdateWorkflow;
 exports.handleDeleteWorkflow = handleDeleteWorkflow;
 exports.handleListWorkflows = handleListWorkflows;
@@ -205,6 +206,12 @@ function tryParseJson(val) {
     catch {
         return val;
     }
+}
+function stripActiveVersion(workflow) {
+    if (!workflow || typeof workflow !== 'object')
+        return workflow;
+    const { activeVersion, ...rest } = workflow;
+    return rest;
 }
 const emptyToUndefined = (v) => typeof v === 'string' && v.trim() === '' ? undefined : v;
 const optionalEmptyAware = (schema) => zod_1.z.preprocess(emptyToUndefined, schema.optional());
@@ -386,7 +393,7 @@ async function handleGetWorkflow(args, context) {
         const workflow = await client.getWorkflow(id);
         return {
             success: true,
-            data: workflow
+            data: stripActiveVersion(workflow)
         };
     }
     catch (error) {
@@ -428,7 +435,7 @@ async function handleGetWorkflowDetails(args, context) {
         return {
             success: true,
             data: {
-                workflow,
+                workflow: stripActiveVersion(workflow),
                 executionStats: stats,
                 hasWebhookTrigger: (0, n8n_validation_1.hasWebhookTrigger)(workflow),
                 webhookPath: (0, n8n_validation_1.getWebhookUrl)(workflow)
@@ -518,6 +525,59 @@ async function handleGetWorkflowMinimal(args, context) {
                 tags: workflow.tags || [],
                 createdAt: workflow.createdAt,
                 updatedAt: workflow.updatedAt
+            }
+        };
+    }
+    catch (error) {
+        if (error instanceof zod_1.z.ZodError) {
+            return {
+                success: false,
+                error: 'Invalid input',
+                details: { errors: error.errors }
+            };
+        }
+        if (error instanceof n8n_errors_1.N8nApiError) {
+            return {
+                success: false,
+                error: (0, n8n_errors_1.getUserFriendlyErrorMessage)(error),
+                code: error.code
+            };
+        }
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error occurred'
+        };
+    }
+}
+async function handleGetWorkflowActive(args, context) {
+    try {
+        const client = ensureApiConfigured(context);
+        const { id } = zod_1.z.object({ id: zod_1.z.string() }).parse(args);
+        const workflow = await client.getWorkflow(id);
+        const activeVersion = workflow.activeVersion;
+        if (!workflow.activeVersionId || !activeVersion) {
+            return {
+                success: false,
+                error: 'No published version. Workflow has never been activated or has no live version yet. Use mode="full" to see the draft.',
+                code: 'NO_ACTIVE_VERSION'
+            };
+        }
+        return {
+            success: true,
+            data: {
+                id: workflow.id,
+                name: workflow.name,
+                active: workflow.active,
+                isArchived: workflow.isArchived,
+                tags: workflow.tags || [],
+                settings: workflow.settings,
+                createdAt: workflow.createdAt,
+                updatedAt: workflow.updatedAt,
+                activeVersionId: workflow.activeVersionId,
+                publishedAt: activeVersion.createdAt,
+                versionName: activeVersion.name ?? null,
+                nodes: activeVersion.nodes,
+                connections: activeVersion.connections
             }
         };
     }

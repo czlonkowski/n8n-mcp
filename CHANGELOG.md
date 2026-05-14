@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.53.0] - 2026-05-14
+
+### Fixed
+
+- **`n8n_get_workflow` no longer exceeds Claude Code's per-tool result cap on active workflows (#777).** n8n's draft/publish model returns a nested `activeVersion` object on every workflow GET, duplicating the live graph's `nodes` and `connections` alongside the draft. On the ~50% of workflows that are active, this pushed responses past Claude Code's default 25 000-token MCP cap, so the host persisted the result to a `/var/folders/...` file the model's sandboxed Bash couldn't read — effectively breaking the tool for any non-trivial workflow. `handleGetWorkflow` (mode `full`) and `handleGetWorkflowDetails` (mode `details`) now strip the heavy `activeVersion` payload while preserving the lightweight `activeVersionId` pointer, cutting response size roughly in half. As a defense-in-depth layer for genuinely huge workflows, the `n8n_get_workflow` tool definition now carries `_meta["anthropic/maxResultSizeChars"]: 500000` to opt the tool above the default cap (per the [Claude Code MCP spec](https://code.claude.com/docs/en/mcp#raise-the-limit-for-a-specific-tool)). `UIAppRegistry.injectToolMeta` was switched from assignment to a spread-merge so per-tool `_meta` keys (like the size override) are preserved when UI metadata is injected. Reported by @nepalez.
+
+### Added
+
+- **`n8n_get_workflow` gains `mode='active'` for inspecting the published graph.** Because n8n's editor saves a draft separately from the published/running version, callers that need to reason about what is actually executing (rather than what is being edited) now have a dedicated mode. The response is single-shaped — `nodes` and `connections` are populated from `activeVersion`, with `activeVersionId`, `publishedAt`, and `versionName` exposed at the top level. Workflows that have never been published return `{ success: false, code: 'NO_ACTIVE_VERSION' }` with a message pointing callers at `mode='full'` for the draft. Type-safe support for the new fields was added to the `Workflow` interface as `ActiveWorkflowVersion`.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.52.0] - 2026-05-13
 
 ### Changed

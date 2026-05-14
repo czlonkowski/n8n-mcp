@@ -408,6 +408,17 @@ export function tryParseJson(val: unknown): unknown {
   try { return JSON.parse(val); } catch { return val; }
 }
 
+// n8n's draft/publish model returns a full `activeVersion` object on every workflow GET,
+// duplicating the live graph's nodes/connections alongside the draft. That payload roughly
+// doubles the response size and pushes large workflows past MCP host caps. Strip the
+// heavy object here while preserving `activeVersionId` as a lightweight pointer. Callers
+// that need the published graph should use mode='active' (handleGetWorkflowActive).
+function stripActiveVersion<T extends Partial<Workflow>>(workflow: T): T {
+  if (!workflow || typeof workflow !== 'object') return workflow;
+  const { activeVersion, ...rest } = workflow as T & { activeVersion?: unknown };
+  return rest as T;
+}
+
 // Some MCP clients (e.g. opencode) serialize all schema fields including optional ones,
 // sending '' instead of omitting them. Coerce blank strings to undefined so the n8n API
 // doesn't receive `?cursor=&projectId=` and reject the request. See issue #774.
@@ -623,12 +634,12 @@ export async function handleGetWorkflow(args: unknown, context?: InstanceContext
   try {
     const client = ensureApiConfigured(context);
     const { id } = z.object({ id: z.string() }).parse(args);
-    
+
     const workflow = await client.getWorkflow(id);
-    
+
     return {
       success: true,
-      data: workflow
+      data: stripActiveVersion(workflow)
     };
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -658,15 +669,15 @@ export async function handleGetWorkflowDetails(args: unknown, context?: Instance
   try {
     const client = ensureApiConfigured(context);
     const { id } = z.object({ id: z.string() }).parse(args);
-    
+
     const workflow = await client.getWorkflow(id);
-    
+
     // Get recent executions for this workflow
     const executions = await client.listExecutions({
       workflowId: id,
       limit: 10
     });
-    
+
     // Calculate execution statistics
     const stats = {
       totalExecutions: executions.data.length,
@@ -674,11 +685,11 @@ export async function handleGetWorkflowDetails(args: unknown, context?: Instance
       errorCount: executions.data.filter(e => e.status === ExecutionStatus.ERROR).length,
       lastExecutionTime: executions.data[0]?.startedAt || null
     };
-    
+
     return {
       success: true,
       data: {
-        workflow,
+        workflow: stripActiveVersion(workflow),
         executionStats: stats,
         hasWebhookTrigger: hasWebhookTrigger(workflow),
         webhookPath: getWebhookUrl(workflow)
@@ -797,6 +808,72 @@ export async function handleGetWorkflowMinimal(args: unknown, context?: Instance
       };
     }
     
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
+/**
+ * Returns the workflow's published (active) graph. n8n's draft/publish model exposes
+ * the live version under `activeVersion`; this handler surfaces that as a single-shaped
+ * response with `nodes`/`connections` populated from the published version. Use this when
+ * you need to see what is actually running in production rather than the latest editor draft.
+ *
+ * Returns `code: 'NO_ACTIVE_VERSION'` when the workflow has never been published.
+ */
+export async function handleGetWorkflowActive(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const { id } = z.object({ id: z.string() }).parse(args);
+
+    const workflow = await client.getWorkflow(id);
+    const activeVersion = workflow.activeVersion;
+
+    if (!workflow.activeVersionId || !activeVersion) {
+      return {
+        success: false,
+        error: 'No published version. Workflow has never been activated or has no live version yet. Use mode="full" to see the draft.',
+        code: 'NO_ACTIVE_VERSION'
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        id: workflow.id,
+        name: workflow.name,
+        active: workflow.active,
+        isArchived: workflow.isArchived,
+        tags: workflow.tags || [],
+        settings: workflow.settings,
+        createdAt: workflow.createdAt,
+        updatedAt: workflow.updatedAt,
+        activeVersionId: workflow.activeVersionId,
+        publishedAt: activeVersion.createdAt,
+        versionName: activeVersion.name ?? null,
+        nodes: activeVersion.nodes,
+        connections: activeVersion.connections
+      }
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: 'Invalid input',
+        details: { errors: error.errors }
+      };
+    }
+
+    if (error instanceof N8nApiError) {
+      return {
+        success: false,
+        error: getUserFriendlyErrorMessage(error),
+        code: error.code
+      };
+    }
+
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred'

@@ -67,13 +67,17 @@ export class UIAppRegistry {
    *
    * Sets both nested (_meta.ui.resourceUri) and flat (_meta["ui/resourceUri"])
    * keys for compatibility with hosts that read either format.
+   *
+   * Merges into any existing `_meta` so other keys set on the tool definition
+   * (e.g. `anthropic/maxResultSizeChars`) survive injection.
    */
-  static injectToolMeta(tools: Array<{ name: string; [key: string]: any }>): void {
+  static injectToolMeta(tools: Array<{ name: string; _meta?: Record<string, unknown>; [key: string]: any }>): void {
     if (!this.loaded) return;
     for (const tool of tools) {
       const entry = this.toolIndex.get(tool.name);
       if (entry && entry.html) {
         tool._meta = {
+          ...(tool._meta ?? {}),
           ui: { resourceUri: entry.config.uri },
           'ui/resourceUri': entry.config.uri,
         };

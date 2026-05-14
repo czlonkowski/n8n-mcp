@@ -80,7 +80,7 @@ export const n8nManagementTools: ToolDefinition[] = [
   },
   {
     name: 'n8n_get_workflow',
-    description: `Get workflow by ID with different detail levels. Use mode='full' for complete workflow, 'details' for metadata+stats, 'structure' for nodes/connections only, 'minimal' for id/name/active/tags.`,
+    description: `Get workflow by ID with different detail levels. n8n has a draft/publish model: the workflow body holds the draft (latest edits); use mode='active' to see the published graph that is actually running. Modes: 'full' (draft + metadata), 'details' (full + execution stats), 'active' (published graph only), 'structure' (nodes/connections topology), 'minimal' (id/name/active/tags).`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -90,9 +90,9 @@ export const n8nManagementTools: ToolDefinition[] = [
         },
         mode: {
           type: 'string',
-          enum: ['full', 'details', 'structure', 'minimal'],
+          enum: ['full', 'details', 'structure', 'minimal', 'active'],
           default: 'full',
-          description: 'Detail level: full=complete workflow, details=full+execution stats, structure=nodes/connections topology, minimal=metadata only'
+          description: 'Detail level: full=draft + metadata (activeVersionId pointer kept, heavy activeVersion payload stripped), details=full+execution stats, active=published graph (errors if workflow has no live version), structure=nodes/connections topology, minimal=metadata only'
         }
       },
       required: ['id']
@@ -102,6 +102,12 @@ export const n8nManagementTools: ToolDefinition[] = [
       readOnlyHint: true,
       idempotentHint: true,
       openWorldHint: true,
+    },
+    // Claude Code default per-tool cap is 25k tokens; we opt this tool up to the protocol's
+    // hard ceiling so large but legitimate workflows still come back inline rather than being
+    // persisted to a disk file the model cannot read. See code.claude.com/docs/en/mcp.
+    _meta: {
+      'anthropic/maxResultSizeChars': 500000,
     },
   },
   {

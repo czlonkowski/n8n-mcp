@@ -721,6 +721,28 @@ describe('handlers-n8n-manager', () => {
       expect(mockApiClient.getWorkflow).toHaveBeenCalledWith('test-workflow-id');
     });
 
+    it('strips the heavy activeVersion payload but keeps activeVersionId (issue #777)', async () => {
+      // n8n's draft/publish model returns an activeVersion object that duplicates
+      // the published nodes/connections. Stripping it cuts response size ~50% on
+      // active workflows and keeps Claude Code under its per-tool size cap.
+      const testWorkflow = createTestWorkflow({
+        activeVersionId: 'v-123',
+        activeVersion: {
+          versionId: 'v-123',
+          nodes: [{ id: 'published-node', name: 'Published', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: {} }],
+          connections: {},
+        },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflow({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data).not.toHaveProperty('activeVersion');
+      expect(result.data.activeVersionId).toBe('v-123');
+      expect(result.data.nodes).toEqual(testWorkflow.nodes);
+    });
+
     it('should handle not found error', async () => {
       const notFoundError = new N8nNotFoundError('Workflow', 'non-existent');
       mockApiClient.getWorkflow.mockRejectedValue(notFoundError);
@@ -799,6 +821,79 @@ describe('handlers-n8n-manager', () => {
       expect(result.success).toBe(true);
       expect(result.data).toHaveProperty('hasWebhookTrigger', true);
       expect(result.data).toHaveProperty('webhookPath', '/webhook/test-webhook');
+    });
+
+    it('strips activeVersion from the nested workflow object (issue #777)', async () => {
+      const testWorkflow = createTestWorkflow({
+        activeVersionId: 'v-456',
+        activeVersion: {
+          versionId: 'v-456',
+          nodes: [],
+          connections: {},
+        },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockApiClient.listExecutions.mockResolvedValue({ data: [], nextCursor: null });
+
+      const result = await handlers.handleGetWorkflowDetails({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data.workflow).not.toHaveProperty('activeVersion');
+      expect(result.data.workflow.activeVersionId).toBe('v-456');
+    });
+  });
+
+  describe('handleGetWorkflowActive', () => {
+    it('returns the published graph from activeVersion as the top-level nodes/connections', async () => {
+      const draftNodes = [
+        { id: 'n1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'draft' } },
+      ];
+      const publishedNodes = [
+        { id: 'n1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'published' } },
+      ];
+      const testWorkflow = createTestWorkflow({
+        nodes: draftNodes,
+        activeVersionId: 'v-789',
+        activeVersion: {
+          versionId: 'v-789',
+          name: 'Version v-789',
+          createdAt: '2026-05-14T07:57:33.701Z',
+          nodes: publishedNodes,
+          connections: { Set: { main: [[]] } },
+        },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data).not.toHaveProperty('activeVersion');
+      expect(result.data.nodes).toEqual(publishedNodes);
+      expect(result.data.nodes).not.toEqual(draftNodes);
+      expect(result.data.activeVersionId).toBe('v-789');
+      expect(result.data.publishedAt).toBe('2026-05-14T07:57:33.701Z');
+      expect(result.data.versionName).toBe('Version v-789');
+    });
+
+    it('returns NO_ACTIVE_VERSION when the workflow has no published version', async () => {
+      const testWorkflow = createTestWorkflow({ activeVersionId: null });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('NO_ACTIVE_VERSION');
+      expect(result.error).toMatch(/no published version/i);
+    });
+
+    it('returns NO_ACTIVE_VERSION when activeVersionId is set but activeVersion object is missing', async () => {
+      const testWorkflow = createTestWorkflow({ activeVersionId: 'v-orphan', activeVersion: null });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('NO_ACTIVE_VERSION');
     });
   });
 

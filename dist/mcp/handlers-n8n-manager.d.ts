@@ -13,6 +13,7 @@ export declare function handleGetWorkflow(args: unknown, context?: InstanceConte
 export declare function handleGetWorkflowDetails(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleGetWorkflowStructure(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleGetWorkflowMinimal(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
+export declare function handleGetWorkflowActive(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleUpdateWorkflow(args: unknown, repository: NodeRepository, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleDeleteWorkflow(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
 export declare function handleListWorkflows(args: unknown, context?: InstanceContext): Promise<McpToolResponse>;
