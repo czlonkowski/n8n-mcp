@@ -353,9 +353,10 @@ describe('HTTP Server Session Management', () => {
         instanceId: 'tenant-a'
       };
 
-      (server as any).transports['session-a'] = {
+      const existingTransport = {
         close: vi.fn().mockResolvedValue(undefined)
       };
+      (server as any).transports['session-a'] = existingTransport;
       (server as any).servers['session-a'] = {};
       (server as any).sessionMetadata['session-a'] = {
         lastAccess: new Date(),
@@ -376,8 +377,8 @@ describe('HTTP Server Session Management', () => {
       await server.handleRequest(second.req as any, second.res as any, instanceContext);
       await new Promise(resolve => setTimeout(resolve, 10));
 
-      expect((server as any).transports['session-a']).toBeDefined();
-      expect(second.res.status).not.toHaveBeenCalledWith(400);
+      expect((server as any).transports['session-a']).toBe(existingTransport);
+      expect(existingTransport.close).not.toHaveBeenCalled();
     });
 
     it('should replace same-instance sessions in instance multi-tenant mode', async () => {
