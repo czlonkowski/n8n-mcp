@@ -942,6 +942,53 @@ describe('handlers-n8n-manager', () => {
       expect(result.success).toBe(false);
       expect(result.code).toBe('NO_ACTIVE_VERSION');
     });
+
+    it('should handle invalid input via the Zod catch path', async () => {
+      const result = await handlers.handleGetWorkflowActive({ notId: 'test' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid input');
+      expect(result.details?.errors).toBeDefined();
+    });
+
+    it('should map N8nApiError through the friendly-message path', async () => {
+      const notFoundError = new N8nNotFoundError('Workflow', 'non-existent');
+      mockApiClient.getWorkflow.mockRejectedValue(notFoundError);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'non-existent' });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Workflow with ID non-existent not found',
+        code: 'NOT_FOUND',
+      });
+    });
+
+    it('should fall through to the generic Error catch on unexpected failures', async () => {
+      mockApiClient.getWorkflow.mockRejectedValue(new Error('boom'));
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('boom');
+    });
+
+    it('defaults versionCreatedAt and versionName to null when the source values are missing', async () => {
+      const testWorkflow = createTestWorkflow({
+        activeVersionId: 'v-bare',
+        activeVersion: {
+          nodes: [],
+          connections: {},
+        },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data.versionCreatedAt).toBeNull();
+      expect(result.data.versionName).toBeNull();
+    });
   });
 
   describe('handleDeleteWorkflow', () => {
