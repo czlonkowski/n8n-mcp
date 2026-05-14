@@ -32,7 +32,7 @@ export const n8nGetWorkflowDoc: ToolDocumentation = {
     returns: `Depends on mode:
 - full: Draft workflow object (id, name, active, nodes[], connections{}, settings, createdAt, updatedAt, activeVersionId)
 - details: Full draft + executionStats (successCount, errorCount, lastExecution, etc.)
-- active: Published graph as { id, name, active, activeVersionId, publishedAt, versionName, nodes[], connections{}, settings, tags, createdAt, updatedAt }. Returns { success: false, code: 'NO_ACTIVE_VERSION' } if the workflow has no published version.
+- active: Published graph as { id, name, active, activeVersionId, versionCreatedAt, versionName, nodes[], connections{}, settings, tags, createdAt, updatedAt }. \`versionCreatedAt\` is the version row's creation time (within ~1s of the publish event in current n8n). Returns { success: false, code: 'NO_ACTIVE_VERSION' } if the workflow has no published version.
 - structure: { nodes: [...], connections: {...} } - topology only
 - minimal: { id, name, active, tags, createdAt, updatedAt }`,
     examples: [

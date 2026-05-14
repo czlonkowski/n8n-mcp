@@ -208,8 +208,6 @@ function tryParseJson(val) {
     }
 }
 function stripActiveVersion(workflow) {
-    if (!workflow || typeof workflow !== 'object')
-        return workflow;
     const { activeVersion, ...rest } = workflow;
     return rest;
 }
@@ -574,7 +572,7 @@ async function handleGetWorkflowActive(args, context) {
                 createdAt: workflow.createdAt,
                 updatedAt: workflow.updatedAt,
                 activeVersionId: workflow.activeVersionId,
-                publishedAt: activeVersion.createdAt,
+                versionCreatedAt: activeVersion.createdAt ?? null,
                 versionName: activeVersion.name ?? null,
                 nodes: activeVersion.nodes,
                 connections: activeVersion.connections

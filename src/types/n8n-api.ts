@@ -59,19 +59,17 @@ export interface WorkflowSettings {
  * alongside the working draft. `nodes`/`connections` on the workflow itself are the
  * draft (latest edits in the editor); `activeVersion.nodes`/`activeVersion.connections`
  * are the published graph that actually runs.
+ *
+ * Only the fields we read are declared; n8n returns additional keys (versionId,
+ * authors, autosaved, workflowPublishHistory, etc.) — add them here when a consumer
+ * actually needs them.
  */
 export interface ActiveWorkflowVersion {
-  versionId: string;
-  workflowId?: string;
   nodes: WorkflowNode[];
   connections: WorkflowConnection;
   name?: string | null;
-  description?: string | null;
-  authors?: string | null;
-  autosaved?: boolean;
   createdAt?: string;
-  updatedAt?: string;
-  workflowPublishHistory?: Array<Record<string, unknown>>;
+  [key: string]: unknown;
 }
 
 export interface Workflow {

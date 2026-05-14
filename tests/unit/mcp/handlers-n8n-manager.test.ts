@@ -743,6 +743,45 @@ describe('handlers-n8n-manager', () => {
       expect(result.data.nodes).toEqual(testWorkflow.nodes);
     });
 
+    it('mode=full returns the DRAFT nodes/connections, not the published ones', async () => {
+      // Regression guard: someone re-wiring stripActiveVersion to also overwrite
+      // workflow.nodes with activeVersion.nodes would break the draft/publish split
+      // but still pass the "no activeVersion key" assertion above.
+      const draftNodes = [
+        { id: 'd1', name: 'Draft Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'draft' } },
+      ];
+      const publishedNodes = [
+        { id: 'd1', name: 'Draft Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'published' } },
+      ];
+      const draftConnections = { 'Draft Set': { main: [[{ node: 'Other', type: 'main', index: 0 }]] } };
+      const testWorkflow = createTestWorkflow({
+        nodes: draftNodes,
+        connections: draftConnections,
+        activeVersionId: 'v-1',
+        activeVersion: { versionId: 'v-1', nodes: publishedNodes, connections: {} },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflow({ id: 'test-workflow-id' });
+
+      expect(result.data.nodes).toEqual(draftNodes);
+      expect(result.data.nodes).not.toEqual(publishedNodes);
+      expect(result.data.connections).toEqual(draftConnections);
+    });
+
+    it('passes through workflows that have no activeVersion key at all (older n8n versions)', async () => {
+      // Pre-draft/publish n8n versions don't return activeVersion at all. The strip
+      // must be a no-op on those, not mangle the response.
+      const testWorkflow = createTestWorkflow();
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflow({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data).not.toHaveProperty('activeVersion');
+      expect(result.data.nodes).toEqual(testWorkflow.nodes);
+    });
+
     it('should handle not found error', async () => {
       const notFoundError = new N8nNotFoundError('Workflow', 'non-existent');
       mockApiClient.getWorkflow.mockRejectedValue(notFoundError);
@@ -823,12 +862,18 @@ describe('handlers-n8n-manager', () => {
       expect(result.data).toHaveProperty('webhookPath', '/webhook/test-webhook');
     });
 
-    it('strips activeVersion from the nested workflow object (issue #777)', async () => {
+    it('strips activeVersion from the nested workflow object but preserves draft nodes/connections (issue #777)', async () => {
+      const draftNodes = [
+        { id: 'd1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'draft' } },
+      ];
+      const draftConnections = { Set: { main: [[]] } };
       const testWorkflow = createTestWorkflow({
+        nodes: draftNodes,
+        connections: draftConnections,
         activeVersionId: 'v-456',
         activeVersion: {
           versionId: 'v-456',
-          nodes: [],
+          nodes: [{ id: 'd1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'published' } }],
           connections: {},
         },
       });
@@ -840,6 +885,8 @@ describe('handlers-n8n-manager', () => {
       expect(result.success).toBe(true);
       expect(result.data.workflow).not.toHaveProperty('activeVersion');
       expect(result.data.workflow.activeVersionId).toBe('v-456');
+      expect(result.data.workflow.nodes).toEqual(draftNodes);
+      expect(result.data.workflow.connections).toEqual(draftConnections);
     });
   });
 
@@ -871,7 +918,7 @@ describe('handlers-n8n-manager', () => {
       expect(result.data.nodes).toEqual(publishedNodes);
       expect(result.data.nodes).not.toEqual(draftNodes);
       expect(result.data.activeVersionId).toBe('v-789');
-      expect(result.data.publishedAt).toBe('2026-05-14T07:57:33.701Z');
+      expect(result.data.versionCreatedAt).toBe('2026-05-14T07:57:33.701Z');
       expect(result.data.versionName).toBe('Version v-789');
     });
 

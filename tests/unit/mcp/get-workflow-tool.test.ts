@@ -19,9 +19,12 @@ describe('n8n_get_workflow tool definition', () => {
   it('opts the tool above the Claude Code default per-tool size cap (issue #777)', () => {
     // Claude Code's MCP host caps tool output at 25k tokens by default and persists
     // larger responses to disk. We declare the anthropic-spec per-tool override so
-    // legitimately large workflow responses still come back inline.
+    // legitimately large workflow responses still come back inline. The value is
+    // below the protocol's 500k ceiling to leave headroom for the MCP envelope.
     const meta = (tool as { _meta?: Record<string, unknown> })._meta;
     expect(meta).toBeDefined();
-    expect(meta?.['anthropic/maxResultSizeChars']).toBe(500000);
+    const sizeCap = meta?.['anthropic/maxResultSizeChars'] as number;
+    expect(sizeCap).toBeGreaterThan(25000);
+    expect(sizeCap).toBeLessThanOrEqual(500000);
   });
 });

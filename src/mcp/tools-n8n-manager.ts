@@ -103,11 +103,12 @@ export const n8nManagementTools: ToolDefinition[] = [
       idempotentHint: true,
       openWorldHint: true,
     },
-    // Claude Code default per-tool cap is 25k tokens; we opt this tool up to the protocol's
-    // hard ceiling so large but legitimate workflows still come back inline rather than being
-    // persisted to a disk file the model cannot read. See code.claude.com/docs/en/mcp.
+    // Claude Code default per-tool cap is 25k tokens; raise it so large but legitimate
+    // workflows still come back inline rather than being persisted to a disk file the model
+    // cannot read. The protocol ceiling is 500k chars; we leave ~10% headroom for the
+    // MCP/JSON-RPC envelope wrapping our payload. See code.claude.com/docs/en/mcp.
     _meta: {
-      'anthropic/maxResultSizeChars': 500000,
+      'anthropic/maxResultSizeChars': 450000,
     },
   },
   {

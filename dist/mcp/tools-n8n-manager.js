@@ -98,7 +98,7 @@ exports.n8nManagementTools = [
             openWorldHint: true,
         },
         _meta: {
-            'anthropic/maxResultSizeChars': 500000,
+            'anthropic/maxResultSizeChars': 450000,
         },
     },
     {

@@ -413,10 +413,9 @@ export function tryParseJson(val: unknown): unknown {
 // doubles the response size and pushes large workflows past MCP host caps. Strip the
 // heavy object here while preserving `activeVersionId` as a lightweight pointer. Callers
 // that need the published graph should use mode='active' (handleGetWorkflowActive).
-function stripActiveVersion<T extends Partial<Workflow>>(workflow: T): T {
-  if (!workflow || typeof workflow !== 'object') return workflow;
-  const { activeVersion, ...rest } = workflow as T & { activeVersion?: unknown };
-  return rest as T;
+function stripActiveVersion(workflow: Workflow): Workflow {
+  const { activeVersion, ...rest } = workflow;
+  return rest;
 }
 
 // Some MCP clients (e.g. opencode) serialize all schema fields including optional ones,
@@ -851,7 +850,10 @@ export async function handleGetWorkflowActive(args: unknown, context?: InstanceC
         createdAt: workflow.createdAt,
         updatedAt: workflow.updatedAt,
         activeVersionId: workflow.activeVersionId,
-        publishedAt: activeVersion.createdAt,
+        // The version row's creation timestamp, not the publish-event time. n8n doesn't
+        // expose a dedicated "publishedAt" on the active version; in current n8n the two
+        // are within ~1s of each other but we don't claim they're identical.
+        versionCreatedAt: activeVersion.createdAt ?? null,
         versionName: activeVersion.name ?? null,
         nodes: activeVersion.nodes,
         connections: activeVersion.connections

@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`n8n_get_workflow` gains `mode='active'` for inspecting the published graph.** Because n8n's editor saves a draft separately from the published/running version, callers that need to reason about what is actually executing (rather than what is being edited) now have a dedicated mode. The response is single-shaped — `nodes` and `connections` are populated from `activeVersion`, with `activeVersionId`, `publishedAt`, and `versionName` exposed at the top level. Workflows that have never been published return `{ success: false, code: 'NO_ACTIVE_VERSION' }` with a message pointing callers at `mode='full'` for the draft. Type-safe support for the new fields was added to the `Workflow` interface as `ActiveWorkflowVersion`.
+- **`n8n_get_workflow` gains `mode='active'` for inspecting the published graph.** Because n8n's editor saves a draft separately from the published/running version, callers that need to reason about what is actually executing (rather than what is being edited) now have a dedicated mode. The response is single-shaped — `nodes` and `connections` are populated from `activeVersion`, with `activeVersionId`, `versionCreatedAt`, and `versionName` exposed at the top level. `versionCreatedAt` is the version row's creation timestamp (within ~1s of the publish event in current n8n; we don't claim they're identical). Workflows that have never been published return `{ success: false, code: 'NO_ACTIVE_VERSION' }` with a message pointing callers at `mode='full'` for the draft. Type-safe support for the new fields was added to the `Workflow` interface as `ActiveWorkflowVersion`.
 
 Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
 

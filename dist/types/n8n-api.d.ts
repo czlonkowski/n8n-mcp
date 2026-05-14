@@ -44,17 +44,11 @@ export interface WorkflowSettings {
     errorWorkflow?: string;
 }
 export interface ActiveWorkflowVersion {
-    versionId: string;
-    workflowId?: string;
     nodes: WorkflowNode[];
     connections: WorkflowConnection;
     name?: string | null;
-    description?: string | null;
-    authors?: string | null;
-    autosaved?: boolean;
     createdAt?: string;
-    updatedAt?: string;
-    workflowPublishHistory?: Array<Record<string, unknown>>;
+    [key: string]: unknown;
 }
 export interface Workflow {
     id?: string;
