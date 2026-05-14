@@ -830,34 +830,58 @@ export async function handleGetWorkflowActive(args: unknown, context?: InstanceC
     const workflow = await client.getWorkflow(id);
     const activeVersion = workflow.activeVersion;
 
-    if (!workflow.activeVersionId || !activeVersion) {
+    // Common metadata fields returned regardless of which graph source we use.
+    const baseMeta = {
+      id: workflow.id,
+      name: workflow.name,
+      active: workflow.active,
+      isArchived: workflow.isArchived,
+      tags: workflow.tags || [],
+      settings: workflow.settings,
+      createdAt: workflow.createdAt,
+      updatedAt: workflow.updatedAt,
+    };
+
+    if (workflow.activeVersionId && activeVersion) {
       return {
-        success: false,
-        error: 'No published version. Workflow has never been activated or has no live version yet. Use mode="full" to see the draft.',
-        code: 'NO_ACTIVE_VERSION'
+        success: true,
+        data: {
+          ...baseMeta,
+          activeVersionId: workflow.activeVersionId,
+          // The version row's creation timestamp, not the publish-event time. n8n doesn't
+          // expose a dedicated "publishedAt" on the active version; in current n8n the two
+          // are within ~1s of each other but we don't claim they're identical.
+          versionCreatedAt: activeVersion.createdAt ?? null,
+          versionName: activeVersion.name ?? null,
+          nodes: activeVersion.nodes,
+          connections: activeVersion.connections,
+        }
+      };
+    }
+
+    // Fallback: older n8n versions don't have a draft/publish split — workflow.nodes IS
+    // the running graph when workflow.active is true. The same fallback covers the rare
+    // orphan case in newer n8n where activeVersionId got nulled but the workflow is still
+    // running. In both cases, returning the workflow body honors the "what is actually
+    // running" semantic of mode='active'.
+    if (workflow.active === true) {
+      return {
+        success: true,
+        data: {
+          ...baseMeta,
+          activeVersionId: null,
+          versionCreatedAt: null,
+          versionName: null,
+          nodes: workflow.nodes,
+          connections: workflow.connections,
+        }
       };
     }
 
     return {
-      success: true,
-      data: {
-        id: workflow.id,
-        name: workflow.name,
-        active: workflow.active,
-        isArchived: workflow.isArchived,
-        tags: workflow.tags || [],
-        settings: workflow.settings,
-        createdAt: workflow.createdAt,
-        updatedAt: workflow.updatedAt,
-        activeVersionId: workflow.activeVersionId,
-        // The version row's creation timestamp, not the publish-event time. n8n doesn't
-        // expose a dedicated "publishedAt" on the active version; in current n8n the two
-        // are within ~1s of each other but we don't claim they're identical.
-        versionCreatedAt: activeVersion.createdAt ?? null,
-        versionName: activeVersion.name ?? null,
-        nodes: activeVersion.nodes,
-        connections: activeVersion.connections
-      }
+      success: false,
+      error: 'No published version. Workflow is inactive and has never been activated. Use mode="full" to see the draft.',
+      code: 'NO_ACTIVE_VERSION'
     };
   } catch (error) {
     if (error instanceof z.ZodError) {

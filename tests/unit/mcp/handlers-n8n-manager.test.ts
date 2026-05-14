@@ -922,8 +922,8 @@ describe('handlers-n8n-manager', () => {
       expect(result.data.versionName).toBe('Version v-789');
     });
 
-    it('returns NO_ACTIVE_VERSION when the workflow has no published version', async () => {
-      const testWorkflow = createTestWorkflow({ activeVersionId: null });
+    it('returns NO_ACTIVE_VERSION when the workflow is inactive and was never published', async () => {
+      const testWorkflow = createTestWorkflow({ active: false, activeVersionId: null });
       mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
 
       const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
@@ -933,8 +933,50 @@ describe('handlers-n8n-manager', () => {
       expect(result.error).toMatch(/no published version/i);
     });
 
-    it('returns NO_ACTIVE_VERSION when activeVersionId is set but activeVersion object is missing', async () => {
-      const testWorkflow = createTestWorkflow({ activeVersionId: 'v-orphan', activeVersion: null });
+    it('falls back to workflow.nodes for older n8n versions that have no activeVersion field but are active', async () => {
+      // Pre-draft/publish n8n doesn't carry activeVersionId at all; workflow.nodes IS
+      // the running graph when workflow.active is true. The same fallback covers the
+      // rare orphan case in newer n8n where activeVersionId got nulled.
+      const draftNodes = [
+        { id: 'r1', name: 'Running', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: {} },
+      ];
+      const testWorkflow = createTestWorkflow({
+        active: true,
+        activeVersionId: null,
+        nodes: draftNodes,
+      });
+      // activeVersion key intentionally absent (matches older-n8n shape)
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data.activeVersionId).toBeNull();
+      expect(result.data.versionCreatedAt).toBeNull();
+      expect(result.data.versionName).toBeNull();
+      expect(result.data.nodes).toEqual(draftNodes);
+    });
+
+    it('falls back to workflow.nodes when activeVersionId points at a missing version but workflow is active', async () => {
+      const testWorkflow = createTestWorkflow({
+        active: true,
+        activeVersionId: 'v-orphan',
+        activeVersion: null,
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data.nodes).toEqual(testWorkflow.nodes);
+    });
+
+    it('returns NO_ACTIVE_VERSION when the orphan case occurs on an inactive workflow', async () => {
+      const testWorkflow = createTestWorkflow({
+        active: false,
+        activeVersionId: 'v-orphan',
+        activeVersion: null,
+      });
       mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
 
       const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });

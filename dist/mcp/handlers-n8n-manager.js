@@ -553,30 +553,46 @@ async function handleGetWorkflowActive(args, context) {
         const { id } = zod_1.z.object({ id: zod_1.z.string() }).parse(args);
         const workflow = await client.getWorkflow(id);
         const activeVersion = workflow.activeVersion;
-        if (!workflow.activeVersionId || !activeVersion) {
+        const baseMeta = {
+            id: workflow.id,
+            name: workflow.name,
+            active: workflow.active,
+            isArchived: workflow.isArchived,
+            tags: workflow.tags || [],
+            settings: workflow.settings,
+            createdAt: workflow.createdAt,
+            updatedAt: workflow.updatedAt,
+        };
+        if (workflow.activeVersionId && activeVersion) {
             return {
-                success: false,
-                error: 'No published version. Workflow has never been activated or has no live version yet. Use mode="full" to see the draft.',
-                code: 'NO_ACTIVE_VERSION'
+                success: true,
+                data: {
+                    ...baseMeta,
+                    activeVersionId: workflow.activeVersionId,
+                    versionCreatedAt: activeVersion.createdAt ?? null,
+                    versionName: activeVersion.name ?? null,
+                    nodes: activeVersion.nodes,
+                    connections: activeVersion.connections,
+                }
+            };
+        }
+        if (workflow.active === true) {
+            return {
+                success: true,
+                data: {
+                    ...baseMeta,
+                    activeVersionId: null,
+                    versionCreatedAt: null,
+                    versionName: null,
+                    nodes: workflow.nodes,
+                    connections: workflow.connections,
+                }
             };
         }
         return {
-            success: true,
-            data: {
-                id: workflow.id,
-                name: workflow.name,
-                active: workflow.active,
-                isArchived: workflow.isArchived,
-                tags: workflow.tags || [],
-                settings: workflow.settings,
-                createdAt: workflow.createdAt,
-                updatedAt: workflow.updatedAt,
-                activeVersionId: workflow.activeVersionId,
-                versionCreatedAt: activeVersion.createdAt ?? null,
-                versionName: activeVersion.name ?? null,
-                nodes: activeVersion.nodes,
-                connections: activeVersion.connections
-            }
+            success: false,
+            error: 'No published version. Workflow is inactive and has never been activated. Use mode="full" to see the draft.',
+            code: 'NO_ACTIVE_VERSION'
         };
     }
     catch (error) {

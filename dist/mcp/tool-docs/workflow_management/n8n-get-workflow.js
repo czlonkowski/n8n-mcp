@@ -18,12 +18,12 @@ exports.n8nGetWorkflowDoc = {
         ]
     },
     full: {
-        description: `**Draft vs published.** n8n keeps a draft (the workflow body's nodes/connections — what you see in the editor) and an active version (the published graph that actually runs). Saving in the editor updates the draft; publishing promotes it to the active version. The two diverge whenever there are unpublished edits.
+        description: `**Draft vs published.** n8n keeps a draft (the workflow body's nodes/connections — what you see in the editor) and an active version (the published graph that actually runs). Saving in the editor updates the draft; publishing promotes it to the active version. The two diverge whenever there are unpublished edits. Older n8n versions don't have this split — \`workflow.nodes\` is the only graph.
 
 **Modes:**
 - full (default): Draft workflow with all metadata. The heavy nested \`activeVersion\` payload is omitted to keep responses small, but \`activeVersionId\` is preserved so callers know whether a published version exists.
 - details: Full draft + execution statistics (success/error counts, last execution time)
-- active: The published (running) graph. Returns \`code: 'NO_ACTIVE_VERSION'\` if the workflow has never been activated.
+- active: The published (running) graph. On older n8n versions that don't have the draft/publish split, falls back to \`workflow.nodes\` when \`active: true\` so the mode stays usable across n8n versions. Returns \`code: 'NO_ACTIVE_VERSION'\` only for inactive workflows that were never published.
 - structure: Nodes and connections only - useful for topology analysis
 - minimal: Just id, name, active status, and tags - fastest response`,
         parameters: {
