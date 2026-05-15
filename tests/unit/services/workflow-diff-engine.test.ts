@@ -595,6 +595,51 @@ describe('WorkflowDiffEngine', () => {
       expect(result.warnings).toBeDefined();
       expect(result.warnings!.some(w => w.message.includes('not found'))).toBe(true);
     });
+
+    it.each([false, true])('should validate connection operations before later rename projections when validateOnly=%s', async (validateOnly) => {
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        validateOnly,
+        operations: [
+          {
+            type: 'removeConnection',
+            source: 'Webhook',
+            target: 'HTTP Request'
+          },
+          {
+            type: 'removeConnection',
+            source: 'HTTP Request',
+            target: 'Slack'
+          },
+          {
+            type: 'removeNode',
+            nodeName: 'HTTP Request'
+          },
+          {
+            type: 'updateNode',
+            nodeName: 'Webhook',
+            updates: {
+              name: 'HTTP Request'
+            }
+          },
+          {
+            type: 'addConnection',
+            source: 'HTTP Request',
+            target: 'Slack'
+          }
+        ]
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.errors).toBeUndefined();
+
+      const renamedNode = result.workflow!.nodes.find((node: any) => node.id === 'webhook-1');
+      expect(renamedNode?.name).toBe('HTTP Request');
+      expect(result.workflow!.nodes.some((node: any) => node.name === 'Webhook')).toBe(false);
+      expect(result.workflow!.connections['HTTP Request']?.main?.[0]).toEqual([
+        { node: 'Slack', type: 'main', index: 0 }
+      ]);
+    });
   });
 
   describe('PatchNodeField Operation', () => {

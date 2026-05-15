@@ -89,6 +89,52 @@ function countOccurrences(str: string, search: string): number {
   return count;
 }
 
+function operationReferencesAddedNode(
+  operation: WorkflowDiffOperation,
+  addedNode: AddNodeOperation['node']
+): boolean {
+  if (operation.type === 'addConnection') {
+    return operation.source === addedNode.name
+      || operation.source === addedNode.id
+      || operation.target === addedNode.name
+      || operation.target === addedNode.id;
+  }
+
+  if (operation.type === 'rewireConnection') {
+    return operation.source === addedNode.name
+      || operation.source === addedNode.id
+      || operation.from === addedNode.name
+      || operation.from === addedNode.id
+      || operation.to === addedNode.name
+      || operation.to === addedNode.id;
+  }
+
+  return false;
+}
+
+function buildExecutionEntries(operations: WorkflowDiffOperation[]) {
+  const entries = operations.map((operation, index) => ({ operation, index }));
+
+  for (let currentIndex = 0; currentIndex < entries.length; currentIndex++) {
+    const entry = entries[currentIndex];
+    if (entry.operation.type !== 'addNode') continue;
+    const addedNode = entry.operation.node;
+
+    const referencedBeforeAdd = entries.findIndex((candidate, candidateIndex) =>
+      candidateIndex < currentIndex
+      && isConnectionOperation(candidate.operation)
+      && operationReferencesAddedNode(candidate.operation, addedNode)
+    );
+
+    if (referencedBeforeAdd === -1) continue;
+
+    entries.splice(currentIndex, 1);
+    entries.splice(referencedBeforeAdd, 0, entry);
+  }
+
+  return entries;
+}
+
 /**
  * Not safe for concurrent use — create a new instance per request.
  * Instance state is reset at the start of each applyDiff() call.
@@ -128,20 +174,9 @@ export class WorkflowDiffEngine {
       // Clone workflow to avoid modifying original
       const workflowCopy = JSON.parse(JSON.stringify(workflow));
 
-      // Group operations by type for two-pass processing
-      const nodeOperationTypes = ['addNode', 'removeNode', 'updateNode', 'patchNodeField', 'moveNode', 'enableNode', 'disableNode'];
-      const nodeOperations: Array<{ operation: WorkflowDiffOperation; index: number }> = [];
-      const otherOperations: Array<{ operation: WorkflowDiffOperation; index: number }> = [];
-
-      request.operations.forEach((operation, index) => {
-        if (nodeOperationTypes.includes(operation.type)) {
-          nodeOperations.push({ operation, index });
-        } else {
-          otherOperations.push({ operation, index });
-        }
-      });
-
-      const allOperations = [...nodeOperations, ...otherOperations];
+      const operationEntries = buildExecutionEntries(request.operations);
+      const nodeOperationCount = request.operations.filter(isNodeOperation).length;
+      const otherOperationCount = request.operations.length - nodeOperationCount;
       const errors: WorkflowDiffValidationError[] = [];
       const appliedIndices: number[] = [];
       const failedIndices: number[] = [];
@@ -149,7 +184,7 @@ export class WorkflowDiffEngine {
       // Process based on mode
       if (request.continueOnError) {
         // Best-effort mode: continue even if some operations fail
-        for (const { operation, index } of allOperations) {
+        for (const { operation, index } of operationEntries) {
           const error = this.validateOperation(workflowCopy, operation);
           if (error) {
             errors.push({
@@ -163,6 +198,7 @@ export class WorkflowDiffEngine {
 
           try {
             this.applyOperation(workflowCopy, operation);
+            this.flushPendingRenames(workflowCopy);
             appliedIndices.push(index);
           } catch (error) {
             const errorMsg = `Failed to apply operation: ${error instanceof Error ? error.message : 'Unknown error'}`;
@@ -173,12 +209,6 @@ export class WorkflowDiffEngine {
             });
             failedIndices.push(index);
           }
-        }
-
-        // Update connection references after all node renames (even in continueOnError mode)
-        if (this.renameMap.size > 0 && appliedIndices.length > 0) {
-          this.updateConnectionReferences(workflowCopy);
-          logger.debug(`Auto-updated ${this.renameMap.size} node name references in connections (continueOnError mode)`);
         }
 
         // If validateOnly flag is set, return success without applying.
@@ -222,8 +252,7 @@ export class WorkflowDiffEngine {
         };
       } else {
         // Atomic mode: all operations must succeed
-        // Pass 1: Validate and apply node operations first
-        for (const { operation, index } of nodeOperations) {
+        for (const { operation, index } of operationEntries) {
           const error = this.validateOperation(workflowCopy, operation);
           if (error) {
             return {
@@ -238,40 +267,7 @@ export class WorkflowDiffEngine {
 
           try {
             this.applyOperation(workflowCopy, operation);
-          } catch (error) {
-            return {
-              success: false,
-              errors: [{
-                operation: index,
-                message: `Failed to apply operation: ${error instanceof Error ? error.message : 'Unknown error'}`,
-                details: operation
-              }]
-            };
-          }
-        }
-
-        // Update connection references after all node renames
-        if (this.renameMap.size > 0) {
-          this.updateConnectionReferences(workflowCopy);
-          logger.debug(`Auto-updated ${this.renameMap.size} node name references in connections`);
-        }
-
-        // Pass 2: Validate and apply other operations (connections, metadata)
-        for (const { operation, index } of otherOperations) {
-          const error = this.validateOperation(workflowCopy, operation);
-          if (error) {
-            return {
-              success: false,
-              errors: [{
-                operation: index,
-                message: error,
-                details: operation
-              }]
-            };
-          }
-
-          try {
-            this.applyOperation(workflowCopy, operation);
+            this.flushPendingRenames(workflowCopy);
           } catch (error) {
             return {
               success: false,
@@ -321,7 +317,7 @@ export class WorkflowDiffEngine {
           success: true,
           workflow: workflowCopy,
           operationsApplied,
-          message: `Successfully applied ${operationsApplied} operations (${nodeOperations.length} node ops, ${otherOperations.length} other ops)`,
+          message: `Successfully applied ${operationsApplied} operations (${nodeOperationCount} node ops, ${otherOperationCount} other ops)`,
           warnings: this.warnings.length > 0 ? this.warnings : undefined,
           shouldActivate: shouldActivate || undefined,
           shouldDeactivate: shouldDeactivate || undefined,
@@ -1471,6 +1467,14 @@ export class WorkflowDiffEngine {
    *
    * @param workflow - The workflow to update
    */
+  private flushPendingRenames(workflow: Workflow): void {
+    if (this.renameMap.size === 0) return;
+
+    this.updateConnectionReferences(workflow);
+    logger.debug(`Auto-updated ${this.renameMap.size} node name references in connections`);
+    this.renameMap.clear();
+  }
+
   private updateConnectionReferences(workflow: Workflow): void {
     if (this.renameMap.size === 0) return;
 
