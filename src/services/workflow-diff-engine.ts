@@ -112,6 +112,18 @@ function operationReferencesAddedNode(
   return false;
 }
 
+/**
+ * Build execution order for diff operations.
+ *
+ * Operations execute in the order the caller provided so each one validates
+ * against the workflow state at its position in the sequence (#788). The only
+ * exception is the legacy "add node and connect it in the same batch" pattern,
+ * where an addConnection / rewireConnection references a node added later in
+ * the batch — we hoist that addNode to just before its first earlier reference
+ * so the connection op still resolves. Other operation kinds are never
+ * reordered; if a caller emits `removeConnection X→Y` before `addNode X`,
+ * it now fails as it should.
+ */
 function buildExecutionEntries(operations: WorkflowDiffOperation[]) {
   const entries = operations.map((operation, index) => ({ operation, index }));
 
