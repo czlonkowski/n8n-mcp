@@ -11,7 +11,8 @@ interface ParsedFrontmatter {
   description?: string;
 }
 
-function parseFrontmatter(content: string): ParsedFrontmatter {
+function parseFrontmatter(raw: string): ParsedFrontmatter {
+  const content = raw.replace(/\r\n/g, '\n');
   if (!content.startsWith('---\n')) return {};
   const end = content.indexOf('\n---', 4);
   if (end === -1) return {};
@@ -107,9 +108,10 @@ export class SkillResourceRegistry {
 
   static getByUri(uri: string): SkillResource | null {
     if (!this.loaded) return null;
-    if (this.entries.has(uri)) return this.entries.get(uri)!;
-    // Accept bare skill://n8n-mcp/{name} as alias for SKILL.md
+    const direct = this.entries.get(uri);
+    if (direct) return direct;
     if (!uri.startsWith(SKILL_URI_PREFIX)) return null;
+    // Accept bare skill://n8n-mcp/{name} as alias for SKILL.md
     const remainder = uri.slice(SKILL_URI_PREFIX.length);
     if (remainder.includes('/')) return null;
     return this.entries.get(`${SKILL_URI_PREFIX}${remainder}/SKILL.md`) ?? null;

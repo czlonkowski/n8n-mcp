@@ -100,6 +100,24 @@ describe('SkillResourceRegistry', () => {
       expect(skill?.description).toBe('Another Skill');
     });
 
+    it('parses CRLF frontmatter', () => {
+      const crlfRoot = mkdtempSync(path.join(os.tmpdir(), 'n8n-mcp-crlf-'));
+      const skillDir = path.join(crlfRoot, 'data', 'skills', 'crlf-skill');
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(
+        path.join(skillDir, 'SKILL.md'),
+        '---\r\nname: crlf-skill\r\ndescription: CRLF frontmatter works\r\n---\r\n\r\n# Body\r\n',
+      );
+      try {
+        SkillResourceRegistry.load(crlfRoot);
+        const skill = SkillResourceRegistry.getByUri('skill://n8n-mcp/crlf-skill/SKILL.md');
+        expect(skill?.description).toBe('CRLF frontmatter works');
+        expect(skill?.name).toBe('crlf-skill');
+      } finally {
+        rmSync(crlfRoot, { recursive: true, force: true });
+      }
+    });
+
     it('uses text/markdown mime type', () => {
       SkillResourceRegistry.load(fixtureRoot);
       for (const skill of SkillResourceRegistry.getAll()) {
@@ -134,6 +152,17 @@ describe('SkillResourceRegistry', () => {
 
     it('returns null for URIs outside the skill scheme', () => {
       expect(SkillResourceRegistry.getByUri('ui://n8n-mcp/something')).toBeNull();
+    });
+
+    it('rejects path-traversal attempts in the URI', () => {
+      // A crafted bare URI with `..` slips through neither the Map lookup
+      // (no such key) nor the bare-name fallback (which forbids `/`).
+      expect(
+        SkillResourceRegistry.getByUri('skill://n8n-mcp/../../../etc/passwd'),
+      ).toBeNull();
+      expect(
+        SkillResourceRegistry.getByUri('skill://n8n-mcp/sample-skill/../another-skill/SKILL.md'),
+      ).toBeNull();
     });
 
     it('returns null before load() is called', () => {

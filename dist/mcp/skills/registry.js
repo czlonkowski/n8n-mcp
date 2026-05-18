@@ -9,7 +9,8 @@ const path_1 = __importDefault(require("path"));
 const logger_1 = require("../../utils/logger");
 const SKILL_URI_PREFIX = 'skill://n8n-mcp/';
 const MIME_TYPE = 'text/markdown';
-function parseFrontmatter(content) {
+function parseFrontmatter(raw) {
+    const content = raw.replace(/\r\n/g, '\n');
     if (!content.startsWith('---\n'))
         return {};
     const end = content.indexOf('\n---', 4);
@@ -103,8 +104,9 @@ class SkillResourceRegistry {
     static getByUri(uri) {
         if (!this.loaded)
             return null;
-        if (this.entries.has(uri))
-            return this.entries.get(uri);
+        const direct = this.entries.get(uri);
+        if (direct)
+            return direct;
         if (!uri.startsWith(SKILL_URI_PREFIX))
             return null;
         const remainder = uri.slice(SKILL_URI_PREFIX.length);
