@@ -48,6 +48,7 @@ COPY --from=builder /app/dist ./dist
 # Copy pre-built database and required files
 # Cache bust: 2025-07-06-trigger-fix-v3 - includes is_trigger=true for webhook,cron,interval,emailReadImap
 COPY data/nodes.db ./data/
+COPY data/skills ./data/skills
 COPY src/database/schema-optimized.sql ./src/database/
 COPY .env.example ./
 

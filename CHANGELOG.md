@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.54.0] - 2026-05-18
+
+### Added
+
+- **MCP Resources surface for n8n-skills markdown.** The `n8n-skills` repo ships seven expert skills (~30 markdown files covering Code node JavaScript/Python, expression syntax, node configuration, validation, workflow patterns, and the n8n-mcp tools themselves) as a Claude Code plugin. That distribution path only reaches Claude Code users with the plugin installed; every other MCP client — Cursor, Claude Desktop without plugins, the OpenAI Agents SDK, custom agents — had no way to discover or read this content even though they all consume `n8n-mcp`. The MCP `resources` capability is the standard surface for on-demand markdown context, and the server already implemented `ListResources`/`ReadResource` for UI apps under `ui://n8n-mcp/{id}` (`src/mcp/server.ts:901-938`), so a parallel `skill://n8n-mcp/{name}/{file}` namespace fits the existing plumbing exactly. A new `SkillResourceRegistry` mirrors `UIAppRegistry`: it scans `data/skills/*/*.md` at server construction, parses frontmatter (or the first heading as fallback) for resource metadata, and serves each markdown file with `mimeType: text/markdown`. A bare `skill://n8n-mcp/{name}` URI resolves to that skill's `SKILL.md` as a convenience, and a new `resources/templates/list` handler advertises both URI templates (`skill://n8n-mcp/{name}` and `skill://n8n-mcp/{name}/{file}`) so capable clients can construct URIs without enumerating first. The existing `ui://n8n-mcp/{id}` resolution is unchanged — both schemes coexist in the same `ListResources`/`ReadResource` handlers. The skill markdown is brought into the npm artifact and Docker image via a new `npm run sync:skills` script that copies from a sibling `n8n-skills/skills/` checkout (configurable via `N8N_SKILLS_SOURCE`), with the copy committed under `data/skills/` so CI and downstream consumers do not need the sibling repo present. `package.json` `files` and the Dockerfile both ship `data/skills/`. Skills are exposed unconditionally — they are low-cost (~28k lines, loaded once at startup) and Claude Code's plugin distribution and the MCP Resources surface intentionally serve different clients: a Claude Code user installs the plugin for the auto-loaded `Skill` tool UX, and everyone else now gets the same content via `resources/list`. Coverage: 15 unit tests against the registry.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.53.2] - 2026-05-18
 
 ### Fixed

@@ -5,12 +5,14 @@ import {
   ListToolsRequestSchema,
   InitializeRequestSchema,
   ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { existsSync, readFileSync, promises as fs } from 'fs';
 import path from 'path';
 import { n8nDocumentationToolsFinal } from './tools';
 import { UIAppRegistry } from './ui';
+import { SkillResourceRegistry } from './skills';
 import { n8nManagementTools } from './tools-n8n-manager';
 import { makeToolsN8nFriendly } from './tools-n8n-friendly';
 import { getWorkflowExampleString } from './workflow-examples';
@@ -273,6 +275,7 @@ export class N8NDocumentationMCPServer {
     );
 
     UIAppRegistry.load();
+    SkillResourceRegistry.load();
     this.setupHandlers();
   }
 
@@ -897,44 +900,65 @@ export class N8NDocumentationMCPServer {
       }
     });
 
-    // Handle ListResources for UI apps
+    // Handle ListResources: UI apps + skill markdown
     this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
       const apps = UIAppRegistry.getAllApps();
+      const skills = SkillResourceRegistry.getAll();
       return {
-        resources: apps
-          .filter(app => app.html !== null)
-          .map(app => ({
-            uri: app.config.uri,
-            name: app.config.displayName,
-            description: app.config.description,
-            mimeType: app.config.mimeType,
+        resources: [
+          ...apps
+            .filter(app => app.html !== null)
+            .map(app => ({
+              uri: app.config.uri,
+              name: app.config.displayName,
+              description: app.config.description,
+              mimeType: app.config.mimeType,
+            })),
+          ...skills.map(skill => ({
+            uri: skill.uri,
+            name: skill.name,
+            description: skill.description,
+            mimeType: skill.mimeType,
           })),
+        ],
       };
     });
 
-    // Handle ReadResource for UI apps
+    // Advertise URI templates so capable clients can construct skill URIs
+    this.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+      resourceTemplates: SkillResourceRegistry.getTemplates(),
+    }));
+
+    // Handle ReadResource for UI apps and skill markdown
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       const uri = request.params.uri;
-      // Parse ui://n8n-mcp/{id} pattern
-      const match = uri.match(/^ui:\/\/n8n-mcp\/(.+)$/);
-      if (!match) {
-        throw new Error(`Unknown resource URI: ${uri}`);
+
+      const uiMatch = uri.match(/^ui:\/\/n8n-mcp\/(.+)$/);
+      if (uiMatch) {
+        const app = UIAppRegistry.getAppById(uiMatch[1]);
+        if (!app || !app.html) {
+          throw new Error(`UI app not found or not built: ${uiMatch[1]}`);
+        }
+        return {
+          contents: [
+            { uri: app.config.uri, mimeType: app.config.mimeType, text: app.html },
+          ],
+        };
       }
 
-      const app = UIAppRegistry.getAppById(match[1]);
-      if (!app || !app.html) {
-        throw new Error(`UI app not found or not built: ${match[1]}`);
+      if (uri.startsWith('skill://n8n-mcp/')) {
+        const skill = SkillResourceRegistry.getByUri(uri);
+        if (!skill) {
+          throw new Error(`Skill resource not found: ${uri}`);
+        }
+        return {
+          contents: [
+            { uri: skill.uri, mimeType: skill.mimeType, text: skill.content },
+          ],
+        };
       }
 
-      return {
-        contents: [
-          {
-            uri: app.config.uri,
-            mimeType: app.config.mimeType,
-            text: app.html,
-          },
-        ],
-      };
+      throw new Error(`Unknown resource URI: ${uri}`);
     });
   }
 

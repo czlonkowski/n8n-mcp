@@ -1,6 +1,6 @@
 {
   "name": "n8n-mcp",
-  "version": "2.53.2",
+  "version": "2.54.0",
   "description": "Integration between n8n workflow automation and Model Context Protocol (MCP)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -17,7 +17,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "build:ui": "cd ui-apps && npm install && npm run build",
-    "build:all": "npm run build:ui && npm run build",
+    "build:all": "npm run sync:skills && npm run build:ui && npm run build",
+    "sync:skills": "npx tsx scripts/sync-skills.ts",
     "rebuild": "node dist/scripts/rebuild.js",
     "rebuild:optimized": "node dist/scripts/rebuild-optimized.js",
     "validate": "node dist/scripts/validate.js",
@@ -127,6 +128,7 @@
     "ui-apps/dist/**/*",
     "data/nodes.db",
     "data/workflow-patterns.json",
+    "data/skills/**/*.md",
     ".env.example",
     "README.md",
     "LICENSE",

@@ -44,6 +44,7 @@ const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const tools_1 = require("./tools");
 const ui_1 = require("./ui");
+const skills_1 = require("./skills");
 const tools_n8n_manager_1 = require("./tools-n8n-manager");
 const tools_n8n_friendly_1 = require("./tools-n8n-friendly");
 const workflow_examples_1 = require("./workflow-examples");
@@ -161,6 +162,7 @@ class N8NDocumentationMCPServer {
             },
         });
         ui_1.UIAppRegistry.load();
+        skills_1.SkillResourceRegistry.load();
         this.setupHandlers();
     }
     async close() {
@@ -597,36 +599,55 @@ class N8NDocumentationMCPServer {
         });
         this.server.setRequestHandler(types_js_1.ListResourcesRequestSchema, async () => {
             const apps = ui_1.UIAppRegistry.getAllApps();
+            const skills = skills_1.SkillResourceRegistry.getAll();
             return {
-                resources: apps
-                    .filter(app => app.html !== null)
-                    .map(app => ({
-                    uri: app.config.uri,
-                    name: app.config.displayName,
-                    description: app.config.description,
-                    mimeType: app.config.mimeType,
-                })),
-            };
-        });
-        this.server.setRequestHandler(types_js_1.ReadResourceRequestSchema, async (request) => {
-            const uri = request.params.uri;
-            const match = uri.match(/^ui:\/\/n8n-mcp\/(.+)$/);
-            if (!match) {
-                throw new Error(`Unknown resource URI: ${uri}`);
-            }
-            const app = ui_1.UIAppRegistry.getAppById(match[1]);
-            if (!app || !app.html) {
-                throw new Error(`UI app not found or not built: ${match[1]}`);
-            }
-            return {
-                contents: [
-                    {
+                resources: [
+                    ...apps
+                        .filter(app => app.html !== null)
+                        .map(app => ({
                         uri: app.config.uri,
+                        name: app.config.displayName,
+                        description: app.config.description,
                         mimeType: app.config.mimeType,
-                        text: app.html,
-                    },
+                    })),
+                    ...skills.map(skill => ({
+                        uri: skill.uri,
+                        name: skill.name,
+                        description: skill.description,
+                        mimeType: skill.mimeType,
+                    })),
                 ],
             };
+        });
+        this.server.setRequestHandler(types_js_1.ListResourceTemplatesRequestSchema, async () => ({
+            resourceTemplates: skills_1.SkillResourceRegistry.getTemplates(),
+        }));
+        this.server.setRequestHandler(types_js_1.ReadResourceRequestSchema, async (request) => {
+            const uri = request.params.uri;
+            const uiMatch = uri.match(/^ui:\/\/n8n-mcp\/(.+)$/);
+            if (uiMatch) {
+                const app = ui_1.UIAppRegistry.getAppById(uiMatch[1]);
+                if (!app || !app.html) {
+                    throw new Error(`UI app not found or not built: ${uiMatch[1]}`);
+                }
+                return {
+                    contents: [
+                        { uri: app.config.uri, mimeType: app.config.mimeType, text: app.html },
+                    ],
+                };
+            }
+            if (uri.startsWith('skill://n8n-mcp/')) {
+                const skill = skills_1.SkillResourceRegistry.getByUri(uri);
+                if (!skill) {
+                    throw new Error(`Skill resource not found: ${uri}`);
+                }
+                return {
+                    contents: [
+                        { uri: skill.uri, mimeType: skill.mimeType, text: skill.content },
+                    ],
+                };
+            }
+            throw new Error(`Unknown resource URI: ${uri}`);
         });
     }
     sanitizeValidationResult(result, toolName) {
