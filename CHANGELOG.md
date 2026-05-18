@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.53.1] - 2026-05-18
+
+### Fixed
+
+- **SSRF guard no longer blanket-rejects IPv6 addresses on DNS64/NAT64 networks reaching public IPv4 servers.** A community user reported that every n8n API call started failing with `SSRF protection: IPv6 private address not allowed` after their environment switched to a resolver that synthesizes `AAAA` records via DNS64 — Node 17+ returns the synthetic `64:ff9b::<public-IPv4>` address first under default verbatim DNS ordering, and the previous blanket block on the `64:ff9b::/96` prefix rejected it. The IPv6 helper now inspects the canonical hextets of recognized tunneling prefixes (NAT64 RFC 6052 `64:ff9b::/96`, NAT64 RFC 8215 `64:ff9b:1::/48`, 6to4 RFC 3056 `2002::/16`, and Teredo RFC 4380 `2001::/32`), extracts the embedded IPv4, and applies the same `PRIVATE_IP_RANGES` and `CLOUD_METADATA` policy that's already enforced on plain IPv4 destinations. Tunneled private/metadata IPv4 — including the original GHSA-56c3-vfp2-5qqj payloads `64:ff9b::a9fe:a9fe`, `2002:a9fe:a9fe::`, and the equivalent loopback/RFC1918 embeddings — stays blocked. Tunneled public IPv4 is now allowed. Non-canonical `64:ff9b:` shapes that match neither RFC 6052 nor RFC 8215 fail safe and are blocked. IPv6 parsing is delegated to `ipaddr.js` (already a transitive dependency via `express → proxy-addr`, now promoted to a direct dep at the same `^1.9.1` version, so the install footprint is unchanged). Reported by Luca M.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.53.0] - 2026-05-14
 
 ### Fixed
