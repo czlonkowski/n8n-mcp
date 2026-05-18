@@ -608,33 +608,26 @@ Always check the response for validation errors and adjust your operations accor
 
 ## Transactional Updates
 
-The diff engine now supports transactional updates using a **two-pass processing** approach:
+The diff engine processes operations **sequentially in the order you submit them**. Each operation validates against the workflow state as of its position in the batch — so a connection op only sees nodes that earlier ops have already added, and a `removeConnection` validates *before* any later `updateNode` rename projects onto its references. Rename projections (auto-updating connection references when a node is renamed) flush after the rename op runs, not at the end of the batch.
 
 ### How It Works
 
-1. **No Operation Limit**: Process unlimited operations in a single request
-2. **Two-Pass Processing**:
-   - **Pass 1**: All node operations (add, remove, update, move, enable, disable)
-   - **Pass 2**: All other operations (connections, settings, metadata)
+1. **Sequential Execution**: Operations apply in caller order; each op validates against the state of the workflow up to that point.
+2. **Per-Op Rename Flush**: When `updateNode` renames a node, all connection references (both keys and target names) are rewritten before the next op validates.
+3. **No Operation Limit**: Process unlimited operations in a single request.
+4. **Atomic by Default**: Any operation failing aborts the batch; pass `continueOnError: true` for best-effort mode.
 
-This allows you to add nodes and connect them in the same request:
+### Legacy Hoist: `addConnection` before `addNode`
+
+For backward compatibility with the "list connections first, then nodes" pattern, an `addConnection` or `rewireConnection` that references a node added later in the same batch causes that `addNode` to be hoisted to just before its first earlier reference. This is the *only* automatic reordering. Other op kinds (e.g., `removeConnection X→Y` before `addNode X`, or `replaceConnections` referencing a not-yet-added node) are no longer reordered and will fail validation.
 
 ```json
 {
   "id": "workflow-id",
   "operations": [
-    // These will be processed in Pass 2 (but work because nodes are added first)
-    {
-      "type": "addConnection",
-      "source": "Webhook",
-      "target": "Process Data"
-    },
-    {
-      "type": "addConnection", 
-      "source": "Process Data",
-      "target": "Send Email"
-    },
-    // These will be processed in Pass 1
+    // Hoisted: "Process Data" is added before this connection runs
+    { "type": "addConnection", "source": "Webhook", "target": "Process Data" },
+    { "type": "addConnection", "source": "Process Data", "target": "Send Email" },
     {
       "type": "addNode",
       "node": {
@@ -650,21 +643,22 @@ This allows you to add nodes and connect them in the same request:
         "name": "Send Email",
         "type": "n8n-nodes-base.emailSend",
         "position": [600, 300],
-        "parameters": {
-          "to": "user@example.com"
-        }
+        "parameters": { "to": "user@example.com" }
       }
     }
   ]
 }
 ```
 
+### Recommendation
+
+Even though the hoist exists, write operations in causal order — add the node first, then connect it. This matches what the diff engine actually does at runtime, makes batches easier to read, and avoids surprises if you ever switch on `continueOnError: true` (where the order in which failures occur matters).
+
 ### Benefits
 
-- **Order Independence**: You don't need to worry about operation order
-- **Atomic Updates**: All operations succeed or all fail (unless continueOnError is enabled)
-- **Intuitive Usage**: Add complex workflow structures in one call
-- **No Hard Limits**: Process unlimited operations efficiently
+- **Predictable Validation**: Each op sees the workflow state as it stands at that point in the batch, so errors point at the real cause instead of an end-state projection.
+- **Atomic Updates**: All operations succeed or all fail (unless `continueOnError` is enabled).
+- **No Hard Limits**: Process unlimited operations efficiently.
 
 ### Example: Complete Workflow Addition
 
@@ -723,4 +717,4 @@ This allows you to add nodes and connect them in the same request:
 }
 ```
 
-All operations will be processed correctly regardless of order!
+Operations execute top-to-bottom; nodes are added before the connections that reference them.

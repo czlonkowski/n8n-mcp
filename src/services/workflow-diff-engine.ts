@@ -909,13 +909,14 @@ export class WorkflowDiffEngine {
 
     this.modifiedNodeIds.add(node.id);
 
-    // Track node renames for connection reference updates
-    if (operation.updates.name && operation.updates.name !== node.name) {
-      const oldName = node.name;
-      const newName = operation.updates.name;
-      this.renameMap.set(oldName, newName);
-      logger.debug(`Tracking rename: "${oldName}" → "${newName}"`);
-    }
+    // Capture (but do not yet commit) a potential rename. The renameMap drives
+    // the per-op flushPendingRenames() that rewrites connection references, so
+    // a stale entry from a failed updateNode would corrupt every later op in
+    // continueOnError mode. Commit only after the updates loop + sanitization
+    // complete and node.name actually changed.
+    const pendingRename = operation.updates.name && operation.updates.name !== node.name
+      ? { oldName: node.name, newName: operation.updates.name }
+      : undefined;
 
     // Apply updates using dot notation
     Object.entries(operation.updates).forEach(([path, value]) => {
@@ -946,6 +947,14 @@ export class WorkflowDiffEngine {
 
     // Update the node in-place
     Object.assign(node, sanitized);
+
+    // Commit the rename only after updates+sanitization succeeded and the
+    // rename actually landed on the node. Guards against phantom rename
+    // entries when an earlier update path threw (Copilot review on #789).
+    if (pendingRename && node.name === pendingRename.newName) {
+      this.renameMap.set(pendingRename.oldName, pendingRename.newName);
+      logger.debug(`Tracking rename: "${pendingRename.oldName}" → "${pendingRename.newName}"`);
+    }
   }
 
   private applyPatchNodeField(workflow: Workflow, operation: PatchNodeFieldOperation): void {

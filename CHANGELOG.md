@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.53.2] - 2026-05-18
+
+### Fixed
+
+- **Batch `n8n_update_partial_workflow` operations no longer fail with a phantom "Source node not found" when a later `updateNode` renames a node referenced by an earlier connection op (#788).** The diff engine previously processed operations in two passes — every node op (add/remove/update/move/enable/disable) ran first, then every connection op — so a batch like `[removeConnection NodeA→NodeB, removeNode NodeB, updateNode NodeA→{name:"NodeB"}, addConnection NodeB→NodeC]` validated `operation 0` against state that already had the rename projected on it, even though the rename was scheduled for `operation 3`. Because connection references are rewritten in-place when a node is renamed (the #353 auto-update behavior), the original `NodeA` had effectively vanished from the validator's view before its own `removeConnection` ran, and the error's "Available nodes" list — which showed the **post-rename** node set against a failure reported on `operation 0` — was the giveaway. The engine now applies operations strictly in caller order and runs `flushPendingRenames()` after each op so connection references catch up to the new node name *before* the next op validates; chained renames (`A→B` then `B→C`) consequently compose correctly, where the previous renameMap-based post-pass would have collided on the intermediate key. A single backward-compat case is preserved: an `addConnection` or `rewireConnection` that references an `addNode` declared later in the same batch is still accepted — that one `addNode` is hoisted to just before its first earlier reference. Other op kinds (notably `removeConnection X→Y` before `addNode X`, or `replaceConnections` referencing a not-yet-added node) are no longer reordered and now fail validation at their actual call site, which matches what the caller is actually asking for. As a defense against a related Copilot-flagged edge case, `applyUpdateNode` no longer records a rename intent in `renameMap` before the updates loop runs — if a subsequent path inside the same updates object throws (forbidden path keys, `__patch_find_replace` failures), the rename is never committed, so `continueOnError` mode cannot carry a phantom rename into a later op and silently rewrite connection keys to a name no node carries. Six regression tests cover the #788 batch in both `validateOnly` modes, the `continueOnError` variant, the legacy hoist, the strict negative case, and the rename-leak guard. The `docs/workflow-diff-examples.md` "two-pass processing" section is rewritten to describe the new sequential semantics and the single backward-compat hoist. Reported by @DocksDocks; fix by @AjTheSpidey.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.53.1] - 2026-05-18
 
 ### Fixed

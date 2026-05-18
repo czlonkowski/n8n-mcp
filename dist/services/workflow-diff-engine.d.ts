@@ -45,6 +45,7 @@ export declare class WorkflowDiffEngine {
     private validateReplaceConnections;
     private applyCleanStaleConnections;
     private applyReplaceConnections;
+    private flushPendingRenames;
     private updateConnectionReferences;
     private normalizeNodeName;
     private findNode;

@@ -640,6 +640,109 @@ describe('WorkflowDiffEngine', () => {
         { node: 'Slack', type: 'main', index: 0 }
       ]);
     });
+
+    it('should apply the #788 rename batch under continueOnError mode', async () => {
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        continueOnError: true,
+        operations: [
+          { type: 'removeConnection', source: 'Webhook', target: 'HTTP Request' },
+          { type: 'removeConnection', source: 'HTTP Request', target: 'Slack' },
+          { type: 'removeNode', nodeName: 'HTTP Request' },
+          { type: 'updateNode', nodeName: 'Webhook', updates: { name: 'HTTP Request' } },
+          { type: 'addConnection', source: 'HTTP Request', target: 'Slack' }
+        ]
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.errors).toBeUndefined();
+      expect(result.applied).toEqual([0, 1, 2, 3, 4]);
+      expect(result.workflow!.connections['HTTP Request']?.main?.[0]).toEqual([
+        { node: 'Slack', type: 'main', index: 0 }
+      ]);
+    });
+
+    it('should hoist a later addNode referenced by an earlier addConnection (legacy pattern)', async () => {
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [
+          { type: 'addConnection', source: 'Slack', target: 'Notifier' },
+          {
+            type: 'addNode',
+            node: {
+              name: 'Notifier',
+              type: 'n8n-nodes-base.set',
+              position: [800, 300],
+              parameters: {}
+            }
+          }
+        ]
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.errors).toBeUndefined();
+      expect(result.workflow!.nodes.some((n: any) => n.name === 'Notifier')).toBe(true);
+      expect(result.workflow!.connections['Slack']?.main?.[0]).toEqual([
+        { node: 'Notifier', type: 'main', index: 0 }
+      ]);
+    });
+
+    it('should reject a removeConnection that references a node added later in the batch', async () => {
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [
+          { type: 'removeConnection', source: 'Phantom', target: 'Slack' },
+          {
+            type: 'addNode',
+            node: {
+              name: 'Phantom',
+              type: 'n8n-nodes-base.set',
+              position: [800, 300],
+              parameters: {}
+            }
+          }
+        ]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors?.[0]?.operation).toBe(0);
+      expect(result.errors?.[0]?.message).toContain('Source node not found');
+    });
+
+    it('should not leak rename tracking when an updateNode apply throws after the rename was recorded', async () => {
+      // updateNode validation does not reject forbidden path keys, but
+      // setNestedProperty throws on them. With the keys ordered so the
+      // forbidden path is iterated before "name", applyUpdateNode throws
+      // *after* recording the rename intent but *before* the rename actually
+      // lands on node.name. Without the commit-after-success guard, the next
+      // successful op's flushPendingRenames would rewrite connection
+      // references to a name no node carries — silently corrupting the graph.
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        continueOnError: true,
+        operations: [
+          {
+            type: 'updateNode',
+            nodeName: 'Webhook',
+            updates: {
+              '__proto__.polluted': 'x',
+              name: 'CodeRunner'
+            }
+          } as any,
+          // Drives flushPendingRenames. If renameMap leaked, the connection
+          // key "Webhook" would be rewritten to "CodeRunner" — leaving an
+          // orphaned key referencing a node that doesn't exist under that name.
+          { type: 'addTag', tag: 'sentinel' }
+        ]
+      });
+
+      expect(result.failed).toContain(0);
+      expect(result.applied).toContain(1);
+      // Source workflow's "Webhook" must still own its outgoing connection.
+      expect(result.workflow!.connections['Webhook']).toBeDefined();
+      expect(result.workflow!.connections['CodeRunner']).toBeUndefined();
+      expect(result.workflow!.nodes.some((n: any) => n.name === 'CodeRunner')).toBe(false);
+    });
   });
 
   describe('PatchNodeField Operation', () => {
