@@ -1,6 +1,6 @@
 {
   "name": "n8n-mcp",
-  "version": "2.53.0",
+  "version": "2.53.1",
   "description": "Integration between n8n workflow automation and Model Context Protocol (MCP)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -162,6 +162,7 @@
     "express": "^5.1.0",
     "express-rate-limit": "^7.1.5",
     "form-data": "^4.0.5",
+    "ipaddr.js": "^1.9.1",
     "lru-cache": "^11.2.1",
     "n8n-core": "2.20.3",
     "n8n-nodes-base": "2.20.4",

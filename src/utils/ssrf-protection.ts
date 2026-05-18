@@ -3,6 +3,7 @@ import { lookup } from 'dns/promises';
 import { isIPv6 } from 'net';
 import http from 'http';
 import https from 'https';
+import ipaddr from 'ipaddr.js';
 import { logger } from './logger';
 
 export interface PinnedAgents {
@@ -68,10 +69,10 @@ const PRIVATE_IP_RANGES = [
 export class SSRFProtection {
   /**
    * IPv6 addresses that must be blocked: loopback, unspecified, link-local,
-   * unique-local, site-local (deprecated), IPv4-mapped, IPv4-compatible,
-   * 6to4, and NAT64-mapped addresses. All of these either represent private
-   * networks or embed an arbitrary IPv4 address that would bypass IPv4-only
-   * SSRF checks.
+   * unique-local, site-local (deprecated), IPv4-mapped, IPv4-compatible, and
+   * any IPv6→IPv4 tunneling address (NAT64, 6to4, Teredo) whose embedded IPv4
+   * is private or a cloud-metadata endpoint. Tunneling prefixes with a public
+   * embedded IPv4 are allowed so legitimate DNS64/NAT64 environments work.
    *
    * Hostname must be lowercased and bracket-stripped. WHATWG URL parser
    * canonicalizes IPv6 literals (zero compression, dotted-quad → hex pairs),
@@ -104,15 +105,72 @@ export class SSRFProtection {
     // Unique local fc00::/7 (RFC 4193). Covers fc00-fdff in the first hextet.
     if (/^f[cd]/.test(hostname)) return true;
 
-    // 6to4 2002::/16 (RFC 3056) — bits 16-47 embed an arbitrary IPv4 address,
-    // so any 2002: address can tunnel to RFC1918 or metadata endpoints.
-    if (hostname.startsWith('2002:')) return true;
-
-    // NAT64 64:ff9b::/96 (RFC 6052) and 64:ff9b:1::/48 (RFC 8215) — embedded
-    // IPv4 in the low 32 bits, same tunneling concern as 6to4.
-    if (hostname.startsWith('64:ff9b:')) return true;
+    // Tunneling prefixes (NAT64, 6to4, Teredo) carry an embedded IPv4. Extract
+    // it and reuse the IPv4 policy so we don't blanket-block legitimate users
+    // on DNS64/NAT64 networks reaching public IPv4 servers, while keeping the
+    // GHSA-56c3-vfp2-5qqj defense against tunneled private/metadata IPv4.
+    const embedded = SSRFProtection.tryExtractTunneledIPv4(hostname);
+    if (embedded === 'non_canonical') return true;
+    if (embedded !== null) {
+      if (CLOUD_METADATA.has(embedded)) return true;
+      if (PRIVATE_IP_RANGES.some(regex => regex.test(embedded))) return true;
+      return false;
+    }
 
     return false;
+  }
+
+  /**
+   * Extract the embedded IPv4 from a canonical IPv6 tunneling address.
+   *
+   * Returns a dotted-quad string when the address is RFC 6052 NAT64
+   * (`64:ff9b::/96`), RFC 8215 local-use NAT64 (`64:ff9b:1::/48`), RFC 3056
+   * 6to4 (`2002::/16`), or RFC 4380 Teredo (`2001::/32`). Returns the literal
+   * `'non_canonical'` when the prefix family is recognized but the shape does
+   * not strictly match the RFC (caller treats this as a block — fail safe).
+   * Returns `null` for any other IPv6 (caller continues with other checks).
+   *
+   * Parsing is delegated to `ipaddr.js` so we don't roll a homegrown hextet
+   * expander — a bug there would be an SSRF bypass.
+   */
+  private static tryExtractTunneledIPv4(hostname: string): string | 'non_canonical' | null {
+    let parsed: ReturnType<typeof ipaddr.parse>;
+    try {
+      parsed = ipaddr.parse(hostname);
+    } catch {
+      return null;
+    }
+    if (parsed.kind() !== 'ipv6') return null;
+    const p = (parsed as ipaddr.IPv6).parts;
+
+    // NAT64 64:ff9b: family — RFC 6052 well-known /96 and RFC 8215 local-use /48
+    if (p[0] === 0x64 && p[1] === 0xff9b) {
+      const rfc6052 = p[2] === 0 && p[3] === 0 && p[4] === 0 && p[5] === 0;
+      const rfc8215 = p[2] === 0x0001;
+      if (rfc6052 || rfc8215) {
+        return SSRFProtection.hextetsToIPv4(p[6], p[7]);
+      }
+      // Prefix family is reserved for NAT64 but shape doesn't match a known
+      // RFC variant — refuse rather than guess what the OS would translate to.
+      return 'non_canonical';
+    }
+
+    // 6to4 2002::/16 (RFC 3056) — bits 16-47 are the embedded IPv4
+    if (p[0] === 0x2002) {
+      return SSRFProtection.hextetsToIPv4(p[1], p[2]);
+    }
+
+    // Teredo 2001::/32 (RFC 4380) — last 32 bits are the client IPv4
+    // obfuscated by XOR with all-ones.
+    if (p[0] === 0x2001 && p[1] === 0) {
+      return SSRFProtection.hextetsToIPv4(p[6] ^ 0xffff, p[7] ^ 0xffff);
+    }
+
+    return null;
+  }
+
+  private static hextetsToIPv4(hi: number, lo: number): string {
+    return `${(hi >>> 8) & 0xff}.${hi & 0xff}.${(lo >>> 8) & 0xff}.${lo & 0xff}`;
   }
 
   /**

@@ -9,6 +9,7 @@ const promises_1 = require("dns/promises");
 const net_1 = require("net");
 const http_1 = __importDefault(require("http"));
 const https_1 = __importDefault(require("https"));
+const ipaddr_js_1 = __importDefault(require("ipaddr.js"));
 const logger_1 = require("./logger");
 const CLOUD_METADATA = new Set([
     '169.254.169.254',
@@ -47,11 +48,47 @@ class SSRFProtection {
             return true;
         if (/^f[cd]/.test(hostname))
             return true;
-        if (hostname.startsWith('2002:'))
+        const embedded = SSRFProtection.tryExtractTunneledIPv4(hostname);
+        if (embedded === 'non_canonical')
             return true;
-        if (hostname.startsWith('64:ff9b:'))
-            return true;
+        if (embedded !== null) {
+            if (CLOUD_METADATA.has(embedded))
+                return true;
+            if (PRIVATE_IP_RANGES.some(regex => regex.test(embedded)))
+                return true;
+            return false;
+        }
         return false;
+    }
+    static tryExtractTunneledIPv4(hostname) {
+        let parsed;
+        try {
+            parsed = ipaddr_js_1.default.parse(hostname);
+        }
+        catch {
+            return null;
+        }
+        if (parsed.kind() !== 'ipv6')
+            return null;
+        const p = parsed.parts;
+        if (p[0] === 0x64 && p[1] === 0xff9b) {
+            const rfc6052 = p[2] === 0 && p[3] === 0 && p[4] === 0 && p[5] === 0;
+            const rfc8215 = p[2] === 0x0001;
+            if (rfc6052 || rfc8215) {
+                return SSRFProtection.hextetsToIPv4(p[6], p[7]);
+            }
+            return 'non_canonical';
+        }
+        if (p[0] === 0x2002) {
+            return SSRFProtection.hextetsToIPv4(p[1], p[2]);
+        }
+        if (p[0] === 0x2001 && p[1] === 0) {
+            return SSRFProtection.hextetsToIPv4(p[6] ^ 0xffff, p[7] ^ 0xffff);
+        }
+        return null;
+    }
+    static hextetsToIPv4(hi, lo) {
+        return `${(hi >>> 8) & 0xff}.${hi & 0xff}.${(lo >>> 8) & 0xff}.${lo & 0xff}`;
     }
     static async validateWebhookUrl(urlString) {
         try {
