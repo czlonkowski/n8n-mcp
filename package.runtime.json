@@ -1,6 +1,6 @@
 {
   "name": "n8n-mcp-runtime",
-  "version": "2.51.3",
+  "version": "2.53.1",
   "description": "n8n MCP Server Runtime Dependencies Only",
   "private": true,
   "dependencies": {
@@ -9,6 +9,7 @@
     "express": "^5.1.0",
     "express-rate-limit": "^7.1.5",
     "dotenv": "^16.5.0",
+    "ipaddr.js": "^1.9.1",
     "lru-cache": "^11.2.1",
     "sql.js": "^1.13.0",
     "tslib": "^2.6.2",

@@ -14,6 +14,7 @@ export declare class SSRFProtection {
     private static isPrivateOrMappedIpv6;
     private static tryExtractTunneledIPv4;
     private static hextetsToIPv4;
+    private static isTunneledCloudMetadata;
     static validateWebhookUrl(urlString: string): Promise<WebhookUrlValidationResult>;
     static createPinnedAgents(address: string, family: 4 | 6): PinnedAgents;
     static validateUrlSync(urlString: string): {

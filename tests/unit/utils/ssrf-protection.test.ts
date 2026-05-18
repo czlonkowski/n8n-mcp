@@ -228,6 +228,32 @@ describe('SSRFProtection', () => {
       }
     });
 
+    // The "metadata blocked in all modes" promise must hold for IPv6-tunneled
+    // metadata too — otherwise permissive mode lets an attacker reach IMDS via
+    // `64:ff9b::169.254.169.254` and equivalents.
+    it.each([
+      ['http://[64:ff9b::a9fe:a9fe]/',     'NAT64 RFC 6052'],
+      ['http://[64:ff9b:1::a9fe:a9fe]/',   'NAT64 RFC 8215'],
+      ['http://[2002:a9fe:a9fe::]/',       '6to4'],
+      ['http://[2001::5601:5601]/',        'Teredo (XOR)'],
+    ])('blocks tunneled cloud metadata in permissive sync mode: %s (%s)', (url) => {
+      const result = SSRFProtection.validateUrlSync(url);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('Cloud metadata endpoint blocked');
+    });
+
+    it.each([
+      ['64:ff9b::a9fe:a9fe',   'NAT64 RFC 6052'],
+      ['64:ff9b:1::a9fe:a9fe', 'NAT64 RFC 8215'],
+      ['2002:a9fe:a9fe::',     '6to4'],
+      ['2001::5601:5601',      'Teredo (XOR)'],
+    ])('blocks tunneled cloud metadata via DNS in permissive async mode: %s (%s)', async (address) => {
+      vi.mocked(dns.lookup).mockResolvedValue({ address, family: 6 } as any);
+      const result = await SSRFProtection.validateWebhookUrl('http://evil-domain.com/webhook');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain('metadata');
+    });
+
     it('should allow public URLs', async () => {
       const result = await SSRFProtection.validateWebhookUrl('https://api.example.com/webhook');
       expect(result.valid).toBe(true);
@@ -306,28 +332,20 @@ describe('SSRFProtection', () => {
       expect(result.family).toBe(6);
     });
 
-    it('blocks hostname resolving to NAT64-wrapped metadata IPv4 (strict mode)', async () => {
-      delete process.env.WEBHOOK_SECURITY_MODE; // strict
-      vi.mocked(dns.lookup).mockResolvedValue({ address: '64:ff9b::a9fe:a9fe', family: 6 } as any);
-
-      const result = await SSRFProtection.validateWebhookUrl('http://evil-domain.com/webhook');
-      expect(result.valid).toBe(false);
-      expect(result.reason).toBeDefined();
-    });
-
-    it('blocks hostname resolving to NAT64-wrapped private IPv4 (moderate mode)', async () => {
-      process.env.WEBHOOK_SECURITY_MODE = 'moderate';
-      // 10.0.0.1 → 0a00:0001
-      vi.mocked(dns.lookup).mockResolvedValue({ address: '64:ff9b::a00:1', family: 6 } as any);
-
-      const result = await SSRFProtection.validateWebhookUrl('http://internal.company.com/webhook');
-      expect(result.valid).toBe(false);
-      expect(result.reason).toBeDefined();
-    });
-
-    it('blocks hostname resolving to 6to4-wrapped metadata IPv4 (strict mode)', async () => {
-      delete process.env.WEBHOOK_SECURITY_MODE; // strict
-      vi.mocked(dns.lookup).mockResolvedValue({ address: '2002:a9fe:a9fe::', family: 6 } as any);
+    // DNS rebinding via tunneling prefixes: attacker resolves a public hostname
+    // to a NAT64/6to4 address whose embedded IPv4 is private/metadata. Must be
+    // blocked in every mode where the embedded IPv4 would itself be blocked.
+    it.each([
+      ['strict',   '64:ff9b::a9fe:a9fe', 'NAT64-wrapped metadata IPv4'],
+      ['moderate', '64:ff9b::a00:1',     'NAT64-wrapped 10.0.0.1 (RFC1918)'],
+      ['strict',   '2002:a9fe:a9fe::',   '6to4-wrapped metadata IPv4'],
+    ])('blocks hostname resolving to %s mode: %s (%s)', async (mode, address) => {
+      if (mode === 'strict') {
+        delete process.env.WEBHOOK_SECURITY_MODE;
+      } else {
+        process.env.WEBHOOK_SECURITY_MODE = mode;
+      }
+      vi.mocked(dns.lookup).mockResolvedValue({ address, family: 6 } as any);
 
       const result = await SSRFProtection.validateWebhookUrl('http://evil-domain.com/webhook');
       expect(result.valid).toBe(false);
@@ -664,16 +682,18 @@ describe('SSRFProtection', () => {
         }
       });
 
-      it('should reject 6to4 (2002::/16) embedding arbitrary IPv4', () => {
+      it('should reject 6to4 (2002::/16) embedding cloud metadata IPv4', () => {
         const result = SSRFProtection.validateUrlSync('http://[2002:a9fe:a9fe::]');
         expect(result.valid).toBe(false);
-        expect(result.reason).toBe('IPv6 private/mapped address not allowed');
+        // Tunneled metadata is gated as metadata in all modes (including permissive)
+        // rather than as a generic IPv6-private rejection.
+        expect(result.reason).toBe('Cloud metadata endpoint blocked');
       });
 
-      it('should reject NAT64 (64:ff9b::/96) embedding arbitrary IPv4', () => {
+      it('should reject NAT64 (64:ff9b::/96) embedding cloud metadata IPv4', () => {
         const result = SSRFProtection.validateUrlSync('http://[64:ff9b::a9fe:a9fe]');
         expect(result.valid).toBe(false);
-        expect(result.reason).toBe('IPv6 private/mapped address not allowed');
+        expect(result.reason).toBe('Cloud metadata endpoint blocked');
       });
 
       it('should reject full fc00::/7 ULA range, not just fc00:/fd00: literals', () => {
@@ -738,31 +758,44 @@ describe('SSRFProtection', () => {
       // all embed an IPv4 address. The block decision depends on what that
       // embedded IPv4 is, not on the prefix family. Public-IPv4 tunneling is
       // legitimate (e.g. DNS64/NAT64 networks reaching public servers); only
-      // private/metadata embeddings are dangerous.
-      describe('tunneled IPv4 (NAT64, 6to4, Teredo) — block when embedded IPv4 is private/metadata', () => {
-        const blockedPayloads: Array<[string, string]> = [
+      // private/metadata embeddings are dangerous. Tunneled metadata is gated
+      // earlier than tunneled-private (so it surfaces the cloud-metadata
+      // reason verbatim) because metadata is unconditionally blocked in every
+      // mode, including permissive.
+      describe('tunneled IPv4 (NAT64, 6to4, Teredo) — block when embedded IPv4 is metadata', () => {
+        const metadataPayloads: Array<[string, string]> = [
+          ['http://[64:ff9b::a9fe:a9fe]',   'IMDS via NAT64 RFC 6052'],
+          ['http://[64:ff9b:1::a9fe:a9fe]', 'IMDS via NAT64 RFC 8215'],
+          ['http://[2002:a9fe:a9fe::]',     'IMDS via 6to4'],
+          // 169.254.169.254 → 0xa9fe^0xffff=0x5601 (both halves)
+          ['http://[2001::5601:5601]',      'IMDS via Teredo'],
+        ];
+        it.each(metadataPayloads)('blocks %s (%s)', (url) => {
+          const result = SSRFProtection.validateUrlSync(url);
+          expect(result.valid).toBe(false);
+          expect(result.reason).toBe('Cloud metadata endpoint blocked');
+        });
+      });
+
+      describe('tunneled IPv4 (NAT64, 6to4, Teredo) — block when embedded IPv4 is private/loopback', () => {
+        const privatePayloads: Array<[string, string]> = [
           // NAT64 RFC 6052 well-known /96 (64:ff9b::/96)
-          ['http://[64:ff9b::a9fe:a9fe]',   'AWS/Azure IMDS via NAT64'],
           ['http://[64:ff9b::7f00:1]',      'loopback via NAT64'],
           ['http://[64:ff9b::a00:1]',       '10.0.0.1 (RFC1918) via NAT64'],
           ['http://[64:ff9b::ac10:1]',      '172.16.0.1 (RFC1918) via NAT64'],
           ['http://[64:ff9b::c0a8:1]',      '192.168.0.1 (RFC1918) via NAT64'],
-          // NAT64 RFC 8215 local-use /48 (64:ff9b:1::/48)
-          ['http://[64:ff9b:1::a9fe:a9fe]', 'IMDS via RFC 8215 NAT64'],
+          // NAT64 RFC 8215 local-use /96 sub-prefix (64:ff9b:1::/96)
           ['http://[64:ff9b:1::7f00:1]',    'loopback via RFC 8215 NAT64'],
           // 6to4 RFC 3056 (2002::/16) — embedded IPv4 in bits 16-47
-          ['http://[2002:a9fe:a9fe::]',     'IMDS via 6to4'],
           ['http://[2002:7f00:1::]',        'loopback via 6to4'],
           ['http://[2002:a00:1::]',         'RFC1918 via 6to4'],
           // Teredo RFC 4380 (2001::/32) — client IPv4 in last 32 bits XOR 0xffff:0xffff
-          // 169.254.169.254 → 0xa9fe^0xffff=0x5601 (both halves)
-          ['http://[2001::5601:5601]',      'IMDS via Teredo'],
           // 127.0.0.1 → (0x7f00^0xffff=0x80ff, 0x0001^0xffff=0xfffe)
           ['http://[2001::80ff:fffe]',      'loopback via Teredo'],
           // 10.0.0.1 → (0x0a00^0xffff=0xf5ff, 0x0001^0xffff=0xfffe)
           ['http://[2001::f5ff:fffe]',      'RFC1918 via Teredo'],
         ];
-        it.each(blockedPayloads)('blocks %s (%s)', (url) => {
+        it.each(privatePayloads)('blocks %s (%s)', (url) => {
           const result = SSRFProtection.validateUrlSync(url);
           expect(result.valid).toBe(false);
           expect(result.reason).toBe('IPv6 private/mapped address not allowed');
@@ -784,11 +817,18 @@ describe('SSRFProtection', () => {
         });
       });
 
-      it('should block non-canonical 64:ff9b: shapes that match neither RFC 6052 nor RFC 8215', () => {
-        // parts[2]=2 doesn't match the well-known /96 (parts[2..5]==0) or the
-        // RFC 8215 local-use /48 (parts[2]==1). Refuse to guess what an OS
-        // NAT64 translator would do — fail safe.
-        const result = SSRFProtection.validateUrlSync('http://[64:ff9b:2::1]');
+      it.each([
+        // parts[2]=2 — neither well-known NAT64 (parts[2..5]==0) nor RFC 8215
+        // local-use (parts[2]==1, parts[3..5]==0). Refuse to guess.
+        ['http://[64:ff9b:2::1]',             'unknown 64:ff9b: sub-prefix'],
+        // parts[2]==1 BUT parts[3]!=0 — would be a literal RFC 6052 /48
+        // embedding (IPv4 split around a u-octet at bits 64-71). RFC 8215
+        // §3.1 recommends /96 sub-prefixes over the /48 embedding precisely
+        // because the latter is rarely deployed; we refuse rather than guess
+        // which slot the OS NAT64 translator will read the IPv4 from.
+        ['http://[64:ff9b:1:a9fe:a9:fe00::]', '/48 RFC 6052 embedding shape'],
+      ])('should block non-canonical 64:ff9b: shapes: %s (%s)', (url) => {
+        const result = SSRFProtection.validateUrlSync(url);
         expect(result.valid).toBe(false);
         expect(result.reason).toBe('IPv6 private/mapped address not allowed');
       });

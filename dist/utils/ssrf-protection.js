@@ -73,7 +73,7 @@ class SSRFProtection {
         const p = parsed.parts;
         if (p[0] === 0x64 && p[1] === 0xff9b) {
             const rfc6052 = p[2] === 0 && p[3] === 0 && p[4] === 0 && p[5] === 0;
-            const rfc8215 = p[2] === 0x0001;
+            const rfc8215 = p[2] === 0x0001 && p[3] === 0 && p[4] === 0 && p[5] === 0;
             if (rfc6052 || rfc8215) {
                 return SSRFProtection.hextetsToIPv4(p[6], p[7]);
             }
@@ -89,6 +89,12 @@ class SSRFProtection {
     }
     static hextetsToIPv4(hi, lo) {
         return `${(hi >>> 8) & 0xff}.${hi & 0xff}.${(lo >>> 8) & 0xff}.${lo & 0xff}`;
+    }
+    static isTunneledCloudMetadata(addr) {
+        if (!(0, net_1.isIPv6)(addr))
+            return false;
+        const embedded = SSRFProtection.tryExtractTunneledIPv4(addr);
+        return typeof embedded === 'string' && embedded !== 'non_canonical' && CLOUD_METADATA.has(embedded);
     }
     static async validateWebhookUrl(urlString) {
         try {
@@ -122,6 +128,14 @@ class SSRFProtection {
             }
             if (CLOUD_METADATA.has(resolvedIP)) {
                 logger_1.logger.warn('SSRF blocked: Hostname resolves to cloud metadata IP', {
+                    hostname,
+                    resolvedIP,
+                    mode
+                });
+                return { valid: false, reason: 'Hostname resolves to cloud metadata endpoint' };
+            }
+            if (SSRFProtection.isTunneledCloudMetadata(resolvedIP)) {
+                logger_1.logger.warn('SSRF blocked: Hostname resolves to IPv6-tunneled cloud metadata', {
                     hostname,
                     resolvedIP,
                     mode
@@ -219,6 +233,9 @@ class SSRFProtection {
             hostname = hostname.slice(1, -1);
         }
         if (CLOUD_METADATA.has(hostname)) {
+            return { valid: false, reason: 'Cloud metadata endpoint blocked' };
+        }
+        if (SSRFProtection.isTunneledCloudMetadata(hostname)) {
             return { valid: false, reason: 'Cloud metadata endpoint blocked' };
         }
         const mode = (process.env.WEBHOOK_SECURITY_MODE || 'strict');

@@ -143,15 +143,23 @@ export class SSRFProtection {
     if (parsed.kind() !== 'ipv6') return null;
     const p = (parsed as ipaddr.IPv6).parts;
 
-    // NAT64 64:ff9b: family — RFC 6052 well-known /96 and RFC 8215 local-use /48
+    // NAT64 64:ff9b: family — both layouts here put the IPv4 in the last 32
+    // bits, so we recognize only the /96 well-known position for each.
+    //   * RFC 6052 well-known: `64:ff9b::/96` (parts[2..5] all zero)
+    //   * RFC 8215 local-use: `64:ff9b:1::/96` sub-prefix within the /48 block
+    //     (parts[2]==1, parts[3..5] zero) — RFC 8215 §3.1 recommends operators
+    //     embed IPv4 in /96 sub-prefixes rather than the literal RFC 6052 /48
+    //     layout, which interleaves the IPv4 around a u-octet at bits 64-71.
+    // Any other 64:ff9b: shape (including a literal RFC 6052 /48 embedding
+    // such as `64:ff9b:1:a9fe:a9:fe00::`) is treated as non-canonical and
+    // fail-safe blocked — we won't guess which slot the OS NAT64 translator
+    // will read the IPv4 from.
     if (p[0] === 0x64 && p[1] === 0xff9b) {
       const rfc6052 = p[2] === 0 && p[3] === 0 && p[4] === 0 && p[5] === 0;
-      const rfc8215 = p[2] === 0x0001;
+      const rfc8215 = p[2] === 0x0001 && p[3] === 0 && p[4] === 0 && p[5] === 0;
       if (rfc6052 || rfc8215) {
         return SSRFProtection.hextetsToIPv4(p[6], p[7]);
       }
-      // Prefix family is reserved for NAT64 but shape doesn't match a known
-      // RFC variant — refuse rather than guess what the OS would translate to.
       return 'non_canonical';
     }
 
@@ -171,6 +179,19 @@ export class SSRFProtection {
 
   private static hextetsToIPv4(hi: number, lo: number): string {
     return `${(hi >>> 8) & 0xff}.${hi & 0xff}.${(lo >>> 8) & 0xff}.${lo & 0xff}`;
+  }
+
+  /**
+   * True when `addr` is an IPv6 tunneling address whose embedded IPv4 is a
+   * cloud-metadata endpoint. Used to enforce the "metadata blocked in all
+   * modes" promise against tunneled targets — `validateWebhookUrl` and
+   * `validateUrlSync` both return valid early under `permissive` mode, so
+   * the broader `isPrivateOrMappedIpv6` gate wouldn't otherwise run.
+   */
+  private static isTunneledCloudMetadata(addr: string): boolean {
+    if (!isIPv6(addr)) return false;
+    const embedded = SSRFProtection.tryExtractTunneledIPv4(addr);
+    return typeof embedded === 'string' && embedded !== 'non_canonical' && CLOUD_METADATA.has(embedded);
   }
 
   /**
@@ -236,6 +257,19 @@ export class SSRFProtection {
       // Step 4: ALWAYS block cloud metadata IPs (all modes)
       if (CLOUD_METADATA.has(resolvedIP)) {
         logger.warn('SSRF blocked: Hostname resolves to cloud metadata IP', {
+          hostname,
+          resolvedIP,
+          mode
+        });
+        return { valid: false, reason: 'Hostname resolves to cloud metadata endpoint' };
+      }
+
+      // Step 4b: ALWAYS block tunneled metadata (NAT64/6to4/Teredo wrapping a
+      // CLOUD_METADATA IPv4) — the literal-string check above can't see these
+      // since the resolved IP is an IPv6 form. Runs before the permissive
+      // early-return so the "metadata blocked in all modes" promise holds.
+      if (SSRFProtection.isTunneledCloudMetadata(resolvedIP)) {
+        logger.warn('SSRF blocked: Hostname resolves to IPv6-tunneled cloud metadata', {
           hostname,
           resolvedIP,
           mode
@@ -385,6 +419,13 @@ export class SSRFProtection {
     }
 
     if (CLOUD_METADATA.has(hostname)) {
+      return { valid: false, reason: 'Cloud metadata endpoint blocked' };
+    }
+
+    // ALWAYS block tunneled metadata (NAT64/6to4/Teredo wrapping a metadata
+    // IPv4) — runs before the permissive early-return so the "metadata
+    // blocked in all modes" promise holds for IPv6 literals too.
+    if (SSRFProtection.isTunneledCloudMetadata(hostname)) {
       return { valid: false, reason: 'Cloud metadata endpoint blocked' };
     }
 
