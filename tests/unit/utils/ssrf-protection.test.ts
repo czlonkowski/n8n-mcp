@@ -254,6 +254,28 @@ describe('SSRFProtection', () => {
       expect(result.reason).toContain('metadata');
     });
 
+    // The fail-safe stance for non-canonical tunneling prefixes must also hold
+    // in permissive mode — refusing to guess where an unknown wire format will
+    // route is mode-independent.
+    it.each([
+      ['http://[64:ff9b:2::1]',             'unknown 64:ff9b: sub-prefix'],
+      ['http://[64:ff9b:1:a9fe:a9:fe00::]', '/48 RFC 6052 embedding shape'],
+    ])('blocks non-canonical tunneling in permissive sync mode: %s (%s)', (url) => {
+      const result = SSRFProtection.validateUrlSync(url);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('IPv6 private/mapped address not allowed');
+    });
+
+    it.each([
+      ['64:ff9b:2::1',             'unknown 64:ff9b: sub-prefix'],
+      ['64:ff9b:1:a9fe:a9:fe00::', '/48 RFC 6052 embedding shape'],
+    ])('blocks non-canonical tunneling via DNS in permissive async mode: %s (%s)', async (address) => {
+      vi.mocked(dns.lookup).mockResolvedValue({ address, family: 6 } as any);
+      const result = await SSRFProtection.validateWebhookUrl('http://evil-domain.com/webhook');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toBe('IPv6 private/mapped address not allowed');
+    });
+
     it('should allow public URLs', async () => {
       const result = await SSRFProtection.validateWebhookUrl('https://api.example.com/webhook');
       expect(result.valid).toBe(true);

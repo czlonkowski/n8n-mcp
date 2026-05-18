@@ -124,10 +124,13 @@ export class SSRFProtection {
    * Extract the embedded IPv4 from a canonical IPv6 tunneling address.
    *
    * Returns a dotted-quad string when the address is RFC 6052 NAT64
-   * (`64:ff9b::/96`), RFC 8215 local-use NAT64 (`64:ff9b:1::/48`), RFC 3056
-   * 6to4 (`2002::/16`), or RFC 4380 Teredo (`2001::/32`). Returns the literal
-   * `'non_canonical'` when the prefix family is recognized but the shape does
-   * not strictly match the RFC (caller treats this as a block — fail safe).
+   * (`64:ff9b::/96`), RFC 8215 local-use NAT64 at the well-known
+   * `64:ff9b:1::/96` sub-prefix layout (parts[3..5] == 0), RFC 3056 6to4
+   * (`2002::/16`), or RFC 4380 Teredo (`2001::/32`). Returns the literal
+   * `'non_canonical'` when the prefix family is recognized but the shape
+   * does not strictly match — this includes anything in `64:ff9b:1::/48`
+   * outside the /96 sub-prefix layout (e.g. the literal RFC 6052 /48
+   * embedding that interleaves the IPv4 around a u-octet at bits 64-71).
    * Returns `null` for any other IPv6 (caller continues with other checks).
    *
    * Parsing is delegated to `ipaddr.js` so we don't roll a homegrown hextet
@@ -182,16 +185,32 @@ export class SSRFProtection {
   }
 
   /**
-   * True when `addr` is an IPv6 tunneling address whose embedded IPv4 is a
-   * cloud-metadata endpoint. Used to enforce the "metadata blocked in all
-   * modes" promise against tunneled targets — `validateWebhookUrl` and
-   * `validateUrlSync` both return valid early under `permissive` mode, so
-   * the broader `isPrivateOrMappedIpv6` gate wouldn't otherwise run.
+   * Decisions that must hold across every security mode, including
+   * `permissive`. Both validators return valid early under `permissive`
+   * (the documented "block cloud metadata; allow everything else" mode),
+   * so the broader `isPrivateOrMappedIpv6` gate wouldn't otherwise run
+   * against the resolved/literal IPv6.
+   *
+   * Two cases need pre-permissive rejection:
+   *   * **Tunneled metadata** — `64:ff9b::169.254.169.254` and equivalents
+   *     across NAT64/6to4/Teredo. Without this, permissive lets IMDS
+   *     traffic through an IPv6 wrapper.
+   *   * **Non-canonical tunneling prefix** — `64:ff9b:` shapes that match
+   *     neither RFC 6052 nor RFC 8215 (or 6to4/Teredo equivalents we don't
+   *     recognize). We refuse to guess what the OS translator will route
+   *     to, regardless of mode.
+   *
+   * Returns the user-facing reason string when blocking, or null when the
+   * address is fine for the mode check that follows.
    */
-  private static isTunneledCloudMetadata(addr: string): boolean {
-    if (!isIPv6(addr)) return false;
+  private static tunneledIPv6BlockReason(addr: string): string | null {
+    if (!isIPv6(addr)) return null;
     const embedded = SSRFProtection.tryExtractTunneledIPv4(addr);
-    return typeof embedded === 'string' && embedded !== 'non_canonical' && CLOUD_METADATA.has(embedded);
+    if (embedded === 'non_canonical') return 'IPv6 private/mapped address not allowed';
+    if (typeof embedded === 'string' && CLOUD_METADATA.has(embedded)) {
+      return 'Cloud metadata endpoint blocked';
+    }
+    return null;
   }
 
   /**
@@ -264,17 +283,19 @@ export class SSRFProtection {
         return { valid: false, reason: 'Hostname resolves to cloud metadata endpoint' };
       }
 
-      // Step 4b: ALWAYS block tunneled metadata (NAT64/6to4/Teredo wrapping a
-      // CLOUD_METADATA IPv4) — the literal-string check above can't see these
-      // since the resolved IP is an IPv6 form. Runs before the permissive
-      // early-return so the "metadata blocked in all modes" promise holds.
-      if (SSRFProtection.isTunneledCloudMetadata(resolvedIP)) {
-        logger.warn('SSRF blocked: Hostname resolves to IPv6-tunneled cloud metadata', {
+      // Step 4b: All-mode IPv6 tunneling gate — runs before the permissive
+      // early-return. Rejects (a) tunneled cloud-metadata (any mode) and
+      // (b) non-canonical tunneling prefixes (the fail-safe promise must
+      // hold in permissive too, not just strict/moderate).
+      const tunneledReason = SSRFProtection.tunneledIPv6BlockReason(resolvedIP);
+      if (tunneledReason !== null) {
+        logger.warn('SSRF blocked: IPv6 tunneling rejection (all-mode gate)', {
           hostname,
           resolvedIP,
-          mode
+          mode,
+          reason: tunneledReason
         });
-        return { valid: false, reason: 'Hostname resolves to cloud metadata endpoint' };
+        return { valid: false, reason: tunneledReason };
       }
 
       // Step 5: Mode-specific validation
@@ -422,11 +443,11 @@ export class SSRFProtection {
       return { valid: false, reason: 'Cloud metadata endpoint blocked' };
     }
 
-    // ALWAYS block tunneled metadata (NAT64/6to4/Teredo wrapping a metadata
-    // IPv4) — runs before the permissive early-return so the "metadata
-    // blocked in all modes" promise holds for IPv6 literals too.
-    if (SSRFProtection.isTunneledCloudMetadata(hostname)) {
-      return { valid: false, reason: 'Cloud metadata endpoint blocked' };
+    // All-mode IPv6 tunneling gate — rejects tunneled metadata and
+    // non-canonical tunneling prefixes before the permissive early-return.
+    const tunneledReason = SSRFProtection.tunneledIPv6BlockReason(hostname);
+    if (tunneledReason !== null) {
+      return { valid: false, reason: tunneledReason };
     }
 
     const mode: SecurityMode = (process.env.WEBHOOK_SECURITY_MODE || 'strict') as SecurityMode;

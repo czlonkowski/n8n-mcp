@@ -90,11 +90,16 @@ class SSRFProtection {
     static hextetsToIPv4(hi, lo) {
         return `${(hi >>> 8) & 0xff}.${hi & 0xff}.${(lo >>> 8) & 0xff}.${lo & 0xff}`;
     }
-    static isTunneledCloudMetadata(addr) {
+    static tunneledIPv6BlockReason(addr) {
         if (!(0, net_1.isIPv6)(addr))
-            return false;
+            return null;
         const embedded = SSRFProtection.tryExtractTunneledIPv4(addr);
-        return typeof embedded === 'string' && embedded !== 'non_canonical' && CLOUD_METADATA.has(embedded);
+        if (embedded === 'non_canonical')
+            return 'IPv6 private/mapped address not allowed';
+        if (typeof embedded === 'string' && CLOUD_METADATA.has(embedded)) {
+            return 'Cloud metadata endpoint blocked';
+        }
+        return null;
     }
     static async validateWebhookUrl(urlString) {
         try {
@@ -134,13 +139,15 @@ class SSRFProtection {
                 });
                 return { valid: false, reason: 'Hostname resolves to cloud metadata endpoint' };
             }
-            if (SSRFProtection.isTunneledCloudMetadata(resolvedIP)) {
-                logger_1.logger.warn('SSRF blocked: Hostname resolves to IPv6-tunneled cloud metadata', {
+            const tunneledReason = SSRFProtection.tunneledIPv6BlockReason(resolvedIP);
+            if (tunneledReason !== null) {
+                logger_1.logger.warn('SSRF blocked: IPv6 tunneling rejection (all-mode gate)', {
                     hostname,
                     resolvedIP,
-                    mode
+                    mode,
+                    reason: tunneledReason
                 });
-                return { valid: false, reason: 'Hostname resolves to cloud metadata endpoint' };
+                return { valid: false, reason: tunneledReason };
             }
             if (mode === 'permissive') {
                 logger_1.logger.warn('SSRF protection in permissive mode (localhost and private IPs allowed)', {
@@ -235,8 +242,9 @@ class SSRFProtection {
         if (CLOUD_METADATA.has(hostname)) {
             return { valid: false, reason: 'Cloud metadata endpoint blocked' };
         }
-        if (SSRFProtection.isTunneledCloudMetadata(hostname)) {
-            return { valid: false, reason: 'Cloud metadata endpoint blocked' };
+        const tunneledReason = SSRFProtection.tunneledIPv6BlockReason(hostname);
+        if (tunneledReason !== null) {
+            return { valid: false, reason: tunneledReason };
         }
         const mode = (process.env.WEBHOOK_SECURITY_MODE || 'strict');
         if (mode === 'permissive') {
