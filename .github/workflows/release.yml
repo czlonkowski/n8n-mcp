@@ -324,7 +324,9 @@ jobs:
           cache: 'npm'
 
       - name: Upgrade npm to >= 11.5.1 (Trusted Publisher support)
-        run: npm install -g npm@latest
+        run: |
+          npm install -g 'npm@^11.5.1'
+          npm --version
 
       - name: Install dependencies
         # See test.yml for the --legacy-peer-deps rationale (mappersmith / diff conflict).

@@ -419,19 +419,28 @@ class ReleaseAutomationTester {
         }
       }
       
-      // Check for npm Trusted Publisher (OIDC) configuration
-      if (workflowContent.includes('id-token: write')) {
-        success('Workflow: id-token: write permission configured (OIDC)');
-      } else {
-        error('Workflow: id-token: write permission missing');
-        this.errors.push('Trusted Publishing requires id-token: write on publish-npm job');
-      }
+      // Check for npm Trusted Publisher (OIDC) configuration — scoped to the publish-npm job
+      // Slice from "  publish-npm:" to the next job at the same indent (2 spaces, non-space char)
+      const publishNpmMatch = workflowContent.match(/^ {2}publish-npm:\n([\s\S]*?)(?=^ {2}\S|\Z)/m);
+      const publishNpmBlock = publishNpmMatch ? publishNpmMatch[1] : '';
 
-      if (workflowContent.includes('environment: npm-publish')) {
-        success('Workflow: npm-publish environment configured');
+      if (!publishNpmBlock) {
+        error('Workflow: could not locate publish-npm job block for OIDC checks');
+        this.errors.push('publish-npm job not found in workflow');
       } else {
-        error('Workflow: npm-publish environment missing');
-        this.errors.push('Trusted Publishing requires environment: npm-publish');
+        if (/\bid-token:\s*write\b/.test(publishNpmBlock)) {
+          success('Workflow: publish-npm has id-token: write permission (OIDC)');
+        } else {
+          error('Workflow: publish-npm is missing id-token: write permission');
+          this.errors.push('Trusted Publishing requires id-token: write on publish-npm job');
+        }
+
+        if (/\benvironment:\s*npm-publish\b/.test(publishNpmBlock)) {
+          success('Workflow: publish-npm uses npm-publish environment');
+        } else {
+          error('Workflow: publish-npm is missing environment: npm-publish');
+          this.errors.push('Trusted Publishing requires environment: npm-publish on publish-npm job');
+        }
       }
 
       if (workflowContent.includes('${{ secrets.NPM_TOKEN }}')) {
