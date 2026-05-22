@@ -116,15 +116,29 @@ Set these in GitHub repository settings → Secrets:
 
 | Secret | Description | Required |
 |--------|-------------|----------|
-| `NPM_TOKEN` | NPM authentication token for publishing | ✅ Yes |
+| `DOCKERHUB_USERNAME` | Docker Hub username for image pushes | ✅ Yes |
+| `DOCKERHUB_TOKEN` | Docker Hub access token | ✅ Yes |
 | `GITHUB_TOKEN` | Automatically provided by GitHub Actions | ✅ Auto |
 
-### NPM Token Setup
+NPM publishing uses [npm Trusted Publishers](https://docs.npmjs.com/trusted-publishers) (OIDC) — no `NPM_TOKEN` secret is required.
 
-1. Login to [npmjs.com](https://www.npmjs.com)
-2. Go to Account Settings → Access Tokens
-3. Create a new **Automation** token
-4. Add as `NPM_TOKEN` secret in GitHub
+### NPM Trusted Publisher Setup
+
+The `publish-npm` job authenticates to npm via short-lived OIDC tokens minted by GitHub Actions. This is configured once on the npm side:
+
+1. Login to [npmjs.com](https://www.npmjs.com) as a maintainer of `n8n-mcp`.
+2. Go to the package page → **Settings** → **Trusted Publishers** → **Add publisher**.
+3. Configure:
+   - **Publisher**: GitHub Actions
+   - **Organization or user**: `czlonkowski`
+   - **Repository**: `n8n-mcp`
+   - **Workflow filename**: `release.yml`
+   - **Environment**: `npm-publish`
+4. Save.
+
+The matching GitHub environment must exist (Settings → Environments → `npm-publish`). No protection rules are required, though a required reviewer can be added for an approval gate before each release.
+
+The workflow declares `id-token: write` and `environment: npm-publish` on the `publish-npm` job; `npm publish` detects the OIDC runtime and authenticates automatically. Provenance attestations are published with every release.
 
 ## Testing
 
@@ -230,7 +244,17 @@ The workflow provides comprehensive summaries:
 ```
 Error: 401 Unauthorized
 ```
-**Solution**: Check NPM_TOKEN secret is valid and has publishing permissions.
+or
+```
+npm error code ENEEDAUTH
+npm error need auth This command requires you to be logged in
+```
+**Solution**: Verify the Trusted Publisher configuration on npmjs.com matches the workflow:
+- Repository: `czlonkowski/n8n-mcp`
+- Workflow filename: `release.yml` (filename only, no path)
+- Environment: `npm-publish`
+
+Also confirm the `publish-npm` job in the workflow still has `permissions: id-token: write` and `environment: npm-publish`. Runner npm must be ≥ 11.5.1 — the `Upgrade npm` step handles this.
 
 #### Docker Build Fails
 ```
@@ -282,7 +306,9 @@ Version not incremented
 ## Security
 
 ### Secrets Management
-- NPM_TOKEN has limited scope (publish only)
+- NPM auth uses Trusted Publishers (OIDC) — no long-lived npm token stored in the repo
+- Each release mints a short-lived token scoped to the workflow run
+- Provenance attestations are signed and published with every release, linking the package back to the exact commit + workflow run
 - GITHUB_TOKEN has automatic scoping
 - No secrets are logged or exposed
 

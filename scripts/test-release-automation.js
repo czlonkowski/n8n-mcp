@@ -419,14 +419,26 @@ class ReleaseAutomationTester {
         }
       }
       
-      // Check for secrets usage
-      if (workflowContent.includes('${{ secrets.NPM_TOKEN }}')) {
-        success('Workflow: NPM_TOKEN secret configured');
+      // Check for npm Trusted Publisher (OIDC) configuration
+      if (workflowContent.includes('id-token: write')) {
+        success('Workflow: id-token: write permission configured (OIDC)');
       } else {
-        warning('Workflow: NPM_TOKEN secret may be missing');
-        this.warnings.push('NPM_TOKEN secret may need to be configured');
+        error('Workflow: id-token: write permission missing');
+        this.errors.push('Trusted Publishing requires id-token: write on publish-npm job');
       }
-      
+
+      if (workflowContent.includes('environment: npm-publish')) {
+        success('Workflow: npm-publish environment configured');
+      } else {
+        error('Workflow: npm-publish environment missing');
+        this.errors.push('Trusted Publishing requires environment: npm-publish');
+      }
+
+      if (workflowContent.includes('${{ secrets.NPM_TOKEN }}')) {
+        warning('Workflow: stale NPM_TOKEN reference found — Trusted Publishing makes this unnecessary');
+        this.warnings.push('Remove ${{ secrets.NPM_TOKEN }} from workflow now that OIDC is used');
+      }
+
       if (workflowContent.includes('${{ secrets.GITHUB_TOKEN }}')) {
         success('Workflow: GITHUB_TOKEN secret configured');
       } else {
@@ -535,9 +547,11 @@ class ReleaseAutomationTester {
     
     // Next steps
     log('\n📋 Next Steps:', 'cyan');
-    log('1. Ensure all secrets are configured in GitHub repository settings:', 'cyan');
-    log('   • NPM_TOKEN (required for npm publishing)', 'cyan');
-    log('   • GITHUB_TOKEN (automatically available)', 'cyan');
+    log('1. Ensure GitHub repository settings are configured:', 'cyan');
+    log('   • Secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN', 'cyan');
+    log('   • Environment "npm-publish" exists (Settings → Environments)', 'cyan');
+    log('   • npm Trusted Publisher configured on npmjs.com (no NPM_TOKEN secret needed)', 'cyan');
+    log('   • GITHUB_TOKEN is provided automatically', 'cyan');
     log('\n2. To trigger a release:', 'cyan');
     log('   • Update version in package.json', 'cyan');
     log('   • Update changelog in docs/CHANGELOG.md', 'cyan');
