@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.55.0] - 2026-05-22
+
+### Changed
+
+- **Updated n8n to 2.21.7.** Bumped the four n8n packages this server loads at build time: `n8n-nodes-base` 2.20.4 → 2.21.2, `n8n-core` 2.20.3 → 2.21.4, `n8n-workflow` 2.20.0 → 2.21.1, and `@n8n/n8n-nodes-langchain` 2.20.4 → 2.21.4. The node database was rebuilt from the upgraded packages (822 core nodes, 542 AI-capable tool variants, 86% documentation coverage) and the community-node corpus was refreshed against the n8n verified-nodes Strapi API and the npm registry — total community count is now 1,029 (911 verified + 118 unverified), and incremental README/AI-summary generation backfilled the new arrivals (1,022/1,029 with README, 1,021/1,029 with AI summary). README badge and node-count copy updated to 1,851 total (822 core + 1,029 community, 911 verified).
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.54.0] - 2026-05-18
 
 ### Added
