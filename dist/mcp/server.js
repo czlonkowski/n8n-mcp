@@ -544,12 +544,13 @@ class N8NDocumentationMCPServer {
             try {
                 logger_1.logger.debug(`Executing tool: ${name}`, (0, redaction_1.summarizeToolCallArgs)(processedArgs));
                 const startTime = Date.now();
-                const additionalTool = this.additionalToolsByName.get(name);
-                const result = additionalTool
-                    ? await additionalTool.handler(processedArgs ?? {}, { instanceContext: this.instanceContext })
-                    : await this.executeTool(name, processedArgs);
+                const isAdditionalTool = this.additionalToolsByName.has(name);
+                const result = await this.executeTool(name, processedArgs);
                 const duration = Date.now() - startTime;
                 logger_1.logger.debug(`Tool ${name} executed successfully`);
+                // Additional tools receive the same telemetry treatment as built-ins:
+                // tool name and duration are recorded. Hosts that prefer not to emit
+                // internal tool names in telemetry should filter at the telemetry sink.
                 telemetry_1.telemetry.trackToolUsage(name, true, duration);
                 if (this.previousTool) {
                     const timeDelta = Date.now() - this.previousToolTimestamp;
@@ -557,6 +558,11 @@ class N8NDocumentationMCPServer {
                 }
                 this.previousTool = name;
                 this.previousToolTimestamp = Date.now();
+                if (isAdditionalTool) {
+                    // Return the handler's CallToolResult directly, skipping the
+                    // built-in stringify/wrap path so the host controls the response shape.
+                    return result;
+                }
                 let responseText;
                 let structuredContent = null;
                 try {

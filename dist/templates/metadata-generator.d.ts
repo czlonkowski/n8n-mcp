@@ -1,5 +1,29 @@
 import { z } from 'zod';
-export declare const TemplateMetadataSchema: any;
+export declare const TemplateMetadataSchema: z.ZodObject<{
+    categories: z.ZodArray<z.ZodString, "many">;
+    complexity: z.ZodEnum<["simple", "medium", "complex"]>;
+    use_cases: z.ZodArray<z.ZodString, "many">;
+    estimated_setup_minutes: z.ZodNumber;
+    required_services: z.ZodArray<z.ZodString, "many">;
+    key_features: z.ZodArray<z.ZodString, "many">;
+    target_audience: z.ZodArray<z.ZodString, "many">;
+}, "strip", z.ZodTypeAny, {
+    complexity: "simple" | "medium" | "complex";
+    categories: string[];
+    use_cases: string[];
+    estimated_setup_minutes: number;
+    required_services: string[];
+    key_features: string[];
+    target_audience: string[];
+}, {
+    complexity: "simple" | "medium" | "complex";
+    categories: string[];
+    use_cases: string[];
+    estimated_setup_minutes: number;
+    required_services: string[];
+    key_features: string[];
+    target_audience: string[];
+}>;
 export type TemplateMetadata = z.infer<typeof TemplateMetadataSchema>;
 export interface MetadataRequest {
     templateId: number;

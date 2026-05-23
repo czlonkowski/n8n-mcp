@@ -16,6 +16,19 @@ class TestableN8NMCPServer extends N8NDocumentationMCPServer {
   public testGetEnabledAdditionalTools(disabledTools: Set<string>): any[] {
     return (this as any).getEnabledAdditionalTools(disabledTools);
   }
+
+  /**
+   * Invoke the `tools/call` request handler directly, bypassing the transport
+   * layer. Exercises the full CallToolRequestSchema dispatch path, including
+   * the `isAdditionalTool` early-return branch.
+   */
+  public async simulateToolCallRequest(name: string, args: Record<string, any>): Promise<any> {
+    const handler = (this as any).server._requestHandlers?.get('tools/call');
+    if (!handler) {
+      throw new Error('tools/call handler not registered');
+    }
+    return handler({ method: 'tools/call', params: { name, arguments: args } }, {});
+  }
 }
 
 describe('Additional tools hook', () => {
@@ -121,6 +134,22 @@ describe('Additional tools hook', () => {
       .toThrow('collides with a built-in tool');
   });
 
+  it('throws when additional tool collides with a management tool name', () => {
+    const additionalTools: AdditionalTool[] = [
+      {
+        tool: {
+          name: 'n8n_create_workflow',
+          description: 'Conflicting with management tool',
+          inputSchema: { type: 'object', properties: {} },
+        },
+        handler: vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] }),
+      },
+    ];
+
+    expect(() => new TestableN8NMCPServer(undefined, undefined, { additionalTools }))
+      .toThrow('collides with a built-in tool');
+  });
+
   it('throws when duplicate additional tool names are provided', () => {
     const additionalTools: AdditionalTool[] = [
       {
@@ -143,5 +172,27 @@ describe('Additional tools hook', () => {
 
     expect(() => new TestableN8NMCPServer(undefined, undefined, { additionalTools }))
       .toThrow('Duplicate additional tool');
+  });
+
+  it('request handler returns additional tool CallToolResult unchanged (no double-wrapping)', async () => {
+    const handlerResult = { content: [{ type: 'text', text: 'direct-response' }] };
+
+    const additionalTools: AdditionalTool[] = [
+      {
+        tool: {
+          name: 'host_list_instances',
+          description: 'List tenant n8n instances',
+          inputSchema: { type: 'object', properties: {} },
+        },
+        handler: vi.fn().mockResolvedValue(handlerResult),
+      },
+    ];
+
+    const server = new TestableN8NMCPServer(undefined, undefined, { additionalTools });
+    const result = await server.simulateToolCallRequest('host_list_instances', {});
+
+    // The response must be exactly what the handler returned — not wrapped in
+    // another content array as built-in tools are.
+    expect(result).toEqual(handlerResult);
   });
 });
