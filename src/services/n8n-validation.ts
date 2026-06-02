@@ -172,6 +172,10 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
     active,
     activeVersionId,
     activeVersion,
+    // n8n 2.x returns `nodeGroups` on GET /workflows but rejects it on PUT
+    // (workflow schema has additionalProperties:false) -> must be stripped,
+    // otherwise every update fails with 400 "must NOT have additional properties".
+    nodeGroups,
     // Keep everything else
     ...cleanedWorkflow
   } = workflow as any;
