@@ -386,11 +386,15 @@ describe('n8n-validation', () => {
           triggerCount: 5,
           shared: true,
           active: true,
+          activeVersionId: 'av123',
+          activeVersion: { foo: 'bar' },
+          nodeGroups: [], // n8n 2.x returns it on GET but rejects it on PUT
+          sourceWorkflowId: 'src-456', // n8n 2.25+ (migration AddSourceWorkflowId), rejected on PUT
           settings: { executionOrder: 'v1' },
         } as any;
 
         const cleaned = cleanWorkflowForUpdate(workflow);
-        
+
         // Should remove all these fields
         expect(cleaned).not.toHaveProperty('id');
         expect(cleaned).not.toHaveProperty('createdAt');
@@ -407,7 +411,11 @@ describe('n8n-validation', () => {
         expect(cleaned).not.toHaveProperty('triggerCount');
         expect(cleaned).not.toHaveProperty('shared');
         expect(cleaned).not.toHaveProperty('active');
-        
+        expect(cleaned).not.toHaveProperty('activeVersionId');
+        expect(cleaned).not.toHaveProperty('activeVersion');
+        expect(cleaned).not.toHaveProperty('nodeGroups');
+        expect(cleaned).not.toHaveProperty('sourceWorkflowId');
+
         // Should keep name and filter settings to safe properties
         expect(cleaned.name).toBe('Updated Workflow');
         expect(cleaned.settings).toEqual({ executionOrder: 'v1' });

@@ -176,6 +176,10 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
     // (workflow schema has additionalProperties:false) -> must be stripped,
     // otherwise every update fails with 400 "must NOT have additional properties".
     nodeGroups,
+    // n8n 2.25+ (migration AddSourceWorkflowId) returns `sourceWorkflowId` on GET
+    // but the PUT /workflows schema (additionalProperties:false) rejects it too.
+    // Without stripping, every workflow update fails with 400 on n8n >= 2.25.
+    sourceWorkflowId,
     // Keep everything else
     ...cleanedWorkflow
   } = workflow as any;
