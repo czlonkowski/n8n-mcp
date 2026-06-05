@@ -87,7 +87,7 @@ export const LLM_PROVIDER_PRESETS: Record<string, LLMProviderPreset> = {
   },
   minimax: {
     baseUrl: 'https://api.minimax.io/v1',
-    model: 'MiniMax-M2.7',
+    model: 'MiniMax-M3',
     supportsTemperature: true,
     temperatureRange: [0, 1],
   },
@@ -281,7 +281,7 @@ Guidelines:
 
   /**
    * Strip thinking/reasoning tags from LLM responses.
-   * Some models (MiniMax M2.5/M2.7, Qwen) wrap internal reasoning in <think> tags.
+   * Some models (MiniMax M2.7, Qwen) wrap internal reasoning in <think> tags.
    */
   private stripThinkingTags(content: string): string {
     return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();

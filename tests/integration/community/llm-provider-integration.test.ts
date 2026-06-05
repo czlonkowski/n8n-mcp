@@ -135,7 +135,7 @@ describe('LLM Provider Integration', () => {
 
       const generator = createDocumentationGenerator();
 
-      expect(generator['model']).toBe('MiniMax-M2.7');
+      expect(generator['model']).toBe('MiniMax-M3');
     });
   });
 
@@ -151,12 +151,12 @@ describe('LLM Provider Integration', () => {
 
     it('should allow model override with preset', () => {
       process.env.N8N_MCP_LLM_PROVIDER = 'minimax';
-      process.env.N8N_MCP_LLM_MODEL = 'MiniMax-M2.5-highspeed';
+      process.env.N8N_MCP_LLM_MODEL = 'MiniMax-M2.7-highspeed';
       process.env.MINIMAX_API_KEY = 'test-key';
 
       const generator = createDocumentationGenerator();
 
-      expect(generator['model']).toBe('MiniMax-M2.5-highspeed');
+      expect(generator['model']).toBe('MiniMax-M2.7-highspeed');
     });
 
     it('should use local defaults when no provider is set', () => {

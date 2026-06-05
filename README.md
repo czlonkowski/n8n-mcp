@@ -1259,7 +1259,7 @@ Set `N8N_MCP_LLM_PROVIDER` for quick setup with a cloud provider:
 | Provider | Preset Name | Default Model | API Key Env Var |
 |----------|------------|---------------|-----------------|
 | [OpenAI](https://openai.com) | `openai` | `gpt-4o-mini` | `OPENAI_API_KEY` |
-| [MiniMax](https://www.minimaxi.com) | `minimax` | `MiniMax-M2.7` | `MINIMAX_API_KEY` |
+| [MiniMax](https://www.minimaxi.com) | `minimax` | `MiniMax-M3` | `MINIMAX_API_KEY` |
 | [Anthropic](https://anthropic.com) | `anthropic` | `claude-sonnet-4-20250514` | `N8N_MCP_LLM_API_KEY` |
 
 ```bash

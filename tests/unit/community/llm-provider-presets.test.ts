@@ -37,7 +37,7 @@ describe('LLM Provider Presets', () => {
       expect(LLM_PROVIDER_PRESETS).toHaveProperty('minimax');
       const minimax = LLM_PROVIDER_PRESETS.minimax;
       expect(minimax.baseUrl).toBe('https://api.minimax.io/v1');
-      expect(minimax.model).toBe('MiniMax-M2.7');
+      expect(minimax.model).toBe('MiniMax-M3');
       expect(minimax.supportsTemperature).toBe(true);
       expect(minimax.temperatureRange).toEqual([0, 1]);
     });
@@ -104,7 +104,7 @@ describe('LLM Provider Presets', () => {
     it('should resolve MiniMax preset (mixed case)', () => {
       const preset = resolveProviderPreset('MiniMax');
       expect(preset).toBeDefined();
-      expect(preset!.model).toBe('MiniMax-M2.7');
+      expect(preset!.model).toBe('MiniMax-M3');
     });
 
     it('should resolve openai preset', () => {
@@ -156,7 +156,7 @@ describe('LLM Provider Presets', () => {
 
       const generator = createDocumentationGenerator();
 
-      expect(generator['model']).toBe('MiniMax-M2.7');
+      expect(generator['model']).toBe('MiniMax-M3');
     });
 
     it('should use openai preset when N8N_MCP_LLM_PROVIDER=openai', () => {
@@ -170,12 +170,12 @@ describe('LLM Provider Presets', () => {
 
     it('should allow N8N_MCP_LLM_MODEL to override preset model', () => {
       process.env.N8N_MCP_LLM_PROVIDER = 'minimax';
-      process.env.N8N_MCP_LLM_MODEL = 'MiniMax-M2.5-highspeed';
+      process.env.N8N_MCP_LLM_MODEL = 'MiniMax-M2.7-highspeed';
       process.env.MINIMAX_API_KEY = 'test-key';
 
       const generator = createDocumentationGenerator();
 
-      expect(generator['model']).toBe('MiniMax-M2.5-highspeed');
+      expect(generator['model']).toBe('MiniMax-M2.7-highspeed');
     });
 
     it('should allow N8N_MCP_LLM_BASE_URL to override preset base URL', () => {
@@ -186,7 +186,7 @@ describe('LLM Provider Presets', () => {
       const generator = createDocumentationGenerator();
 
       // Model should still come from preset since N8N_MCP_LLM_MODEL is not set
-      expect(generator['model']).toBe('MiniMax-M2.7');
+      expect(generator['model']).toBe('MiniMax-M3');
     });
 
     it('should auto-detect MINIMAX_API_KEY when no explicit API key is set', () => {
