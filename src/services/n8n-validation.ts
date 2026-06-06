@@ -172,6 +172,7 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
     active,
     activeVersionId,
     activeVersion,
+    nodeGroups, // n8n 2.x returns this but rejects it in PUT (Issue #831)
     // Keep everything else
     ...cleanedWorkflow
   } = workflow as any;

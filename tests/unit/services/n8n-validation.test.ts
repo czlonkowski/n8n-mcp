@@ -429,6 +429,22 @@ describe('n8n-validation', () => {
         expect(cleaned.name).toBe('Test Workflow');
       });
 
+      it('should exclude nodeGroups field for n8n 2.x API compatibility (Issue #831)', () => {
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          versionId: 'v123',
+          nodeGroups: [], // n8n 2.x returns this but rejects it in PUT
+        } as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+
+        expect(cleaned).not.toHaveProperty('nodeGroups');
+        expect(cleaned).not.toHaveProperty('versionId');
+        expect(cleaned.name).toBe('Test Workflow');
+      });
+
       it('should exclude description field for n8n API compatibility (Issue #431)', () => {
         const workflow = {
           name: 'Test Workflow',
