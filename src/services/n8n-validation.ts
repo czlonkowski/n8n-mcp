@@ -172,6 +172,7 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
     active,
     activeVersionId,
     activeVersion,
+    nodeGroups,
     // Keep everything else
     ...cleanedWorkflow
   } = workflow as any;
