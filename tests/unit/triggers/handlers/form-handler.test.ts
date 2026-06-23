@@ -21,7 +21,13 @@ vi.mock('../../../../src/config/n8n-api', () => ({
 // Mock SSRFProtection
 vi.mock('../../../../src/utils/ssrf-protection', () => ({
   SSRFProtection: {
-    validateWebhookUrl: vi.fn(async () => ({ valid: true, reason: '' })),
+    validateWebhookUrl: vi.fn(async () => ({
+      valid: true,
+      reason: '',
+      address: '8.8.8.8',
+      family: 4,
+    })),
+    createPinnedAgents: vi.fn(() => ({ httpAgent: {}, httpsAgent: {} })),
   },
 }));
 
@@ -567,6 +573,24 @@ describe('FormHandler', () => {
       // Complex data types are serialized in FormData
       const config = vi.mocked(axios.request).mock.calls[0][0];
       expect(config.data).toBeInstanceOf(FormData);
+    });
+
+    it('should disable redirect-following on outbound request', async () => {
+      const workflow = createWorkflow();
+      const input = {
+        triggerType: 'form' as const,
+        workflowId: workflow.id!,
+        formData: { name: 'Alice' },
+      };
+      const triggerInfo: DetectedTrigger = {
+        type: 'form',
+        node: workflow.nodes[0],
+      } as any;
+
+      await handler.execute(input, workflow, triggerInfo);
+
+      const config = vi.mocked(axios.request).mock.calls[0][0];
+      expect(config.maxRedirects).toBe(0);
     });
   });
 });

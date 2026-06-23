@@ -44,6 +44,21 @@ export class MutationTracker {
       const workflowBefore = WorkflowSanitizer.sanitizeWorkflowRaw(data.workflowBefore);
       const workflowAfter = WorkflowSanitizer.sanitizeWorkflowRaw(data.workflowAfter);
 
+      // SECURITY (GHSA-8g7g-hmwm-6rv2): redact caller-supplied operations,
+      // validation results, and error messages before storing in the telemetry record.
+      const sanitizedOperations = WorkflowSanitizer.sanitizeTelemetryObject<DiffOperation[]>(
+        data.operations
+      );
+      const sanitizedValidationBefore = WorkflowSanitizer.sanitizeTelemetryObject(
+        data.validationBefore
+      );
+      const sanitizedValidationAfter = WorkflowSanitizer.sanitizeTelemetryObject(
+        data.validationAfter
+      );
+      const sanitizedMutationError = WorkflowSanitizer.sanitizeTelemetryObject<string | undefined>(
+        data.mutationError
+      );
+
       // Sanitize user intent
       const sanitizedIntent = intentSanitizer.sanitize(data.userIntent);
 
@@ -97,15 +112,15 @@ export class MutationTracker {
         userIntent: sanitizedIntent,
         intentClassification,
         toolName: data.toolName,
-        operations: data.operations,
+        operations: sanitizedOperations,
         operationCount: data.operations.length,
         operationTypes: this.extractOperationTypes(data.operations),
-        validationBefore: data.validationBefore,
-        validationAfter: data.validationAfter,
+        validationBefore: sanitizedValidationBefore,
+        validationAfter: sanitizedValidationAfter,
         ...validationMetrics,
         ...changeMetrics,
         mutationSuccess: data.mutationSuccess,
-        mutationError: data.mutationError,
+        mutationError: sanitizedMutationError,
         durationMs: data.durationMs,
       };
 

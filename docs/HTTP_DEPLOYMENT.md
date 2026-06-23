@@ -620,7 +620,7 @@ AUTH_RATE_LIMIT_MAX=20
 
 ### SSRF Protection
 
-Prevents Server-Side Request Forgery attacks when using webhook triggers:
+Prevents Server-Side Request Forgery attacks. The same gate applies to webhook trigger URLs (chat, form, generic webhook), the n8n API client base URL (`N8N_API_URL`), and per-request URLs supplied via the `x-n8n-url` header in multi-tenant mode.
 
 **Three Security Modes:**
 

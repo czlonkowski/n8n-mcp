@@ -1,7 +1,7 @@
 /**
  * Unit tests for BaseTriggerHandler
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BaseTriggerHandler } from '../../../../src/triggers/handlers/base-handler';
 import { N8nApiClient } from '../../../../src/services/n8n-api-client';
 import { InstanceContext } from '../../../../src/types/instance-context';
@@ -190,6 +190,54 @@ describe('BaseTriggerHandler', () => {
 
       const apiKey = (handler as any).getApiKey();
       expect(apiKey).toBe('context-key');
+    });
+  });
+
+  describe('GHSA-jxx9-px88-pj69 — multi-tenant env fallback refused', () => {
+    const originalMultiTenant = process.env.ENABLE_MULTI_TENANT;
+
+    beforeEach(() => {
+      process.env.ENABLE_MULTI_TENANT = 'true';
+    });
+
+    afterEach(() => {
+      if (originalMultiTenant === undefined) {
+        delete process.env.ENABLE_MULTI_TENANT;
+      } else {
+        process.env.ENABLE_MULTI_TENANT = originalMultiTenant;
+      }
+    });
+
+    it('getBaseUrl returns undefined when no context in multi-tenant mode', () => {
+      const handler = new TestHandler(mockClient);
+      const baseUrl = (handler as any).getBaseUrl();
+      expect(baseUrl).toBeUndefined();
+    });
+
+    it('getApiKey returns undefined when no context in multi-tenant mode', () => {
+      const handler = new TestHandler(mockClient);
+      const apiKey = (handler as any).getApiKey();
+      expect(apiKey).toBeUndefined();
+    });
+
+    it('getBaseUrl still returns context URL in multi-tenant mode', () => {
+      const context: InstanceContext = {
+        n8nApiUrl: 'https://tenant.n8n.com/api/v1',
+        n8nApiKey: 'tenant-key',
+        sessionId: 'tenant-session',
+      };
+      const handler = new TestHandler(mockClient, context);
+      expect((handler as any).getBaseUrl()).toBe('https://tenant.n8n.com');
+    });
+
+    it('getApiKey still returns context key in multi-tenant mode', () => {
+      const context: InstanceContext = {
+        n8nApiUrl: 'https://tenant.n8n.com/api/v1',
+        n8nApiKey: 'tenant-key',
+        sessionId: 'tenant-session',
+      };
+      const handler = new TestHandler(mockClient, context);
+      expect((handler as any).getApiKey()).toBe('tenant-key');
     });
   });
 

@@ -16,7 +16,7 @@ import { n8nDocumentationToolsFinal } from './mcp/tools';
 import { n8nManagementTools } from './mcp/tools-n8n-manager';
 import { N8NDocumentationMCPServer } from './mcp/server';
 import { logger } from './utils/logger';
-import { AuthManager } from './utils/auth';
+import { AuthManager, buildBearerChallenge } from './utils/auth';
 import { PROJECT_VERSION } from './utils/version';
 import { isN8nApiConfigured } from './config/n8n-api';
 import dotenv from 'dotenv';
@@ -301,12 +301,13 @@ export async function startFixedHTTPServer() {
     
     // Check if Authorization header is missing
     if (!authHeader) {
-      logger.warn('Authentication failed: Missing Authorization header', { 
+      logger.warn('Authentication failed: Missing Authorization header', {
         ip: req.ip,
         userAgent: req.get('user-agent'),
         reason: 'no_auth_header'
       });
-      res.status(401).json({ 
+      res.setHeader('WWW-Authenticate', buildBearerChallenge('no_auth_header'));
+      res.status(401).json({
         jsonrpc: '2.0',
         error: {
           code: -32001,
@@ -316,16 +317,17 @@ export async function startFixedHTTPServer() {
       });
       return;
     }
-    
+
     // Check if Authorization header has Bearer prefix
     if (!authHeader.startsWith('Bearer ')) {
-      logger.warn('Authentication failed: Invalid Authorization header format (expected Bearer token)', { 
+      logger.warn('Authentication failed: Invalid Authorization header format (expected Bearer token)', {
         ip: req.ip,
         userAgent: req.get('user-agent'),
         reason: 'invalid_auth_format',
         headerPrefix: authHeader.substring(0, Math.min(authHeader.length, 10)) + '...'  // Log first 10 chars for debugging
       });
-      res.status(401).json({ 
+      res.setHeader('WWW-Authenticate', buildBearerChallenge('invalid_auth_format'));
+      res.status(401).json({
         jsonrpc: '2.0',
         error: {
           code: -32001,
@@ -350,6 +352,7 @@ export async function startFixedHTTPServer() {
         userAgent: req.get('user-agent'),
         reason: 'invalid_token'
       });
+      res.setHeader('WWW-Authenticate', buildBearerChallenge('invalid_token'));
       res.status(401).json({
         jsonrpc: '2.0',
         error: {

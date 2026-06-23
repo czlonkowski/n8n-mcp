@@ -13,6 +13,34 @@ export class ValidationError extends Error {
   }
 }
 
+// SECURITY (GHSA-8g7g-hmwm-6rv2): validate caller-supplied URL path segment.
+const API_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
+const API_PATH_SEGMENT_MAX_LENGTH = 128;
+
+export function encodeApiPathSegment(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new ValidationError(
+      `${fieldName} is required and must be a non-empty string`,
+      fieldName,
+      value
+    );
+  }
+  if (value.length > API_PATH_SEGMENT_MAX_LENGTH) {
+    throw new ValidationError(
+      `${fieldName} exceeds maximum length of ${API_PATH_SEGMENT_MAX_LENGTH} characters`,
+      fieldName
+    );
+  }
+  if (!API_PATH_SEGMENT_PATTERN.test(value)) {
+    throw new ValidationError(
+      `Invalid ${fieldName}: must contain only alphanumeric characters, hyphens, or underscores`,
+      fieldName,
+      value
+    );
+  }
+  return encodeURIComponent(value);
+}
+
 export interface ValidationResult {
   valid: boolean;
   errors: Array<{

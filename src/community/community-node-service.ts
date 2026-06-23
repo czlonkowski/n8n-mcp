@@ -1,6 +1,7 @@
 import { logger } from '../utils/logger';
 import { NodeRepository, CommunityNodeFields } from '../database/node-repository';
 import { ParsedNode } from '../parsers/node-parser';
+import { parseTypeVersion } from '../utils/typeversion';
 import {
   CommunityNodeFetcher,
   StrapiCommunityNode,
@@ -280,7 +281,9 @@ export class CommunityNodeService {
         nodeDesc.group?.includes('webhook') ||
         false,
       isVersioned: (attributes.nodeVersions?.length || 0) > 1,
-      version: nodeDesc.version?.toString() || attributes.npmVersion || '1',
+      // typeVersion is the descriptor's version, NOT the npm package version.
+      // npm version (e.g. "0.2.21") is exposed separately via npmVersion below.
+      version: (parseTypeVersion(nodeDesc.version) ?? 1).toString(),
       outputs: nodeDesc.outputs,
       outputNames: nodeDesc.outputNames,
 
@@ -322,7 +325,10 @@ export class CommunityNodeService {
       isTrigger: pkgInfo.name.includes('trigger'),
       isWebhook: pkgInfo.name.includes('webhook'),
       isVersioned: false,
-      version: pkgInfo.version,
+      // No descriptor available without parsing the npm tarball — declarative community
+      // nodes default to typeVersion 1 at runtime when version isn't declared.
+      // npm package version is preserved in the npmVersion field below.
+      version: '1',
 
       // Community-specific fields
       isCommunity: true,

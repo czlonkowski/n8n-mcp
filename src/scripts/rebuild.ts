@@ -28,9 +28,13 @@ async function rebuild() {
   const schema = fs.readFileSync(path.join(__dirname, '../../src/database/schema.sql'), 'utf8');
   db.exec(schema);
   
-  // Clear existing data
-  db.exec('DELETE FROM nodes');
-  console.log('🗑️  Cleared existing data\n');
+  // Clear existing data, but preserve community nodes (is_community = 1).
+  // Community nodes are fetched separately (npm run fetch:community) and are not
+  // part of the installed n8n packages, so a full wipe would drop them on every
+  // rebuild and force a manual backup/restore. Scoping the delete to core/base
+  // nodes lets them survive the rebuild automatically.
+  db.exec('DELETE FROM nodes WHERE is_community = 0 OR is_community IS NULL');
+  console.log('🗑️  Cleared core/base nodes (community nodes preserved)\n');
   
   // Load all nodes
   const nodes = await loader.loadAllNodes();

@@ -527,7 +527,34 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       expect(inputErrors).toHaveLength(0);
     });
 
-    it('should flag regular node with index 1 (only 1 input)', async () => {
+    it('should flag connection targeting a trigger node input', async () => {
+      const workflow = {
+        nodes: [
+          { id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [0, 0], parameters: {} },
+          { id: '2', name: 'Set', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} },
+          { id: '3', name: 'Webhook2', type: 'n8n-nodes-base.webhook', position: [400, 0], parameters: {} },
+        ],
+        connections: {
+          'Webhook': {
+            main: [[{ node: 'Set', type: 'main', index: 0 }]]
+          },
+          'Set': {
+            main: [[{ node: 'Webhook2', type: 'main', index: 0 }]]
+          }
+        }
+      };
+
+      const result = await validator.validateWorkflow(workflow as any);
+
+      const inputErrors = result.errors.filter(e => e.code === 'INPUT_INDEX_OUT_OF_BOUNDS');
+      expect(inputErrors).toHaveLength(1);
+      expect(inputErrors[0].message).toContain('trigger nodes have no main inputs');
+    });
+
+    it('should skip bounds check for non-Merge regular nodes (dynamic inputs)', async () => {
+      // Non-Merge nodes can accept dynamic inputs (e.g., Code nodes with multiple
+      // connections in production). We skip bounds checking for these since we
+      // can't reliably determine their input count from metadata.
       const workflow = {
         nodes: [
           { id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [0, 0], parameters: {} },
@@ -535,17 +562,15 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
         ],
         connections: {
           'Webhook': {
-            main: [[{ node: 'Code', type: 'main', index: 1 }]]  // index 1 - out of bounds
+            main: [[{ node: 'Code', type: 'main', index: 1 }]]
           }
         }
       };
 
       const result = await validator.validateWorkflow(workflow as any);
 
-      const inputError = result.errors.find(e => e.code === 'INPUT_INDEX_OUT_OF_BOUNDS');
-      expect(inputError).toBeDefined();
-      expect(inputError!.message).toContain('Input index 1');
-      expect(inputError!.message).toContain('Code');
+      const inputErrors = result.errors.filter(e => e.code === 'INPUT_INDEX_OUT_OF_BOUNDS');
+      expect(inputErrors).toHaveLength(0);
     });
 
     it('should accept Merge node with index 1 (has 2 inputs)', async () => {
@@ -573,6 +598,57 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
 
       const inputErrors = result.errors.filter(e => e.code === 'INPUT_INDEX_OUT_OF_BOUNDS');
       expect(inputErrors).toHaveLength(0);
+    });
+
+    it('should accept Merge node with numberInputs: 4 (multi-input combine mode)', async () => {
+      const workflow = {
+        nodes: [
+          { id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [0, 0], parameters: {} },
+          { id: '2', name: 'SetA', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} },
+          { id: '3', name: 'SetB', type: 'n8n-nodes-base.set', position: [200, 100], parameters: {} },
+          { id: '4', name: 'SetC', type: 'n8n-nodes-base.set', position: [200, 200], parameters: {} },
+          { id: '5', name: 'SetD', type: 'n8n-nodes-base.set', position: [200, 300], parameters: {} },
+          { id: '6', name: 'Merge', type: 'n8n-nodes-base.merge', position: [400, 150], parameters: { mode: 'combine', numberInputs: 4 } },
+        ],
+        connections: {
+          'Webhook': {
+            main: [[{ node: 'SetA', type: 'main', index: 0 }, { node: 'SetB', type: 'main', index: 0 }, { node: 'SetC', type: 'main', index: 0 }, { node: 'SetD', type: 'main', index: 0 }]]
+          },
+          'SetA': { main: [[{ node: 'Merge', type: 'main', index: 0 }]] },
+          'SetB': { main: [[{ node: 'Merge', type: 'main', index: 1 }]] },
+          'SetC': { main: [[{ node: 'Merge', type: 'main', index: 2 }]] },
+          'SetD': { main: [[{ node: 'Merge', type: 'main', index: 3 }]] },
+        }
+      };
+
+      const result = await validator.validateWorkflow(workflow as any);
+
+      const inputErrors = result.errors.filter(e => e.code === 'INPUT_INDEX_OUT_OF_BOUNDS');
+      expect(inputErrors).toHaveLength(0);
+    });
+
+    it('should flag Merge node when index exceeds numberInputs', async () => {
+      const workflow = {
+        nodes: [
+          { id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [0, 0], parameters: {} },
+          { id: '2', name: 'Set1', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} },
+          { id: '3', name: 'Merge', type: 'n8n-nodes-base.merge', position: [400, 0], parameters: { numberInputs: 2 } },
+        ],
+        connections: {
+          'Webhook': {
+            main: [[{ node: 'Set1', type: 'main', index: 0 }]]
+          },
+          'Set1': {
+            main: [[{ node: 'Merge', type: 'main', index: 3 }]]
+          }
+        }
+      };
+
+      const result = await validator.validateWorkflow(workflow as any);
+
+      const inputErrors = result.errors.filter(e => e.code === 'INPUT_INDEX_OUT_OF_BOUNDS');
+      expect(inputErrors).toHaveLength(1);
+      expect(inputErrors[0].message).toContain('Input index 3');
     });
 
     it('should skip bounds check for unknown node types', async () => {

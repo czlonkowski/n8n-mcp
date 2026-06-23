@@ -50,9 +50,9 @@ curl -s -X POST http://localhost:3000/mcp \
   -H "Authorization: Bearer $AUTH_TOKEN" \
   -d '{"jsonrpc":"2.0","method":"get_database_statistics","id":2}' | jq .
 
-# Check health again to see session info
+# Liveness check (health body is intentionally minimal per GHSA-75hx-xj24-mqrw)
 echo
-echo "Checking health to see session info..."
+echo "Liveness check..."
 curl -s http://localhost:3000/health | jq .
 
 # Clean up

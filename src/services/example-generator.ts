@@ -443,9 +443,19 @@ return results;`
     },
     
     // If - Conditional logic
+    // IF v2.2+ requires conditions.options (version/leftValue/caseSensitive/typeValidation),
+    // a combinator ('and'|'or'), and a stable id on each condition;
+    // see node-sanitizer.ts / n8n-validation.ts / type-structures.ts.
     'nodes-base.if': {
       minimal: {
         conditions: {
+          options: {
+            version: 2,
+            leftValue: '',
+            caseSensitive: true,
+            typeValidation: 'strict'
+          },
+          combinator: 'and',
           conditions: [
             {
               id: '1',
@@ -461,6 +471,13 @@ return results;`
       },
       common: {
         conditions: {
+          options: {
+            version: 2,
+            leftValue: '',
+            caseSensitive: true,
+            typeValidation: 'strict'
+          },
+          combinator: 'and',
           conditions: [
             {
               id: '1',

@@ -19,6 +19,7 @@
 import axios from 'axios';
 import { logger } from '../utils/logger';
 import { N8nVersionInfo, N8nSettingsResponse } from '../types/n8n-api';
+import type { PinnedAgents } from '../utils/ssrf-protection';
 
 // Cache version info per base URL with TTL to handle server upgrades
 interface CachedVersion {
@@ -122,6 +123,7 @@ export function getSupportedSettingsProperties(version: N8nVersionInfo): Set<str
 export async function fetchN8nVersion(
   baseUrl: string,
   headers?: Record<string, string>
+  pinnedAgents?: PinnedAgents
 ): Promise<N8nVersionInfo | null> {
   // Check cache first (with TTL)
   const cached = versionCache.get(baseUrl);
@@ -137,10 +139,14 @@ export async function fetchN8nVersion(
 
     logger.debug(`Fetching n8n version from ${settingsUrl}`);
 
+    // SECURITY (GHSA-cmrh-wvq6-wm9r): pin transport when caller supplied agents.
     const response = await axios.get<N8nSettingsResponse>(settingsUrl, {
       timeout: 5000,
       headers,
       validateStatus: (status: number) => status < 500,
+      maxRedirects: 0,
+      httpAgent: pinnedAgents?.httpAgent,
+      httpsAgent: pinnedAgents?.httpsAgent,
     });
 
     if (response.status === 200 && response.data) {

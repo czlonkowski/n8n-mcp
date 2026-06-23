@@ -1,9 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TaskTemplates } from '@/services/task-templates';
 import type { TaskTemplate } from '@/services/task-templates';
+import { validateConditionNodeStructure } from '@/services/n8n-validation';
+import { validateNodeMetadata } from '@/services/node-sanitizer';
+import { EnhancedConfigValidator } from '@/services/enhanced-config-validator';
+import type { WorkflowNode } from '@/types/n8n-api';
 
 // Mock the database
 vi.mock('better-sqlite3');
+
+// Property definitions matching how the real nodes declare these fields, so
+// EnhancedConfigValidator runs its filter/structure checks the way users hit them.
+// The IF node declares `conditions` as a `filter`-type property (verified in the node DB),
+// which is what triggers the combinator requirement.
+const IF_FILTER_PROPERTIES = [
+  { name: 'conditions', displayName: 'Conditions', type: 'filter' }
+];
+const AGENT_PROPERTIES = [
+  { name: 'promptType', displayName: 'Prompt', type: 'options', options: [{ value: 'define' }, { value: 'auto' }] },
+  { name: 'text', displayName: 'Text', type: 'string' },
+  { name: 'options', displayName: 'Options', type: 'collection' }
+];
 
 describe('TaskTemplates', () => {
   beforeEach(() => {
@@ -121,8 +138,16 @@ describe('TaskTemplates', () => {
     it('should have AI agent workflow template', () => {
       const template = TaskTemplates.getTaskTemplate('ai_agent_workflow');
 
-      expect(template?.nodeType).toBe('nodes-langchain.agent');
-      expect(template?.configuration).toHaveProperty('systemMessage');
+      // Must use the full package-prefixed node type and the current
+      // promptType + options.systemMessage shape (see issue #374).
+      expect(template?.nodeType).toBe('@n8n/n8n-nodes-langchain.agent');
+      expect(template?.configuration).toMatchObject({
+        promptType: 'define',
+        text: '={{ $json.query }}',
+        options: { systemMessage: expect.any(String) }
+      });
+      expect(template?.configuration).not.toHaveProperty('systemMessage');
+      expect(template?.configuration).not.toHaveProperty('outputType');
     });
 
     it('should have error handling pattern templates', () => {
@@ -365,5 +390,87 @@ describe('TaskTemplates', () => {
       // AI calls: longer waits for rate limits
       expect(aiTemplate?.configuration.waitBetweenTries).toBe(5000);
     });
+  });
+
+  // Regression for issue #374: the static generator emitted invalid IF and
+  // AI Agent configs. These tests run the generated configs through the same
+  // validators n8n-mcp enforces so the bug cannot silently return.
+  describe('issue #374 — generated configs are valid', () => {
+    it('filter_data IF config passes the condition-node validator and sanitizer metadata check', () => {
+      const template = TaskTemplates.getTaskTemplate('filter_data');
+      expect(template).toBeDefined();
+
+      // IF v2.2+ is what the validator/sanitizer guard on; the template config
+      // must satisfy the conditions.options + per-condition id requirements.
+      const node: WorkflowNode = {
+        id: 'filter-data-node',
+        name: 'Filter Data',
+        type: 'n8n-nodes-base.if',
+        typeVersion: 2.2,
+        position: [0, 0],
+        parameters: template!.configuration
+      };
+
+      expect(validateConditionNodeStructure(node)).toEqual([]);
+      expect(validateNodeMetadata(node)).toEqual([]);
+
+      // EnhancedConfigValidator is the validator users actually hit. It requires a
+      // `combinator` on filter-type properties — the field that was still missing
+      // before this fix. This assertion fails without combinator, passes with it.
+      const result = EnhancedConfigValidator.validateWithMode(
+        'nodes-base.if',
+        template!.configuration,
+        IF_FILTER_PROPERTIES,
+        'operation',
+        'ai-friendly'
+      );
+      expect(result.valid).toBe(true);
+      expect(
+        result.errors.filter(e => /combinator|filter/i.test(`${e.property} ${e.message}`))
+      ).toEqual([]);
+
+      // Explicit checks on the fields that were previously missing.
+      const conditions = template!.configuration.conditions;
+      expect(conditions.options).toEqual({
+        version: 2,
+        leftValue: '',
+        caseSensitive: true,
+        typeValidation: 'strict'
+      });
+      expect(conditions.combinator).toBe('and');
+      expect(conditions.conditions[0]).toHaveProperty('id');
+    });
+
+    it.each(['ai_agent_workflow', 'multi_tool_ai_agent'])(
+      '%s uses the package-prefixed agent type and current promptType/options shape',
+      (taskName) => {
+        const template = TaskTemplates.getTaskTemplate(taskName);
+        expect(template).toBeDefined();
+
+        // Correct, package-prefixed node type (was missing the @n8n/ prefix).
+        expect(template!.nodeType).toBe('@n8n/n8n-nodes-langchain.agent');
+
+        // Current shape: promptType + text + options.systemMessage, matching the
+        // 1.5k real-world agent nodes in the template DB (systemMessage lives
+        // under the options collection in the current node).
+        expect(template!.configuration).toMatchObject({
+          promptType: 'define',
+          text: expect.stringContaining('{{'),
+          options: { systemMessage: expect.any(String) }
+        });
+
+        // Validate through EnhancedConfigValidator: the options.systemMessage shape
+        // must produce a clean result. (The node-specific-validators top-level
+        // systemMessage hint is only an info-level suggestion and must not flip valid.)
+        const result = EnhancedConfigValidator.validateWithMode(
+          template!.nodeType,
+          template!.configuration,
+          AGENT_PROPERTIES,
+          'operation',
+          'ai-friendly'
+        );
+        expect(result.valid).toBe(true);
+      }
+    );
   });
 });

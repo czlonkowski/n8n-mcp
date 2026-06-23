@@ -78,6 +78,12 @@ export abstract class BaseTriggerHandler<T extends BaseTriggerInput = BaseTrigge
     if (this.context?.n8nApiUrl) {
       return this.context.n8nApiUrl.replace(/\/api\/v1\/?$/, '');
     }
+    // SECURITY (GHSA-jxx9-px88-pj69): in multi-tenant mode, refuse to fall
+    // back to the operator's env URL. A handler running without a tenant
+    // context must not surface the operator's instance URL.
+    if (process.env.ENABLE_MULTI_TENANT === 'true') {
+      return undefined;
+    }
     // Fallback to environment config
     const config = getN8nApiConfig();
     if (config?.baseUrl) {
@@ -93,6 +99,11 @@ export abstract class BaseTriggerHandler<T extends BaseTriggerInput = BaseTrigge
     // First try context (for multi-tenant scenarios)
     if (this.context?.n8nApiKey) {
       return this.context.n8nApiKey;
+    }
+    // SECURITY (GHSA-jxx9-px88-pj69): in multi-tenant mode, refuse to fall
+    // back to the operator's env API key.
+    if (process.env.ENABLE_MULTI_TENANT === 'true') {
+      return undefined;
     }
     // Fallback to environment config
     const config = getN8nApiConfig();

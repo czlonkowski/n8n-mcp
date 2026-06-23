@@ -116,10 +116,14 @@ async function shutdown(signal: string) {
     originalConsoleError('Error during shutdown:', error);
   }
   
-  // Close stdin to signal we're done reading
-  process.stdin.pause();
-  process.stdin.destroy();
-  
+  // Platform-aware stdin teardown — see stdin-teardown.ts (Issues #383/#385).
+  // Lazy-required (like the telemetry fast path above) so it stays off the
+  // stdio hot path and avoids any import-ordering ambiguity with the output
+  // suppression set up above.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { tearDownStdin } = require('../utils/stdin-teardown');
+  tearDownStdin();
+
   // Exit with timeout to ensure we don't hang
   setTimeout(() => {
     process.exit(0);

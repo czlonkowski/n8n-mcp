@@ -19,7 +19,13 @@ vi.mock('../../../../src/config/n8n-api', () => ({
 // Mock SSRFProtection
 vi.mock('../../../../src/utils/ssrf-protection', () => ({
   SSRFProtection: {
-    validateWebhookUrl: vi.fn(async () => ({ valid: true, reason: '' })),
+    validateWebhookUrl: vi.fn(async () => ({
+      valid: true,
+      reason: '',
+      address: '8.8.8.8',
+      family: 4,
+    })),
+    createPinnedAgents: vi.fn(() => ({ httpAgent: {}, httpsAgent: {} })),
   },
 }));
 

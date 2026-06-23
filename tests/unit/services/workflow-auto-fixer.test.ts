@@ -402,4 +402,61 @@ describe('WorkflowAutoFixer', () => {
       expect(result.operations).toEqual([]);
     });
   });
+
+  describe('Webhook path fix stability (QA #4)', () => {
+    const webhookValidation = (nodeName: string): WorkflowValidationResult => ({
+      valid: false,
+      errors: [{
+        nodeId: nodeName,
+        nodeName,
+        message: 'Webhook path is required'
+      }] as any,
+      warnings: [],
+      statistics: {
+        totalNodes: 1,
+        enabledNodes: 1,
+        triggerNodes: 1,
+        validConnections: 0,
+        invalidConnections: 0,
+        expressionsValidated: 0
+      },
+      suggestions: []
+    });
+
+    it('produces the same webhook UUID for preview and apply on identical input', async () => {
+      const workflow = createMockWorkflow([
+        createMockNode('wh1', 'n8n-nodes-base.webhook')
+      ]);
+      const validation = webhookValidation('wh1');
+
+      const preview = await autoFixer.generateFixes(workflow, validation, [], { applyFixes: false });
+      const apply = await autoFixer.generateFixes(workflow, validation, [], { applyFixes: true });
+
+      const previewPath = preview.fixes.find(f => f.type === 'webhook-missing-path')?.after;
+      const applyPath = apply.fixes.find(f => f.type === 'webhook-missing-path')?.after;
+      expect(previewPath).toBeDefined();
+      expect(previewPath).toBe(applyPath);
+    });
+
+    it('produces distinct webhook UUIDs for different workflow+node pairs', async () => {
+      const wf1 = createMockWorkflow([createMockNode('wh1', 'n8n-nodes-base.webhook')]);
+      const wf2 = { ...createMockWorkflow([createMockNode('wh1', 'n8n-nodes-base.webhook')]), id: 'different-workflow' };
+
+      const fix1 = (await autoFixer.generateFixes(wf1, webhookValidation('wh1'), []))
+        .fixes.find(f => f.type === 'webhook-missing-path')?.after;
+      const fix2 = (await autoFixer.generateFixes(wf2, webhookValidation('wh1'), []))
+        .fixes.find(f => f.type === 'webhook-missing-path')?.after;
+
+      expect(fix1).toBeDefined();
+      expect(fix2).toBeDefined();
+      expect(fix1).not.toBe(fix2);
+    });
+
+    it('derived UUID matches canonical UUID string shape', async () => {
+      const workflow = createMockWorkflow([createMockNode('wh1', 'n8n-nodes-base.webhook')]);
+      const result = await autoFixer.generateFixes(workflow, webhookValidation('wh1'), []);
+      const path = result.fixes.find(f => f.type === 'webhook-missing-path')?.after;
+      expect(path).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    });
+  });
 });

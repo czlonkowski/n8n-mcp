@@ -1,9 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ExampleGenerator } from '@/services/example-generator';
 import type { NodeExamples } from '@/services/example-generator';
+import { validateConditionNodeStructure } from '@/services/n8n-validation';
+import { validateNodeMetadata } from '@/services/node-sanitizer';
+import { EnhancedConfigValidator } from '@/services/enhanced-config-validator';
+import type { WorkflowNode } from '@/types/n8n-api';
 
 // Mock the database
 vi.mock('better-sqlite3');
+
+// The IF node declares `conditions` as a `filter`-type property (verified in the
+// node DB), which is what makes EnhancedConfigValidator enforce the combinator field.
+const IF_FILTER_PROPERTIES = [
+  { name: 'conditions', displayName: 'Conditions', type: 'filter' }
+];
 
 describe('ExampleGenerator', () => {
   beforeEach(() => {
@@ -282,6 +292,60 @@ describe('ExampleGenerator', () => {
       expect(examples.minimal?.alwaysOutputData).toBe(true);
       expect(examples.common?.responseCode).toBe(200);
     });
+  });
+
+  // Regression for issue #374: the IF example previously omitted conditions.options
+  // and the combinator field, so generated configs failed n8n's own validators and
+  // rendered an empty IF node. Run every IF example variant through the
+  // condition-node validator, sanitizer metadata check, and EnhancedConfigValidator
+  // (the one users actually hit, which enforces the filter combinator).
+  describe('issue #374 — IF examples are valid for v2.2+', () => {
+    it.each(['minimal', 'common'] as const)(
+      'IF example "%s" passes all validators including EnhancedConfigValidator',
+      (variant) => {
+        const examples = ExampleGenerator.getExamples('nodes-base.if');
+        const config = examples[variant]!;
+        expect(config).toBeDefined();
+
+        const node: WorkflowNode = {
+          id: 'if-node',
+          name: 'IF',
+          type: 'n8n-nodes-base.if',
+          typeVersion: 2.2,
+          position: [0, 0],
+          parameters: config
+        };
+
+        expect(validateConditionNodeStructure(node)).toEqual([]);
+        expect(validateNodeMetadata(node)).toEqual([]);
+
+        // EnhancedConfigValidator enforces the filter `combinator` field, which was
+        // still missing before this fix. Without combinator this result is invalid.
+        const result = EnhancedConfigValidator.validateWithMode(
+          'nodes-base.if',
+          config,
+          IF_FILTER_PROPERTIES,
+          'operation',
+          'ai-friendly'
+        );
+        expect(result.valid).toBe(true);
+        expect(
+          result.errors.filter(e => /combinator|filter/i.test(`${e.property} ${e.message}`))
+        ).toEqual([]);
+
+        // The previously-missing options block and combinator must be present.
+        expect(config.conditions.options).toEqual({
+          version: 2,
+          leftValue: '',
+          caseSensitive: true,
+          typeValidation: 'strict'
+        });
+        expect(config.conditions.combinator).toBe('and');
+        for (const c of config.conditions.conditions) {
+          expect(c).toHaveProperty('id');
+        }
+      }
+    );
   });
 
   describe('getTaskExample', () => {

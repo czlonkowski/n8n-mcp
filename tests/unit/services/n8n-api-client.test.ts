@@ -129,15 +129,18 @@ describe('N8nApiClient', () => {
   describe('constructor', () => {
     it('should create client with default configuration', () => {
       client = new N8nApiClient(defaultConfig);
-      
-      expect(axios.create).toHaveBeenCalledWith({
+
+      expect(axios.create).toHaveBeenCalledWith(expect.objectContaining({
         baseURL: 'https://n8n.example.com/api/v1',
         timeout: 30000,
         headers: {
           'X-N8N-API-KEY': 'test-api-key',
           'Content-Type': 'application/json',
         },
-      });
+        // SECURITY (GHSA-cmrh-wvq6-wm9r): no redirect-following on the
+        // authenticated client.
+        maxRedirects: 0,
+      }));
     });
 
     it('should handle baseUrl without /api/v1', () => {
@@ -202,10 +205,14 @@ describe('N8nApiClient', () => {
       
       expect(axios.get).toHaveBeenCalledWith(
         'https://n8n.example.com/healthz',
-        {
+        expect.objectContaining({
           timeout: 5000,
           validateStatus: expect.any(Function),
-        }
+          maxRedirects: 0,
+          // SECURITY (GHSA-cmrh-wvq6-wm9r): pinned transport agents.
+          httpAgent: expect.any(Object),
+          httpsAgent: expect.any(Object),
+        })
       );
       expect(result).toEqual({ status: 'ok', features: {} });
     });
@@ -908,11 +915,15 @@ describe('N8nApiClient', () => {
       
       const result = await client.triggerWebhook(webhookRequest);
       
-      expect(axios.create).toHaveBeenCalledWith({
+      expect(axios.create).toHaveBeenCalledWith(expect.objectContaining({
         baseURL: 'https://n8n.example.com/',
         validateStatus: expect.any(Function),
-      });
-      
+        maxRedirects: 0,
+        // SECURITY (GHSA-cmrh-wvq6-wm9r): pinned transport agents.
+        httpAgent: expect.any(Object),
+        httpsAgent: expect.any(Object),
+      }));
+
       expect(result).toEqual(response);
     });
 
@@ -1099,10 +1110,54 @@ describe('N8nApiClient', () => {
 
     it('should delete credential', async () => {
       mockAxiosInstance.delete.mockResolvedValue({ data: {} });
-      
+
       await client.deleteCredential('123');
-      
+
       expect(mockAxiosInstance.delete).toHaveBeenCalledWith('/credentials/123');
+    });
+
+    describe('listAllCredentials (pagination, #816)', () => {
+      it('paginates across multiple pages until nextCursor is empty', async () => {
+        mockAxiosInstance.get
+          .mockResolvedValueOnce({ data: { data: [{ id: '1' }, { id: '2' }], nextCursor: 'page2' } })
+          .mockResolvedValueOnce({ data: { data: [{ id: '3' }], nextCursor: null } });
+
+        const result = await client.listAllCredentials();
+
+        expect(result.map((c) => c.id)).toEqual(['1', '2', '3']);
+        expect(mockAxiosInstance.get).toHaveBeenCalledTimes(2);
+        expect(mockAxiosInstance.get).toHaveBeenNthCalledWith(1, '/credentials', {
+          params: { limit: 100, cursor: undefined },
+        });
+        expect(mockAxiosInstance.get).toHaveBeenNthCalledWith(2, '/credentials', {
+          params: { limit: 100, cursor: 'page2' },
+        });
+      });
+
+      it('stops when a cursor repeats to avoid infinite loops', async () => {
+        mockAxiosInstance.get.mockResolvedValue({
+          data: { data: [{ id: 'x' }], nextCursor: 'same' },
+        });
+
+        const result = await client.listAllCredentials();
+
+        // First page accepted, second page returns the same cursor -> stop.
+        expect(result.map((c) => c.id)).toEqual(['x', 'x']);
+        expect(mockAxiosInstance.get).toHaveBeenCalledTimes(2);
+      });
+
+      it('respects the MAX_PAGES safety cap', async () => {
+        // Always return a fresh cursor so only the page cap can stop the loop.
+        let n = 0;
+        mockAxiosInstance.get.mockImplementation(async () => ({
+          data: { data: [{ id: `c${n}` }], nextCursor: `cursor-${n++}` },
+        }));
+
+        const result = await client.listAllCredentials();
+
+        expect(mockAxiosInstance.get).toHaveBeenCalledTimes(50);
+        expect(result).toHaveLength(50);
+      });
     });
   });
 
@@ -1678,21 +1733,26 @@ describe('N8nApiClient', () => {
       client = new N8nApiClient(defaultConfig);
     });
 
-    it('should log requests', () => {
-      const config = { 
-        method: 'get', 
+    it('should log requests', async () => {
+      const config = {
+        method: 'get',
         url: '/workflows',
         params: { limit: 10 },
         data: undefined,
       };
-      
-      const result = requestInterceptor(config);
-      
+
+      const result = await requestInterceptor(config);
+
       expect(logger.debug).toHaveBeenCalledWith(
         'n8n API Request: GET /workflows',
         { params: { limit: 10 }, data: undefined }
       );
+      // SECURITY (GHSA-cmrh-wvq6-wm9r): interceptor returns the config with
+      // pinned agents attached. Compare identity rather than expecting the
+      // original object back unchanged.
       expect(result).toBe(config);
+      expect(result.httpAgent).toBeDefined();
+      expect(result.httpsAgent).toBeDefined();
     });
 
     it('should log successful responses', () => {
@@ -1786,6 +1846,65 @@ describe('N8nApiClient', () => {
       expect(() => {
         new N8nApiClient({ baseUrl: 'not-a-url', apiKey: 'k' });
       }).not.toThrow();
+    });
+  });
+
+  describe('path segment validation', () => {
+    beforeEach(() => {
+      client = new N8nApiClient(defaultConfig);
+    });
+
+    const invalidIds = [
+      '../credentials',
+      '../../../healthz',
+      '..%2Fcredentials',
+      '%2E%2E%2Fcredentials',
+      'workflow/../credentials',
+      'a?includeData=true',
+      'a#fragment',
+      'with space',
+      '',
+      'a'.repeat(129),
+    ];
+
+    it('rejects ids containing disallowed characters or sequences', async () => {
+      for (const badId of invalidIds) {
+        await expect(client.getWorkflow(badId)).rejects.toThrow();
+      }
+      expect(mockAxiosInstance.get).not.toHaveBeenCalled();
+    });
+
+    it('rejects disallowed ids on getCredential, deleteWorkflow, getExecution, deleteCredential', async () => {
+      await expect(client.getCredential('../tags')).rejects.toThrow();
+      await expect(client.deleteWorkflow('../../healthz')).rejects.toThrow();
+      await expect(client.getExecution('1?includeData=true')).rejects.toThrow();
+      await expect(client.deleteCredential('cred/../../variables')).rejects.toThrow();
+      expect(mockAxiosInstance.get).not.toHaveBeenCalled();
+      expect(mockAxiosInstance.delete).not.toHaveBeenCalled();
+    });
+
+    it('accepts valid nanoid-style ids', async () => {
+      const workflow = { id: 'abc-XYZ_123', name: 'Test', nodes: [], connections: {} };
+      mockAxiosInstance.get.mockResolvedValue({ data: workflow });
+
+      await expect(client.getWorkflow('abc-XYZ_123')).resolves.toEqual(workflow);
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/workflows/abc-XYZ_123');
+    });
+
+    it('accepts valid uuid-style ids', async () => {
+      const workflow = { id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890', name: 'Test', nodes: [], connections: {} };
+      mockAxiosInstance.get.mockResolvedValue({ data: workflow });
+
+      await expect(client.getWorkflow('a1b2c3d4-e5f6-7890-abcd-ef1234567890')).resolves.toEqual(workflow);
+    });
+
+    it('rejects non-string id types', async () => {
+      // @ts-expect-error - intentional bad input
+      await expect(client.getWorkflow(123)).rejects.toThrow();
+      // @ts-expect-error - intentional bad input
+      await expect(client.getWorkflow(null)).rejects.toThrow();
+      // @ts-expect-error - intentional bad input
+      await expect(client.getWorkflow(undefined)).rejects.toThrow();
     });
   });
 });

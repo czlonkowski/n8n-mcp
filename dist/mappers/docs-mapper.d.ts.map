@@ -1,1 +1,0 @@
-{"version":3,"file":"docs-mapper.d.ts","sourceRoot":"","sources":["../../src/mappers/docs-mapper.ts"],"names":[],"mappings":"AAGA,qBAAa,UAAU;IACrB,OAAO,CAAC,QAAQ,CAAwC;IAGxD,OAAO,CAAC,QAAQ,CAAC,WAAW,CAU1B;IAEI,kBAAkB,CAAC,QAAQ,EAAE,MAAM,GAAG,OAAO,CAAC,MAAM,GAAG,IAAI,CAAC;IAkDlE,OAAO,CAAC,4BAA4B;CAmDrC"}

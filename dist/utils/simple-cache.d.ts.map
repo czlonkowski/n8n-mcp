@@ -1,1 +1,0 @@
-{"version":3,"file":"simple-cache.d.ts","sourceRoot":"","sources":["../../src/utils/simple-cache.ts"],"names":[],"mappings":"AAIA,qBAAa,WAAW;IACtB,OAAO,CAAC,KAAK,CAAqD;IAClE,OAAO,CAAC,YAAY,CAA+B;;IAYnD,GAAG,CAAC,GAAG,EAAE,MAAM,GAAG,GAAG;IASrB,GAAG,CAAC,GAAG,EAAE,MAAM,EAAE,IAAI,EAAE,GAAG,EAAE,UAAU,GAAE,MAAY,GAAG,IAAI;IAO3D,KAAK,IAAI,IAAI;IAQb,OAAO,IAAI,IAAI;CAOhB"}

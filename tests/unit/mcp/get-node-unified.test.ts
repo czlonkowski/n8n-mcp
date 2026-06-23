@@ -538,7 +538,10 @@ describe('Unified get_node Tool', () => {
       // Webhook node has no version history in our test data
       expect(result.totalVersions).toBe(0);
       expect(result.available).toBe(false);
-      expect(result.message).toBeDefined();
+      // Unavailable shape surfaces the reason so callers can tell
+      // "no data" apart from "no changes" (regression for QA #1/#12).
+      expect(result.reason).toBeDefined();
+      expect(result.reason).toMatch(/not populated/i);
     });
   });
 

@@ -636,6 +636,87 @@ describe('CommunityNodeService', () => {
     });
   });
 
+  describe('typeVersion handling (#781)', () => {
+    it('Strapi: uses descriptor version, not npm package version', async () => {
+      // Descriptor says version: 1; npm package is at 5.4.2 — typeVersion must be 1.
+      const node = {
+        ...mockStrapiNode,
+        attributes: {
+          ...mockStrapiNode.attributes,
+          npmVersion: '5.4.2',
+          nodeDescription: { ...mockStrapiNode.attributes.nodeDescription, version: 1 },
+        },
+      };
+      mockFetcher.fetchVerifiedNodes.mockResolvedValue([node]);
+
+      await service.syncVerifiedNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({ version: '1', npmVersion: '5.4.2' })
+      );
+    });
+
+    it('Strapi: defaults to "1" when descriptor version is missing (no npm fallback)', async () => {
+      const node = {
+        ...mockStrapiNode,
+        attributes: {
+          ...mockStrapiNode.attributes,
+          npmVersion: '0.2.21', // npm-style multi-dot — must NOT leak into typeVersion
+          nodeDescription: { ...mockStrapiNode.attributes.nodeDescription, version: undefined },
+        },
+      };
+      mockFetcher.fetchVerifiedNodes.mockResolvedValue([node]);
+
+      await service.syncVerifiedNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({ version: '1', npmVersion: '0.2.21' })
+      );
+    });
+
+    it('Strapi: collapses descriptor version arrays to the highest entry', async () => {
+      const node = {
+        ...mockStrapiNode,
+        attributes: {
+          ...mockStrapiNode.attributes,
+          nodeDescription: { ...mockStrapiNode.attributes.nodeDescription, version: [1, 2, 2.1] },
+        },
+      };
+      mockFetcher.fetchVerifiedNodes.mockResolvedValue([node]);
+
+      await service.syncVerifiedNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({ version: '2.1' })
+      );
+    });
+
+    it('npm-only: defaults version to "1" instead of using npm package version', async () => {
+      // mockNpmPackage has package.version = "1.0.0" — must NOT be stored as typeVersion.
+      mockFetcher.fetchNpmPackages.mockResolvedValue([mockNpmPackage]);
+
+      await service.syncNpmNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({ version: '1', npmVersion: '1.0.0' })
+      );
+    });
+
+    it('npm-only: preserves npm package version separately even when it is multi-dot', async () => {
+      const node = {
+        ...mockNpmPackage,
+        package: { ...mockNpmPackage.package, version: '0.2.21' },
+      };
+      mockFetcher.fetchNpmPackages.mockResolvedValue([node]);
+
+      await service.syncNpmNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({ version: '1', npmVersion: '0.2.21' })
+      );
+    });
+  });
+
   describe('getCommunityStats', () => {
     it('should return community stats from repository', () => {
       const mockStats = { total: 100, verified: 30, unverified: 70 };

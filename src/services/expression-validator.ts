@@ -376,6 +376,11 @@ export class ExpressionValidator {
       });
     } else if (obj && typeof obj === 'object') {
       Object.entries(obj).forEach(([key, value]) => {
+        // Skip raw code fields — they contain JavaScript/Python source code,
+        // not n8n expressions, so bracket matching would produce false positives.
+        if (key === 'jsCode' || key === 'pythonCode' || key === 'functionCode') {
+          return;
+        }
         const newPath = path ? `${path}.${key}` : key;
         this.validateParametersRecursive(value, context, result, newPath, visited);
       });

@@ -830,6 +830,15 @@ export class EnhancedConfigValidator extends ConfigValidator {
     // Normalize the node type for repository lookups
     const normalizedNodeType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
 
+    // Skip resource/operation validation when the node is missing from our database
+    // (truly unknown community node). The per-field "no schema → skip" guards below
+    // additionally cover community nodes that are indexed with empty operation/resource
+    // metadata (e.g., n8n-nodes-puppeteer.puppeteer rows exist but with empty schemas) —
+    // see #739 for the original false positive.
+    if (!this.nodeRepository.getNode(normalizedNodeType)) {
+      return;
+    }
+
     // Apply defaults for validation
     const configWithDefaults = { ...config };
 
@@ -846,6 +855,9 @@ export class EnhancedConfigValidator extends ConfigValidator {
       // Remove any existing resource error from base validator to replace with our enhanced version
       result.errors = result.errors.filter(e => e.property !== 'resource');
       const validResources = this.nodeRepository.getNodeResources(normalizedNodeType);
+      // Skip validation when the node has no resource schema (#739).
+      // Community nodes indexed with empty schemas would otherwise false-positive.
+      if (validResources.length > 0) {
       const resourceIsValid = validResources.some(r => {
         const resourceValue = typeof r === 'string' ? r : r.value;
         return resourceValue === config.resource;
@@ -913,6 +925,7 @@ export class EnhancedConfigValidator extends ConfigValidator {
           }
         }
       }
+      } // end: validResources.length > 0
     }
 
     // Validate operation field - now we check configWithDefaults which has defaults applied
@@ -920,6 +933,12 @@ export class EnhancedConfigValidator extends ConfigValidator {
     if (config.operation !== undefined || configWithDefaults.operation !== undefined) {
       // Remove any existing operation error from base validator to replace with our enhanced version
       result.errors = result.errors.filter(e => e.property !== 'operation');
+
+      // Skip validation when the node has NO operation schema at all (#739). Use the
+      // unfiltered lookup so a real typo like resource="files" + operation="x" on a known
+      // node (where validOperations for "files" is empty but the node DOES have operations
+      // for valid resources) still surfaces as an invalid operation error.
+      if (this.nodeRepository.getNodeOperations(normalizedNodeType).length === 0) return;
 
       // Use the operation from configWithDefaults for validation (which includes the default if applied)
       const operationToValidate = configWithDefaults.operation || config.operation;

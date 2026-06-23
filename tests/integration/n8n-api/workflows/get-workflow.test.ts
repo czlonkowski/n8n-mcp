@@ -83,6 +83,10 @@ describe('Integration: handleGetWorkflow', () => {
       expect(retrievedNode.name).toBe(originalNode.name);
       expect(retrievedNode.type).toBe(originalNode.type);
       expect(retrievedNode.parameters).toBeDefined();
+
+      // Issue #777: the heavy activeVersion payload must not be returned to the caller.
+      // activeVersionId is kept so callers know whether a published version exists.
+      expect((retrieved as unknown as { activeVersion?: unknown }).activeVersion).toBeUndefined();
     });
   });
 

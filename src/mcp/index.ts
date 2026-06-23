@@ -6,6 +6,7 @@ import { handleTelemetryCliIfPresent } from '../telemetry/telemetry-cli';
 import { EarlyErrorLogger } from '../telemetry/early-error-logger';
 import { STARTUP_CHECKPOINTS, findFailedCheckpoint, StartupCheckpoint } from '../telemetry/startup-checkpoints';
 import { existsSync } from 'fs';
+import { tearDownStdin } from '../utils/stdin-teardown';
 
 // Add error details to stderr for Claude Desktop debugging
 process.on('uncaughtException', (error) => {
@@ -149,10 +150,14 @@ async function main() {
 
           await server.shutdown();
 
-          // Close stdin to signal we're done reading
-          if (process.stdin && !process.stdin.destroyed) {
-            process.stdin.pause();
-            process.stdin.destroy();
+          // Platform-aware stdin teardown — see stdin-teardown.ts (Issues #383/#385).
+          tearDownStdin();
+
+          // On win32 we skip stdin.destroy() (see stdin-teardown.ts); the unref'd
+          // shutdown timeout below can't force an exit, so exit explicitly here to
+          // mirror the published stdio-wrapper bin (Issues #383 / #385).
+          if (process.platform === 'win32') {
+            process.exit(0);
           }
 
           // Exit with timeout to ensure we don't hang

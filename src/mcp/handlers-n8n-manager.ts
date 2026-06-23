@@ -12,6 +12,7 @@ import {
   McpToolResponse,
   ExecutionFilterOptions,
   ExecutionMode,
+  Credential,
 } from '../types/n8n-api';
 import type { TriggerType, TestWorkflowInput } from '../triggers/types';
 import {
@@ -31,7 +32,7 @@ import { z } from 'zod';
 import { WorkflowValidator } from '../services/workflow-validator';
 import { EnhancedConfigValidator } from '../services/enhanced-config-validator';
 import { NodeRepository } from '../database/node-repository';
-import { InstanceContext, validateInstanceContext } from '../types/instance-context';
+import { InstanceContext, validateInstanceContext, getInstanceScopeId } from '../types/instance-context';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
 import { WorkflowAutoFixer, AutoFixConfig } from '../services/workflow-auto-fixer';
 import { ExpressionFormatValidator, ExpressionFormatIssue } from '../services/expression-format-validator';
@@ -49,6 +50,11 @@ import {
 } from '../utils/cache-utils';
 import { processExecution } from '../services/execution-processor';
 import { checkNpmVersion, formatVersionMessage } from '../utils/npm-version-checker';
+import {
+  normalizeMcpJsonValue,
+  normalizeMcpWorkflowConnections,
+  normalizeMcpWorkflowNodes,
+} from '../utils/mcp-input-normalizer';
 
 // ========================================================================
 // TypeScript Interfaces for Type Safety
@@ -331,6 +337,14 @@ export function getN8nApiClient(context?: InstanceContext): N8nApiClient | null 
     return null;
   }
 
+  // SECURITY (GHSA-jxx9-px88-pj69): never fall back to process-level credentials
+  // when multi-tenant mode is enabled. A missing or incomplete tenant context
+  // must result in no client, not the operator's N8N_API_KEY.
+  if (process.env.ENABLE_MULTI_TENANT === 'true') {
+    logger.warn('Refusing env-credential fallback in multi-tenant mode');
+    return null;
+  }
+
   // Fall back to default singleton from environment
   logger.info('Falling back to environment configuration for n8n API client');
   const config = getN8nApiConfig();
@@ -371,12 +385,60 @@ function ensureApiConfigured(context?: InstanceContext): N8nApiClient {
   return client;
 }
 
+/**
+ * Resolve the n8n API config to surface in a tool response (apiUrl,
+ * baseUrl for workflow links, etc.). Prefers the per-request tenant
+ * context; falls back to the process-env config only in single-tenant
+ * mode.
+ *
+ * SECURITY (GHSA-jxx9-px88-pj69): in multi-tenant mode this never returns
+ * the operator's env config, so handler responses cannot disclose the
+ * operator's apiUrl to a tenant whose context was missing or incomplete.
+ */
+function resolveN8nApiConfigForResponse(context?: InstanceContext) {
+  const fromContext = context ? getN8nApiConfigFromContext(context) : null;
+  if (fromContext) {
+    return fromContext;
+  }
+  if (process.env.ENABLE_MULTI_TENANT === 'true') {
+    return null;
+  }
+  return getN8nApiConfig();
+}
+
+// MCP transports may serialize JSON objects/arrays as strings.
+// Parse them back, but return the original value on failure so Zod reports a proper type error.
+export function tryParseJson(val: unknown): unknown {
+  if (typeof val !== 'string') return val;
+  try { return JSON.parse(val); } catch { return val; }
+}
+
+// n8n's draft/publish model returns a full `activeVersion` object on every workflow GET,
+// duplicating the live graph's nodes/connections alongside the draft. That payload roughly
+// doubles the response size and pushes large workflows past MCP host caps. Strip the
+// heavy object here while preserving `activeVersionId` as a lightweight pointer. Callers
+// that need the published graph should use mode='active' (handleGetWorkflowActive).
+function stripActiveVersion(workflow: Workflow): Workflow {
+  const { activeVersion, ...rest } = workflow;
+  return rest;
+}
+
+// Some MCP clients (e.g. opencode) serialize all schema fields including optional ones,
+// sending '' instead of omitting them. Coerce blank strings to undefined so the n8n API
+// doesn't receive `?cursor=&projectId=` and reject the request. See issue #774.
+const emptyToUndefined = (v: unknown) =>
+  typeof v === 'string' && v.trim() === '' ? undefined : v;
+const optionalEmptyAware = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess(emptyToUndefined, schema.optional());
+
 // Zod schemas for input validation
 const createWorkflowSchema = z.object({
   name: z.string(),
-  nodes: z.array(z.any()),
-  connections: z.record(z.any()),
-  settings: z.object({
+  nodes: z.preprocess(normalizeMcpWorkflowNodes, z.array(z.any())),
+  // Two-arg z.record(keySchema, valueSchema) — see services/n8n-validation.ts for the
+  // Zod 3/4 compatibility rationale (#744).
+  connections: z.preprocess(normalizeMcpWorkflowConnections, z.record(z.string(), z.any())),
+  settings: z.preprocess(normalizeMcpJsonValue, z.object({
     executionOrder: z.enum(['v0', 'v1']).optional(),
     timezone: z.string().optional(),
     saveDataErrorExecution: z.enum(['all', 'none']).optional(),
@@ -385,26 +447,26 @@ const createWorkflowSchema = z.object({
     saveExecutionProgress: z.boolean().optional(),
     executionTimeout: z.number().optional(),
     errorWorkflow: z.string().optional(),
-  }).optional(),
+  })).optional(),
   projectId: z.string().optional(),
 });
 
 const updateWorkflowSchema = z.object({
   id: z.string(),
   name: z.string().optional(),
-  nodes: z.array(z.any()).optional(),
-  connections: z.record(z.any()).optional(),
-  settings: z.any().optional(),
+  nodes: z.preprocess(normalizeMcpWorkflowNodes, z.array(z.any())).optional(),
+  connections: z.preprocess(normalizeMcpWorkflowConnections, z.record(z.string(), z.any())).optional(),
+  settings: z.preprocess(normalizeMcpJsonValue, z.any()).optional(),
   createBackup: z.boolean().optional(),
   intent: z.string().optional(),
 });
 
 const listWorkflowsSchema = z.object({
   limit: z.number().min(1).max(100).optional(),
-  cursor: z.string().optional(),
+  cursor: optionalEmptyAware(z.string()),
   active: z.boolean().optional(),
-  tags: z.array(z.string()).optional(),
-  projectId: z.string().optional(),
+  tags: z.preprocess(normalizeMcpJsonValue, z.array(z.string())).optional(),
+  projectId: optionalEmptyAware(z.string()),
   excludePinnedData: z.boolean().optional(),
 });
 
@@ -443,11 +505,11 @@ const autofixWorkflowSchema = z.object({
 // Schema for n8n_test_workflow tool
 const testWorkflowSchema = z.object({
   workflowId: z.string(),
-  triggerType: z.enum(['webhook', 'form', 'chat']).optional(),
-  httpMethod: z.enum(['GET', 'POST', 'PUT', 'DELETE']).optional(),
-  webhookPath: z.string().optional(),
-  message: z.string().optional(),
-  sessionId: z.string().optional(),
+  triggerType: optionalEmptyAware(z.enum(['webhook', 'form', 'chat'])),
+  httpMethod: optionalEmptyAware(z.enum(['GET', 'POST', 'PUT', 'DELETE'])),
+  webhookPath: optionalEmptyAware(z.string()),
+  message: optionalEmptyAware(z.string()),
+  sessionId: optionalEmptyAware(z.string()),
   data: z.record(z.unknown()).optional(),
   headers: z.record(z.string()).optional(),
   timeout: z.number().optional(),
@@ -456,22 +518,21 @@ const testWorkflowSchema = z.object({
 
 const listExecutionsSchema = z.object({
   limit: z.number().min(1).max(100).optional(),
-  cursor: z.string().optional(),
-  workflowId: z.string().optional(),
-  projectId: z.string().optional(),
-  status: z.enum(['success', 'error', 'waiting']).optional(),
+  cursor: optionalEmptyAware(z.string()),
+  workflowId: optionalEmptyAware(z.string()),
+  projectId: optionalEmptyAware(z.string()),
+  status: optionalEmptyAware(z.enum(['success', 'error', 'waiting'])),
   includeData: z.boolean().optional(),
 });
 
 const workflowVersionsSchema = z.object({
-  mode: z.enum(['list', 'get', 'rollback', 'delete', 'prune', 'truncate']),
+  mode: z.enum(['list', 'get', 'rollback', 'delete', 'prune']),
   workflowId: z.string().optional(),
   versionId: z.number().optional(),
   limit: z.number().default(10).optional(),
   validateBefore: z.boolean().default(true).optional(),
   deleteAll: z.boolean().default(false).optional(),
   maxVersions: z.number().default(10).optional(),
-  confirmTruncate: z.boolean().default(false).optional(),
 });
 
 // Workflow Management Handlers
@@ -576,12 +637,12 @@ export async function handleGetWorkflow(args: unknown, context?: InstanceContext
   try {
     const client = ensureApiConfigured(context);
     const { id } = z.object({ id: z.string() }).parse(args);
-    
+
     const workflow = await client.getWorkflow(id);
-    
+
     return {
       success: true,
-      data: workflow
+      data: stripActiveVersion(workflow)
     };
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -611,15 +672,15 @@ export async function handleGetWorkflowDetails(args: unknown, context?: Instance
   try {
     const client = ensureApiConfigured(context);
     const { id } = z.object({ id: z.string() }).parse(args);
-    
+
     const workflow = await client.getWorkflow(id);
-    
+
     // Get recent executions for this workflow
     const executions = await client.listExecutions({
       workflowId: id,
       limit: 10
     });
-    
+
     // Calculate execution statistics
     const stats = {
       totalExecutions: executions.data.length,
@@ -627,11 +688,11 @@ export async function handleGetWorkflowDetails(args: unknown, context?: Instance
       errorCount: executions.data.filter(e => e.status === ExecutionStatus.ERROR).length,
       lastExecutionTime: executions.data[0]?.startedAt || null
     };
-    
+
     return {
       success: true,
       data: {
-        workflow,
+        workflow: stripActiveVersion(workflow),
         executionStats: stats,
         hasWebhookTrigger: hasWebhookTrigger(workflow),
         webhookPath: getWebhookUrl(workflow)
@@ -757,6 +818,164 @@ export async function handleGetWorkflowMinimal(args: unknown, context?: Instance
   }
 }
 
+/**
+ * Returns the full config of only the requested nodes, identified by node name or node ID.
+ * Large workflows with long Code-node source can exceed client-side response limits when
+ * fetched whole (issue #101); this mode lets a caller pull one heavy node's `parameters`
+ * without the rest of the graph. Discover node names cheaply with mode='structure' first.
+ *
+ * `nodeNames` accepts both node names and node IDs; any entries that match nothing are
+ * reported back in `notFound` so the caller knows the lookup was partial.
+ */
+export async function handleGetWorkflowFiltered(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const { id, nodeNames } = z.object({
+      id: z.string(),
+      nodeNames: z.array(z.string()).min(1)
+    }).parse(args);
+
+    const workflow = await client.getWorkflow(id);
+
+    const requested = new Set(nodeNames);
+    const matchedNodes = workflow.nodes.filter(
+      node => requested.has(node.name) || requested.has(node.id)
+    );
+
+    // Report any requested keys that resolved to no node so partial requests are transparent.
+    const matchedKeys = new Set(matchedNodes.flatMap(node => [node.name, node.id]));
+    const notFound = nodeNames.filter(key => !matchedKeys.has(key));
+
+    return {
+      success: true,
+      data: {
+        id: workflow.id,
+        name: workflow.name,
+        active: workflow.active,
+        isArchived: workflow.isArchived,
+        nodes: matchedNodes,
+        nodeCount: workflow.nodes.length,
+        returnedCount: matchedNodes.length,
+        ...(notFound.length > 0 ? { notFound } : {})
+      }
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: 'Invalid input',
+        details: { errors: error.errors }
+      };
+    }
+
+    if (error instanceof N8nApiError) {
+      return {
+        success: false,
+        error: getUserFriendlyErrorMessage(error),
+        code: error.code
+      };
+    }
+
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
+/**
+ * Returns the workflow's published (active) graph. n8n's draft/publish model exposes
+ * the live version under `activeVersion`; this handler surfaces that as a single-shaped
+ * response with `nodes`/`connections` populated from the published version. Use this when
+ * you need to see what is actually running in production rather than the latest editor draft.
+ *
+ * Returns `code: 'NO_ACTIVE_VERSION'` when the workflow has never been published.
+ */
+export async function handleGetWorkflowActive(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const { id } = z.object({ id: z.string() }).parse(args);
+
+    const workflow = await client.getWorkflow(id);
+    const activeVersion = workflow.activeVersion;
+
+    // Common metadata fields returned regardless of which graph source we use.
+    const baseMeta = {
+      id: workflow.id,
+      name: workflow.name,
+      active: workflow.active,
+      isArchived: workflow.isArchived,
+      tags: workflow.tags || [],
+      settings: workflow.settings,
+      createdAt: workflow.createdAt,
+      updatedAt: workflow.updatedAt,
+    };
+
+    if (workflow.activeVersionId && activeVersion) {
+      return {
+        success: true,
+        data: {
+          ...baseMeta,
+          activeVersionId: workflow.activeVersionId,
+          // The version row's creation timestamp, not the publish-event time. n8n doesn't
+          // expose a dedicated "publishedAt" on the active version; in current n8n the two
+          // are within ~1s of each other but we don't claim they're identical.
+          versionCreatedAt: activeVersion.createdAt ?? null,
+          versionName: activeVersion.name ?? null,
+          nodes: activeVersion.nodes,
+          connections: activeVersion.connections,
+        }
+      };
+    }
+
+    // Fallback: older n8n versions don't have a draft/publish split — workflow.nodes IS
+    // the running graph when workflow.active is true. The same fallback covers the rare
+    // orphan case in newer n8n where activeVersionId got nulled but the workflow is still
+    // running. In both cases, returning the workflow body honors the "what is actually
+    // running" semantic of mode='active'.
+    if (workflow.active === true) {
+      return {
+        success: true,
+        data: {
+          ...baseMeta,
+          activeVersionId: null,
+          versionCreatedAt: null,
+          versionName: null,
+          nodes: workflow.nodes,
+          connections: workflow.connections,
+        }
+      };
+    }
+
+    return {
+      success: false,
+      error: 'No published version. Workflow is inactive and has never been activated. Use mode="full" to see the draft.',
+      code: 'NO_ACTIVE_VERSION'
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: 'Invalid input',
+        details: { errors: error.errors }
+      };
+    }
+
+    if (error instanceof N8nApiError) {
+      return {
+        success: false,
+        error: getUserFriendlyErrorMessage(error),
+        code: error.code
+      };
+    }
+
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
 export async function handleUpdateWorkflow(
   args: unknown,
   repository: NodeRepository,
@@ -775,38 +994,67 @@ export async function handleUpdateWorkflow(
     const { id, createBackup, intent, ...updateData } = input;
     userIntent = intent || 'Full workflow update';
 
-    // If nodes/connections are being updated, validate the structure
-    if (updateData.nodes || updateData.connections) {
-      // Always fetch current workflow for validation (need all fields like name)
-      const current = await client.getWorkflow(id);
-      workflowBefore = JSON.parse(JSON.stringify(current));
+    // n8n's Public API PUT /workflows is a FULL replace: the write schema requires name,
+    // nodes, connections AND settings to all be present. This tool exposes them as optional,
+    // so we always fetch the current workflow and merge the caller's partial update over it.
+    // Without this, omitting e.g. `name` fails with
+    // "request/body must have required property 'name'".
+    const current = await client.getWorkflow(id);
+    workflowBefore = JSON.parse(JSON.stringify(current));
 
-      // Preserve credentials from current workflow for nodes that don't specify them.
-      // AI-generated node updates typically omit credential references because they
-      // aren't included in the context provided to the AI. Without this merge, the
-      // n8n API rejects the PUT with missing credentials.
-      if (updateData.nodes && current.nodes) {
-        const currentById = new Map<string, any>();
-        const currentByName = new Map<string, any>();
-        for (const node of current.nodes) {
-          if (node.id) currentById.set(node.id, node);
-          currentByName.set(node.name, node);
-        }
-        for (const node of updateData.nodes as any[]) {
-          const hasCredentials = node.credentials && typeof node.credentials === 'object' && Object.keys(node.credentials).length > 0;
-          if (!hasCredentials) {
-            const match = (node.id && currentById.get(node.id)) || currentByName.get(node.name);
-            if (match?.credentials) {
-              node.credentials = match.credentials;
-            }
+    // Preserve credentials from current workflow for nodes that don't specify them.
+    // AI-generated node updates typically omit credential references because they
+    // aren't included in the context provided to the AI. Without this merge, the
+    // n8n API rejects the PUT with missing credentials.
+    if (updateData.nodes && current.nodes) {
+      const currentById = new Map<string, any>();
+      const currentByName = new Map<string, any>();
+      for (const node of current.nodes) {
+        if (node.id) currentById.set(node.id, node);
+        currentByName.set(node.name, node);
+      }
+      for (const node of updateData.nodes as any[]) {
+        const hasCredentials = node.credentials && typeof node.credentials === 'object' && Object.keys(node.credentials).length > 0;
+        if (!hasCredentials) {
+          const match = (node.id && currentById.get(node.id)) || currentByName.get(node.name);
+          if (match?.credentials) {
+            node.credentials = match.credentials;
           }
         }
       }
+    }
 
+    // Merge the partial update over the current workflow so all API-required fields are
+    // present. cleanWorkflowForUpdate() (inside client.updateWorkflow) strips the read-only
+    // fields carried in from the GET response.
+    //
+    // Settings are handled separately from the spread: the Zod schema allows `settings` to be
+    // null / any value, and a null (or otherwise non-object) value spread over `current` would
+    // clobber the existing settings and then get reduced to minimal defaults downstream. n8n's
+    // PUT is a full replace and requires settings to be present, so we only override when the
+    // caller supplied a real settings object — and then we merge it over the current settings
+    // so a partial payload (e.g. { executionOrder: 'v0' }) doesn't drop untouched keys like
+    // timezone/errorWorkflow. A missing/null/non-object settings value leaves current settings
+    // untouched.
+    const { settings: settingsUpdate, ...nonSettingsUpdate } = updateData;
+    const fullWorkflow = {
+      ...current,
+      ...nonSettingsUpdate
+    };
+
+    if (settingsUpdate && typeof settingsUpdate === 'object') {
+      fullWorkflow.settings = {
+        ...((current.settings as Record<string, unknown>) ?? {}),
+        ...(settingsUpdate as Record<string, unknown>),
+      };
+    }
+
+    // Backup + structure validation only when the graph changed (nodes/connections).
+    if (updateData.nodes || updateData.connections) {
       // Create backup before modifying workflow (default: true)
       if (createBackup !== false) {
         try {
-          const versioningService = new WorkflowVersioningService(repository, client);
+          const versioningService = new WorkflowVersioningService(repository, client, getInstanceScopeId(context));
           const backupResult = await versioningService.createBackup(id, current, {
             trigger: 'full_update'
           });
@@ -826,11 +1074,6 @@ export async function handleUpdateWorkflow(
         }
       }
 
-      const fullWorkflow = {
-        ...current,
-        ...updateData
-      };
-
       // Validate workflow structure (n8n API expects FULL form: n8n-nodes-base.*)
       const errors = validateWorkflowStructure(fullWorkflow);
       if (errors.length > 0) {
@@ -842,8 +1085,8 @@ export async function handleUpdateWorkflow(
       }
     }
 
-    // Update workflow
-    const workflow = await client.updateWorkflow(id, updateData);
+    // Update workflow with the merged full payload
+    const workflow = await client.updateWorkflow(id, fullWorkflow as Partial<Workflow>);
 
     // Track successful mutation
     if (workflowBefore) {
@@ -1701,7 +1944,7 @@ export async function handleHealthCheck(context?: InstanceContext): Promise<McpT
       instanceId: health.instanceId,
       n8nVersion: health.n8nVersion,
       features: health.features,
-      apiUrl: getN8nApiConfig()?.baseUrl,
+      apiUrl: resolveN8nApiConfigForResponse(context)?.baseUrl,
       mcpVersion,
       supportedN8nVersion,
       versionCheck: {
@@ -1761,7 +2004,7 @@ export async function handleHealthCheck(context?: InstanceContext): Promise<McpT
         error: getUserFriendlyErrorMessage(error),
         code: error.code,
         details: {
-          apiUrl: getN8nApiConfig()?.baseUrl,
+          apiUrl: resolveN8nApiConfigForResponse(context)?.baseUrl,
           hint: 'Check if n8n is running and API is enabled',
           troubleshooting: [
             '1. Verify n8n instance is running',
@@ -1965,10 +2208,14 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
   const isDocker = process.env.IS_DOCKER === 'true';
   const cloudPlatform = detectCloudPlatform();
 
-  // Check environment variables
+  // Check environment variables. SECURITY (GHSA-jxx9-px88-pj69): in
+  // multi-tenant mode the operator's env credentials are not part of the
+  // tenant's view of the system, so we mask them out of the diagnostic
+  // payload rather than letting them leak through `environment.*`.
+  const isMultiTenant = process.env.ENABLE_MULTI_TENANT === 'true';
   const envVars = {
-    N8N_API_URL: process.env.N8N_API_URL || null,
-    N8N_API_KEY: process.env.N8N_API_KEY ? '***configured***' : null,
+    N8N_API_URL: isMultiTenant ? null : (process.env.N8N_API_URL || null),
+    N8N_API_KEY: isMultiTenant ? null : (process.env.N8N_API_KEY ? '***configured***' : null),
     NODE_ENV: process.env.NODE_ENV || 'production',
     MCP_MODE: mcpMode,
     isDocker,
@@ -1978,7 +2225,7 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
   };
 
   // Check API configuration
-  const apiConfig = getN8nApiConfig();
+  const apiConfig = resolveN8nApiConfigForResponse(context);
   const apiConfigured = apiConfig !== null;
   const apiClient = getN8nApiClient(context);
 
@@ -2223,8 +2470,18 @@ export async function handleWorkflowVersions(
 ): Promise<McpToolResponse> {
   try {
     const input = workflowVersionsSchema.parse(args);
+
+    // SECURITY (GHSA-2cf7-hpwf-47h9): multi-tenant requests must resolve a
+    // complete tenant scope; fail closed otherwise.
+    if (process.env.ENABLE_MULTI_TENANT === 'true' && getInstanceScopeId(context) === '') {
+      return {
+        success: false,
+        error: 'Workflow version storage is not available for this tenant context'
+      };
+    }
+
     const client = context ? getN8nApiClient(context) : null;
-    const versioningService = new WorkflowVersioningService(repository, client || undefined);
+    const versioningService = new WorkflowVersioningService(repository, client || undefined, getInstanceScopeId(context));
 
     switch (input.mode) {
       case 'list': {
@@ -2359,25 +2616,6 @@ export async function handleWorkflowVersions(
             pruned: result.pruned,
             remaining: result.remaining,
             message: `Pruned ${result.pruned} old version(s), ${result.remaining} version(s) remaining`
-          }
-        };
-      }
-
-      case 'truncate': {
-        if (!input.confirmTruncate) {
-          return {
-            success: false,
-            error: 'confirmTruncate must be true to truncate all versions. This action cannot be undone.'
-          };
-        }
-
-        const result = await versioningService.truncateAllVersions(true);
-
-        return {
-          success: true,
-          data: {
-            deleted: result.deleted,
-            message: result.message
           }
         };
       }
@@ -2549,7 +2787,7 @@ export async function handleDeployTemplate(
     });
 
     // Get base URL for workflow link
-    const apiConfig = context ? getN8nApiConfigFromContext(context) : getN8nApiConfig();
+    const apiConfig = resolveN8nApiConfigForResponse(context);
     const baseUrl = apiConfig?.baseUrl?.replace('/api/v1', '') || '';
 
     // Auto-fix common issues after deployment (expression format, etc.)
@@ -2645,7 +2883,7 @@ export async function handleDeployTemplate(
 export async function handleTriggerWebhookWorkflow(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
   const triggerWebhookSchema = z.object({
     webhookUrl: z.string().url(),
-    httpMethod: z.enum(['GET', 'POST', 'PUT', 'DELETE']).optional(),
+    httpMethod: optionalEmptyAware(z.enum(['GET', 'POST', 'PUT', 'DELETE'])),
     data: z.record(z.unknown()).optional(),
     headers: z.record(z.string()).optional(),
     waitForResponse: z.boolean().optional(),
@@ -2744,24 +2982,18 @@ const createTableSchema = z.object({
   columns: z.array(z.object({
     name: z.string().min(1, 'Column name cannot be empty'),
     type: z.enum(['string', 'number', 'boolean', 'date']).optional(),
-  })).optional(),
+  })).min(1, 'At least one column is required'),
+  projectId: optionalEmptyAware(z.string()),
 });
 
 const listTablesSchema = z.object({
   limit: z.number().min(1).max(100).optional(),
-  cursor: z.string().optional(),
+  cursor: optionalEmptyAware(z.string()),
 });
 
 const updateTableSchema = tableIdSchema.extend({
   name: z.string().min(1, 'New table name cannot be empty'),
 });
-
-// MCP transports may serialize JSON objects/arrays as strings.
-// Parse them back, but return the original value on failure so Zod reports a proper type error.
-export function tryParseJson(val: unknown): unknown {
-  if (typeof val !== 'string') return val;
-  try { return JSON.parse(val); } catch { return val; }
-}
 
 const coerceJsonArray = z.preprocess(tryParseJson, z.array(z.record(z.unknown())));
 const coerceJsonObject = z.preprocess(tryParseJson, z.record(z.unknown()));
@@ -2769,10 +3001,10 @@ const coerceJsonFilter = z.preprocess(tryParseJson, dataTableFilterSchema);
 
 const getRowsSchema = tableIdSchema.extend({
   limit: z.number().min(1).max(100).optional(),
-  cursor: z.string().optional(),
+  cursor: optionalEmptyAware(z.string()),
   filter: z.union([coerceJsonFilter, z.string()]).optional(),
-  sortBy: z.string().optional(),
-  search: z.string().optional(),
+  sortBy: optionalEmptyAware(z.string()),
+  search: optionalEmptyAware(z.string()),
 });
 
 const insertRowsSchema = tableIdSchema.extend({
@@ -2965,9 +3197,17 @@ export async function handleDeleteRows(args: unknown, context?: InstanceContext)
       ...params,
     };
     const result = await client.deleteDataTableRows(tableId, queryParams as any);
+
+    // Strip meaningless all-null "after" rows from dryRun responses — after a
+    // delete there is no "after" state, so the template row with null fields
+    // surfaces as noise for callers (QA #10).
+    const cleanedResult = params.dryRun && Array.isArray(result)
+      ? result.filter((row: any) => row?.dryRunState !== 'after')
+      : result;
+
     return {
       success: true,
-      data: result,
+      data: cleanedResult,
       message: params.dryRun ? 'Dry run: rows matched for deletion (no changes applied)' : 'Rows deleted successfully',
     };
   } catch (error) {
@@ -2982,11 +3222,56 @@ export async function handleDeleteRows(args: unknown, context?: InstanceContext)
 // SECURITY: Never log credential data values (they contain secrets like API keys, passwords).
 // Only log credential name, type, and ID.
 
-const listCredentialsSchema = z.object({}).passthrough();
+const listCredentialsSchema = z.object({
+  includeUsage: z.boolean().optional(),
+  // Mirror listWorkflowsSchema: bound limit and normalize an empty-string cursor
+  // to undefined so an echoed-back empty nextCursor isn't forwarded to the n8n API.
+  cursor: optionalEmptyAware(z.string()),
+  limit: z.number().min(1).max(100).optional(),
+}).passthrough();
 
 const getCredentialSchema = z.object({
   id: z.string({ required_error: 'Credential ID is required' }),
+  includeUsage: z.boolean().optional(),
 });
+
+interface CredentialUsageEntry {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
+async function buildCredentialUsageMap(
+  client: N8nApiClient
+): Promise<Map<string, CredentialUsageEntry[]>> {
+  const usage = new Map<string, CredentialUsageEntry[]>();
+  const workflows = await client.listAllWorkflows();
+  for (const wf of workflows) {
+    if (!wf.id) continue;
+    const entry: CredentialUsageEntry = {
+      id: wf.id,
+      name: wf.name,
+      active: wf.active ?? false,
+    };
+    const seenForThisWorkflow = new Set<string>();
+    for (const node of wf.nodes ?? []) {
+      if (!node.credentials) continue;
+      for (const credConfig of Object.values(node.credentials)) {
+        const credId = (credConfig as { id?: unknown } | null)?.id;
+        if (typeof credId !== 'string' || credId === '') continue;
+        if (seenForThisWorkflow.has(credId)) continue;
+        seenForThisWorkflow.add(credId);
+        const list = usage.get(credId);
+        if (list) {
+          list.push(entry);
+        } else {
+          usage.set(credId, [entry]);
+        }
+      }
+    }
+  }
+  return usage;
+}
 
 const createCredentialSchema = z.object({
   name: z.string({ required_error: 'Credential name is required' }),
@@ -3009,20 +3294,106 @@ const getCredentialSchemaTypeSchema = z.object({
   type: z.string({ required_error: 'Credential type is required' }),
 });
 
+type CredentialWithUsage = Credential & {
+  usedIn?: CredentialUsageEntry[];
+  usageCount?: number;
+};
+
+// Strip the sensitive `data` field from a credential before returning it.
+// Defense in depth against future n8n versions returning decrypted values.
+function stripCredentialData(credential: Credential): CredentialWithUsage {
+  const { data: _sensitiveData, ...safeCred } = credential;
+  return safeCred;
+}
+
+// Not every n8n deployment allows credential reads through its public API:
+// older versions reject GET /credentials with 405 (#809), and API-key scopes
+// or instance settings can block it with 403. Detect that so list/get can
+// explain the limitation instead of surfacing a bare "GET method not allowed".
+function isCredentialReadUnsupported(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  const status = (error as { statusCode?: number }).statusCode;
+  if (status === 405 || status === 403) {
+    return true;
+  }
+  // Some errors arrive unwrapped, without a statusCode — fall back to the
+  // reason phrase then, but never override a concrete non-405/403 status.
+  if (status !== undefined) {
+    return false;
+  }
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  return message.includes('not allowed');
+}
+
+// Fresh object per call: the response carries per-error details, and a shared
+// singleton could be mutated downstream by future response decoration.
+function credentialReadUnsupportedResponse(error: unknown): McpToolResponse {
+  return {
+    success: false,
+    error:
+      'This n8n instance\'s public API rejected the credential read. On older n8n versions the public API ' +
+      'does not expose GET /credentials at all; on newer ones this can mean the API key or instance settings ' +
+      'do not permit credential reads. The create, delete, and getSchema actions generally still work, and ' +
+      'update does too where the API version supports it (it needs a known credential ID, not list/get). ' +
+      'To find an existing credential\'s ID, open it in the n8n UI — the ID is in the URL.',
+    code: 'NOT_SUPPORTED',
+    details: {
+      statusCode: (error as { statusCode?: number }).statusCode,
+      cause: error instanceof Error ? error.message : String(error),
+    },
+  };
+}
+
 export async function handleListCredentials(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
   try {
     const client = ensureApiConfigured(context);
-    listCredentialsSchema.parse(args);
-    const result = await client.listCredentials();
+    const { includeUsage, cursor, limit } = listCredentialsSchema.parse(args);
+
+    if (includeUsage) {
+      // Full audit: scan ALL credential pages so usage reporting is complete.
+      // Cursor/limit paging does not apply here — return every credential at once.
+      const allCredentials = await client.listAllCredentials();
+      // Strip sensitive data field — defense in depth, consistent with the get path.
+      let credentials: CredentialWithUsage[] = allCredentials.map(stripCredentialData);
+      let usageScanError: string | undefined;
+      try {
+        const usageMap = await buildCredentialUsageMap(client);
+        credentials = credentials.map((cred) => {
+          const usedIn = (cred.id ? usageMap.get(cred.id) : undefined) ?? [];
+          return { ...cred, usedIn, usageCount: usedIn.length };
+        });
+      } catch (scanError) {
+        // Degrade gracefully: still return the full credential list rather than
+        // failing the whole call when only the workflow scan failed.
+        usageScanError = scanError instanceof Error ? scanError.message : String(scanError);
+      }
+      return {
+        success: true,
+        data: {
+          credentials,
+          count: credentials.length,
+          ...(usageScanError ? { usageScanError } : {}),
+        },
+      };
+    }
+
+    // Standard single-page cursor paging (mirrors n8n_list_workflows).
+    const result = await client.listCredentials({ cursor, limit });
+    const credentials = result.data.map(stripCredentialData);
     return {
       success: true,
       data: {
-        credentials: result.data,
-        count: result.data.length,
+        credentials,
+        count: credentials.length,
         nextCursor: result.nextCursor || undefined,
       },
     };
   } catch (error) {
+    if (isCredentialReadUnsupported(error)) {
+      return credentialReadUnsupportedResponse(error);
+    }
     return handleCrudError(error);
   }
 }
@@ -3030,41 +3401,105 @@ export async function handleListCredentials(args: unknown, context?: InstanceCon
 export async function handleGetCredential(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
   try {
     const client = ensureApiConfigured(context);
-    const { id } = getCredentialSchema.parse(args);
+    const { id, includeUsage } = getCredentialSchema.parse(args);
     let credential;
     try {
       credential = await client.getCredential(id);
     } catch (getError: unknown) {
-      // GET /credentials/:id is not in the n8n public API — fall back to list + filter
-      const status = (getError as { statusCode?: number }).statusCode;
-      const msg = (getError as Error).message ?? '';
-      const isUnsupported = status === 405 || status === 403 || msg.includes('not allowed');
-      if (!isUnsupported) {
+      // GET /credentials/:id is not always in the n8n public API — fall back to list + filter
+      if (!isCredentialReadUnsupported(getError)) {
         throw getError;
       }
-      const list = await client.listCredentials();
-      credential = list.data.find((c) => c.id === id);
+      // Paginate through ALL credentials — the target id may live beyond page 1.
+      // If the list endpoint is rejected too, the instance supports no credential
+      // reads at all; the outer catch turns that into the NOT_SUPPORTED response.
+      const all = await client.listAllCredentials();
+      credential = all.find((c) => c.id === id);
       if (!credential) {
         return { success: false, error: `Credential ${id} not found` };
       }
     }
     // Strip sensitive data field — defense in depth against future n8n versions returning decrypted values
     const { data: _sensitiveData, ...safeCred } = credential;
+    let enriched: CredentialWithUsage = safeCred;
+    let usageScanError: string | undefined;
+    if (includeUsage) {
+      try {
+        const usageMap = await buildCredentialUsageMap(client);
+        const usedIn = usageMap.get(id) ?? [];
+        enriched = { ...safeCred, usedIn, usageCount: usedIn.length };
+      } catch (scanError) {
+        usageScanError = scanError instanceof Error ? scanError.message : String(scanError);
+      }
+    }
     return {
       success: true,
-      data: safeCred,
+      data: usageScanError ? { ...enriched, usageScanError } : enriched,
     };
   } catch (error) {
+    if (isCredentialReadUnsupported(error)) {
+      return credentialReadUnsupportedResponse(error);
+    }
     return handleCrudError(error);
   }
+}
+
+/**
+ * Workaround for n8n's oAuth2Api credential schema (#740).
+ *
+ * The upstream Ajv schema has two interacting bugs that make `clientCredentials`
+ * grant unusable as-is:
+ *   1. `additionalProperties: false` at the root with `useDynamicClientRegistration`
+ *      missing from `properties`, so sending it triggers an "additional property"
+ *      rejection.
+ *   2. The `if/then/else` on `useDynamicClientRegistration` uses
+ *      `properties.x.enum` to test value, which evaluates true vacuously when the
+ *      field is absent — so both `then` branches fire simultaneously, and `serverUrl`
+ *      (a Dynamic Client Registration field) becomes required even on plain
+ *      client-credentials flows that have no DCR involvement.
+ *
+ * The shim normalizes data for that specific combination so the Ajv schema is
+ * satisfied: strip the rejected `useDynamicClientRegistration` field, inject
+ * the `sendAdditionalBodyProperties` / `additionalBodyProperties` defaults
+ * the schema's grant-type `then` branch requires, and inject `serverUrl: ''`
+ * to satisfy the spuriously-fired DCR `then` branch.
+ *
+ * Filed upstream against n8n. Remove this shim when their schema is fixed.
+ */
+function applyCredentialDataShims(
+  type: string,
+  data: Record<string, any> | undefined
+): Record<string, any> | undefined {
+  if (!data || type !== 'oAuth2Api' || data.grantType !== 'clientCredentials') {
+    return data;
+  }
+  const shimmed: Record<string, any> = { ...data };
+  if ('useDynamicClientRegistration' in shimmed && !shimmed.useDynamicClientRegistration) {
+    delete shimmed.useDynamicClientRegistration;
+  }
+  if (!('sendAdditionalBodyProperties' in shimmed)) {
+    shimmed.sendAdditionalBodyProperties = false;
+  }
+  if (!('additionalBodyProperties' in shimmed)) {
+    shimmed.additionalBodyProperties = '';
+  }
+  // Only inject serverUrl when the DCR branch fires spuriously (DCR is absent/false).
+  // If the caller explicitly opted into DCR (true), let n8n surface a real
+  // "missing serverUrl" error rather than masking it with our empty-string default.
+  const dcrActive = shimmed.useDynamicClientRegistration === true;
+  if (!dcrActive && !('serverUrl' in shimmed)) {
+    shimmed.serverUrl = '';
+  }
+  return shimmed;
 }
 
 export async function handleCreateCredential(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
   try {
     const client = ensureApiConfigured(context);
     const { name, type, data } = createCredentialSchema.parse(args);
+    const shimmedData = applyCredentialDataShims(type, data);
     logger.info(`Creating credential: name="${name}", type="${type}"`);
-    const credential = await client.createCredential({ name, type, data });
+    const credential = await client.createCredential({ name, type, data: shimmedData });
     const { data: _sensitiveData, ...safeCred } = credential;
     return {
       success: true,
@@ -3084,7 +3519,26 @@ export async function handleUpdateCredential(args: unknown, context?: InstanceCo
     const updatePayload: Record<string, any> = {};
     if (name !== undefined) updatePayload.name = name;
     if (type !== undefined) updatePayload.type = type;
-    if (data !== undefined) updatePayload.data = data;
+    // Apply the same oAuth2 clientCredentials shim as the create path (#740) — n8n's
+    // schema rejects the same payload shape on update, so re-saving an existing
+    // credential would re-trigger the bug without this. When the caller omits `type`
+    // (common partial-update pattern) but `data.grantType === 'clientCredentials'`,
+    // fetch the existing credential to derive its type — otherwise the shim would
+    // silently skip and the update would fail.
+    if (data !== undefined) {
+      let derivedType = type;
+      if (derivedType === undefined && data?.grantType === 'clientCredentials') {
+        try {
+          const existing = await client.getCredential(id);
+          derivedType = existing?.type;
+        } catch {
+          // GET /credentials/:id may not be exposed by n8n's public API; falling
+          // back to listCredentials adds a costly round-trip. If the lookup fails,
+          // skip the shim — n8n will surface its own validation error.
+        }
+      }
+      updatePayload.data = applyCredentialDataShims(derivedType ?? '', data);
+    }
     const credential = await client.updateCredential(id, updatePayload);
     const { data: _sensitiveData, ...safeCred } = credential;
     return {
@@ -3151,18 +3605,29 @@ export async function handleAuditInstance(args: unknown, context?: InstanceConte
     // Phase A: n8n built-in audit
     let builtinAudit: any = null;
     let builtinAuditMs = 0;
+    const auditStart = Date.now();
     try {
-      const auditStart = Date.now();
       builtinAudit = await client.generateAudit({
         categories: input.categories,
         daysAbandonedWorkflow: input.daysAbandonedWorkflow,
       });
       builtinAuditMs = Date.now() - auditStart;
     } catch (auditError: any) {
-      builtinAuditMs = Date.now() - totalStart;
-      const msg = auditError?.statusCode === 404
-        ? 'Built-in audit endpoint not available on this n8n version.'
-        : `Built-in audit failed: ${auditError?.message || 'unknown error'}`;
+      builtinAuditMs = Date.now() - auditStart;
+      // Surface HTTP status in the warning so users can tell server-side errors
+      // (n8n internal failures, missing N8N_HOST/N8N_PROTOCOL env, etc.) apart
+      // from client-side ones. Pre-fix the message hid this and the bare
+      // "Invalid URL" string from n8n's response body looked like a client bug. (#736)
+      const status = auditError?.statusCode;
+      const reason = auditError?.message || 'unknown error';
+      let msg: string;
+      if (status === 404) {
+        msg = 'Built-in audit endpoint not available on this n8n version.';
+      } else if (status !== undefined) {
+        msg = `Built-in audit failed (HTTP ${status}): ${reason}`;
+      } else {
+        msg = `Built-in audit failed (no response from n8n): ${reason}`;
+      }
       warnings.push(msg);
       logger.warn(`Audit: ${msg}`);
     }
@@ -3197,9 +3662,7 @@ export async function handleAuditInstance(args: unknown, context?: InstanceConte
     const totalMs = Date.now() - totalStart;
 
     // Build the API URL for the report (mask the key)
-    const apiConfig = context?.n8nApiUrl
-      ? { baseUrl: context.n8nApiUrl }
-      : getN8nApiConfig();
+    const apiConfig = resolveN8nApiConfigForResponse(context);
     const instanceUrl = apiConfig?.baseUrl || 'unknown';
 
     // Build unified markdown report

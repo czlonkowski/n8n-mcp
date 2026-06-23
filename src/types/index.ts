@@ -4,6 +4,7 @@ export * from './type-structures';
 export * from './instance-context';
 export * from './session-state';
 export * from './generate-workflow';
+export * from './additional-tools';
 
 export interface MCPServerConfig {
   port: number;
@@ -49,6 +50,9 @@ export interface ToolDefinition {
     ui?: {
       resourceUri?: string;
     };
+    /** Claude Code per-tool override for the default result-size cap (see code.claude.com/docs/en/mcp). */
+    'anthropic/maxResultSizeChars'?: number;
+    [key: string]: unknown;
   };
 }
 

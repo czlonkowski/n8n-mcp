@@ -11,6 +11,7 @@ import { extractBracketExpressions } from '../utils/expression-utils';
 import { ExpressionFormatValidator } from './expression-format-validator';
 import { NodeSimilarityService, NodeSuggestion } from './node-similarity-service';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
+import { parseTypeVersion } from '../utils/typeversion';
 import { Logger } from '../utils/logger';
 import { validateAISpecificNodes, hasAINodes, AI_CONNECTION_TYPES } from './ai-node-validator';
 import { isAIToolSubNode } from './ai-tool-validators';
@@ -496,40 +497,59 @@ export class WorkflowValidator {
         // Otherwise, langchain nodes with invalid typeVersion (e.g., 99999) would pass validation
         // but fail at runtime in n8n. This was the bug fixed in v2.17.4.
         if (nodeInfo.isVersioned) {
-          // Check if typeVersion is missing
-          if (!node.typeVersion) {
-            result.errors.push({
-              type: 'error',
-              nodeId: node.id,
-              nodeName: node.name,
-              message: `Missing required property 'typeVersion'. Add typeVersion: ${nodeInfo.version || 1}`
-            });
-          }
-          // Check if typeVersion is invalid (must be non-negative number, version 0 is valid)
-          else if (typeof node.typeVersion !== 'number' || node.typeVersion < 0) {
-            result.errors.push({
-              type: 'error',
-              nodeId: node.id,
-              nodeName: node.name,
-              message: `Invalid typeVersion: ${node.typeVersion}. Must be a non-negative number`
-            });
-          }
-          // Check if typeVersion is outdated (less than latest)
-          else if (nodeInfo.version && node.typeVersion < nodeInfo.version) {
+          // Coerce nodeInfo.version (stored as TEXT in SQLite, may be a non-numeric
+          // npm-style string for community nodes — see #781) to a finite number for
+          // safe comparisons. If we can't, skip the min/max checks rather than silently
+          // comparing against NaN.
+          const maxVersion = parseTypeVersion(nodeInfo.version);
+          if (maxVersion === null && nodeInfo.version != null) {
+            // Stale seed data: stored version isn't a valid typeVersion. We can't
+            // tell whether `node.typeVersion` is in range, so surface the gap rather
+            // than silently passing it through.
             result.warnings.push({
               type: 'warning',
               nodeId: node.id,
               nodeName: node.name,
-              message: `Outdated typeVersion: ${node.typeVersion}. Latest is ${nodeInfo.version}`
+              message: `Cannot validate typeVersion for ${node.type}: stored version "${nodeInfo.version}" is not a valid typeVersion. Min/max checks were skipped — re-sync this node or verify typeVersion against the node descriptor manually.`
             });
           }
-          // Check if typeVersion exceeds maximum supported
-          else if (nodeInfo.version && node.typeVersion > nodeInfo.version) {
+
+          // Check if typeVersion is missing. Use an explicit nullish check so that
+          // a literal 0 isn't treated as missing, and so that NaN falls through to
+          // the "invalid" branch below (where it is reported as non-finite).
+          if (node.typeVersion === undefined || node.typeVersion === null) {
             result.errors.push({
               type: 'error',
               nodeId: node.id,
               nodeName: node.name,
-              message: `typeVersion ${node.typeVersion} exceeds maximum supported version ${nodeInfo.version}`
+              message: `Missing required property 'typeVersion'. Add typeVersion: ${maxVersion ?? 1}`
+            });
+          }
+          // Check if typeVersion is invalid (must be a finite, non-negative number; 0 is valid)
+          else if (typeof node.typeVersion !== 'number' || !Number.isFinite(node.typeVersion) || node.typeVersion < 0) {
+            result.errors.push({
+              type: 'error',
+              nodeId: node.id,
+              nodeName: node.name,
+              message: `Invalid typeVersion: ${node.typeVersion}. Must be a finite non-negative number`
+            });
+          }
+          // Check if typeVersion is outdated (less than latest)
+          else if (maxVersion !== null && node.typeVersion < maxVersion) {
+            result.warnings.push({
+              type: 'warning',
+              nodeId: node.id,
+              nodeName: node.name,
+              message: `Outdated typeVersion: ${node.typeVersion}. Latest is ${maxVersion}`
+            });
+          }
+          // Check if typeVersion exceeds maximum supported
+          else if (maxVersion !== null && node.typeVersion > maxVersion) {
+            result.errors.push({
+              type: 'error',
+              nodeId: node.id,
+              nodeName: node.name,
+              message: `typeVersion ${node.typeVersion} exceeds maximum supported version ${maxVersion}`
             });
           }
         }
@@ -1213,29 +1233,45 @@ export class WorkflowValidator {
     const nodeInfo = this.nodeRepository.getNode(normalizedType);
     if (!nodeInfo) return;
 
-    // Most nodes have 1 main input. Known exceptions:
     const shortType = normalizedType.replace(/^(n8n-)?nodes-base\./, '');
-    let mainInputCount = 1; // Default: most nodes have 1 input
-
-    if (shortType === 'merge' || shortType === 'compareDatasets') {
-      mainInputCount = 2; // Merge nodes have 2 inputs
-    }
 
     // Trigger nodes have 0 inputs
     if (nodeInfo.isTrigger || isTriggerNode(targetNode.type)) {
-      mainInputCount = 0;
+      if (connection.index >= 0) {
+        result.errors.push({
+          type: 'error',
+          nodeName: targetNode.name,
+          message: `Input index ${connection.index} on node "${targetNode.name}" exceeds its input count (0). ` +
+            `Connection from "${sourceName}" targets input ${connection.index}, but trigger nodes have no main inputs.`,
+          code: 'INPUT_INDEX_OUT_OF_BOUNDS'
+        });
+        result.statistics.invalidConnections++;
+      }
+      return;
     }
 
-    if (mainInputCount > 0 && connection.index >= mainInputCount) {
-      result.errors.push({
-        type: 'error',
-        nodeName: targetNode.name,
-        message: `Input index ${connection.index} on node "${targetNode.name}" exceeds its input count (${mainInputCount}). ` +
-          `Connection from "${sourceName}" targets input ${connection.index}, but this node has ${mainInputCount} main input(s) (indices 0-${mainInputCount - 1}).`,
-        code: 'INPUT_INDEX_OUT_OF_BOUNDS'
-      });
-      result.statistics.invalidConnections++;
+    // Merge/CompareDatasets: read dynamic numberInputs parameter (defaults to 2)
+    if (shortType === 'merge' || shortType === 'compareDatasets') {
+      const rawInputs = targetNode.parameters?.numberInputs;
+      const parsed = rawInputs ? Number(rawInputs) : 2;
+      const mainInputCount = Number.isFinite(parsed) ? parsed : 2;
+
+      if (connection.index >= mainInputCount) {
+        result.errors.push({
+          type: 'error',
+          nodeName: targetNode.name,
+          message: `Input index ${connection.index} on node "${targetNode.name}" exceeds its input count (${mainInputCount}). ` +
+            `Connection from "${sourceName}" targets input ${connection.index}, but this node has ${mainInputCount} main input(s) (indices 0-${mainInputCount - 1}).`,
+          code: 'INPUT_INDEX_OUT_OF_BOUNDS'
+        });
+        result.statistics.invalidConnections++;
+      }
+      return;
     }
+
+    // For all other nodes: skip input bounds check.
+    // Many n8n nodes accept dynamic inputs that can't be determined from
+    // metadata alone. The false positive cost outweighs the benefit.
   }
 
   /**
@@ -1376,7 +1412,17 @@ export class WorkflowValidator {
       'nodes-base.loop'
     ];
 
-    const hasCycleDFS = (nodeName: string, pathFromLoopNode: boolean = false): boolean => {
+    // Conditional node types that can serve as loop exit conditions
+    const conditionalNodeTypes = [
+      'n8n-nodes-base.if',
+      'nodes-base.if',
+      'n8n-nodes-base.switch',
+      'nodes-base.switch',
+      'n8n-nodes-base.filter',
+      'nodes-base.filter',
+    ];
+
+    const hasCycleDFS = (nodeName: string, pathFromLoopNode: boolean = false, pathFromConditionalNode: boolean = false): boolean => {
       visited.add(nodeName);
       recursionStack.add(nodeName);
 
@@ -1394,20 +1440,21 @@ export class WorkflowValidator {
 
         const currentNodeType = nodeTypeMap.get(nodeName);
         const isLoopNode = loopNodeTypes.includes(currentNodeType || '');
-        
+        const isConditionalNode = conditionalNodeTypes.includes(currentNodeType || '');
+
         for (const target of allTargets) {
           if (!visited.has(target)) {
-            if (hasCycleDFS(target, pathFromLoopNode || isLoopNode)) return true;
+            if (hasCycleDFS(target, pathFromLoopNode || isLoopNode, pathFromConditionalNode || isConditionalNode)) return true;
           } else if (recursionStack.has(target)) {
             // Allow cycles that involve legitimate loop nodes
             const targetNodeType = nodeTypeMap.get(target);
             const isTargetLoopNode = loopNodeTypes.includes(targetNodeType || '');
-            
-            // If this cycle involves a loop node, it's legitimate
-            if (isTargetLoopNode || pathFromLoopNode || isLoopNode) {
+
+            // Allow cycles involving loop nodes or conditional exit nodes (IF/Switch/Filter)
+            if (isTargetLoopNode || pathFromLoopNode || isLoopNode || pathFromConditionalNode || isConditionalNode) {
               continue; // Allow this cycle
             }
-            
+
             return true; // Reject other cycles
           }
         }
@@ -1496,8 +1543,15 @@ export class WorkflowValidator {
         formatContext
       );
 
+      // Suppress missing-cachedResultName warnings at minimal profile only
+      // — the issue is UI-degrading, not runtime-blocking, so callers asking
+      // for the smallest possible result set don't need it (#715).
+      const filteredIssues = profile === 'minimal'
+        ? formatIssues.filter(i => i.issueType !== 'missing-cached-result-name')
+        : formatIssues;
+
       // Add format errors and warnings
-      formatIssues.forEach(issue => {
+      filteredIssues.forEach(issue => {
         const formattedMessage = ExpressionFormatValidator.formatErrorMessage(issue, formatContext);
 
         if (issue.severity === 'error') {

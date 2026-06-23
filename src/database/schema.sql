@@ -237,6 +237,7 @@ CREATE INDEX IF NOT EXISTS idx_prop_changes_auto ON version_property_changes(aut
 -- Auto-prunes to 10 versions per workflow to prevent memory leaks
 CREATE TABLE IF NOT EXISTS workflow_versions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  instance_id TEXT NOT NULL DEFAULT '',   -- Tenant scope (see getInstanceScopeId); '' = single-tenant
   workflow_id TEXT NOT NULL,              -- n8n workflow ID
   version_number INTEGER NOT NULL,        -- Incremental version number (1, 2, 3...)
   workflow_name TEXT NOT NULL,            -- Workflow name at time of backup
@@ -250,10 +251,11 @@ CREATE TABLE IF NOT EXISTS workflow_versions (
   fix_types TEXT,                         -- JSON array of fix types (if autofix)
   metadata TEXT,                          -- Additional context (JSON)
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(workflow_id, version_number)
+  UNIQUE(instance_id, workflow_id, version_number)
 );
 
 -- Indexes for workflow version queries
+CREATE INDEX IF NOT EXISTS idx_workflow_versions_instance ON workflow_versions(instance_id, workflow_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_versions_workflow_id ON workflow_versions(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_versions_created_at ON workflow_versions(created_at);
 CREATE INDEX IF NOT EXISTS idx_workflow_versions_trigger ON workflow_versions(trigger);

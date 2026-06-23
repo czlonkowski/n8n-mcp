@@ -131,6 +131,8 @@ describe('HTTP Server instance URL validation (GHSA-4ggg-h7ph-26qr)', () => {
     process.env = { ...originalEnv };
     process.env.AUTH_TOKEN = TEST_AUTH_TOKEN;
     process.env.PORT = '0';
+    // These tests assert default-strict behavior; clear any test-env override.
+    delete process.env.WEBHOOK_SECURITY_MODE;
 
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -377,6 +379,115 @@ describe('HTTP Server instance URL validation (GHSA-4ggg-h7ph-26qr)', () => {
       await handler(req, res);
 
       assertSsrfRejection(res);
+    });
+  });
+
+  describe('GHSA-jxx9-px88-pj69, GHSA-2cf7-hpwf-47h9 — multi-tenant header omission', () => {
+    beforeEach(() => {
+      process.env.ENABLE_MULTI_TENANT = 'true';
+      // Process-level credentials must not leak to tenants even when set.
+      process.env.N8N_API_URL = 'https://operator-n8n.example.com';
+      process.env.N8N_API_KEY = 'operator-api-key';
+    });
+
+    it('rejects request with no tenant headers in multi-tenant mode', async () => {
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('post', '/mcp');
+      const { req, res } = createMockReqRes();
+      req.headers = { authorization: `Bearer ${TEST_AUTH_TOKEN}` };
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      const jsonArgs = (res.json as any).mock.calls[0][0];
+      expect(jsonArgs).toMatchObject({
+        jsonrpc: '2.0',
+        error: {
+          code: -32602,
+          message: 'Multi-tenant headers required',
+        },
+      });
+    });
+
+    it('rejects with no headers even when partial-context validation would pass', async () => {
+      // Defense-in-depth: the no-headers gate runs before validateInstanceContext,
+      // so an attacker cannot avoid 400 by also omitting other optional headers.
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('post', '/mcp');
+      const { req, res } = createMockReqRes();
+      req.headers = {
+        authorization: `Bearer ${TEST_AUTH_TOKEN}`,
+        'x-instance-id': 'attacker-only-instance-id',
+      };
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('rejects request with only the url tenant header', async () => {
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('post', '/mcp');
+      const { req, res } = createMockReqRes();
+      req.headers = {
+        authorization: `Bearer ${TEST_AUTH_TOKEN}`,
+        'x-n8n-url': 'https://tenant-n8n.example.com',
+      };
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      const jsonArgs = (res.json as any).mock.calls[0][0];
+      expect(jsonArgs).toMatchObject({
+        jsonrpc: '2.0',
+        error: {
+          code: -32602,
+          message: 'Multi-tenant headers required',
+        },
+      });
+    });
+
+    it('rejects request with only the key tenant header', async () => {
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('post', '/mcp');
+      const { req, res } = createMockReqRes();
+      req.headers = {
+        authorization: `Bearer ${TEST_AUTH_TOKEN}`,
+        'x-n8n-key': 'tenant-api-key',
+      };
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      const jsonArgs = (res.json as any).mock.calls[0][0];
+      expect(jsonArgs).toMatchObject({
+        jsonrpc: '2.0',
+        error: {
+          code: -32602,
+          message: 'Multi-tenant headers required',
+        },
+      });
+    });
+
+    it('allows request with both tenant headers in multi-tenant mode', async () => {
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('post', '/mcp');
+      const { req, res } = createMockReqRes();
+      req.headers = {
+        authorization: `Bearer ${TEST_AUTH_TOKEN}`,
+        'x-n8n-url': 'https://tenant-n8n.example.com',
+        'x-n8n-key': 'tenant-api-key',
+      };
+      await handler(req, res);
+
+      // Must not be a 400; the transport mock then returns 200.
+      expect(res.status).not.toHaveBeenCalledWith(400);
     });
   });
 

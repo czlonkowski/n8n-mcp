@@ -13,7 +13,10 @@ RUN apk add --no-cache python3 make g++ && \
 COPY package*.json tsconfig*.json ./
 
 # Install all dependencies (including devDependencies for build)
-RUN npm ci --no-audit --no-fund
+# --legacy-peer-deps: n8n-nodes-base 2.20.x pulls in mappersmith with a `diff`
+# peer that conflicts with ts-node's `diff@^4`; npm 7+ strict resolution leaves
+# the lock internally inconsistent without this flag.
+RUN npm ci --no-audit --no-fund --legacy-peer-deps
 
 # Copy source code
 COPY src ./src

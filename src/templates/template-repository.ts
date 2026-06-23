@@ -315,7 +315,10 @@ export class TemplateRepository {
     const taskNodeMap: Record<string, string[]> = {
       'ai_automation': ['@n8n/n8n-nodes-langchain.openAi', '@n8n/n8n-nodes-langchain.agent', 'n8n-nodes-base.openAi'],
       'data_sync': ['n8n-nodes-base.googleSheets', 'n8n-nodes-base.postgres', 'n8n-nodes-base.mysql'],
-      'webhook_processing': ['n8n-nodes-base.webhook', 'n8n-nodes-base.httpRequest'],
+      // webhook_processing must match only workflows *triggered* by a webhook.
+      // Including httpRequest here was returning scheduleTrigger/formTrigger
+      // workflows that merely use outbound HTTP — not webhook-triggered (QA #2).
+      'webhook_processing': ['n8n-nodes-base.webhook'],
       'email_automation': ['n8n-nodes-base.gmail', 'n8n-nodes-base.emailSend', 'n8n-nodes-base.emailReadImap'],
       'slack_integration': ['n8n-nodes-base.slack', 'n8n-nodes-base.slackTrigger'],
       'data_transformation': ['n8n-nodes-base.code', 'n8n-nodes-base.set', 'n8n-nodes-base.merge'],
@@ -416,7 +419,10 @@ export class TemplateRepository {
     const taskNodeMap: Record<string, string[]> = {
       'ai_automation': ['@n8n/n8n-nodes-langchain.openAi', '@n8n/n8n-nodes-langchain.agent', 'n8n-nodes-base.openAi'],
       'data_sync': ['n8n-nodes-base.googleSheets', 'n8n-nodes-base.postgres', 'n8n-nodes-base.mysql'],
-      'webhook_processing': ['n8n-nodes-base.webhook', 'n8n-nodes-base.httpRequest'],
+      // webhook_processing must match only workflows *triggered* by a webhook.
+      // Including httpRequest here was returning scheduleTrigger/formTrigger
+      // workflows that merely use outbound HTTP — not webhook-triggered (QA #2).
+      'webhook_processing': ['n8n-nodes-base.webhook'],
       'email_automation': ['n8n-nodes-base.gmail', 'n8n-nodes-base.emailSend', 'n8n-nodes-base.emailReadImap'],
       'slack_integration': ['n8n-nodes-base.slack', 'n8n-nodes-base.slackTrigger'],
       'data_transformation': ['n8n-nodes-base.code', 'n8n-nodes-base.set', 'n8n-nodes-base.merge'],
@@ -803,6 +809,17 @@ export class TemplateRepository {
     return result.count;
   }
   
+  /**
+   * Whether any templates have metadata_json populated.
+   * Lets callers distinguish "metadata not yet enriched" from "no matches".
+   */
+  hasMetadataCoverage(): boolean {
+    const row = this.db.prepare(`
+      SELECT 1 FROM templates WHERE metadata_json IS NOT NULL LIMIT 1
+    `).get() as { 1?: number } | undefined;
+    return !!row;
+  }
+
   /**
    * Get unique categories from metadata
    */

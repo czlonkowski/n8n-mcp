@@ -17,6 +17,22 @@ Railway deployment provides:
 - ⚡ **Auto-scaling** - Railway handles the infrastructure
 - 📊 **Built-in monitoring** - Logs and metrics included
 
+## ⚠️ Before You Deploy
+
+`AUTH_TOKEN` is **required** — the server refuses to start without it. How you handle it depends on how you deploy:
+
+> ⚠️ **Required — `AUTH_TOKEN`**: Open your service's **Variables** tab and make sure `AUTH_TOKEN` is set to a secure value of at least 32 characters:
+> ```bash
+> # Generate a secure token locally:
+> openssl rand -base64 32
+> ```
+> - **Deploying via the one-click template?** A placeholder `AUTH_TOKEN` is created for you — you **must replace** it with your own secure value (the server warns every 5 minutes until you do).
+> - **Deploying from your own repo/Dockerfile?** Railway does **not** auto-create the variable — you **must add** `AUTH_TOKEN` yourself, or the server will not start.
+>
+> Either way, Railway redeploys automatically once the variable is saved. See [Configure Security](#2-configure-security) below for the full walkthrough.
+
+> 💡 **Optional**: To enable n8n workflow-management integration, also set `N8N_API_URL` and `N8N_API_KEY`. See [Optional: n8n Integration](#optional-n8n-integration).
+
 ## 🎯 Step-by-Step Deployment
 
 ### 1. Deploy to Railway

@@ -76,6 +76,9 @@ describe('Integration: handleGetWorkflowDetails', () => {
 
       // Verify metadata fields
       expect(details.versionId).toBeDefined();
+
+      // Issue #777: the heavy activeVersion payload must not be returned to the caller.
+      expect((details as unknown as { activeVersion?: unknown }).activeVersion).toBeUndefined();
     });
   });
 

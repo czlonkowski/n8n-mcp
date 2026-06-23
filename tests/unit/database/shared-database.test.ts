@@ -21,8 +21,13 @@ vi.mock('../../../src/database/database-adapter', () => ({
 
 vi.mock('../../../src/database/node-repository', () => ({
   NodeRepository: vi.fn().mockImplementation(() => ({
-    getNodeTypes: vi.fn().mockReturnValue([])
+    getNodeTypes: vi.fn().mockReturnValue([]),
+    pruneExpiredWorkflowVersions: vi.fn()
   }))
+}));
+
+vi.mock('../../../src/database/migrations/add-workflow-versions-instance-id', () => ({
+  migrateWorkflowVersionsInstanceId: vi.fn().mockReturnValue(false)
 }));
 
 vi.mock('../../../src/templates/template-service', () => ({
@@ -62,6 +67,15 @@ describe('Shared Database Module', () => {
     // Get the mocked function
     const adapterModule = await import('../../../src/database/database-adapter');
     createDatabaseAdapter = adapterModule.createDatabaseAdapter as ReturnType<typeof vi.fn>;
+    createDatabaseAdapter.mockResolvedValue(mockDb);
+
+    // Re-establish constructor mock implementation. The global afterEach runs
+    // vi.restoreAllMocks(), which clears vi.fn implementations between tests.
+    const { NodeRepository } = await import('../../../src/database/node-repository');
+    (NodeRepository as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      getNodeTypes: vi.fn().mockReturnValue([]),
+      pruneExpiredWorkflowVersions: vi.fn()
+    }));
   });
 
   afterEach(async () => {

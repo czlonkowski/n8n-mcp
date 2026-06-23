@@ -99,7 +99,10 @@ async function rebuildOptimized() {
   const schema = fs.readFileSync(schemaPath, 'utf8');
   db.exec(schema);
   
-  // Clear existing data
+  // Clear existing data.
+  // NOTE: unlike rebuild.ts, this optimized path uses schema-optimized.sql, which
+  // has no is_community column and no community-node support — so there are no
+  // community nodes to preserve here and a full wipe is correct.
   db.exec('DELETE FROM nodes');
   console.log('🗑️  Cleared existing data\n');
   

@@ -196,10 +196,7 @@ npm run validate
 rm -f data/nodes.db
 npm run rebuild
 
-# Check specific nodes
-npm run test-nodes
-
-# Validate database
+# Validate database (includes critical-node checks)
 npm run validate
 ```
 

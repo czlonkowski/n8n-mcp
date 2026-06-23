@@ -89,7 +89,10 @@ export class WorkflowVersioningService {
 
   constructor(
     private nodeRepository: NodeRepository,
-    private apiClient?: N8nApiClient
+    private apiClient?: N8nApiClient,
+    // Tenant scope for all version operations (GHSA-j6r7-6fhx-77wx). Derived
+    // via getInstanceScopeId; '' is the single tenant for single-user mode.
+    private instanceId: string = ''
   ) {}
 
   /**
@@ -107,11 +110,12 @@ export class WorkflowVersioningService {
     }
   ): Promise<BackupResult> {
     // Get current max version number
-    const versions = this.nodeRepository.getWorkflowVersions(workflowId, 1);
+    const versions = this.nodeRepository.getWorkflowVersions(workflowId, this.instanceId, 1);
     const nextVersion = versions.length > 0 ? versions[0].versionNumber + 1 : 1;
 
     // Create new version
     const versionId = this.nodeRepository.createWorkflowVersion({
+      instanceId: this.instanceId,
       workflowId,
       versionNumber: nextVersion,
       workflowName: workflow.name || 'Unnamed Workflow',
@@ -125,7 +129,8 @@ export class WorkflowVersioningService {
     // Auto-prune to keep max 10 versions
     const pruned = this.nodeRepository.pruneWorkflowVersions(
       workflowId,
-      this.DEFAULT_MAX_VERSIONS
+      this.DEFAULT_MAX_VERSIONS,
+      this.instanceId
     );
 
     return {
@@ -142,7 +147,7 @@ export class WorkflowVersioningService {
    * Get version history for a workflow
    */
   async getVersionHistory(workflowId: string, limit: number = 10): Promise<VersionInfo[]> {
-    const versions = this.nodeRepository.getWorkflowVersions(workflowId, limit);
+    const versions = this.nodeRepository.getWorkflowVersions(workflowId, this.instanceId, limit);
 
     return versions.map(v => ({
       id: v.id,
@@ -161,7 +166,7 @@ export class WorkflowVersioningService {
    * Get a specific workflow version
    */
   async getVersion(versionId: number): Promise<WorkflowVersion | null> {
-    return this.nodeRepository.getWorkflowVersion(versionId);
+    return this.nodeRepository.getWorkflowVersion(versionId, this.instanceId);
   }
 
   /**
@@ -187,10 +192,10 @@ export class WorkflowVersioningService {
     let versionToRestore: WorkflowVersion | null = null;
 
     if (versionId) {
-      versionToRestore = this.nodeRepository.getWorkflowVersion(versionId);
+      versionToRestore = this.nodeRepository.getWorkflowVersion(versionId, this.instanceId);
     } else {
       // Get latest backup
-      versionToRestore = this.nodeRepository.getLatestWorkflowVersion(workflowId);
+      versionToRestore = this.nodeRepository.getLatestWorkflowVersion(workflowId, this.instanceId);
     }
 
     if (!versionToRestore) {
@@ -280,7 +285,7 @@ export class WorkflowVersioningService {
    * Delete a specific version
    */
   async deleteVersion(versionId: number): Promise<{ success: boolean; message: string }> {
-    const version = this.nodeRepository.getWorkflowVersion(versionId);
+    const version = this.nodeRepository.getWorkflowVersion(versionId, this.instanceId);
 
     if (!version) {
       return {
@@ -289,7 +294,7 @@ export class WorkflowVersioningService {
       };
     }
 
-    this.nodeRepository.deleteWorkflowVersion(versionId);
+    this.nodeRepository.deleteWorkflowVersion(versionId, this.instanceId);
 
     return {
       success: true,
@@ -301,7 +306,7 @@ export class WorkflowVersioningService {
    * Delete all versions for a workflow
    */
   async deleteAllVersions(workflowId: string): Promise<{ deleted: number; message: string }> {
-    const count = this.nodeRepository.getWorkflowVersionCount(workflowId);
+    const count = this.nodeRepository.getWorkflowVersionCount(workflowId, this.instanceId);
 
     if (count === 0) {
       return {
@@ -310,7 +315,7 @@ export class WorkflowVersioningService {
       };
     }
 
-    const deleted = this.nodeRepository.deleteWorkflowVersionsByWorkflowId(workflowId);
+    const deleted = this.nodeRepository.deleteWorkflowVersionsByWorkflowId(workflowId, this.instanceId);
 
     return {
       deleted,
@@ -325,37 +330,17 @@ export class WorkflowVersioningService {
     workflowId: string,
     maxVersions: number = 10
   ): Promise<{ pruned: number; remaining: number }> {
-    const pruned = this.nodeRepository.pruneWorkflowVersions(workflowId, maxVersions);
-    const remaining = this.nodeRepository.getWorkflowVersionCount(workflowId);
+    const pruned = this.nodeRepository.pruneWorkflowVersions(workflowId, maxVersions, this.instanceId);
+    const remaining = this.nodeRepository.getWorkflowVersionCount(workflowId, this.instanceId);
 
     return { pruned, remaining };
-  }
-
-  /**
-   * Truncate entire workflow_versions table
-   * Requires explicit confirmation
-   */
-  async truncateAllVersions(confirm: boolean): Promise<{ deleted: number; message: string }> {
-    if (!confirm) {
-      return {
-        deleted: 0,
-        message: 'Truncate operation not confirmed - no action taken'
-      };
-    }
-
-    const deleted = this.nodeRepository.truncateWorkflowVersions();
-
-    return {
-      deleted,
-      message: `Truncated workflow_versions table - deleted ${deleted} version(s)`
-    };
   }
 
   /**
    * Get storage statistics
    */
   async getStorageStats(): Promise<StorageStats> {
-    const stats = this.nodeRepository.getVersionStorageStats();
+    const stats = this.nodeRepository.getVersionStorageStats(this.instanceId);
 
     return {
       totalVersions: stats.totalVersions,
@@ -376,8 +361,8 @@ export class WorkflowVersioningService {
    * Compare two versions
    */
   async compareVersions(versionId1: number, versionId2: number): Promise<VersionDiff> {
-    const v1 = this.nodeRepository.getWorkflowVersion(versionId1);
-    const v2 = this.nodeRepository.getWorkflowVersion(versionId2);
+    const v1 = this.nodeRepository.getWorkflowVersion(versionId1, this.instanceId);
+    const v2 = this.nodeRepository.getWorkflowVersion(versionId2, this.instanceId);
 
     if (!v1 || !v2) {
       throw new Error(`One or both versions not found: ${versionId1}, ${versionId2}`);

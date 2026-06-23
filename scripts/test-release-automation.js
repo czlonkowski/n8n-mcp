@@ -419,14 +419,35 @@ class ReleaseAutomationTester {
         }
       }
       
-      // Check for secrets usage
-      if (workflowContent.includes('${{ secrets.NPM_TOKEN }}')) {
-        success('Workflow: NPM_TOKEN secret configured');
+      // Check for npm Trusted Publisher (OIDC) configuration — scoped to the publish-npm job
+      // Slice from "  publish-npm:" to the next job at the same indent (2 spaces, non-space char)
+      const publishNpmMatch = workflowContent.match(/^ {2}publish-npm:\n([\s\S]*?)(?=^ {2}\S|\Z)/m);
+      const publishNpmBlock = publishNpmMatch ? publishNpmMatch[1] : '';
+
+      if (!publishNpmBlock) {
+        error('Workflow: could not locate publish-npm job block for OIDC checks');
+        this.errors.push('publish-npm job not found in workflow');
       } else {
-        warning('Workflow: NPM_TOKEN secret may be missing');
-        this.warnings.push('NPM_TOKEN secret may need to be configured');
+        if (/\bid-token:\s*write\b/.test(publishNpmBlock)) {
+          success('Workflow: publish-npm has id-token: write permission (OIDC)');
+        } else {
+          error('Workflow: publish-npm is missing id-token: write permission');
+          this.errors.push('Trusted Publishing requires id-token: write on publish-npm job');
+        }
+
+        if (/\benvironment:\s*npm-publish\b/.test(publishNpmBlock)) {
+          success('Workflow: publish-npm uses npm-publish environment');
+        } else {
+          error('Workflow: publish-npm is missing environment: npm-publish');
+          this.errors.push('Trusted Publishing requires environment: npm-publish on publish-npm job');
+        }
       }
-      
+
+      if (workflowContent.includes('${{ secrets.NPM_TOKEN }}')) {
+        warning('Workflow: stale NPM_TOKEN reference found — Trusted Publishing makes this unnecessary');
+        this.warnings.push('Remove ${{ secrets.NPM_TOKEN }} from workflow now that OIDC is used');
+      }
+
       if (workflowContent.includes('${{ secrets.GITHUB_TOKEN }}')) {
         success('Workflow: GITHUB_TOKEN secret configured');
       } else {
@@ -535,9 +556,11 @@ class ReleaseAutomationTester {
     
     // Next steps
     log('\n📋 Next Steps:', 'cyan');
-    log('1. Ensure all secrets are configured in GitHub repository settings:', 'cyan');
-    log('   • NPM_TOKEN (required for npm publishing)', 'cyan');
-    log('   • GITHUB_TOKEN (automatically available)', 'cyan');
+    log('1. Ensure GitHub repository settings are configured:', 'cyan');
+    log('   • Secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN', 'cyan');
+    log('   • Environment "npm-publish" exists (Settings → Environments)', 'cyan');
+    log('   • npm Trusted Publisher configured on npmjs.com (no NPM_TOKEN secret needed)', 'cyan');
+    log('   • GITHUB_TOKEN is provided automatically', 'cyan');
     log('\n2. To trigger a release:', 'cyan');
     log('   • Update version in package.json', 'cyan');
     log('   • Update changelog in docs/CHANGELOG.md', 'cyan');

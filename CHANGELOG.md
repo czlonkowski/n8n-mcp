@@ -7,6 +7,445 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.59.3] - 2026-06-21
+
+### Fixed
+
+- **IF node and AI Agent example/template configs now validate against n8n** (#374). The static example and task-template generators emitted configs that n8n rejects. IF (`nodes-base.if`) examples were missing the `conditions.options` block (`version`/`leftValue`/`caseSensitive`/`typeValidation`), the filter `combinator`, and per-condition `id`s — so the generated node rendered empty and failed the validators. The AI Agent task templates used `nodes-langchain.agent` (missing the `@n8n/` package prefix) with a flat `text`/`outputType`/`systemMessage` shape instead of the current `promptType` + `options.systemMessage` structure. Both are corrected to the shapes the bundled node schema actually expects, and a regression test now runs the generated configs through `EnhancedConfigValidator` (the validator users hit) so the shapes cannot silently drift again. Reported by @FelipeLuz01.
+- **Windows: the MCP server no longer crashes on graceful shutdown** (#383, #385). Calling `process.stdin.destroy()` during shutdown triggered a fatal libuv assertion (`!(handle->flags & UV_HANDLE_CLOSING)`, `src/win/async.c:76`) on Windows, crashing the server on exit/disconnect — including via the published `npx n8n-mcp` stdio bin, which the earlier proposed fix missed. stdin teardown is now platform-aware (always `pause()`, only `destroy()` off `win32`) via a shared `tearDownStdin()` helper applied to both stdio entrypoints, with an explicit `win32` exit path so shutdown can't hang. Reported by @libragik.
+
+### Security
+
+- **Session restore now requires a complete tenant context in multi-tenant mode** (#844). Defense-in-depth follow-up to GHSA-2cf7-hpwf-47h9. `restoreSessionState()` validated a restored `InstanceContext` only via `validateInstanceContext`, which checks each field only when it is present, so a persisted context carrying just one of `n8nApiUrl`/`n8nApiKey` could be restored as a partial tenant identity — an asymmetry with the export side, which already refuses to persist a partial context. A presence guard mirroring the export-side check now rejects partial contexts on restore and emits a `session_restore_failed` security event; sessions with no context at all (single-tenant/stdio) are unaffected.
+
+### Documentation
+
+- **Railway deployment guide gains an upfront `AUTH_TOKEN` callout** (#152). Added a "Before You Deploy" section near the top of `docs/RAILWAY_DEPLOYMENT.md` covering both deploy paths — the one-click template (which pre-sets a placeholder `AUTH_TOKEN` you must replace) and a self-hosted repo/Dockerfile deploy (where Railway does not auto-create the variable, so the server won't start until you add it). Reported by @gthay.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.59.2] - 2026-06-19
+
+### Added
+
+- **`MULTI_TENANT_ALLOW_CONCURRENT_SESSIONS` env flag** (multi-tenant `instance` strategy). By default the instance strategy assumes one MCP session per instance and, on every `initialize`, eagerly evicts all other live sessions for that same instance (`reason: instance_reconnect`). When several MCP clients target the same instance concurrently — e.g. an automation agent, an IDE, and a web client all authenticated as one tenant — each client's `initialize` destroys the others' active sessions, so their next tool call fast-fails with `-32000 "Session not found or expired"` and the client reports a dropped connection. Set `MULTI_TENANT_ALLOW_CONCURRENT_SESSIONS=true` to skip the eager eviction and let concurrent same-instance sessions coexist; sessions are then reclaimed only by their natural lifecycle (transport close, the `SESSION_TIMEOUT_MINUTES` idle sweep, and the `N8N_MCP_MAX_SESSIONS` cap). Default `false` preserves the previous one-session-per-instance behavior. Hosted multi-client deployments should enable it.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.59.1] - 2026-06-19
+
+### Security
+
+- **Bumped `uuid` 10 → 14** (`package.json` + `package.runtime.json`). This is the only Dependabot advisory that actually reaches the published runtime artifact: a clean-room `npm install --production` from `package.runtime.json` (the manifest shipped to npm and installed in the Docker runtime stage) flagged exactly one vulnerable package — `uuid@10.0.0` (GHSA-w5hq-g745-h8pq / CVE-2026-41907, missing buffer bounds check in v3/v5/v6 when a caller-supplied output buffer is passed). The fix lands in a major release, so the `^10` pin could not auto-resolve. The server's own usage is unaffected (`v4` random IDs, and one `v5` call that passes no buffer), but the direct dependency is bumped so no vulnerable `uuid` reaches the shipped artifact. The `v4`/`v5` named exports are unchanged and verified under the CommonJS build. Note: the dev/build `package-lock.json` still contains older `uuid` copies (8.x/9.x/10.x) nested under the n8n packages (`@n8n/n8n-nodes-langchain`'s `@langchain/*`, plus snowflake-sdk, tedious, typeorm, etc.); these are build-time-only transitives that are absent from `package.runtime.json` and never installed at runtime, so they are intentionally not force-overridden (doing so would push those packages across multiple `uuid` breaking majors and risk the `npm run rebuild` build for code that does not ship). The GitHub `uuid` alert may therefore stay open until the n8n packages bump their own `uuid` upstream, which clears on the regular n8n update.
+- **Bumped dev/CI test tooling out of the vulnerable ranges**: `vitest` and `@vitest/*` 3.2.4 → 3.2.6 (clears the `vitest` advisory CVE-2026-47429, which only triggers via `vitest --ui` bound to a non-localhost interface — CI runs headless `vitest run`), which also refreshes the transitive `vite` to 7.3.5. These are dev-only dependencies and are never installed in the published package or the Docker runtime image.
+- **Bumped `ui-apps` build tooling**: `vite` ^6.0.0 → ^6.4.3, refreshing the transitive build chain to patched versions (`rollup` 4.62.0, `postcss` 8.5.15, `@babel/core` 7.29.7, `picomatch` 2.3.2/4.0.4). `ui-apps` produces static single-file HTML bundles at build time; none of this tooling ships in `ui-apps/dist/**`.
+
+The remaining open Dependabot advisories are not addressed here because they do not reach a shipped artifact: the bulk are transitive dependencies of the n8n packages (`n8n-core`, `n8n-nodes-base`, `n8n-workflow`, `@n8n/n8n-nodes-langchain`), which are build-time-only (used to generate `data/nodes.db`) and are absent from `package.runtime.json` — they clear on the regular n8n dependency updates. One low-severity `esbuild` advisory (Windows dev-server arbitrary file read, GHSA-g7r4-m6w7-qqqr) remains pinned by `vite`'s `^0.27.0` range and is unreachable in this project (esbuild is an internal Vite/Vitest transform, not an exposed dev server; CI is Linux).
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.59.0] - 2026-06-18
+
+### Added
+
+- **`n8n_get_workflow` gains `mode="filtered"`** for reading a single node (or a handful of nodes) without pulling the whole workflow. On large workflows with long Code-node source, `mode="full"`/`mode="active"` can return a payload big enough to be truncated client-side, leaving `jsCode`/`pythonCode` unreadable. The new mode takes a `nodeNames` array (matched against node names *or* node IDs) and returns only those nodes with their full config, plus light metadata (`nodeCount`, `returnedCount`, and a `notFound` list for any keys that matched nothing). Recommended flow: `mode="structure"` to discover node names, then `mode="filtered"` to pull the specific heavy node. Requested by @MiRaIOMeZaSu (#101).
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.58.0] - 2026-06-17
+
+### Changed
+
+- **Updated n8n to 2.26.5.** Bumped the four n8n packages this server loads at build time: `n8n-nodes-base` 2.23.0 → 2.26.2, `n8n-core` 2.23.1 → 2.26.2, `n8n-workflow` 2.23.0 → 2.26.2, and `@n8n/n8n-nodes-langchain` 2.23.0 → 2.26.2. The node database was rebuilt from the upgraded packages (816 core nodes, 1,137 AI-capable tool variants, 611 versioned nodes, 271 triggers) and the existing community-node corpus (1,029 nodes) was preserved with its READMEs and AI summaries intact. README badge and node-count copy updated to 1,845 total (816 core + 1,029 community).
+
+### Fixed
+
+- **`npm run update:n8n` no longer aborts at its validation step.** The post-rebuild validation invoked a `test-nodes` npm script pointing at `dist/scripts/test-nodes.js`, a file removed long ago, so every run ended with `Cannot find module .../test-nodes.js` and `❌ Update failed at validation step` even though the dependency bump and database rebuild had completed. The redundant `test-nodes` step (critical-node checks are already covered by `npm run validate`) and its dangling npm script have been removed.
+- **Published runtime manifest aligned with the build.** `package.runtime.json` (the manifest published to npm) pinned `@modelcontextprotocol/sdk` to `1.20.1` while the code is built and tested against `1.28.0`, and declared `node >=16.0.0` despite depending on `express@^5` (which requires Node ≥18). Both are now corrected (SDK `1.28.0`, engine `>=18.0.0`) so runtime-only installs match the tested build.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.57.4] - 2026-06-13
+
+### Security
+
+- Fix incorrect authorization for tenant-scoped workflow version backups in multi-tenant HTTP mode (GHSA-2cf7-hpwf-47h9). Reported by @DavidCarliez.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.57.3] - 2026-06-10
+
+### Fixed
+
+- **Workflow payloads mangled by HTTP MCP clients are repaired before validation (#814).** Some HTTP MCP clients (opencode confirmed) re-serialize nested tool arguments before they reach the server: arrays arrive as dense numeric-index records (`[x, y]` → `{"0": x, "1": y}`), numbers as strings (`typeVersion: "3"`), and objects as JSON strings (`parameters: "{}"`), which made `n8n_update_partial_workflow` effectively unusable and `n8n_create_workflow` intermittently fail on those clients. A new input normalizer restores the intended shapes inside the Zod schemas for workflow create/update, the partial-update diff request (the `operations` array itself plus `node`, `updates`, `patches`, `connections`, `settings`, and `position` fields), and `tags` on `n8n_list_workflows`. Guard rails: only canonical array-index keys trigger conversion (leading-zero keys like `"00"` are preserved as objects), number coercion accepts canonical decimal strings only (no `"0x10"`/`"1e3"`), normalization is depth-capped against pathological nesting, nested strings are never JSON-parsed (so `jsCode` payloads are safe), and node `credentials` — never an array in n8n — are exempt from dense conversion. Well-formed input from stdio clients passes through byte-identical. Likely also resolves #600, #611, and #492. Thanks to @cnYui for the fix (#836).
+- **`n8n_manage_credentials` now explains itself when an n8n instance cannot read credentials (#809).** Not every n8n deployment allows credential reads through its public API: older versions reject `GET /credentials` outright (405), and API-key scopes or instance settings can block it (403) — so the `list` action failed with a bare `GET method not allowed` and agents could not tell an unsupported action from a transient error. `list` and `get` now detect the rejection and return a clear `NOT_SUPPORTED` response explaining the likely causes (version vs. permissions), noting that `create`, `delete`, and `getSchema` generally still work (`update` too, where the API version supports it), pointing to the n8n UI for credential IDs, and carrying the underlying status code and message in `details` for diagnosis. The tool description documents the requirement. Deployments whose API does permit credential reads (used by `list` pagination and the `get` list-fallback since 2.57.1) are unaffected.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.57.2] - 2026-06-09
+
+### Fixed
+
+- **`n8n_update_partial_workflow` no longer fails with `request/body must NOT have additional properties` on n8n 2.x.** n8n's Public API write schema (`PUT /workflows/{id}`) declares `additionalProperties: false`, but its `GET` response echoes back server-managed fields that the write schema does not accept — including a top-level `availableInMCP` column on n8n 2.x, plus fields not even in the OpenAPI spec (`activeVersionId`, `versionCounter`, `nodeGroups`). The previous payload cleaner used a denylist, so any newly-echoed field leaked into the update request and was rejected. `cleanWorkflowForUpdate` now uses an allowlist (`name`, `nodes`, `connections`, `settings`), which is forward-compatible — fields n8n adds in future versions can no longer break updates. (`availableInMCP` *inside* `settings` remains a valid, writable property and is preserved.) Also resolves the `nodeGroups` reports (#831, #838).
+- **`n8n_update_full_workflow` no longer rejects updates that omit `name` or `settings`.** n8n's `PUT /workflows/{id}` is a full replace and requires `name`, `nodes`, `connections` and `settings` to all be present, but the tool lists them as optional. The handler now always fetches the current workflow and merges the caller's partial update over it, so omitted required fields are preserved from the existing workflow instead of failing with `request/body must have required property 'name'`.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.57.1] - 2026-06-03
+
+### Fixed
+
+- **`n8n_manage_credentials` can now paginate past 100 credentials (#816).** The `list` action accepts a `cursor` (and optional `limit`) and returns `nextCursor`, mirroring `n8n_list_workflows`, so callers can page through every credential on instances with more than 100. This also fixes two silent knock-on bugs: `get` by id no longer returns a false "not found" for credentials living beyond the first page (its list-fallback now scans all pages), and `includeUsage: true` on `list` now performs a complete all-pages scan instead of reporting only the first 100, so credential inventory/rotation audits no longer under-report.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.57.0] - 2026-06-02
+
+### Changed
+
+- **Updated n8n to 2.23.0.** Bumped the four n8n packages this server loads at build time: `n8n-nodes-base` 2.21.2 → 2.23.0, `n8n-core` 2.21.4 → 2.23.1, `n8n-workflow` 2.21.1 → 2.23.0, and `@n8n/n8n-nodes-langchain` 2.21.4 → 2.23.0. The node database was rebuilt from the upgraded packages (822 core nodes, 1,143 AI-capable tool variants, 606 versioned nodes, 271 triggers) and the existing community-node corpus (1,029 nodes) was preserved with its READMEs and AI summaries intact. README badge and node-count copy updated to 1,851 total (822 core + 1,029 community).
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.56.1] - 2026-06-02
+
+### Fixed
+
+- **Workflow version backups are now scoped per n8n instance.** Each `workflow_versions` record is tagged with a derived, non-spoofable instance key (a hash of the instance's API URL and key), and every read, list, get, delete, rollback, and prune is filtered by it. In multi-tenant HTTP deployments this isolates version history per instance, so one tenant can no longer read or delete another tenant's backups; single-instance and stdio deployments are unaffected (one logical scope). A startup migration adds the `instance_id` column to existing databases (pre-existing, un-scoped backups are cleared during the migration) and an age-based retention sweep — configurable via `WORKFLOW_VERSION_RETENTION_DAYS` (default 30) — bounds on-disk growth alongside the existing per-workflow keep-10 pruning.
+
+### Changed
+
+- **Removed the global `truncate` mode from `n8n_workflow_versions`.** Per-workflow `delete`/`prune` plus the automatic retention sweep replace it.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.56.0] - 2026-05-23
+
+### Added
+
+- **`additionalTools` hook on `EngineOptions` for host-injected MCP tools (#798, #799).** Multi-tenant consumers of `N8NMCPEngine` (notably the n8n-mcp SaaS at api.n8n-mcp.com) need to expose a small number of tools that belong to their hosting layer rather than upstream — for example a tool that lets the AI agent enumerate and switch between the multiple n8n instances a single user has registered, which depends on host-specific concepts (multi-tenant credential storage, named instance registry, per-user defaults) that have no place in this repo. Before this change there was no way to inject such a tool into the engine's `tools/list` / `tools/call` surface without forking the MCP server layer or wrapping it externally and reimplementing the JSON-RPC request/response boundary, both of which couple the host to upstream wire-format details. `EngineOptions` now accepts an optional `additionalTools?: AdditionalTool[]`, where each entry pairs a standard MCP `Tool` (name, description, inputSchema) with an `async handler(args, { instanceContext })` that returns a `CallToolResult`. The option threads through `N8NMCPEngine` → `SingleSessionHTTPServer` → `N8NDocumentationMCPServer`, registering tools at construction; collisions with built-in documentation or management tool names — and duplicate names within `additionalTools` — throw immediately so misconfiguration fails fast rather than shadowing core tools. Enabled additional tools are appended to `tools/list` after the built-in surfaces, and the existing `DISABLED_TOOLS` env-var filter applies uniformly. `tools/call` routes by name: matching calls dispatch to the host's handler with the current per-session `InstanceContext` (so per-tenant credentials and defaults are available), and the handler's `CallToolResult` is returned unchanged — the built-in stringify/wrap path that built-in tools go through is skipped, letting hosts control the response shape and content types. Non-matching calls continue through the existing built-in dispatch. Argument validation (`expected object`) applies to additional tools the same way it does to built-ins. New `AdditionalTool` and `AdditionalToolContext` types are re-exported from `src/index.ts` and `src/mcp-engine.ts` for integrator use. Hosts that prefer not to emit internal tool names in telemetry should filter at the telemetry sink — additional tools receive the same `trackToolUsage(name, true, duration)` treatment as built-ins. Coverage: six unit tests against the registry covering handler dispatch with `instanceContext`, non-object argument rejection, `DISABLED_TOOLS` filtering, collision rejection against both documentation and management tool name lists, duplicate-name rejection, and a request-handler-level test that asserts the additional tool's `CallToolResult` is returned unchanged through the full `tools/call` path (no double-wrapping regression). No breaking changes — the field is optional and existing engine consumers see identical behavior when omitted.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.55.0] - 2026-05-22
+
+### Changed
+
+- **Updated n8n to 2.21.7.** Bumped the four n8n packages this server loads at build time: `n8n-nodes-base` 2.20.4 → 2.21.2, `n8n-core` 2.20.3 → 2.21.4, `n8n-workflow` 2.20.0 → 2.21.1, and `@n8n/n8n-nodes-langchain` 2.20.4 → 2.21.4. The node database was rebuilt from the upgraded packages (822 core nodes, 542 AI-capable tool variants, 86% documentation coverage) and the community-node corpus was refreshed against the n8n verified-nodes Strapi API and the npm registry — total community count is now 1,029 (911 verified + 118 unverified), and incremental README/AI-summary generation backfilled the new arrivals (1,022/1,029 with README, 1,021/1,029 with AI summary). README badge and node-count copy updated to 1,851 total (822 core + 1,029 community, 911 verified).
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.54.0] - 2026-05-18
+
+### Added
+
+- **MCP Resources surface for n8n-skills markdown.** The `n8n-skills` repo ships seven expert skills (~30 markdown files covering Code node JavaScript/Python, expression syntax, node configuration, validation, workflow patterns, and the n8n-mcp tools themselves) as a Claude Code plugin. That distribution path only reaches Claude Code users with the plugin installed; every other MCP client — Cursor, Claude Desktop without plugins, the OpenAI Agents SDK, custom agents — had no way to discover or read this content even though they all consume `n8n-mcp`. The MCP `resources` capability is the standard surface for on-demand markdown context, and the server already implemented `ListResources`/`ReadResource` for UI apps under `ui://n8n-mcp/{id}` (`src/mcp/server.ts:901-938`), so a parallel `skill://n8n-mcp/{name}/{file}` namespace fits the existing plumbing exactly. A new `SkillResourceRegistry` mirrors `UIAppRegistry`: it scans `data/skills/*/*.md` at server construction, parses frontmatter (or the first heading as fallback) for resource metadata, and serves each markdown file with `mimeType: text/markdown`. A bare `skill://n8n-mcp/{name}` URI resolves to that skill's `SKILL.md` as a convenience, and a new `resources/templates/list` handler advertises both URI templates (`skill://n8n-mcp/{name}` and `skill://n8n-mcp/{name}/{file}`) so capable clients can construct URIs without enumerating first. The existing `ui://n8n-mcp/{id}` resolution is unchanged — both schemes coexist in the same `ListResources`/`ReadResource` handlers. The skill markdown is brought into the npm artifact and Docker image via a new `npm run sync:skills` script that copies from a sibling `n8n-skills/skills/` checkout (configurable via `N8N_SKILLS_SOURCE`), with the copy committed under `data/skills/` so CI and downstream consumers do not need the sibling repo present. `package.json` `files` and the Dockerfile both ship `data/skills/`. Skills are exposed unconditionally — they are low-cost (~28k lines, loaded once at startup) and Claude Code's plugin distribution and the MCP Resources surface intentionally serve different clients: a Claude Code user installs the plugin for the auto-loaded `Skill` tool UX, and everyone else now gets the same content via `resources/list`. Coverage: 15 unit tests against the registry.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.53.2] - 2026-05-18
+
+### Fixed
+
+- **Batch `n8n_update_partial_workflow` operations no longer fail with a phantom "Source node not found" when a later `updateNode` renames a node referenced by an earlier connection op (#788).** The diff engine previously processed operations in two passes — every node op (add/remove/update/move/enable/disable) ran first, then every connection op — so a batch like `[removeConnection NodeA→NodeB, removeNode NodeB, updateNode NodeA→{name:"NodeB"}, addConnection NodeB→NodeC]` validated `operation 0` against state that already had the rename projected on it, even though the rename was scheduled for `operation 3`. Because connection references are rewritten in-place when a node is renamed (the #353 auto-update behavior), the original `NodeA` had effectively vanished from the validator's view before its own `removeConnection` ran, and the error's "Available nodes" list — which showed the **post-rename** node set against a failure reported on `operation 0` — was the giveaway. The engine now applies operations strictly in caller order and runs `flushPendingRenames()` after each op so connection references catch up to the new node name *before* the next op validates; chained renames (`A→B` then `B→C`) consequently compose correctly, where the previous renameMap-based post-pass would have collided on the intermediate key. A single backward-compat case is preserved: an `addConnection` or `rewireConnection` that references an `addNode` declared later in the same batch is still accepted — that one `addNode` is hoisted to just before its first earlier reference. Other op kinds (notably `removeConnection X→Y` before `addNode X`, or `replaceConnections` referencing a not-yet-added node) are no longer reordered and now fail validation at their actual call site, which matches what the caller is actually asking for. As a defense against a related Copilot-flagged edge case, `applyUpdateNode` no longer records a rename intent in `renameMap` before the updates loop runs — if a subsequent path inside the same updates object throws (forbidden path keys, `__patch_find_replace` failures), the rename is never committed, so `continueOnError` mode cannot carry a phantom rename into a later op and silently rewrite connection keys to a name no node carries. Six regression tests cover the #788 batch in both `validateOnly` modes, the `continueOnError` variant, the legacy hoist, the strict negative case, and the rename-leak guard. The `docs/workflow-diff-examples.md` "two-pass processing" section is rewritten to describe the new sequential semantics and the single backward-compat hoist. Reported by @DocksDocks; fix by @AjTheSpidey.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.53.1] - 2026-05-18
+
+### Fixed
+
+- **SSRF guard no longer blanket-rejects IPv6 addresses on DNS64/NAT64 networks reaching public IPv4 servers.** A community user reported that every n8n API call started failing with `SSRF protection: IPv6 private address not allowed` after their environment switched to a resolver that synthesizes `AAAA` records via DNS64 — Node 17+ returns the synthetic `64:ff9b::<public-IPv4>` address first under default verbatim DNS ordering, and the previous blanket block on the `64:ff9b::/96` prefix rejected it. The IPv6 helper now inspects the canonical hextets of recognized tunneling prefixes and extracts the embedded IPv4, then applies the same `PRIVATE_IP_RANGES` and `CLOUD_METADATA` policy already enforced on plain IPv4 destinations. Supported layouts: NAT64 RFC 6052 well-known `64:ff9b::/96`; NAT64 RFC 8215 local-use at the `64:ff9b:1::/96` sub-prefix layout (parts[3..5] == 0) — RFC 8215 §3.1 recommends operators carve /96 sub-prefixes for IPv4 embedding, so this covers the realistic deployment; 6to4 RFC 3056 `2002::/16`; and Teredo RFC 4380 `2001::/32`. Tunneled private/metadata IPv4 — including the original GHSA-56c3-vfp2-5qqj payloads `64:ff9b::a9fe:a9fe`, `2002:a9fe:a9fe::`, and the equivalent loopback/RFC1918 embeddings — stays blocked. Tunneled public IPv4 (e.g. `64:ff9b::8.8.8.8`) is now allowed. Non-canonical shapes within the same prefix families — `64:ff9b:` outside the supported /96 layouts (including the literal RFC 6052 /48 embedding that interleaves the IPv4 around a u-octet at bits 64-71), and any 6to4/Teredo we don't recognize — fail safe and are blocked. Tunneled cloud-metadata and non-canonical tunneling shapes are now gated in **every** security mode (including permissive), restoring the "metadata blocked in all modes" promise and the fail-safe stance for unknown wire formats. IPv6 parsing is delegated to `ipaddr.js` (already a transitive dependency via `express → proxy-addr`, now promoted to a direct dep at the same `^1.9.1` version, so the install footprint is unchanged). Reported by Luca M.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.53.0] - 2026-05-14
+
+### Fixed
+
+- **Multi-tenant `shared` session strategy no longer terminates concurrent sessions for the same tenant (#783).** Previously, the eager same-instance session cleanup at the top of the HTTP `initialize` handler ran *before* the configured `MULTI_TENANT_SESSION_STRATEGY` was consulted. When the strategy was set to `shared` — intended to let multiple MCP clients reuse the same tenant context concurrently — a second client's `initialize` for the same `x-instance-id` still wiped the first client's session, leaving the first client to fail subsequent requests with `Session not found or expired`. The cleanup is now gated behind `ENABLE_MULTI_TENANT=true && MULTI_TENANT_SESSION_STRATEGY=instance`, restoring the documented behavior of `shared`. The `instance` strategy is unchanged: same-tenant inits still replace prior sessions, which is the desired eager-cleanup semantic there. Two regression tests cover both branches. Reported and fixed by @LevSky22.
+- **HTTP Streamable transport now returns `404` (not `400`) for terminated session IDs, per the MCP spec (#784).** The [MCP Streamable HTTP spec (2025-06-18)](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management) requires servers to respond with `404` when a request carries a valid-format `Mcp-Session-Id` that no longer maps to an active session — that's the client's signal to start a fresh session via `initialize`. The server previously responded with `400 Bad Request: Session not found or expired`, which spec-compliant clients (Claude Desktop, the MCP SDK) cannot distinguish from a genuinely malformed request, so they surface the error to the user instead of auto-reconnecting. The two affected sites (the TOCTOU window after the session-existence check, and the regular non-`initialize` fall-through) now return `404` with `Session not found or expired`. `400` is preserved for genuinely bad requests (missing session ID on a non-`initialize` request), and `202` is preserved for stale-session notifications (the anti-reconnect-storm path from #654). Reported and fixed by @LevSky22.
+- **`n8n_get_workflow` no longer exceeds Claude Code's per-tool result cap on active workflows (#777).** n8n's draft/publish model returns a nested `activeVersion` object on every workflow GET, duplicating the live graph's `nodes` and `connections` alongside the draft. On the ~50% of workflows that are active, this pushed responses past Claude Code's default 25 000-token MCP cap, so the host persisted the result to a `/var/folders/...` file the model's sandboxed Bash couldn't read — effectively breaking the tool for any non-trivial workflow. `handleGetWorkflow` (mode `full`) and `handleGetWorkflowDetails` (mode `details`) now strip the heavy `activeVersion` payload while preserving the lightweight `activeVersionId` pointer, cutting response size roughly in half. As a defense-in-depth layer for genuinely huge workflows, the `n8n_get_workflow` tool definition now carries `_meta["anthropic/maxResultSizeChars"]: 450000` to opt the tool above the default cap (per the [Claude Code MCP spec](https://code.claude.com/docs/en/mcp#raise-the-limit-for-a-specific-tool)) — the value sits below the protocol's 500k-char ceiling to leave headroom for the MCP/JSON-RPC envelope. `UIAppRegistry.injectToolMeta` was switched from assignment to a spread-merge so per-tool `_meta` keys (like the size override) are preserved when UI metadata is injected. Reported by @nepalez.
+
+### Added
+
+- **`n8n_get_workflow` gains `mode='active'` for inspecting the published graph.** Because n8n's editor saves a draft separately from the published/running version, callers that need to reason about what is actually executing (rather than what is being edited) now have a dedicated mode. The response is single-shaped — `nodes` and `connections` are populated from `activeVersion`, with `activeVersionId`, `versionCreatedAt`, and `versionName` exposed at the top level. `versionCreatedAt` is the version row's creation timestamp (within ~1s of the publish event in current n8n; we don't claim they're identical). On older n8n versions without the draft/publish split, the mode falls back to `workflow.nodes` when `active: true` so the mode stays usable across n8n versions; `NO_ACTIVE_VERSION` is returned only for inactive workflows that were never published. Type-safe support for the new fields was added to the `Workflow` interface as `ActiveWorkflowVersion`.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.52.0] - 2026-05-13
+
+### Changed
+
+- **Updated n8n dependencies to 2.20.x.** `n8n-nodes-base` 2.18.3 → 2.20.4, `n8n-core` 2.18.3 → 2.20.3, `n8n-workflow` 2.18.3 → 2.20.0, `@n8n/n8n-nodes-langchain` 2.18.3 → 2.20.4. Pinned exactly (no caret) so a fresh `npm install` after a future minor release of any of these packages can't slip in a different node set than `data/nodes.db` was rebuilt against — `scripts/update-n8n-deps.js` now writes exact pins for the same reason. Database rebuilt against the new packages; community node rows preserved across the rebuild.
+- **`get_node` (essentials/standard detail) `version` field is now a number, not a string** *(behavior change for all callers, not just community nodes)*. Previously the value came straight from the SQLite `version` TEXT column (`"1"`, `"2.3"`); it is now coerced to a finite JS number (`1`, `2.3`) so it can be assigned directly as `typeVersion` in workflow JSON. Callers that did `.startsWith()`, regex matching, or string comparison on the field need to coerce themselves or update to numeric handling. The `versionNotice` string is unchanged.
+
+### Fixed
+
+- **Community nodes: stop advertising npm package version as `typeVersion` (#781).** For community nodes, `get_node` previously returned the npm package version (e.g. `"0.2.21"`) in the `version` field and emitted `versionNotice: "Use typeVersion: 0.2.21 when creating this node"`. The advertised value is not a valid JS number — assigning `typeVersion: 0.2` produced workflows that n8n's runtime rendered as red/broken nodes even though both `validate_workflow` and `n8n_validate_workflow` reported them as valid. The community-node parser no longer falls back to the npm package version when the descriptor's version is missing (Strapi path) and never seeds the npm version as `typeVersion` (npm-only path); both default to `1`, which is what declarative community nodes register at runtime. The `get_node` response, for community nodes, surfaces `isCommunity: true`, `npmVersion`, a community-aware `versionNotice`, and a `metadata.versionCoerced` audit field whenever stale seed data has to be resolved on the fly. The shipped `data/nodes.db` is migrated in place: 118 community rows whose stored `version` was a multi-dot semver or contained letters were reset to `'1'`. `WorkflowValidator.validateAllNodes` now rejects non-finite typeVersions (including `NaN`) with an explicit "must be a finite non-negative number" message, parses comma-separated and array-form `nodeInfo.version` strings before min/max comparisons, falls back to suggesting `typeVersion: 1` when the database version is unparseable, and emits a "Cannot validate typeVersion" warning when stored seed data is unparseable so callers know the min/max checks were skipped rather than silently passed. Reported by @czlonkowski.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.51.3] - 2026-05-11
+
+### Security
+
+- Fix workflow-telemetry URL path and query-string leak (GHSA-f3rg-xqjj-cj9w). `WorkflowSanitizer` previously replaced only the hostname of `url`, `endpoint`, and `webhook` field values with `[domain]` and left the path and query string intact, allowing customer IDs in URL paths, tenant identifiers, signed-request parameters, and tokens shorter than the 20-character generic-token threshold to reach the `telemetry_workflows` and `workflow_mutations` Supabase tables. `sanitizeObject` now fully redacts URL-named fields to `[REDACTED_URL]` regardless of value type, the dead hostname-only branch in `sanitizeString` is removed, and `event-validator.ts` replaces `nodes: z.array(z.any())` with a `.strict()` per-node schema that rejects unknown top-level node keys as defense-in-depth. The mutation telemetry path (`sanitizeWorkflowRaw`) shares the same code path and is fixed automatically. Reported by @u-ktdi.
+
+### Notes
+
+- **Telemetry output format changed.** Anyone consuming the local telemetry analytics will see `[REDACTED_URL]` in place of the previous `https://[domain]/<path>?<query>` and `[REDACTED_URL_WITH_AUTH]` placeholders for `url`, `endpoint`, `webhook`, and similarly-named fields. Pattern-specific placeholders (`[REDACTED_SUPABASE_URL]`, `[REDACTED_N8N_HOST_URL]`, `[REDACTED_WEBHOOK]`, etc.) still apply to free-text node parameters that happen to contain those URLs (e.g. `jsCode`, `systemMessage`).
+- The webhook short-circuit in `sanitizeString` (returns `https://[webhook-url]` when a string value contains `/webhook/` or `/hook/`) remains for non-URL-named fields whose value embeds a webhook URL.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.51.2] - 2026-05-11
+
+### Security
+
+- Fix silent env-credential fallback in multi-tenant HTTP mode (GHSA-jxx9-px88-pj69). When `ENABLE_MULTI_TENANT=true`, requests that omitted the `x-n8n-url` and `x-n8n-key` headers fell through to the process-level `N8N_API_URL` / `N8N_API_KEY`, letting one authenticated MCP tenant operate on the operator's n8n instance. Both paths now fail closed: the HTTP edge rejects header-less multi-tenant requests with `400 Multi-tenant headers required`, and `getN8nApiClient` refuses to construct an env-fallback client when `ENABLE_MULTI_TENANT=true`. Single-tenant mode is unchanged. Reported by @u-ktdi.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.51.1] - 2026-05-06
+
+### Security
+
+- **Hardened `WorkflowSanitizer` (telemetry workflow ingestion) against new secret and PII categories (#779).** Added regex coverage for OpenAI `sk-proj-` / OpenRouter `sk-or-`, Stripe, GitHub PATs, GitLab, Hugging Face, Notion, GoHighLevel, Slack, AWS access key IDs, generic JWTs, Supabase secret/publishable keys, self-hosted n8n hostnames, and Supabase project URLs — all with type-aware placeholders (`[REDACTED_LLM_API_KEY]`, `[REDACTED_SUPABASE_KEY]`, `[REDACTED_STRIPE_KEY]`, `[REDACTED_API_TOKEN]`, `[REDACTED_JWT]`, `[REDACTED_N8N_HOST_URL]`, `[REDACTED_SUPABASE_URL]`). Added email and phone redaction for free-text node parameters (`systemMessage`, `text`, `html`, `prompt`, …). Made the generic 20-31 / 32+ char fallbacks idempotent via a `(?!REDACTED)` negative lookahead and dropped the early-break in `sanitizeString` so strings with secrets matching different patterns get every match redacted. Tightened the Bearer regex to stop at common string delimiters (quotes, commas, semicolons, closing brackets) so `auth: 'Bearer <token>'` no longer eats the closing quote. Tightened the phone regex with digit/hyphen lookbehind/lookahead so UUIDs and other hex-with-hyphen IDs aren't misclassified as phone numbers.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.51.0] - 2026-05-06
+
+### Added
+
+- **`n8n_manage_credentials` now reports which workflows reference each credential.** Pass `includeUsage: true` to `action: "list"` or `action: "get"` to attach a `usedIn: [{id, name, active}]` array and a `usageCount` to every credential. The reverse index is built client-side by scanning workflows (n8n's public API has no native lookup), deduplicated per workflow, and capped at the same 5000-workflow limit `n8n_audit_instance` uses. Default behavior is unchanged — no extra API calls when the flag is omitted. If the workflow scan fails the response degrades to base credentials with a `usageScanError` field rather than failing the whole call.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.50.5] - 2026-05-05
+
+### Fixed
+
+- **Advertise the Bearer auth scheme on `401` responses (#604).** HTTP-mode `/mcp`, `/sse`, and `/messages` now return an RFC 6750-compliant `WWW-Authenticate` challenge alongside the existing JSON-RPC `-32001` error body. Missing-credentials responses use `Bearer realm="n8n-mcp"` (no `error=` keyword, per RFC 6750 §3); rejected credentials use `error="invalid_request"` for non-Bearer schemes and `error="invalid_token"` for bad bearer secrets. Lets MCP scanners and OAuth-discovery clients distinguish "auth required" from "endpoint unreachable" without reading the JSON body. Originally authored by @voidborne-d (#767).
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.50.4] - 2026-05-05
+
+### Fixed
+
+- `n8n_list_workflows` and `n8n_executions` no longer fail with `VALIDATION_ERROR: Empty value found for query parameter` when MCP clients (e.g. opencode v1.14.35) serialize all schema fields — including optional ones — as empty strings. Optional string params (`cursor`, `projectId`, `workflowId`, `status`, `sortBy`, `search`) are now coerced to `undefined` before reaching the n8n API. Reported and diagnosed by @ale90bsas (#774).
+- The same coercion is applied to `n8n_manage_datatable` (list/create/get-rows actions), `n8n_test_workflow`, and `n8n_trigger_webhook_workflow`, all of which had the same vulnerability surface from a broader audit.
+- `serializeDataTableParams` in the n8n API client now also skips blank-string values as defense-in-depth.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.50.3] - 2026-05-04
+
+### Fixed
+
+- `n8n_update_partial_workflow` now rolls back the prior workflow snapshot when n8n persists a body before failing (e.g. unsupported `typeVersion` trips the activation step inside the same PUT), preventing silent corruption of active workflows. Reported and originally fixed by @pybe (#769, closes #770).
+- The rollback no longer fires (and no longer claims `(workflow restored to prior state)`) when n8n rejected the PUT before persisting. The handler now compares `versionId` / `versionCounter` / `updatedAt` from a fresh GET to detect whether persistence actually happened.
+- Rollback-failure responses include `details.priorVersionId` so callers can recover the right snapshot via `n8n_workflow_versions`.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.50.2] - 2026-05-04
+
+### Security
+
+- Fix SSRF in webhook URL validation (GHSA-cmrh-wvq6-wm9r). Reported by @fg0x0.
+
+### Notes
+
+- The n8n API client now validates `N8N_API_URL` through the same SSRF gate as user-supplied webhook URLs. Operators running n8n on the same host as n8n-mcp (`N8N_API_URL=http://localhost:5678` or an RFC1918 address) must set `WEBHOOK_SECURITY_MODE=moderate` (allows localhost, still blocks cloud metadata) to keep the API client functional after upgrade. Default `strict` is unchanged for production deployments with a public n8n URL.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.50.1] - 2026-05-04
+
+### Security
+
+- Fix path-segment validation gap in n8n API client (GHSA-8g7g-hmwm-6rv2). Reported by @cybercraftsolutionsllc.
+- Fix redirect-following on validated webhook, form, and chat trigger requests (GHSA-8g7g-hmwm-6rv2). Reported by @cybercraftsolutionsllc.
+- Redact mutation telemetry payloads before storage (GHSA-8g7g-hmwm-6rv2). Reported by @cybercraftsolutionsllc.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.50.0] - 2026-05-02
+
+### Added
+
+- **Local LLM support for template metadata generation.** `fetch:templates --metadata-only` now routes to any OpenAI-compatible server (vLLM, Ollama, llama.cpp's `/v1`) when `N8N_MCP_LLM_BASE_URL` is set, falling back to OpenAI's Batch API otherwise. New `SequentialMetadataProcessor` issues direct `chat.completions.create` calls with configurable concurrency, since vLLM and friends do not implement OpenAI's `/v1/batches` endpoint. New env vars: `N8N_MCP_LLM_BASE_URL`, `N8N_MCP_LLM_MODEL` (default `Qwen/Qwen3.5-9B`), `N8N_MCP_LLM_API_KEY` (defaults to `EMPTY` for keyless local servers), `N8N_MCP_LLM_CONCURRENCY` (default 40). The cloud Batch path is unchanged.
+- **Stronger, leak-resistant prompt** for template metadata. The system message now spells out what each schema field means (categories, use_cases, required_services, key_features, target_audience) and explicitly forbids echoing prompt headers, which fixes a class of failures where smaller open-source models occasionally emitted `Template: ...` strings into the `categories` array. `createBatchRequest()` now delegates to `buildChatRequest()`, so the cloud Batch path picks up the new prompt too — both paths share the same body verbatim.
+
+### Changed
+
+- **Template store refreshed from n8n.io.** The templates table was rebuilt against the current API: 2,352 templates, 156 ranked node configurations across the most-popular nodes. Previous rebuild dated 2025-12-24.
+- **Template metadata regenerated end-to-end** against a local Qwen3.5-9B vLLM instance: 2,351/2,352 templates carry fresh `metadata_json` (99.96% coverage). One template (4334) skipped due to a tokenizer encoding edge case in its source content.
+- **Community node store refreshed** from the n8n Strapi verified list and the top-100 npm packages: **830 community nodes** (was 768, +62 new). Existing READMEs and AI summaries preserved through the upsert. Total nodes in DB: 1,650 (820 base + 830 community).
+- **Community AI documentation summaries regenerated** against the same local Qwen3.5-9B instance: **825/830 nodes** with both `npm_readme` and `ai_documentation_summary` (99.4% coverage). The 5 misses are npm packages that publish no README on npmjs, so there is no source text to summarise.
+
+### Notes
+
+- Template fetch only drops the `templates` and `templates_fts` tables — never `nodes`. Community nodes were verified intact at 768 mid-run before the separate community refresh added the 62 new ones.
+- A backup of the pre-fetch database lives at `/tmp/nodes-pre-template-update-20260502-093230.db` on the maintainer's machine.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.49.0] - 2026-04-28
+
+### Changed
+
+- **Updated n8n to 2.18.4** (from 2.16.1). All four n8n packages bumped to the versions pinned by `n8n@stable`:
+  - `n8n-nodes-base`: 2.16.0 → 2.18.3
+  - `n8n-core`: 2.16.1 → 2.18.3
+  - `n8n-workflow`: 2.16.0 → 2.18.3
+  - `@n8n/n8n-nodes-langchain`: 2.16.1 → 2.18.3
+  - Pins are now exact (no caret) to prevent npm from auto-resolving to `2.19.0`, which `n8n@stable` does not yet endorse and which would also force a different `zod` peer.
+- **Bumped `zod` to 3.25.67** (from 3.24.1) to satisfy the new `zod` peer dependency declared by `n8n-core@2.18.3` and `n8n-workflow@2.18.3` — the same version `n8n@stable` itself depends on.
+- **Rebuilt node database**: 1,588 nodes total — 820 core (675 from `n8n-nodes-base` + 145 from `@n8n/n8n-nodes-langchain`) + 768 community (668 verified + 100 from npm). Community READMEs refreshed via `generate:docs:readme-only` (763/768 with READMEs, 581/768 with AI summaries — the AI-summary backfill for newly-added community nodes runs separately via the local LLM step).
+- **README badges and node counts updated** to reflect the new n8n version, node totals, and current passing-test count (`5,418`).
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.48.3] - 2026-04-28
+
+### Fixed
+
+- **Validator warning for `__rl` resourceLocator fields missing `cachedResultName` (#715, originally reported in #516 by @upsurge911-lgtm).** When a `__rl` field has `mode` and `value` but no `cachedResultName`, the workflow runs but the n8n UI shows "Choose..." in dropdowns and dependent metadata fetches (column lists, base names, etc.) never fire — users see "No columns found" with no obvious cause. Pre-fix the validator was completely silent on this. New `missing-cached-result-name` warning fires at `runtime`/`ai-friendly`/`strict` profiles (suppressed at `minimal`). The warning is gated to modes where the n8n UI renders a dropdown that displays the cached label (`id`, `list`, `name`) — modes with raw inputs (`expression`, `url`) are skipped to avoid false positives. The autofix half (live n8n API resolution + placeholder fallback) ships in a separate follow-up PR.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.48.2] - 2026-04-28
+
+### Fixed
+
+- **`n8n_audit_instance` error message now distinguishes server-side from client-side failures (#736, reported by @waltho1123-cloud).** Pre-fix the warning was always `Built-in audit failed: <message>`, hiding HTTP status. The reporter's Zeabur deployment generates the `Invalid URL` string inside n8n's own audit code (likely from missing `N8N_PROTOCOL`/`N8N_HOST` env vars) and returned it as the response body — but the warning made it look like a client bug. Three new shapes: `endpoint not available` (404, unchanged); `Built-in audit failed (HTTP <status>): <reason>` for any other status; `Built-in audit failed (no response from n8n): <reason>` when no status was returned (timeouts, ECONNREFUSED). Also fixed a long-standing nit where the error path computed `builtinAuditMs` against `totalStart` instead of `auditStart`.
+- **`n8n_manage_credentials` accepts `oAuth2Api` + `clientCredentials` payloads (#740, reported by @bwsnwl).** n8n's upstream Ajv schema for `oAuth2Api` has a known bug: the `if/then/else` on `useDynamicClientRegistration` uses `properties.x.enum` to test value, which evaluates true vacuously when the field is absent — so both `then` branches fire simultaneously and there is no payload shape that satisfies the schema for a plain `clientCredentials` grant. New `applyCredentialDataShims` helper normalizes the payload for that specific combination: strips `useDynamicClientRegistration` when falsy, injects `sendAdditionalBodyProperties: false`, `additionalBodyProperties: ''`, and `serverUrl: ''` (only when the DCR branch fires spuriously — explicit `useDynamicClientRegistration: true` callers are left alone so n8n surfaces real missing-field errors). Applied symmetrically on both create and update paths. Will be removed once n8n fixes the schema upstream.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.48.1] - 2026-04-28
+
+### Fixed
+
+- **`n8n_update_partial_workflow` validateOnly path now matches the apply path (#744, reported by @Valirius).** Two interacting bugs:
+  - **Path divergence:** `validateOnly: true` returned the structural-validation early-exit BEFORE `validateWorkflowStructure` ran. Reporters could see a green `valid: true` from validate-only and then fail the apply call with a structural error. The structural check now runs in both paths, and the validate-only response includes the same `structureErrors` the apply path would surface, plus a `valid` boolean that reflects post-diff structural validity. The diff engine's `validateOnly` return now carries the simulated post-diff `workflow` so the handler has something to validate against.
+  - **Zod 4 record-key incompatibility:** Single-arg `z.record(valueSchema)` is reinterpreted by Zod 4 (bundled by `@modelcontextprotocol/sdk`) as `z.record(keySchema=valueSchema)`, causing node-name strings like `"W-05b Set Context"` to fail with `_zod` / `Invalid key in record`. All `z.record` calls in `n8n-validation.ts` (`workflowNodeSchema.parameters`, `.credentials`, `workflowConnectionSchema`) and `handlers-n8n-manager.ts` (`createWorkflowSchema.connections`, `updateWorkflowSchema.connections`) now use the explicit two-arg `z.record(z.string(), valueSchema)` form which is unambiguous in both Zod 3 and Zod 4.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.48.0] - 2026-04-28
+
+Three validator/diff false-positive fixes that were blocking valid workflows from being authored or updated via the MCP tools.
+
+### Fixed
+
+- **`addConnection` no longer rejects multiple Switch outputs to the same target (#738, reported by @priyasogani8-star).** `validateAddConnection` was scanning every `sourceIndex` slot when checking for duplicates, so wiring Switch output 1 to a node that already had a connection from output 0 falsely failed with "Connection already exists". The check now resolves smart parameters (`branch`/`case`) the same way `applyAddConnection` does and only inspects the specific `(sourceOutput, sourceIndex)` slot. The error message now also includes the resolved index for clarity. Same change applied to `validateRewireConnection` to suppress duplicate sourceIndex warnings (validate + apply phases were both pushing them) — `resolveSmartParameters` gained an opt-in `silent` mode used only from validate.
+- **`validate_workflow` no longer false-flags operations on community nodes with empty schema (#739, reported by @priyasogani8-star).** `EnhancedConfigValidator.validateResourceAndOperation` was emitting `Invalid operation "X" for node ...` for any non-empty operation value when the node was missing or had empty operation metadata. The puppeteer community node (and similarly indexed packages) ARE in the local DB but with empty `operations`/`properties_schema` columns, so `getNodeOperations()` returned `[]` and any explicit operation was rejected. Three new guards: top-of-method early-exit when `getNode()` returns null, plus per-field skips when the node has zero resource schema or zero operation schema globally. Real typos on KNOWN nodes (e.g. `operation: "sendMessage"` on Slack) still surface correctly.
+- **`n8n_validate_workflow` no longer false-flags Code nodes with template literals or compact `}}` (#746, reported by @MarsSall).** `ExpressionFormatValidator.validateRecursive` walked into `jsCode`/`pythonCode` fields and fed the source to a bracket-balance check that miscounted `{{` vs `}}` on JS object literals like `[{json:{x:1}}]`. The validator now skips raw-code field keys (`jsCode`, `pythonCode`, `functionCode`) — mirrors the existing guard in `ExpressionValidator.validateParametersRecursive`. The skip applies wherever those keys appear in the parameters tree (top-level or nested).
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.47.14] - 2026-04-21
+
+### Security
+
+- Fix IPv6-mapped SSRF bypass in synchronous URL validation (GHSA-56c3-vfp2-5qqj, CVSS 8.5 High). `SSRFProtection.validateUrlSync` now rejects IPv4-mapped IPv6 (`::ffff:169.254.169.254`, `::ffff:127.0.0.1`, etc.) and private IPv6 addresses, matching the async webhook validator. The sync gate is the sole SSRF check in the SDK embedder path (`validateInstanceContext` → `getN8nApiClient`), so the bypass enabled cloud metadata access and `x-n8n-api-key` leakage for callers of `N8NDocumentationMCPServer` / `N8NMCPEngine` with user-supplied `InstanceContext`. Reported by @manthanghasadiya.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.47.13] - 2026-04-20
+
+### Security
+
+- Redact MCP tool-call arguments in server logs (GHSA-wg4g-395p-mqv3, CVSS 4.3 Medium). Reported by @Mirr2.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.47.12] - 2026-04-17
+
+Batch of ten fixes from the 2026-04-16 staging QA regression (release-blockers and polish items shipped together).
+
+### Fixed
+
+- **`get_node` version modes no longer return `upgradeSafe: true` with no data (QA #1 + #12, HIGH).** `versions`, `compare`, `breaking`, and `migrations` modes now check whether version metadata is populated for the node before computing their booleans. When metadata is missing, they return `{ available: false, reason: "Version metadata not populated…" }` instead of a confidently-zero response. Agents that previously saw `upgradeSafe: true` for a known-breaking HTTP Request v1 → v4 upgrade will now get an explicit "no data" signal. `getVersionSummary` also falls back to the node row's `version` field so `detail: standard` no longer reports `currentVersion: "unknown"` while `isVersioned: true` in the same response.
+- **`rewireConnection` no longer silently corrupts the connection map (QA #7, HIGH).** `applyRewireConnection` now resolves `source` / `from` / `to` to concrete node objects up front, passes resolved names through to the inner remove/add calls, skips the add when `to` is already a target of `source` (previously caused a duplicated edge), and asserts an edge-count invariant that throws if the rewrite would leave the graph in an inconsistent state. Added regression tests for name-based rewire, ID-based rewire, and rewire-to-already-connected-target.
+- **`search_templates` `by_metadata` returns `available: false` when metadata is missing (QA #11, HIGH).** Previously returned an empty `items: []` that callers couldn't distinguish from "no matches". Now returns `{ available: false, reason: "Template metadata has not been enriched yet…" }` when no templates have `metadata_json` populated, and `available: true` on hits. Callers get an actionable signal to fall back to `keyword`, `by_nodes`, or `patterns`.
+- **`search_templates` `by_task: webhook_processing` no longer returns schedule/form-triggered templates (QA #2, MEDIUM).** Removed `n8n-nodes-base.httpRequest` from the `webhook_processing` task mapping. HTTP Request is not a trigger, so its presence matched any workflow that used outbound HTTP — including schedule and form triggered ones. Now matches only workflows that include the webhook trigger node.
+- **QA #3 (MEDIUM) — deferred.** An initial attempt to reject invalid `operation` values in `NodeSpecificValidators.validateSlack` used a hardcoded resource→operations map, which turned out to disagree with the actual Slack node's schema (ironically, `post` — the value the QA report flagged as "silently accepted" — is a real Slack message op in n8n). Rather than ship a regression that rejects valid configs, the hardcoded list was removed and the issue deferred until the validator can derive the allowed set from the node's loaded `properties_schema`.
+- **`moveNode` no longer silently mutates state when the wrong param name is passed (QA #6, MEDIUM).** `validateMoveNode` now catches the common `newPosition` typo with a "did you mean 'position'?" message *before* mutation, and also validates that `position` is a 2-element numeric array. Previously the operation set `node.position` to `undefined` and only failed at the final workflow-shape check with a cryptic `position Required` error.
+- **`n8n_autofix_workflow` webhook path UUID is now stable across preview and apply (QA #4, LOW).** Previously each call generated a fresh `crypto.randomUUID()`, so the path shown in preview didn't match the path applied to the workflow. The UUID is now derived deterministically via UUID v5 (SHA-1-based per RFC 4122) from `workflow.id + node.id`, so preview and apply always agree. Downstream systems pre-configured against the preview value will now receive the same path.
+- **`n8n_update_partial_workflow` activate/deactivate ops are now mutually exclusive (QA #8, LOW).** A batch like `[activateWorkflow, deactivateWorkflow]` previously returned `active: true` because the first op's flag was never cleared. The appliers now clear the opposite flag so last-op-wins semantics apply.
+- **`n8n_update_partial_workflow` tool description now documents `patchNodeField` parameters inline (QA #5, LOW).** Added `fieldPath (dot path, e.g. "parameters.jsCode") and patches: [{find, replace}]` to the short tool description so agents can construct the operation without an extra `tools_documentation` round-trip.
+- **`n8n_manage_datatable` `deleteRows` dryRun no longer returns a null "after" row (QA #10, LOW).** Stripped entries with `dryRunState: "after"` from delete responses — those rows always had every field null because there is no "after" state for a delete, and they surfaced as noise. Update/upsert dryRun responses are unchanged.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.47.11] - 2026-04-16
+
+### Security
+
+- Fix sensitive data logging in HTTP mode (GHSA-pfm2-2mhg-8wpx). Reported by @S4nso.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.47.10] - 2026-04-16
+
+### Added
+
+- **`projectId` parameter on `n8n_manage_datatable` `createTable` (Issue #731, reported by @nesl247).** Tables can now be created directly in a specific n8n project instead of always landing in the default/personal project. The n8n public API (`POST /data-tables`) already accepts `projectId` as an optional body field — it was never wired through the MCP tool. `projectId` is threaded through the tool inputSchema, the Zod `createTableSchema`, and the `createDataTable` API client signature, matching the existing pattern on `n8n_create_workflow`. Workflows in team projects that rely on project-scoped data tables (e.g. queue-based processing) can now be fully automated via MCP.
+
+### Changed
+
+- **`columns` is now required (at least one) for `n8n_manage_datatable` `createTable`.** Previously the tool schema marked `columns` as optional, but the underlying n8n API rejects the call with `VALIDATION_ERROR: request/body must have required property 'columns'`. The Zod schema now enforces `.min(1, 'At least one column is required')` so the failure surfaces at the MCP boundary with a clear message instead of an opaque 400 from the API round-trip. Tool inputSchema description, `keyParameters`, `full.description`, parameter docs, and pitfalls are all updated to match.
+
+### Fixed
+
+- **Removed incorrect pitfall claiming `projectId` could not be set via the public API** in `n8n_manage_datatable` tool docs. The n8n API has always supported it; this documentation was misleading agents into manual UI workarounds.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.47.9] - 2026-04-16
+
+### Changed
+
+- **Update n8n to 2.16.1.** Bumped `n8n-nodes-base` 2.15.0 → 2.16.0, `n8n-core` 2.15.0 → 2.16.1, `n8n-workflow` 2.14.1 → 2.16.0, and `@n8n/n8n-nodes-langchain` 2.14.1 → 2.16.1. These are exact-pinned to match the coherent dependency set that ships with n8n 2.16.1, since the individual packages' `latest` dist-tags on npm lag behind the meta-package release (e.g. `n8n-workflow@latest` is 2.13.1 while n8n 2.16.1 actually pins 2.16.0).
+- **Rebuilt node database.** 1,505 nodes total: 812 core (675 from `n8n-nodes-base` + 137 from `@n8n/n8n-nodes-langchain`) and 693 community nodes (605 verified, 88 unverified). Community nodes preserved incrementally across the rebuild via backup/restore — 108 new READMEs fetched for nodes added since the last sync.
+- **Updated README** n8n version badge (2.14.2 → 2.16.1) and node counts (1,396 → 1,505; 516 → 605 verified community).
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.47.8] - 2026-04-14
+
+### Fixed
+
+- **`n8n_create_workflow` / `n8n_update_full_workflow` failures from JSON-stringified array parameters (Issue #611, reported by @Mte90).** VS Code + GitHub Copilot and some other MCP clients serialize array/object tool arguments as JSON strings rather than native JSON types. This reliably affected workflows with 3+ nodes or complex nested parameters (e.g. `__rl` resource-locator objects, filter conditions), producing the error `"nodes must be an array, got string"` while 1-2 node payloads happened to slip through. The `n8n_update_partial_workflow` schema already preprocessed its `operations` field with `tryParseJson` (from the prior #600/#611 fix), but the create/update-full schemas did not — now they do. `nodes`, `connections`, and `settings` on both schemas, plus the `tags` filter on `n8n_list_workflows`, are wrapped with `z.preprocess(tryParseJson, ...)` so stringified JSON is parsed before Zod validation runs. The `tryParseJson` helper was relocated to sit next to its first usage rather than 2,400 lines below it.
+- **Silent JSON parse failures in `coerceStringifiedJsonParams` now log a warning.** The top-level client-bug workaround in `server.ts` had two `catch {}` blocks that swallowed parse errors without trace, so malformed or truncated JSON from buggy MCP clients presented only as downstream Zod errors. Both catch blocks now emit a `logger.warn` with the parse error, a 200-char value preview, and the length — enough to diagnose serialization bugs without digging into transport-level logs.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.47.7] - 2026-04-13
+
+### Fixed
+
+- **Multi-input Merge node false positive (Issue #721).** The strict validator hardcoded the Merge node's input count as 2, rejecting valid connections to inputs 2+ when `numberInputs` was set higher (e.g., combine mode with 4 inputs). The validator now reads the `numberInputs` parameter from the workflow node and skips input bounds checking entirely for non-Merge nodes, since many n8n nodes accept dynamic inputs that can't be determined from metadata alone.
+- **Code node return validation false positive (Issue #721).** The validator flagged `return {status: "ok"}` as "Return value must be an array of objects" even in `runOnceForEachItem` mode, where n8n auto-wraps bare objects. The return-format checks now respect the Code node's `mode` parameter for both JavaScript and Python.
+- **Controlled loop false positive (Issue #721).** Intentional pagination loops (e.g., HTTP Request → IF → Wait → HTTP Request) were flagged as "Workflow contains a cycle (infinite loop)" because the cycle detector only recognized SplitInBatches/Loop nodes as legitimate. It now also recognizes IF, Switch, and Filter nodes as conditional exit points that can bound a loop.
+- **Expression bracket scanning in Code node fields.** The expression validator scanned `jsCode`, `pythonCode`, and `functionCode` fields for unmatched `{{ }}` brackets, producing false positives on ordinary JavaScript/Python curly braces. These raw code fields are now excluded from expression bracket validation.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
+## [2.47.6] - 2026-04-09
+
+### Security
+
+- Fix missing authentication on HTTP endpoints and information disclosure via `/health` (GHSA-75hx-xj24-mqrw). Reported by @yotampe-pluto.
+
+Conceived by Romuald Członkowski - https://www.aiadvisors.pl/en
+
 ## [2.47.5] - 2026-04-08
 
 ### Fixed

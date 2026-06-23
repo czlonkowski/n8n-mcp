@@ -8,18 +8,45 @@ import { randomUUID } from 'crypto';
 import { McpToolResponse } from '../types/n8n-api';
 import { WorkflowDiffRequest, WorkflowDiffOperation, WorkflowDiffValidationError } from '../types/workflow-diff';
 import { WorkflowDiffEngine } from '../services/workflow-diff-engine';
-import { getN8nApiClient, tryParseJson } from './handlers-n8n-manager';
+import { getN8nApiClient } from './handlers-n8n-manager';
 import { N8nApiError, getUserFriendlyErrorMessage } from '../utils/n8n-errors';
 import { logger } from '../utils/logger';
-import { InstanceContext } from '../types/instance-context';
+import { InstanceContext, getInstanceScopeId } from '../types/instance-context';
 import { validateWorkflowStructure } from '../services/n8n-validation';
 import { NodeRepository } from '../database/node-repository';
 import { WorkflowVersioningService } from '../services/workflow-versioning-service';
 import { WorkflowValidator } from '../services/workflow-validator';
 import { EnhancedConfigValidator } from '../services/enhanced-config-validator';
+import {
+  normalizeMcpJsonValue,
+  normalizeMcpWorkflowNode,
+  normalizeMcpWorkflowPosition,
+} from '../utils/mcp-input-normalizer';
 
 // Cached validator instance to avoid recreating on every mutation
 let cachedValidator: WorkflowValidator | null = null;
+
+// Detect whether a fetched workflow has moved past the snapshot we hold.
+// Tries versionId first (most reliable), then versionCounter (n8n 1.118.1+),
+// then updatedAt. Returns 'unknown' when no comparable field is present on
+// both sides; caller falls back to attempting rollback so the safety net
+// is preserved on older n8n versions.
+type VersionCompare = 'same' | 'changed' | 'unknown';
+function compareVersions(
+  a: { versionId?: string; versionCounter?: number; updatedAt?: string },
+  b: { versionId?: string; versionCounter?: number; updatedAt?: string },
+): VersionCompare {
+  if (a.versionId !== undefined && b.versionId !== undefined) {
+    return a.versionId === b.versionId ? 'same' : 'changed';
+  }
+  if (a.versionCounter !== undefined && b.versionCounter !== undefined) {
+    return a.versionCounter === b.versionCounter ? 'same' : 'changed';
+  }
+  if (a.updatedAt !== undefined && b.updatedAt !== undefined) {
+    return a.updatedAt === b.updatedAt ? 'same' : 'changed';
+  }
+  return 'unknown';
+}
 
 /**
  * Get or create cached workflow validator instance
@@ -40,17 +67,17 @@ const NODE_TARGETING_OPERATIONS = new Set([
 // Zod schema for the diff request
 const workflowDiffSchema = z.object({
   id: z.string(),
-  operations: z.preprocess(tryParseJson, z.array(z.object({
+  operations: z.preprocess(normalizeMcpJsonValue, z.array(z.object({
     type: z.string(),
     description: z.string().optional(),
     // Node operations
-    node: z.any().optional(),
+    node: z.preprocess(normalizeMcpWorkflowNode, z.any()).optional(),
     nodeId: z.string().optional(),
     nodeName: z.string().optional(),
-    updates: z.any().optional(),
+    updates: z.preprocess(normalizeMcpJsonValue, z.any()).optional(),
     fieldPath: z.string().optional(),
-    patches: z.any().optional(),
-    position: z.tuple([z.number(), z.number()]).optional(),
+    patches: z.preprocess(normalizeMcpJsonValue, z.any()).optional(),
+    position: z.preprocess(normalizeMcpWorkflowPosition, z.tuple([z.number(), z.number()])).optional(),
     // Connection operations
     source: z.string().optional(),
     target: z.string().optional(),
@@ -66,9 +93,9 @@ const workflowDiffSchema = z.object({
     ignoreErrors: z.boolean().optional(),
     // Connection cleanup operations
     dryRun: z.boolean().optional(),
-    connections: z.any().optional(),
+    connections: z.preprocess(normalizeMcpJsonValue, z.any()).optional(),
     // Metadata operations
-    settings: z.any().optional(),
+    settings: z.preprocess(normalizeMcpJsonValue, z.any()).optional(),
     name: z.string().optional(),
     tag: z.string().optional(),
     // Transfer operation
@@ -172,7 +199,7 @@ export async function handleUpdatePartialWorkflow(
     // Create backup before modifying workflow (default: true)
     if (input.createBackup !== false && !input.validateOnly) {
       try {
-        const versioningService = new WorkflowVersioningService(repository, client);
+        const versioningService = new WorkflowVersioningService(repository, client, getInstanceScopeId(context));
         const backupResult = await versioningService.createBackup(input.id, workflow, {
           trigger: 'partial_update',
           operations: input.operations
@@ -221,14 +248,32 @@ export async function handleUpdatePartialWorkflow(
       }
     }
     
-    // If validateOnly, return validation result
+    // Validate final workflow structure after applying all operations BEFORE the
+    // validateOnly early-return. Pre-fix the early-return ran first and `validateOnly: true`
+    // always reported `valid: true`, but `validateOnly: false` then ran structural validation
+    // and could fail — the two paths disagreed on validity. Now both paths see the same
+    // structural result. (#744)
+    //
+    // Validation can be skipped for specific integration tests that need to test
+    // n8n API behavior with edge case workflows by setting SKIP_WORKFLOW_VALIDATION=true.
+    // When skipping, both paths treat the workflow as valid so they continue to agree.
+    const skipValidation = process.env.SKIP_WORKFLOW_VALIDATION === 'true';
+    const structureErrors = !skipValidation && diffResult.workflow
+      ? validateWorkflowStructure(diffResult.workflow)
+      : [];
+
+    // If validateOnly, return the same structural-validity verdict the apply path would.
+    // operationsToApply reflects what would actually be applied, including continueOnError
+    // partial success (some operations may have failed during simulation).
     if (input.validateOnly) {
+      const operationsToApply = diffResult.operationsApplied ?? input.operations.length;
       return {
         success: true,
         message: diffResult.message,
         data: {
-          valid: true,
-          operationsToApply: input.operations.length
+          valid: structureErrors.length === 0,
+          operationsToApply,
+          ...(structureErrors.length > 0 ? { structureErrors } : {})
         },
         details: {
           warnings: diffResult.warnings
@@ -236,21 +281,15 @@ export async function handleUpdatePartialWorkflow(
       };
     }
 
-    // Validate final workflow structure after applying all operations
+    // Apply path: surface structural errors as a blocking save failure.
     // This prevents creating workflows that pass operation-level validation
-    // but fail workflow-level validation (e.g., UI can't render them)
-    //
-    // Validation can be skipped for specific integration tests that need to test
-    // n8n API behavior with edge case workflows by setting SKIP_WORKFLOW_VALIDATION=true
+    // but fail workflow-level validation (e.g., UI can't render them).
+    // structureErrors is empty when SKIP_WORKFLOW_VALIDATION=true (computed above).
     if (diffResult.workflow) {
-      const structureErrors = validateWorkflowStructure(diffResult.workflow);
       if (structureErrors.length > 0) {
-        const skipValidation = process.env.SKIP_WORKFLOW_VALIDATION === 'true';
-
         logger.warn('Workflow structure validation failed after applying diff operations', {
           workflowId: input.id,
-          errors: structureErrors,
-          blocking: !skipValidation
+          errors: structureErrors
         });
 
         // Analyze error types to provide targeted recovery guidance
@@ -292,34 +331,121 @@ export async function handleUpdatePartialWorkflow(
           ? `Workflow validation failed: ${structureErrors[0]}`
           : `Workflow validation failed with ${structureErrors.length} structural issues`;
 
-        // If validation is not skipped, return error and block the save
-        if (!skipValidation) {
-          return {
-            success: false,
-            saved: false,
-            error: errorMessage,
-            details: {
-              errors: structureErrors,
-              errorCount: structureErrors.length,
-              operationsApplied: diffResult.operationsApplied,
-              applied: diffResult.applied,
-              recoveryGuidance: recoverySteps,
-              note: 'Operations were applied but created an invalid workflow structure. The workflow was NOT saved to n8n to prevent UI rendering errors.',
-              autoSanitizationNote: 'Auto-sanitization runs on modified nodes during updates to fix operator structures and add missing metadata. However, it cannot fix all issues (e.g., broken connections, branch mismatches). Use the recovery guidance above to resolve remaining issues.'
-            }
-          };
-        }
-        // Validation skipped: log warning but continue (for specific integration tests)
-        logger.info('Workflow validation skipped (SKIP_WORKFLOW_VALIDATION=true): Allowing workflow with validation warnings to proceed', {
-          workflowId: input.id,
-          warningCount: structureErrors.length
-        });
+        // structureErrors is only populated when SKIP_WORKFLOW_VALIDATION is unset,
+        // so we can unconditionally block the save here.
+        return {
+          success: false,
+          saved: false,
+          error: errorMessage,
+          details: {
+            errors: structureErrors,
+            errorCount: structureErrors.length,
+            operationsApplied: diffResult.operationsApplied,
+            applied: diffResult.applied,
+            recoveryGuidance: recoverySteps,
+            note: 'Operations were applied but created an invalid workflow structure. The workflow was NOT saved to n8n to prevent UI rendering errors.',
+            autoSanitizationNote: 'Auto-sanitization runs on modified nodes during updates to fix operator structures and add missing metadata. However, it cannot fix all issues (e.g., broken connections, branch mismatches). Use the recovery guidance above to resolve remaining issues.'
+          }
+        };
       }
     }
 
     // Update workflow via API
     try {
-      const updatedWorkflow = await client.updateWorkflow(input.id, diffResult.workflow!);
+      // Rollback-on-error: if the PUT fails, n8n may have persisted the body
+      // before failing (e.g. an unsupported typeVersion trips the activation
+      // step within the same PUT, but the body is already saved). Re-PUT the
+      // workflowBefore snapshot in that case to restore prior state. The
+      // snapshot is captured earlier in this handler for telemetry and is
+      // safe to reuse here.
+      //
+      // To distinguish persist-then-fail from pre-save rejection, GET the
+      // server state after the failed PUT and compare versionId (or
+      // versionCounter / updatedAt — whichever the running n8n exposes). If
+      // unchanged, the body never persisted and rolling back would be both
+      // a wasted PUT and a misleading "(restored to prior state)" message.
+      let updatedWorkflow;
+      try {
+        updatedWorkflow = await client.updateWorkflow(input.id, diffResult.workflow!);
+      } catch (updateError) {
+        if (workflowBefore && !input.validateOnly) {
+          let serverState: any = null;
+          try {
+            serverState = await client.getWorkflow(input.id);
+          } catch (getErr) {
+            logger.debug('Post-failure GET failed; falling back to best-effort rollback', getErr);
+          }
+          // Only skip rollback when we KNOW the body never persisted.
+          // If serverState is missing or we can't compare versions, attempt
+          // rollback as a safety net — the bug class in #770 is silent
+          // corruption, and a redundant PUT is far less harmful than a
+          // missed rollback.
+          const versionState = serverState
+            ? compareVersions(serverState, workflowBefore)
+            : 'unknown';
+
+          if (versionState === 'same') {
+            // Pre-save rejection: nothing to roll back.
+            logger.debug('PUT failed before persisting; skipping rollback', {
+              workflowId: input.id,
+            });
+            if (updateError instanceof N8nApiError) {
+              throw new N8nApiError(
+                updateError.message,
+                updateError.statusCode,
+                updateError.code,
+                {
+                  ...((updateError.details as Record<string, unknown>) ?? {}),
+                  rollbackPerformed: false,
+                },
+              );
+            }
+            throw updateError;
+          }
+
+          // Either persist-then-fail OR couldn't determine — attempt rollback.
+          let rollbackPerformed = false;
+          let rollbackErrorMessage: string | undefined;
+          try {
+            await client.updateWorkflow(input.id, workflowBefore);
+            rollbackPerformed = true;
+            logger.warn('updateWorkflow failed; rolled back to prior state', {
+              workflowId: input.id,
+              originalError: updateError instanceof Error ? updateError.message : String(updateError),
+            });
+          } catch (rollbackErr) {
+            rollbackErrorMessage = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+            logger.error('updateWorkflow failed AND rollback failed', {
+              workflowId: input.id,
+              originalError: updateError instanceof Error ? updateError.message : String(updateError),
+              rollbackError: rollbackErrorMessage,
+            });
+          }
+
+          // Re-throw with rollback context attached so the outer N8nApiError
+          // catch (below) surfaces it with the user-friendly formatting.
+          if (updateError instanceof N8nApiError) {
+            const augmentedDetails: Record<string, unknown> = {
+              ...((updateError.details as Record<string, unknown>) ?? {}),
+              rollbackPerformed,
+              ...(rollbackErrorMessage ? { rollbackError: rollbackErrorMessage } : {}),
+              ...(workflowBefore.versionId ? { priorVersionId: workflowBefore.versionId } : {}),
+            };
+            const suffix = rollbackPerformed
+              ? ' (workflow restored to prior state)'
+              : (rollbackErrorMessage
+                  ? ' (rollback also failed; workflow may be in a broken state — try n8n_workflow_versions for a backup)'
+                  : '');
+            throw new N8nApiError(
+              `${updateError.message}${suffix}`,
+              updateError.statusCode,
+              updateError.code,
+              augmentedDetails,
+            );
+          }
+        }
+        throw updateError;
+      }
 
       // Handle tag operations via dedicated API (#599)
       let tagWarnings: string[] = [];

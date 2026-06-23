@@ -2,6 +2,11 @@ import { DatabaseAdapter } from './database-adapter';
 import { ParsedNode } from '../parsers/node-parser';
 import { SQLiteStorageService } from '../services/sqlite-storage-service';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
+import { logger } from '../utils/logger';
+
+// Default retention window for workflow version backups (days). Configurable
+// via WORKFLOW_VERSION_RETENTION_DAYS; set to 0 to disable age-based pruning.
+const DEFAULT_WORKFLOW_VERSION_RETENTION_DAYS = 30;
 
 /**
  * Community node extension fields
@@ -27,6 +32,31 @@ export class NodeRepository {
     }
 
     this.db = dbOrService;
+  }
+
+  /**
+   * Age-based housekeeping: remove version backups past the retention window.
+   * Called once during database initialization. Internal maintenance only —
+   * not callable by tenants and not tenant-scoped (deterministic retention,
+   * not selective destruction).
+   */
+  pruneExpiredWorkflowVersions(): void {
+    const days = parseInt(
+      process.env.WORKFLOW_VERSION_RETENTION_DAYS || String(DEFAULT_WORKFLOW_VERSION_RETENTION_DAYS),
+      10
+    );
+    if (!Number.isFinite(days) || days <= 0) {
+      return; // Retention disabled.
+    }
+    try {
+      const cutoffIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      const removed = this.deleteWorkflowVersionsOlderThan(cutoffIso);
+      if (removed > 0) {
+        logger.info(`Pruned ${removed} workflow version backup(s) older than ${days} days`);
+      }
+    } catch (error) {
+      logger.warn('Could not prune expired workflow versions', { error });
+    }
   }
   
   /**
@@ -970,6 +1000,18 @@ export class NodeRepository {
   }
 
   /**
+   * Whether any version metadata rows exist for this node type.
+   * Distinguishes "no known changes" from "no data" for get_node version modes.
+   */
+  hasVersionMetadata(nodeType: string): boolean {
+    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
+    const row = this.db.prepare(`
+      SELECT 1 FROM node_versions WHERE node_type = ? LIMIT 1
+    `).get(normalizedType) as any;
+    return !!row;
+  }
+
+  /**
    * Check if a version upgrade path exists between two versions
    */
   hasVersionUpgradePath(nodeType: string, fromVersion: string, toVersion: string): boolean {
@@ -1046,10 +1088,16 @@ export class NodeRepository {
   // Workflow Versioning Methods
   // ========================================
 
+  // All workflow_versions queries are scoped by instance_id to isolate
+  // tenants in multi-tenant deployments (GHSA-j6r7-6fhx-77wx). instanceId is
+  // a required, derived tenant key (see getInstanceScopeId); '' is the single
+  // logical tenant for single-user / stdio deployments.
+
   /**
    * Create a new workflow version (backup before modification)
    */
   createWorkflowVersion(data: {
+    instanceId: string;
     workflowId: string;
     versionNumber: number;
     workflowName: string;
@@ -1061,12 +1109,13 @@ export class NodeRepository {
   }): number {
     const stmt = this.db.prepare(`
       INSERT INTO workflow_versions (
-        workflow_id, version_number, workflow_name, workflow_snapshot,
+        instance_id, workflow_id, version_number, workflow_name, workflow_snapshot,
         trigger, operations, fix_types, metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
+      data.instanceId,
       data.workflowId,
       data.versionNumber,
       data.workflowName,
@@ -1083,30 +1132,30 @@ export class NodeRepository {
   /**
    * Get workflow versions ordered by version number (newest first)
    */
-  getWorkflowVersions(workflowId: string, limit?: number): any[] {
+  getWorkflowVersions(workflowId: string, instanceId: string, limit?: number): any[] {
     let sql = `
       SELECT * FROM workflow_versions
-      WHERE workflow_id = ?
+      WHERE workflow_id = ? AND instance_id = ?
       ORDER BY version_number DESC
     `;
 
     if (limit) {
       sql += ` LIMIT ?`;
-      const rows = this.db.prepare(sql).all(workflowId, limit) as any[];
+      const rows = this.db.prepare(sql).all(workflowId, instanceId, limit) as any[];
       return rows.map(row => this.parseWorkflowVersionRow(row));
     }
 
-    const rows = this.db.prepare(sql).all(workflowId) as any[];
+    const rows = this.db.prepare(sql).all(workflowId, instanceId) as any[];
     return rows.map(row => this.parseWorkflowVersionRow(row));
   }
 
   /**
-   * Get a specific workflow version by ID
+   * Get a specific workflow version by ID, scoped to the caller's tenant
    */
-  getWorkflowVersion(versionId: number): any | null {
+  getWorkflowVersion(versionId: number, instanceId: string): any | null {
     const row = this.db.prepare(`
-      SELECT * FROM workflow_versions WHERE id = ?
-    `).get(versionId) as any;
+      SELECT * FROM workflow_versions WHERE id = ? AND instance_id = ?
+    `).get(versionId, instanceId) as any;
 
     if (!row) return null;
     return this.parseWorkflowVersionRow(row);
@@ -1115,34 +1164,37 @@ export class NodeRepository {
   /**
    * Get the latest workflow version for a workflow
    */
-  getLatestWorkflowVersion(workflowId: string): any | null {
+  getLatestWorkflowVersion(workflowId: string, instanceId: string): any | null {
     const row = this.db.prepare(`
       SELECT * FROM workflow_versions
-      WHERE workflow_id = ?
+      WHERE workflow_id = ? AND instance_id = ?
       ORDER BY version_number DESC
       LIMIT 1
-    `).get(workflowId) as any;
+    `).get(workflowId, instanceId) as any;
 
     if (!row) return null;
     return this.parseWorkflowVersionRow(row);
   }
 
   /**
-   * Delete a specific workflow version
+   * Delete a specific workflow version, scoped to the caller's tenant.
+   * Returns the number of rows deleted (0 if not owned by this tenant).
    */
-  deleteWorkflowVersion(versionId: number): void {
-    this.db.prepare(`
-      DELETE FROM workflow_versions WHERE id = ?
-    `).run(versionId);
+  deleteWorkflowVersion(versionId: number, instanceId: string): number {
+    const result = this.db.prepare(`
+      DELETE FROM workflow_versions WHERE id = ? AND instance_id = ?
+    `).run(versionId, instanceId);
+
+    return result.changes;
   }
 
   /**
    * Delete all versions for a specific workflow
    */
-  deleteWorkflowVersionsByWorkflowId(workflowId: string): number {
+  deleteWorkflowVersionsByWorkflowId(workflowId: string, instanceId: string): number {
     const result = this.db.prepare(`
-      DELETE FROM workflow_versions WHERE workflow_id = ?
-    `).run(workflowId);
+      DELETE FROM workflow_versions WHERE workflow_id = ? AND instance_id = ?
+    `).run(workflowId, instanceId);
 
     return result.changes;
   }
@@ -1151,13 +1203,13 @@ export class NodeRepository {
    * Prune old workflow versions, keeping only the most recent N versions
    * Returns number of versions deleted
    */
-  pruneWorkflowVersions(workflowId: string, keepCount: number): number {
+  pruneWorkflowVersions(workflowId: string, keepCount: number, instanceId: string): number {
     // Get all versions ordered by version_number DESC
     const versions = this.db.prepare(`
       SELECT id FROM workflow_versions
-      WHERE workflow_id = ?
+      WHERE workflow_id = ? AND instance_id = ?
       ORDER BY version_number DESC
-    `).all(workflowId) as any[];
+    `).all(workflowId, instanceId) as any[];
 
     // If we have fewer versions than keepCount, no pruning needed
     if (versions.length <= keepCount) {
@@ -1181,13 +1233,14 @@ export class NodeRepository {
   }
 
   /**
-   * Truncate the entire workflow_versions table
-   * Returns number of rows deleted
+   * Delete all version backups older than the given ISO timestamp, across all
+   * tenants. Internal age-based retention sweep — deterministic housekeeping
+   * that exposes no data and is not callable by tenants. Returns rows deleted.
    */
-  truncateWorkflowVersions(): number {
+  deleteWorkflowVersionsOlderThan(cutoffIso: string): number {
     const result = this.db.prepare(`
-      DELETE FROM workflow_versions
-    `).run();
+      DELETE FROM workflow_versions WHERE created_at < ?
+    `).run(cutoffIso);
 
     return result.changes;
   }
@@ -1195,27 +1248,27 @@ export class NodeRepository {
   /**
    * Get count of versions for a specific workflow
    */
-  getWorkflowVersionCount(workflowId: string): number {
+  getWorkflowVersionCount(workflowId: string, instanceId: string): number {
     const result = this.db.prepare(`
-      SELECT COUNT(*) as count FROM workflow_versions WHERE workflow_id = ?
-    `).get(workflowId) as any;
+      SELECT COUNT(*) as count FROM workflow_versions WHERE workflow_id = ? AND instance_id = ?
+    `).get(workflowId, instanceId) as any;
 
     return result.count;
   }
 
   /**
-   * Get storage statistics for workflow versions
+   * Get storage statistics for workflow versions, scoped to the caller's tenant
    */
-  getVersionStorageStats(): any {
+  getVersionStorageStats(instanceId: string): any {
     // Total versions
     const totalResult = this.db.prepare(`
-      SELECT COUNT(*) as count FROM workflow_versions
-    `).get() as any;
+      SELECT COUNT(*) as count FROM workflow_versions WHERE instance_id = ?
+    `).get(instanceId) as any;
 
     // Total size (approximate - sum of JSON lengths)
     const sizeResult = this.db.prepare(`
-      SELECT SUM(LENGTH(workflow_snapshot)) as total_size FROM workflow_versions
-    `).get() as any;
+      SELECT SUM(LENGTH(workflow_snapshot)) as total_size FROM workflow_versions WHERE instance_id = ?
+    `).get(instanceId) as any;
 
     // Per-workflow breakdown
     const byWorkflow = this.db.prepare(`
@@ -1226,9 +1279,10 @@ export class NodeRepository {
         SUM(LENGTH(workflow_snapshot)) as total_size,
         MAX(created_at) as last_backup
       FROM workflow_versions
+      WHERE instance_id = ?
       GROUP BY workflow_id
       ORDER BY version_count DESC
-    `).all() as any[];
+    `).all(instanceId) as any[];
 
     return {
       totalVersions: totalResult.count,

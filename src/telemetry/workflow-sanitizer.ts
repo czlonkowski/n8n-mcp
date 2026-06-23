@@ -30,7 +30,6 @@ interface SanitizedWorkflow {
 interface PatternDefinition {
   pattern: RegExp;
   placeholder: string;
-  preservePrefix?: boolean; // For patterns like "Bearer [REDACTED]"
 }
 
 export class WorkflowSanitizer {
@@ -39,20 +38,67 @@ export class WorkflowSanitizer {
     { pattern: /https?:\/\/[^\s/]+\/webhook\/[^\s]+/g, placeholder: '[REDACTED_WEBHOOK]' },
     { pattern: /https?:\/\/[^\s/]+\/hook\/[^\s]+/g, placeholder: '[REDACTED_WEBHOOK]' },
 
+    // Self-hosted n8n hostnames — Gap 5 (customer-identifying topology).
+    // Requires a label after `n8n.` so `https://n8n.io/...` (public docs) is
+    // intentionally NOT matched.
+    { pattern: /https?:\/\/n8n\.[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:[/?#][^\s"'<>]*)?/gi, placeholder: '[REDACTED_N8N_HOST_URL]' },
+
+    // Supabase project URLs — Gap 6 (20-char project ref . supabase.co)
+    { pattern: /https?:\/\/[a-z]{20}\.supabase\.co(?:[/?#][^\s"'<>]*)?/gi, placeholder: '[REDACTED_SUPABASE_URL]' },
+
     // URLs with authentication - MUST BE BEFORE BEARER TOKENS
     { pattern: /https?:\/\/[^:]+:[^@]+@[^\s/]+/g, placeholder: '[REDACTED_URL_WITH_AUTH]' },
     { pattern: /wss?:\/\/[^:]+:[^@]+@[^\s/]+/g, placeholder: '[REDACTED_URL_WITH_AUTH]' },
     { pattern: /(?:postgres|mysql|mongodb|redis):\/\/[^:]+:[^@]+@[^\s]+/g, placeholder: '[REDACTED_URL_WITH_AUTH]' }, // Database protocols - includes port and path
 
-    // API keys and tokens - ORDER MATTERS!
-    // More specific patterns first, then general patterns
-    { pattern: /sk-[a-zA-Z0-9]{16,}/g, placeholder: '[REDACTED_APIKEY]' }, // OpenAI keys
-    { pattern: /Bearer\s+[^\s]+/gi, placeholder: 'Bearer [REDACTED]', preservePrefix: true }, // Bearer tokens
-    { pattern: /\b[a-zA-Z0-9_-]{32,}\b/g, placeholder: '[REDACTED_TOKEN]' }, // Long tokens (32+ chars)
-    { pattern: /\b[a-zA-Z0-9_-]{20,31}\b/g, placeholder: '[REDACTED]' }, // Short tokens (20-31 chars)
+    // Bearer tokens — placed before provider/JWT/long-token patterns so that
+    // "Bearer <secret>" is consumed as one unit and the prefix is preserved.
+    // Token-character class excludes common delimiters (quotes, commas,
+    // semicolons, closing brackets) so wrapping syntax like
+    // `auth: 'Bearer <token>'` is preserved instead of being eaten with the token.
+    { pattern: /Bearer\s+[^\s'"`,;}\]]+/gi, placeholder: 'Bearer [REDACTED]' },
 
-    // Email addresses (optional - uncomment if needed)
-    // { pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, placeholder: '[REDACTED_EMAIL]' },
+    // Generic JWT (catches Supabase anon + service_role + any other JWT). Three base64url segments, dot-separated.
+    { pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, placeholder: '[REDACTED_JWT]' },
+
+    // Supabase secret and publishable keys
+    { pattern: /\bsb_(?:secret|publishable)_[A-Za-z0-9_-]{20,}\b/g, placeholder: '[REDACTED_SUPABASE_KEY]' },
+
+    // OpenAI / OpenRouter — sk-proj- and sk-or- BEFORE the generic sk- below
+    { pattern: /\bsk-proj-[A-Za-z0-9_-]{40,}\b/g, placeholder: '[REDACTED_LLM_API_KEY]' },
+    { pattern: /\bsk-or-(?:v1-)?[A-Za-z0-9-]{40,}\b/g, placeholder: '[REDACTED_LLM_API_KEY]' },
+
+    // Stripe (sk_test/live, rk_test/live)
+    { pattern: /\b(?:sk|rk)_(?:test|live)_[A-Za-z0-9]{24,}\b/g, placeholder: '[REDACTED_STRIPE_KEY]' },
+
+    // GitHub PATs (fine-grained + classic)
+    { pattern: /\bgithub_pat_[A-Za-z0-9_]{50,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bghp_[A-Za-z0-9]{36,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+
+    // GitLab PAT
+    { pattern: /\bglpat-[A-Za-z0-9_-]{20,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+
+    // Hugging Face, Notion, GoHighLevel, Slack
+    { pattern: /\bhf_[A-Za-z0-9]{30,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bntn_[A-Za-z0-9]{40,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bpit-[a-f0-9-]{36}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bxox[bpaors]-[A-Za-z0-9-]{10,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+
+    // AWS access key id
+    { pattern: /\bAKIA[A-Z0-9]{16}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
+
+    // Generic OpenAI sk- (unchanged regex; placeholder upgraded to type-aware)
+    { pattern: /\bsk-[A-Za-z0-9]{16,}\b/g, placeholder: '[REDACTED_LLM_API_KEY]' },
+
+    // PII — emails and phones in free-text node parameters
+    { pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, placeholder: '[REDACTED_EMAIL]' },
+    // Lookbehind/lookahead reject digit-or-hyphen neighbours so UUIDs and other
+    // hex-with-hyphen IDs aren't misclassified as phone numbers.
+    { pattern: /(?<![\d-])(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?![\d-])/g, placeholder: '[REDACTED_PHONE]' },
+
+    // Generic token fallbacks (idempotency-safe via negative lookahead)
+    { pattern: /\b(?!REDACTED)[A-Za-z0-9_-]{32,}\b/g, placeholder: '[REDACTED_TOKEN]' }, // Long tokens (32+ chars)
+    { pattern: /\b(?!REDACTED)[A-Za-z0-9_-]{20,31}\b/g, placeholder: '[REDACTED]' }, // Short tokens (20-31 chars)
   ];
 
   private static readonly SENSITIVE_FIELDS = [
@@ -150,6 +196,21 @@ export class WorkflowSanitizer {
   }
 
   /**
+   * Sanitize an arbitrary value before telemetry storage.
+   * SECURITY (GHSA-8g7g-hmwm-6rv2): redact secrets from caller-supplied
+   * values (operations diffs, validation results, error messages) prior to enqueue.
+   */
+  static sanitizeTelemetryObject<T = any>(value: any): T {
+    if (value === null || value === undefined) {
+      return value as T;
+    }
+    if (typeof value === 'string') {
+      return this.sanitizeString(value) as unknown as T;
+    }
+    return this.sanitizeObject(value) as T;
+  }
+
+  /**
    * Sanitize a single node
    */
   private static sanitizeNode(node: WorkflowNode): WorkflowNode {
@@ -181,34 +242,26 @@ export class WorkflowSanitizer {
     const sanitized: any = {};
 
     for (const [key, value] of Object.entries(obj)) {
-      // Check if field name is sensitive
+      const lowerKey = key.toLowerCase();
       const isSensitive = this.isSensitiveField(key);
-      const isUrlField = key.toLowerCase().includes('url') ||
-                         key.toLowerCase().includes('endpoint') ||
-                         key.toLowerCase().includes('webhook');
+      const isUrlField = lowerKey.includes('url') ||
+                         lowerKey.includes('endpoint') ||
+                         lowerKey.includes('webhook');
 
-      // Recursively sanitize nested objects (unless it's a sensitive non-URL field)
-      if (typeof value === 'object' && value !== null) {
-        if (isSensitive && !isUrlField) {
-          // For sensitive object fields (like 'authentication'), redact completely
-          sanitized[key] = '[REDACTED]';
-        } else {
-          sanitized[key] = this.sanitizeObject(value);
-        }
+      // SECURITY (GHSA-f3rg-xqjj-cj9w): URL-like fields (url, endpoint, webhook)
+      // are fully redacted rather than partially sanitized, because preserving
+      // the path or query string leaks customer IDs, tenant identifiers, signed
+      // request parameters, and tokens shorter than the generic-token threshold.
+      if (isSensitive) {
+        sanitized[key] = isUrlField ? '[REDACTED_URL]' : '[REDACTED]';
       }
-      // Sanitize string values
+      // Recursively sanitize non-sensitive nested objects
+      else if (typeof value === 'object' && value !== null) {
+        sanitized[key] = this.sanitizeObject(value);
+      }
+      // Pattern-sanitize non-sensitive strings
       else if (typeof value === 'string') {
-        // For sensitive fields (except URL fields), use generic redaction
-        if (isSensitive && !isUrlField) {
-          sanitized[key] = '[REDACTED]';
-        } else {
-          // For URL fields or non-sensitive fields, use pattern-specific sanitization
-          sanitized[key] = this.sanitizeString(value, key);
-        }
-      }
-      // For non-string sensitive fields, redact completely
-      else if (isSensitive) {
-        sanitized[key] = '[REDACTED]';
+        sanitized[key] = this.sanitizeString(value);
       }
       // Keep other types as-is
       else {
@@ -222,7 +275,7 @@ export class WorkflowSanitizer {
   /**
    * Sanitize string values
    */
-  private static sanitizeString(value: string, fieldName: string): string {
+  private static sanitizeString(value: string): string {
     // First check if this is a webhook URL
     if (value.includes('/webhook/') || value.includes('/hook/')) {
       return 'https://[webhook-url]';
@@ -235,11 +288,6 @@ export class WorkflowSanitizer {
       // Skip webhook patterns - already handled above
       if (patternDef.placeholder.includes('WEBHOOK')) {
         continue;
-      }
-
-      // Skip if already sanitized with a placeholder to prevent double-redaction
-      if (sanitized.includes('[REDACTED')) {
-        break;
       }
 
       // Special handling for URL with auth - preserve path after credentials
@@ -266,27 +314,6 @@ export class WorkflowSanitizer {
 
       // Apply pattern with its specific placeholder
       sanitized = sanitized.replace(patternDef.pattern, patternDef.placeholder);
-    }
-
-    // Additional sanitization for specific field types
-    if (fieldName.toLowerCase().includes('url') ||
-        fieldName.toLowerCase().includes('endpoint')) {
-      // Keep URL structure but remove domain details
-      if (sanitized.startsWith('http://') || sanitized.startsWith('https://')) {
-        // If value has been redacted with URL_WITH_AUTH, preserve it
-        if (sanitized.includes('[REDACTED_URL_WITH_AUTH]')) {
-          return sanitized; // Already properly sanitized with path preserved
-        }
-        // If value has other redactions, leave it as is
-        if (sanitized.includes('[REDACTED]')) {
-          return sanitized;
-        }
-        const urlParts = sanitized.split('/');
-        if (urlParts.length > 2) {
-          urlParts[2] = '[domain]';
-          sanitized = urlParts.join('/');
-        }
-      }
     }
 
     return sanitized;

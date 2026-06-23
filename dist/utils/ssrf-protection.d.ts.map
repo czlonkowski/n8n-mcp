@@ -1,1 +1,0 @@
-{"version":3,"file":"ssrf-protection.d.ts","sourceRoot":"","sources":["../../src/utils/ssrf-protection.ts"],"names":[],"mappings":"AAoDA,qBAAa,cAAc;WAoBZ,kBAAkB,CAAC,SAAS,EAAE,MAAM,GAAG,OAAO,CAAC;QAC1D,KAAK,EAAE,OAAO,CAAC;QACf,MAAM,CAAC,EAAE,MAAM,CAAA;KAChB,CAAC;IA2HF,MAAM,CAAC,eAAe,CAAC,SAAS,EAAE,MAAM,GAAG;QAAE,KAAK,EAAE,OAAO,CAAC;QAAC,MAAM,CAAC,EAAE,MAAM,CAAA;KAAE;CAkD/E"}

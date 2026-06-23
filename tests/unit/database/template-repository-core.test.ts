@@ -348,6 +348,25 @@ describe('TemplateRepository - Core Functionality', () => {
       const results = repository.getTemplatesForTask('unknown_task');
       expect(results).toEqual([]);
     });
+
+    it('queries only the webhook node for webhook_processing (regression #2)', () => {
+      const received: unknown[][] = [];
+      const stmt = new MockPreparedStatement('', new Map());
+      stmt.all = vi.fn((...args: unknown[]) => {
+        received.push(args);
+        return [];
+      });
+      mockAdapter.prepare = vi.fn(() => stmt);
+
+      repository.getTemplatesForTask('webhook_processing');
+
+      const flatParams = received.flat().filter((p): p is string => typeof p === 'string');
+      // Params are LIKE patterns such as `%n8n-nodes-base.webhook%` — use
+      // substring match. httpRequest is NOT a trigger — previous map included
+      // it and pulled in scheduleTrigger/formTrigger templates.
+      expect(flatParams.some(p => p.includes('n8n-nodes-base.webhook'))).toBe(true);
+      expect(flatParams.every(p => !p.includes('n8n-nodes-base.httpRequest'))).toBe(true);
+    });
   });
   
   describe('template statistics', () => {

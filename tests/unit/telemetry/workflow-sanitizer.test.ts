@@ -29,7 +29,11 @@ describe('WorkflowSanitizer', () => {
       expect(sanitized.nodes[0].parameters.headers.Authorization).toBe('[REDACTED]');
     });
 
-    it('should sanitize webhook URLs but keep structure', () => {
+    it('should redact webhook URL fields and keep other fields', () => {
+      // Post-GHSA-f3rg-xqjj-cj9w: URL-named fields are fully redacted regardless
+      // of value, so we no longer try to preserve the `https://[webhook-url]`
+      // shape. The webhook short-circuit in sanitizeString still applies to
+      // non-URL-named fields whose value embeds a /webhook/ URL (see below).
       const workflow = {
         nodes: [
           {
@@ -49,9 +53,28 @@ describe('WorkflowSanitizer', () => {
 
       const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
 
-      expect(sanitized.nodes[0].parameters.webhookUrl).toBe('https://[webhook-url]');
+      expect(sanitized.nodes[0].parameters.webhookUrl).toBe('[REDACTED_URL]');
       expect(sanitized.nodes[0].parameters.method).toBe('POST'); // Method should remain
       expect(sanitized.nodes[0].parameters.path).toBe('my-webhook'); // Path should remain
+    });
+
+    it('redacts /webhook/ URLs embedded in non-URL-named fields', () => {
+      const workflow = {
+        nodes: [
+          {
+            id: '1',
+            name: 'Note',
+            type: 'n8n-nodes-base.set',
+            position: [100, 100],
+            parameters: {
+              note: 'Trigger fires at https://n8n.example.com/webhook/abc-def-ghi when ready.'
+            }
+          }
+        ],
+        connections: {}
+      };
+      const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
+      expect(sanitized.nodes[0].parameters.note).toBe('https://[webhook-url]');
     });
 
     it('should remove credentials entirely', () => {
@@ -84,7 +107,7 @@ describe('WorkflowSanitizer', () => {
       expect(sanitized.nodes[0].parameters.text).toBe('Hello World'); // Text should remain
     });
 
-    it('should sanitize URLs in parameters', () => {
+    it('should fully redact URL-like fields (GHSA-f3rg-xqjj-cj9w)', () => {
       const workflow = {
         nodes: [
           {
@@ -104,9 +127,87 @@ describe('WorkflowSanitizer', () => {
 
       const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
 
-      expect(sanitized.nodes[0].parameters.url).toBe('https://[domain]/endpoint');
-      expect(sanitized.nodes[0].parameters.endpoint).toBe('https://[domain]/api');
-      expect(sanitized.nodes[0].parameters.baseUrl).toBe('https://[domain]');
+      expect(sanitized.nodes[0].parameters.url).toBe('[REDACTED_URL]');
+      expect(sanitized.nodes[0].parameters.endpoint).toBe('[REDACTED_URL]');
+      expect(sanitized.nodes[0].parameters.baseUrl).toBe('[REDACTED_URL]');
+    });
+
+    it('GHSA-f3rg-xqjj-cj9w: does not leak URL paths or query strings', () => {
+      // Verbatim reproduction of the advisory PoC. Confirms that:
+      //   - customer/tenant identifiers in URL paths
+      //   - short query-string secrets (< 20 chars; under the generic-token threshold)
+      //   - signed/short tokens hidden in query strings
+      // never reach the telemetry payload.
+      const workflow = {
+        nodes: [
+          {
+            id: '1',
+            name: 'HTTP',
+            type: 'n8n-nodes-base.httpRequest',
+            typeVersion: 4,
+            position: [0, 0] as [number, number],
+            parameters: {
+              url: 'https://api.example.com/v1/customer/123?api_key=shortsecret&tenant=acme',
+              endpoint: 'https://internal.example.local/v2/users?token=abcd123456789012345',
+              headers: { Authorization: 'Bearer abcdefghijklmnop' }
+            }
+          }
+        ],
+        connections: {}
+      };
+
+      const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
+      const params = sanitized.nodes[0].parameters;
+      const serialized = JSON.stringify(params);
+
+      expect(params.url).toBe('[REDACTED_URL]');
+      expect(params.endpoint).toBe('[REDACTED_URL]');
+      expect(params.headers.Authorization).toBe('[REDACTED]');
+
+      // Nothing from the original path/query string should survive anywhere.
+      for (const leak of [
+        'customer/123',
+        'shortsecret',
+        'tenant=acme',
+        'v2/users',
+        'abcd123456789012345',
+        'api.example.com',
+        'internal.example.local'
+      ]) {
+        expect(serialized).not.toContain(leak);
+      }
+    });
+
+    it('GHSA-f3rg-xqjj-cj9w: redacts short OAuth codes and signed query parameters', () => {
+      const workflow = {
+        nodes: [
+          {
+            id: '1',
+            name: 'OAuth',
+            type: 'n8n-nodes-base.httpRequest',
+            position: [0, 0] as [number, number],
+            parameters: {
+              url: 'https://oauth.example.com/callback?code=4/0AY0e&state=xyz',
+              callbackUrl: 'https://s3.amazonaws.com/bucket/file.pdf?X-Amz-Signature=abc123'
+            }
+          }
+        ],
+        connections: {}
+      };
+
+      const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
+      const serialized = JSON.stringify(sanitized.nodes[0].parameters);
+
+      for (const leak of [
+        'code=4/0AY0e',
+        'state=xyz',
+        'X-Amz-Signature',
+        'bucket/file.pdf',
+        'oauth.example.com',
+        's3.amazonaws.com'
+      ]) {
+        expect(serialized).not.toContain(leak);
+      }
     });
 
     it('should calculate workflow metrics correctly', () => {
@@ -480,8 +581,10 @@ describe('WorkflowSanitizer', () => {
       expect(params.secret_token).toBe('[REDACTED]');
       expect(params.authKey).toBe('[REDACTED]');
       expect(params.clientSecret).toBe('[REDACTED]');
-      expect(params.webhookUrl).toBe('https://hooks.example.com/services/T00000000/B00000000/[REDACTED]');
-      expect(params.databaseUrl).toBe('[REDACTED_URL_WITH_AUTH]');
+      // Post-GHSA-f3rg-xqjj-cj9w: URL-named fields are fully redacted to
+      // [REDACTED_URL] regardless of pattern matches inside the value.
+      expect(params.webhookUrl).toBe('[REDACTED_URL]');
+      expect(params.databaseUrl).toBe('[REDACTED_URL]');
       expect(params.connectionString).toBe('[REDACTED]');
 
       // Safe values should remain
@@ -665,6 +768,270 @@ describe('WorkflowSanitizer', () => {
 
       expect(sanitized.nodeCount).toBe(1);
       expect(sanitized.nodes[0].name).toBe('Node with émojis 🚀 and specíal chars');
+    });
+  });
+
+  describe('idempotency and multi-secret strings', () => {
+    it('redacts secrets matching different patterns in the same string (no early break)', () => {
+      const wf = {
+        nodes: [{
+          id: '1', name: 'Code', type: 'n8n-nodes-base.code',
+          position: [0, 0] as [number, number], typeVersion: 2,
+          parameters: {
+            jsCode:
+              "const KEY = 'sk-1234567890abcdef1234567890abcdef';\n" +
+              "fetch(u, { headers: { auth: 'Bearer ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' } });"
+          },
+        }],
+        connections: {},
+      };
+      const out = WorkflowSanitizer.sanitizeWorkflow(wf);
+      const code = (out.nodes[0].parameters as any).jsCode;
+      expect(code).not.toMatch(/sk-1234567890abcdef/);
+      expect(code).not.toMatch(/ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/);
+      expect(code).toContain('Bearer [REDACTED]');
+    });
+
+    it('produces byte-identical output when sanitized twice (idempotency)', () => {
+      const wf = {
+        nodes: [{
+          id: '1', name: 'Code', type: 'n8n-nodes-base.code',
+          position: [0, 0] as [number, number], typeVersion: 2,
+          parameters: {
+            jsCode:
+              "const KEY = 'sk-proj-HjL38eurXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';\n" +
+              "const SUPA = 'sb_secret_8vSVYqplak7kizRcykjm0w_Xb2fObQ5x';\n" +
+              "const E = 'jane.doe@example.org'; const P = '+1-604-555-1234';"
+          },
+        }],
+        connections: {},
+      };
+      const first = WorkflowSanitizer.sanitizeWorkflow(wf);
+      const second = WorkflowSanitizer.sanitizeWorkflow({ ...wf, nodes: first.nodes });
+      expect(JSON.stringify(second.nodes)).toBe(JSON.stringify(first.nodes));
+    });
+
+    it('Bearer pattern stops at quotes and delimiters, preserving surrounding syntax', () => {
+      const wf = {
+        nodes: [{
+          id: '1', name: 'Code', type: 'n8n-nodes-base.code',
+          position: [0, 0] as [number, number], typeVersion: 2,
+          parameters: { jsCode: "const headers = { auth: 'Bearer my-secret-token-1234567890', other: 'x' };" },
+        }],
+        connections: {},
+      };
+      const out = (WorkflowSanitizer.sanitizeWorkflow(wf).nodes[0].parameters as any).jsCode;
+      expect(out).toContain("'Bearer [REDACTED]'");
+      expect(out).toContain("', other: 'x'");
+      expect(out).not.toContain('my-secret-token');
+    });
+
+    it('does not re-redact existing [REDACTED_*] placeholders', () => {
+      const wf = {
+        nodes: [{
+          id: '1', name: 'Code', type: 'n8n-nodes-base.code',
+          position: [0, 0] as [number, number], typeVersion: 2,
+          parameters: { jsCode: 'const A = "[REDACTED_LLM_API_KEY]"; const B = "[REDACTED_SUPABASE_KEY]";' },
+        }],
+        connections: {},
+      };
+      const out = WorkflowSanitizer.sanitizeWorkflow(wf);
+      const code = (out.nodes[0].parameters as any).jsCode;
+      expect(code).toContain('[REDACTED_LLM_API_KEY]');
+      expect(code).toContain('[REDACTED_SUPABASE_KEY]');
+    });
+  });
+
+  describe('provider-specific token patterns (Gap 4)', () => {
+    const codeNode = (jsCode: string) => ({
+      nodes: [{
+        id: '1', name: 'Code', type: 'n8n-nodes-base.code',
+        position: [0, 0] as [number, number], typeVersion: 2,
+        parameters: { jsCode },
+      }],
+      connections: {},
+    });
+
+    const sweep = (jsCode: string): string =>
+      (WorkflowSanitizer.sanitizeWorkflow(codeNode(jsCode)).nodes[0].parameters as any).jsCode;
+
+    it('redacts Supabase secret keys', () => {
+      const out = sweep("const K = 'sb_secret_8vSVYqplak7kizRcykjm0w_Xb2fObQ5x';");
+      expect(out).not.toMatch(/sb_secret_/);
+      expect(out).toContain('[REDACTED_SUPABASE_KEY]');
+    });
+
+    it('redacts Supabase publishable keys', () => {
+      const out = sweep("const K = 'sb_publishable_abcDEF0123456789_-_xyz_more';");
+      expect(out).not.toMatch(/sb_publishable_/);
+      expect(out).toContain('[REDACTED_SUPABASE_KEY]');
+    });
+
+    it('redacts Supabase anon JWT', () => {
+      const jwt =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' +
+        'eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTYwMDAwMDAwMH0.' +
+        'abcdefghijklmnopqrstuvwxyz0123';
+      const out = sweep(`const T = '${jwt}';`);
+      expect(out).not.toContain(jwt);
+      expect(out).toContain('[REDACTED_JWT]');
+    });
+
+    it('redacts OpenAI sk-proj keys', () => {
+      const out = sweep("const OPENAI_KEY = 'sk-proj-HjL38eurAB-CD12EF34GH56IJ78KL90MN12OP34QR56ST78UV90WX';");
+      expect(out).not.toMatch(/sk-proj-[A-Za-z0-9_-]{8,}/);
+      expect(out).toContain('[REDACTED_LLM_API_KEY]');
+    });
+
+    it('redacts OpenRouter sk-or-v1 keys', () => {
+      const out = sweep("const K = 'sk-or-v1-98807773d8a194795324abcdef0123456789abcdef';");
+      expect(out).not.toMatch(/sk-or-(?:v1-)?[A-Za-z0-9-]{8,}/);
+      expect(out).toContain('[REDACTED_LLM_API_KEY]');
+    });
+
+    it('redacts Stripe live and restricted keys', () => {
+      // Build literals by concatenation so the source doesn't trip GitHub
+      // push protection / secretlint while still producing format-valid
+      // Stripe-shaped strings at runtime.
+      const stripeLive = 'sk_li' + 've_' + '51HAaAaAaAaAaAaAaAaAaAaAa';
+      const stripeTest = 'rk_te' + 'st_' + '51HBbBbBbBbBbBbBbBbBbBbBb';
+      const out = sweep(`const A='${stripeLive}'; const B='${stripeTest}';`);
+      expect(out).not.toMatch(/sk_live_|rk_test_/);
+      expect((out.match(/\[REDACTED_STRIPE_KEY\]/g) || []).length).toBe(2);
+    });
+
+    it('redacts GitHub PATs (classic + fine-grained)', () => {
+      const out = sweep("const A='ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'; const B='github_pat_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';");
+      expect(out).not.toMatch(/ghp_|github_pat_/);
+      expect((out.match(/\[REDACTED_API_TOKEN\]/g) || []).length).toBe(2);
+    });
+
+    it('redacts GitLab PATs', () => {
+      const out = sweep("const T='glpat-AbCdEfGhIjKlMnOpQrSt';");
+      expect(out).not.toMatch(/glpat-/);
+      expect(out).toContain('[REDACTED_API_TOKEN]');
+    });
+
+    it('redacts Hugging Face, Notion, GoHighLevel and Slack tokens', () => {
+      const out = sweep(
+        "const HF='hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345';" +
+        "const NTN='ntn_abcdefghijklmnopqrstuvwxyz01234567890ABCD';" +
+        "const PIT='pit-1b3c7766-aaaa-bbbb-cccc-1234567890ab';" +
+        "const SLK='xoxb-1234567890-abcdefghij-AbCdEfGhIjKlMnOp';"
+      );
+      expect(out).not.toMatch(/hf_|ntn_|pit-|xoxb-/);
+      expect((out.match(/\[REDACTED_API_TOKEN\]/g) || []).length).toBe(4);
+    });
+
+    it('redacts AWS access key ids', () => {
+      const out = sweep("const K='AKIAIOSFODNN7EXAMPLE';");
+      expect(out).not.toMatch(/AKIA[A-Z0-9]{16}/);
+      expect(out).toContain('[REDACTED_API_TOKEN]');
+    });
+
+    it('produces type-aware placeholder for plain OpenAI sk- keys', () => {
+      const out = sweep("const K = 'sk-1234567890abcdef1234567890abcdef';");
+      expect(out).toContain('[REDACTED_LLM_API_KEY]');
+      expect(out).not.toContain('[REDACTED_APIKEY]');
+    });
+  });
+
+  describe('topology-leaking URL patterns (Gaps 5 & 6)', () => {
+    it('redacts self-hosted n8n hostnames anywhere they appear', () => {
+      const wf = {
+        nodes: [{
+          id: '1', name: 'Code', type: 'n8n-nodes-base.code',
+          position: [0, 0] as [number, number], typeVersion: 2,
+          parameters: { jsCode: "fetch('https://n8n.smeventures.dev/workflow/9uF6YQlHJjdsePK');" },
+        }],
+        connections: {},
+      };
+      const out = (WorkflowSanitizer.sanitizeWorkflow(wf).nodes[0].parameters as any).jsCode;
+      expect(out).not.toContain('smeventures.dev');
+      expect(out).toContain('[REDACTED_N8N_HOST_URL]');
+    });
+
+    it('redacts Supabase project URLs (20-char project ref)', () => {
+      const wf = {
+        nodes: [{
+          id: '1', name: 'Code', type: 'n8n-nodes-base.code',
+          position: [0, 0] as [number, number], typeVersion: 2,
+          parameters: { jsCode: "const URL = 'https://lhbpobflhcizuaxehfvl.supabase.co/rest/v1/users';" },
+        }],
+        connections: {},
+      };
+      const out = (WorkflowSanitizer.sanitizeWorkflow(wf).nodes[0].parameters as any).jsCode;
+      expect(out).not.toContain('lhbpobflhcizuaxehfvl.supabase.co');
+      expect(out).toContain('[REDACTED_SUPABASE_URL]');
+    });
+
+    it('redacts Supabase URLs in url fields (no path or project-ref leak)', () => {
+      // Post-GHSA-f3rg-xqjj-cj9w: url-named fields are fully redacted at the
+      // field-name layer, so even the Supabase-specific pattern is short-
+      // circuited. What matters is that no fragment of the original URL
+      // survives.
+      const wf = {
+        nodes: [{
+          id: '1', name: 'HTTP', type: 'n8n-nodes-base.httpRequest',
+          position: [0, 0] as [number, number], typeVersion: 4,
+          parameters: { url: 'https://abcdefghijklmnopqrst.supabase.co/rest/v1/x' },
+        }],
+        connections: {},
+      };
+      const out = (WorkflowSanitizer.sanitizeWorkflow(wf).nodes[0].parameters as any).url;
+      expect(out).toBe('[REDACTED_URL]');
+      expect(out).not.toContain('supabase.co');
+      expect(out).not.toContain('abcdefghijklmnopqrst');
+      expect(out).not.toContain('rest/v1/x');
+    });
+  });
+
+  describe('email and phone PII patterns', () => {
+    it('redacts emails embedded in systemMessage / html / text fields', () => {
+      const wf = {
+        nodes: [
+          { id: '1', name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent',
+            position: [0, 0] as [number, number], typeVersion: 1,
+            parameters: { systemMessage: 'Contact Claire.Tremblay@betterhealthclinic.com for details.' } },
+          { id: '2', name: 'Email', type: 'n8n-nodes-base.emailSend',
+            position: [0, 0] as [number, number], typeVersion: 2.1,
+            parameters: { html: '<p>Best, marcelo.fonseca@livefully.io</p>' } },
+        ],
+        connections: {},
+      };
+      const out = WorkflowSanitizer.sanitizeWorkflow(wf);
+      expect((out.nodes[0].parameters as any).systemMessage).not.toContain('@betterhealthclinic.com');
+      expect((out.nodes[0].parameters as any).systemMessage).toContain('[REDACTED_EMAIL]');
+      expect((out.nodes[1].parameters as any).html).toContain('[REDACTED_EMAIL]');
+    });
+
+    it('redacts phone numbers in free-text fields', () => {
+      const wf = {
+        nodes: [{
+          id: '1', name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent',
+          position: [0, 0] as [number, number], typeVersion: 1,
+          parameters: { systemMessage: 'Call our support: +1-604-555-1234 or (604) 555-1234.' },
+        }],
+        connections: {},
+      };
+      const out = (WorkflowSanitizer.sanitizeWorkflow(wf).nodes[0].parameters as any).systemMessage;
+      expect(out).not.toMatch(/\d{3}.*\d{3}.*\d{4}/);
+      expect((out.match(/\[REDACTED_PHONE\]/g) || []).length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('does not misclassify UUIDs as phone numbers', () => {
+      const wf = {
+        nodes: [{
+          id: '1', name: 'Code', type: 'n8n-nodes-base.code',
+          position: [0, 0] as [number, number], typeVersion: 2,
+          parameters: { jsCode: "const id = 'a1b2c3d4-1234-5678-9abc-123456789012';" },
+        }],
+        connections: {},
+      };
+      const out = (WorkflowSanitizer.sanitizeWorkflow(wf).nodes[0].parameters as any).jsCode;
+      expect(out).not.toContain('[REDACTED_PHONE]');
+      // The UUID will be redacted by the long-token (32+ char) fallback as
+      // [REDACTED_TOKEN] — that's correct behaviour. Phone redaction must not fire.
     });
   });
 });

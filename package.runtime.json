@@ -1,22 +1,23 @@
 {
   "name": "n8n-mcp-runtime",
-  "version": "2.47.5",
+  "version": "2.59.3",
   "description": "n8n MCP Server Runtime Dependencies Only",
   "private": true,
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.20.1",
+    "@modelcontextprotocol/sdk": "1.28.0",
     "@supabase/supabase-js": "^2.57.4",
     "express": "^5.1.0",
     "express-rate-limit": "^7.1.5",
     "dotenv": "^16.5.0",
+    "ipaddr.js": "^1.9.1",
     "lru-cache": "^11.2.1",
     "sql.js": "^1.13.0",
     "tslib": "^2.6.2",
-    "uuid": "^10.0.0",
+    "uuid": "^14.0.0",
     "axios": "^1.7.7"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   },
   "optionalDependencies": {
     "better-sqlite3": "^11.10.0"

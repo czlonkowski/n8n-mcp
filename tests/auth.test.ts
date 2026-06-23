@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AuthManager } from '../src/utils/auth';
+import { AuthManager, buildBearerChallenge } from '../src/utils/auth';
 
 describe('AuthManager', () => {
   let authManager: AuthManager;
@@ -97,9 +97,45 @@ describe('AuthManager', () => {
     it('should compare tokens securely', () => {
       const token = 'my-secret-token';
       const hashedToken = AuthManager.hashToken(token);
-      
+
       expect(AuthManager.compareTokens(token, hashedToken)).toBe(true);
       expect(AuthManager.compareTokens('wrong-token', hashedToken)).toBe(false);
+    });
+  });
+
+  describe('buildBearerChallenge', () => {
+    it('omits error code when no credentials were sent', () => {
+      // RFC 6750 §3: when the request lacks any authentication information,
+      // the resource server SHOULD NOT include an error code.
+      const challenge = buildBearerChallenge('no_auth_header');
+      expect(challenge).toBe('Bearer realm="n8n-mcp"');
+      expect(challenge).not.toContain('error=');
+    });
+
+    it('signals invalid_request when scheme is wrong', () => {
+      const challenge = buildBearerChallenge('invalid_auth_format');
+      expect(challenge).toContain('Bearer realm="n8n-mcp"');
+      expect(challenge).toContain('error="invalid_request"');
+      expect(challenge).toContain('error_description="Bearer token required"');
+    });
+
+    it('signals invalid_token when credentials were rejected', () => {
+      const challenge = buildBearerChallenge('invalid_token');
+      expect(challenge).toContain('Bearer realm="n8n-mcp"');
+      expect(challenge).toContain('error="invalid_token"');
+      expect(challenge).toContain('error_description="Invalid bearer token"');
+    });
+
+    it('honors a custom realm argument', () => {
+      const challenge = buildBearerChallenge('no_auth_header', 'my-deployment');
+      expect(challenge).toBe('Bearer realm="my-deployment"');
+    });
+
+    it('escapes embedded quotes and backslashes in the realm', () => {
+      // RFC 7235 §2.2: realm is a quoted-string, so any " or \ inside
+      // must be escaped to keep the header parseable.
+      const challenge = buildBearerChallenge('no_auth_header', 'weird\\realm"name');
+      expect(challenge).toBe('Bearer realm="weird\\\\realm\\"name"');
     });
   });
 });

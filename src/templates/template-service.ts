@@ -244,6 +244,13 @@ export class TemplateService {
   }
   
   /**
+   * Whether any templates in the corpus have metadata enrichment applied.
+   */
+  async hasMetadataCoverage(): Promise<boolean> {
+    return this.repository.hasMetadataCoverage();
+  }
+
+  /**
    * Get available categories from template metadata
    */
   async getAvailableCategories(): Promise<string[]> {

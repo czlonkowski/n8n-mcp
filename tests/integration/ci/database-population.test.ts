@@ -190,10 +190,13 @@ describe.skipIf(!dbExists)('Database Content Validation', () => {
         'Run: npm run fetch:templates OR restore from git history.'
       ).toBeGreaterThan(0);
 
+      // Threshold is set ~5% below the current healthy floor of 2,352 (May 2026).
+      // n8n.io's catalogue fluctuates as authors archive workflows; tighter than
+      // 2,200 produces false positives, looser hides genuine partial-fetch losses.
       expect(templatesCount.count,
-        `WARNING: Expected at least 2500 templates, got ${templatesCount.count}. ` +
+        `WARNING: Expected at least 2200 templates, got ${templatesCount.count}. ` +
         'Templates may have been partially lost. Run: npm run fetch:templates'
-      ).toBeGreaterThanOrEqual(2500);
+      ).toBeGreaterThanOrEqual(2200);
     });
   });
 

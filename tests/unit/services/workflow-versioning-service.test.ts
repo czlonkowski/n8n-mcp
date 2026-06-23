@@ -115,7 +115,7 @@ describe('WorkflowVersioningService', () => {
         trigger: 'partial_update'
       });
 
-      expect(mockRepository.pruneWorkflowVersions).toHaveBeenCalledWith('workflow-1', 10);
+      expect(mockRepository.pruneWorkflowVersions).toHaveBeenCalledWith('workflow-1', 10, '');
       expect(result.pruned).toBe(3);
       expect(result.message).toContain('pruned 3 old version(s)');
     });
@@ -170,7 +170,7 @@ describe('WorkflowVersioningService', () => {
 
       await service.getVersionHistory('workflow-1', 5);
 
-      expect(mockRepository.getWorkflowVersions).toHaveBeenCalledWith('workflow-1', 5);
+      expect(mockRepository.getWorkflowVersions).toHaveBeenCalledWith('workflow-1', '', 5);
     });
   });
 
@@ -225,7 +225,7 @@ describe('WorkflowVersioningService', () => {
 
       const result = await service.restoreVersion('workflow-1', undefined, false);
 
-      expect(mockRepository.getLatestWorkflowVersion).toHaveBeenCalledWith('workflow-1');
+      expect(mockRepository.getLatestWorkflowVersion).toHaveBeenCalledWith('workflow-1', '');
       expect(result.success).toBe(true);
     });
 
@@ -355,11 +355,11 @@ describe('WorkflowVersioningService', () => {
     it('should delete a specific version', async () => {
       const version = createMockVersion(1);
       vi.spyOn(mockRepository, 'getWorkflowVersion').mockReturnValue(version);
-      vi.spyOn(mockRepository, 'deleteWorkflowVersion').mockReturnValue(undefined);
+      vi.spyOn(mockRepository, 'deleteWorkflowVersion').mockReturnValue(1);
 
       const result = await service.deleteVersion(1);
 
-      expect(mockRepository.deleteWorkflowVersion).toHaveBeenCalledWith(1);
+      expect(mockRepository.deleteWorkflowVersion).toHaveBeenCalledWith(1, '');
       expect(result.success).toBe(true);
       expect(result.message).toContain('Deleted version 1');
     });
@@ -412,25 +412,38 @@ describe('WorkflowVersioningService', () => {
 
       await service.pruneVersions('workflow-1', 5);
 
-      expect(mockRepository.pruneWorkflowVersions).toHaveBeenCalledWith('workflow-1', 5);
+      expect(mockRepository.pruneWorkflowVersions).toHaveBeenCalledWith('workflow-1', 5, '');
     });
   });
 
-  describe('truncateAllVersions', () => {
-    it('should refuse to truncate without confirmation', async () => {
-      const result = await service.truncateAllVersions(false);
+  describe('tenant scoping (GHSA-j6r7-6fhx-77wx)', () => {
+    it('passes the configured instance scope to every repository call', async () => {
+      const scoped = new WorkflowVersioningService(mockRepository, mockApiClient, 'tenant-a');
+      const workflow = createMockWorkflow('workflow-1', 'Test Workflow');
 
-      expect(result.deleted).toBe(0);
-      expect(result.message).toContain('not confirmed');
-    });
+      vi.spyOn(mockRepository, 'getWorkflowVersions').mockReturnValue([]);
+      vi.spyOn(mockRepository, 'createWorkflowVersion').mockReturnValue(1);
+      vi.spyOn(mockRepository, 'pruneWorkflowVersions').mockReturnValue(0);
+      vi.spyOn(mockRepository, 'getWorkflowVersion').mockReturnValue(null);
+      vi.spyOn(mockRepository, 'getWorkflowVersionCount').mockReturnValue(0);
+      vi.spyOn(mockRepository, 'deleteWorkflowVersionsByWorkflowId').mockReturnValue(0);
+      vi.spyOn(mockRepository, 'getVersionStorageStats').mockReturnValue({ totalVersions: 0, totalSize: 0, byWorkflow: [] });
 
-    it('should truncate all versions when confirmed', async () => {
-      vi.spyOn(mockRepository, 'truncateWorkflowVersions').mockReturnValue(50);
+      await scoped.createBackup('workflow-1', workflow, { trigger: 'partial_update' });
+      await scoped.getVersionHistory('workflow-1', 5);
+      await scoped.getVersion(42);
+      await scoped.deleteAllVersions('workflow-1');
+      await scoped.getStorageStats();
 
-      const result = await service.truncateAllVersions(true);
-
-      expect(result.deleted).toBe(50);
-      expect(result.message).toContain('Truncated workflow_versions table');
+      expect(mockRepository.getWorkflowVersions).toHaveBeenCalledWith('workflow-1', 'tenant-a', 1);
+      expect(mockRepository.createWorkflowVersion).toHaveBeenCalledWith(
+        expect.objectContaining({ instanceId: 'tenant-a' })
+      );
+      expect(mockRepository.pruneWorkflowVersions).toHaveBeenCalledWith('workflow-1', 10, 'tenant-a');
+      expect(mockRepository.getWorkflowVersions).toHaveBeenCalledWith('workflow-1', 'tenant-a', 5);
+      expect(mockRepository.getWorkflowVersion).toHaveBeenCalledWith(42, 'tenant-a');
+      expect(mockRepository.getWorkflowVersionCount).toHaveBeenCalledWith('workflow-1', 'tenant-a');
+      expect(mockRepository.getVersionStorageStats).toHaveBeenCalledWith('tenant-a');
     });
   });
 

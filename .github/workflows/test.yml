@@ -50,7 +50,10 @@ jobs:
           cache: 'npm'
       
       - name: Install dependencies
-        run: npm ci
+        # --legacy-peer-deps: n8n-nodes-base 2.20.x pulls in mappersmith with a `diff`
+        # peer that conflicts with ts-node's `diff@^4`; npm 7+ strict resolution leaves
+        # the lock internally inconsistent. Match local dev (.npmrc legacy-peer-deps=true).
+        run: npm ci --legacy-peer-deps
       
       # Verify test environment setup
       - name: Verify test environment
@@ -67,6 +70,18 @@ jobs:
         env:
           CI: true
       
+      # Pre-build the Docker test image used by tests/integration/docker/*.test.ts
+      # Two test files used to build it independently inside their beforeAll hooks; the
+      # builder stage does an `npm install` from the public registry which intermittently
+      # fails on CI runners and tanked the entire test job. Building it here once gets us:
+      #  - one build attempt instead of two
+      #  - a clear, separately-visible CI step when the npm registry is flaky
+      #  - the test suite degrades to skipped tests if this step fails (won't block PRs)
+      - name: Build Docker test image
+        run: npm run docker:test:build
+        timeout-minutes: 8
+        continue-on-error: true
+
       # Run integration tests separately (with MSW setup)
       - name: Run integration tests
         run: npm run test:integration -- --reporter=default --reporter=junit

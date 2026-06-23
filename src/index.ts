@@ -28,6 +28,10 @@ export type {
   GenerateWorkflowHandler,
   GenerateWorkflowHelpers
 } from './types/generate-workflow';
+export type {
+  AdditionalTool,
+  AdditionalToolContext
+} from './types/additional-tools';
 
 // UI module exports
 export type { UIAppConfig, UIMetadata } from './mcp/ui/types';

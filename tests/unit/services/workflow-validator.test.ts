@@ -284,6 +284,74 @@ describe('WorkflowValidator', () => {
       expect(result.errors.some(e => e.message.includes('typeVersion 10 exceeds maximum supported version 2'))).toBe(true);
     });
 
+    // #781 — community nodes used to store npm package versions like "0.2.21" as their
+    // version. That isn't a finite JS number, so `node.typeVersion < nodeInfo.version`
+    // silently coerced to NaN and let bogus typeVersions through.
+    it('rejects NaN as typeVersion even though typeof NaN === "number"', async () => {
+      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [100, 100], parameters: {}, typeVersion: NaN as any }], connections: {} } as any);
+      expect(result.errors.some(e => e.message.includes('Invalid typeVersion') && e.message.includes('finite'))).toBe(true);
+    });
+
+    it('skips min/max comparison and warns when nodeInfo.version is unparseable', async () => {
+      vi.mocked(mockNodeRepository.getNode).mockImplementation((nodeType: string) => {
+        if (nodeType === 'nodes-base.communityFoo') {
+          return { type: 'nodes-base.communityFoo', displayName: 'Community Foo', package: 'n8n-nodes-base', version: '0.2.21', isVersioned: true, outputs: ['main'], properties: [] };
+        }
+        return nodeTypes[nodeType] || null;
+      });
+      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Foo', type: 'n8n-nodes-base.communityFoo', position: [100, 100], parameters: {}, typeVersion: 1 }], connections: {} } as any);
+      // No spurious "Outdated" / "exceeds maximum" errors comparing against NaN…
+      expect(result.errors.some(e => e.message.includes('exceeds maximum'))).toBe(false);
+      expect(result.warnings.some(w => w.message.includes('Outdated typeVersion'))).toBe(false);
+      // …but a heads-up that the comparison was skipped, so callers don't think a
+      // bogus typeVersion was actually accepted.
+      expect(result.warnings.some(w => w.message.includes('Cannot validate typeVersion') && w.message.includes('"0.2.21"'))).toBe(true);
+    });
+
+    it('does not emit the unparseable-version warning when typeVersion is in a valid range too high', async () => {
+      // The warning fires whenever stored version is unparseable, regardless of
+      // user typeVersion — that is the whole point: caller should know the
+      // min/max guarantee did not run, even if their typeVersion happens to be high.
+      vi.mocked(mockNodeRepository.getNode).mockImplementation((nodeType: string) => {
+        if (nodeType === 'nodes-base.communityFoo') {
+          return { type: 'nodes-base.communityFoo', displayName: 'Community Foo', package: 'n8n-nodes-base', version: '0.2.21', isVersioned: true, outputs: ['main'], properties: [] };
+        }
+        return nodeTypes[nodeType] || null;
+      });
+      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Foo', type: 'n8n-nodes-base.communityFoo', position: [100, 100], parameters: {}, typeVersion: 999 }], connections: {} } as any);
+      expect(result.warnings.some(w => w.message.includes('Cannot validate typeVersion'))).toBe(true);
+      // typeVersion: 999 still passes typeof/finite checks, so no error — the warning
+      // is the signal that we couldn't enforce the upper bound.
+      expect(result.errors.some(e => e.message.includes('exceeds maximum'))).toBe(false);
+    });
+
+    it('parses comma-separated nodeInfo.version arrays for the max comparison', async () => {
+      vi.mocked(mockNodeRepository.getNode).mockImplementation((nodeType: string) => {
+        if (nodeType === 'nodes-base.multiVer') {
+          return { type: 'nodes-base.multiVer', displayName: 'Multi', package: 'n8n-nodes-base', version: '1,2,2.1', isVersioned: true, outputs: ['main'], properties: [] };
+        }
+        return nodeTypes[nodeType] || null;
+      });
+      const tooHigh = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'M', type: 'nodes-base.multiVer', position: [100, 100], parameters: {}, typeVersion: 3 }], connections: {} } as any);
+      expect(tooHigh.errors.some(e => e.message.includes('exceeds maximum supported version 2.1'))).toBe(true);
+
+      const ok = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'M', type: 'nodes-base.multiVer', position: [100, 100], parameters: {}, typeVersion: 2.1 }], connections: {} } as any);
+      expect(ok.errors.some(e => e.message.includes('typeVersion'))).toBe(false);
+    });
+
+    it('suggests a finite typeVersion when nodeInfo.version is unparseable', async () => {
+      vi.mocked(mockNodeRepository.getNode).mockImplementation((nodeType: string) => {
+        if (nodeType === 'nodes-base.communityFoo') {
+          return { type: 'nodes-base.communityFoo', displayName: 'Community Foo', package: 'n8n-nodes-base', version: '0.2.21', isVersioned: true, outputs: ['main'], properties: [] };
+        }
+        return nodeTypes[nodeType] || null;
+      });
+      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Foo', type: 'n8n-nodes-base.communityFoo', position: [100, 100], parameters: {} }], connections: {} } as any);
+      // No "Add typeVersion: 0.2.21" — would be invalid; should fall back to 1.
+      expect(result.errors.some(e => e.message.includes('Add typeVersion: 1'))).toBe(true);
+      expect(result.errors.some(e => e.message.includes('Add typeVersion: 0.2.21'))).toBe(false);
+    });
+
     it('should add node validation errors and warnings', async () => {
       vi.mocked(mockEnhancedConfigValidator.validateWithMode).mockReturnValue({ errors: [{ type: 'missing_required', property: 'url', message: 'Missing required field: url' }], warnings: [{ type: 'security', property: 'url', message: 'Consider using HTTPS' }], suggestions: [], mode: 'operation' as const, valid: false, visibleProperties: [], hiddenProperties: [] } as any);
       const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', position: [100, 100], parameters: {}, typeVersion: 4 }], connections: {} } as any);
@@ -452,6 +520,29 @@ describe('WorkflowValidator', () => {
       const error = result.errors.find(e => e.message.includes('Expression format'));
       expect(error?.message).toContain('Current (incorrect):');
       expect(error?.message).toContain('Fixed (correct):');
+    });
+
+    it('emits missing-cachedResultName warning at runtime/ai-friendly/strict, suppresses at minimal (#715)', async () => {
+      const buildAirtableWorkflow = () => ({
+        nodes: [{
+          id: '1', name: 'Airtable', type: 'n8n-nodes-base.airtable', position: [0, 0], typeVersion: 2.1,
+          parameters: {
+            base: { __rl: true, mode: 'id', value: 'appXYZ' },     // missing cachedResultName
+            table: { __rl: true, mode: 'id', value: 'tblABC' }     // missing cachedResultName
+          }
+        }],
+        connections: {}
+      });
+
+      for (const profile of ['runtime', 'ai-friendly', 'strict'] as const) {
+        const result = await validator.validateWorkflow(buildAirtableWorkflow() as any, { profile });
+        const cachedNameWarnings = result.warnings.filter(w => w.message.includes('cachedResultName'));
+        expect(cachedNameWarnings.length, `profile=${profile}`).toBe(2);
+      }
+
+      const minimalResult = await validator.validateWorkflow(buildAirtableWorkflow() as any, { profile: 'minimal' });
+      const minimalCachedNameWarnings = minimalResult.warnings.filter(w => w.message.includes('cachedResultName'));
+      expect(minimalCachedNameWarnings).toHaveLength(0);
     });
   });
 

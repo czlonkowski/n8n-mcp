@@ -180,6 +180,227 @@ describe('handlers-workflow-diff', () => {
       expect(mockApiClient.updateWorkflow).toHaveBeenCalledWith('test-workflow-id', updatedWorkflow);
     });
 
+    it('normalizes HTTP MCP serialized addNode payloads before applying the diff (#814)', async () => {
+      const testWorkflow = createTestWorkflow();
+      const diffRequest = {
+        id: 'test-workflow-id',
+        operations: [
+          {
+            type: 'addNode',
+            node: {
+              id: 'node3',
+              name: 'Set Node',
+              type: 'n8n-nodes-base.set',
+              typeVersion: '3',
+              position: { '0': 500, '1': 100 },
+              parameters: '{"values":{"0":{"name":"message","value":"Hello"}}}',
+            },
+          },
+        ],
+        validateOnly: true,
+      };
+      const normalizedRequest = {
+        id: 'test-workflow-id',
+        operations: [
+          {
+            type: 'addNode',
+            node: {
+              id: 'node3',
+              name: 'Set Node',
+              type: 'n8n-nodes-base.set',
+              typeVersion: 3,
+              position: [500, 100],
+              parameters: {
+                values: [{ name: 'message', value: 'Hello' }],
+              },
+            },
+          },
+        ],
+        validateOnly: true,
+      };
+
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: {
+          ...testWorkflow,
+          nodes: [...testWorkflow.nodes, normalizedRequest.operations[0].node],
+        },
+        operationsApplied: 1,
+        message: 'Validation successful',
+        errors: [],
+        warnings: [],
+      });
+
+      await handleUpdatePartialWorkflow(diffRequest, mockRepository);
+
+      expect(mockDiffEngine.applyDiff).toHaveBeenCalledWith(testWorkflow, normalizedRequest);
+    });
+
+    it('normalizes an operations array mangled into a dense-index record (#814)', async () => {
+      const testWorkflow = createTestWorkflow();
+      const operation = {
+        type: 'updateName',
+        name: 'Renamed Workflow',
+      };
+      const diffRequest = {
+        id: 'test-workflow-id',
+        operations: { '0': operation },
+        validateOnly: true,
+      };
+
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: { ...testWorkflow, name: 'Renamed Workflow' },
+        operationsApplied: 1,
+        message: 'Validation successful',
+        errors: [],
+        warnings: [],
+      });
+
+      await handleUpdatePartialWorkflow(diffRequest, mockRepository);
+
+      expect(mockDiffEngine.applyDiff).toHaveBeenCalledWith(testWorkflow, {
+        id: 'test-workflow-id',
+        operations: [operation],
+        validateOnly: true,
+      });
+    });
+
+    it('normalizes mangled nested arrays inside updateNode updates (#814)', async () => {
+      const testWorkflow = createTestWorkflow();
+      const diffRequest = {
+        id: 'test-workflow-id',
+        operations: [
+          {
+            type: 'updateNode',
+            nodeName: 'HTTP Request',
+            updates: {
+              'parameters.assignments.assignments': {
+                '0': { id: '1', name: 'message', value: 'Hello', type: 'string' },
+              },
+            },
+          },
+        ],
+        validateOnly: true,
+      };
+
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: testWorkflow,
+        operationsApplied: 1,
+        message: 'Validation successful',
+        errors: [],
+        warnings: [],
+      });
+
+      await handleUpdatePartialWorkflow(diffRequest, mockRepository);
+
+      expect(mockDiffEngine.applyDiff).toHaveBeenCalledWith(testWorkflow, {
+        id: 'test-workflow-id',
+        operations: [
+          {
+            type: 'updateNode',
+            nodeName: 'HTTP Request',
+            updates: {
+              'parameters.assignments.assignments': [
+                { id: '1', name: 'message', value: 'Hello', type: 'string' },
+              ],
+            },
+          },
+        ],
+        validateOnly: true,
+      });
+    });
+
+    it('normalizes a patches array mangled into a dense-index record (#814)', async () => {
+      const testWorkflow = createTestWorkflow();
+      const diffRequest = {
+        id: 'test-workflow-id',
+        operations: [
+          {
+            type: 'patchNodeField',
+            nodeName: 'HTTP Request',
+            fieldPath: 'parameters.url',
+            patches: { '0': { find: 'api.test.com', replace: 'api.example.com' } },
+          },
+        ],
+        validateOnly: true,
+      };
+
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: testWorkflow,
+        operationsApplied: 1,
+        message: 'Validation successful',
+        errors: [],
+        warnings: [],
+      });
+
+      await handleUpdatePartialWorkflow(diffRequest, mockRepository);
+
+      expect(mockDiffEngine.applyDiff).toHaveBeenCalledWith(testWorkflow, {
+        id: 'test-workflow-id',
+        operations: [
+          {
+            type: 'patchNodeField',
+            nodeName: 'HTTP Request',
+            fieldPath: 'parameters.url',
+            patches: [{ find: 'api.test.com', replace: 'api.example.com' }],
+          },
+        ],
+        validateOnly: true,
+      });
+    });
+
+    it('normalizes mangled connection arrays in replaceConnections (#814)', async () => {
+      const testWorkflow = createTestWorkflow();
+      const diffRequest = {
+        id: 'test-workflow-id',
+        operations: [
+          {
+            type: 'replaceConnections',
+            connections: {
+              Start: {
+                main: { '0': { '0': { node: 'HTTP Request', type: 'main', index: 0 } } },
+              },
+            },
+          },
+        ],
+        validateOnly: true,
+      };
+
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: testWorkflow,
+        operationsApplied: 1,
+        message: 'Validation successful',
+        errors: [],
+        warnings: [],
+      });
+
+      await handleUpdatePartialWorkflow(diffRequest, mockRepository);
+
+      expect(mockDiffEngine.applyDiff).toHaveBeenCalledWith(testWorkflow, {
+        id: 'test-workflow-id',
+        operations: [
+          {
+            type: 'replaceConnections',
+            connections: {
+              Start: {
+                main: [[{ node: 'HTTP Request', type: 'main', index: 0 }]],
+              },
+            },
+          },
+        ],
+        validateOnly: true,
+      });
+    });
+
     it('should handle validation-only mode', async () => {
       const testWorkflow = createTestWorkflow();
       const diffRequest = {
@@ -218,6 +439,53 @@ describe('handlers-workflow-diff', () => {
         }
       });
 
+      expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('reports valid=false in validateOnly when post-diff structure fails (#744)', async () => {
+      // Pre-fix the validateOnly early-return ran before validateWorkflowStructure
+      // and always returned valid: true, even when validateOnly: false would have failed.
+      // Now both paths produce the same structural verdict.
+      const brokenWorkflow = createTestWorkflow({
+        nodes: [
+          {
+            id: 'orphan-1',
+            name: 'Orphan',
+            type: 'n8n-nodes-base.set',
+            typeVersion: 1,
+            position: [100, 100],
+            parameters: {},
+          },
+        ],
+        // Connection points to a node that does not exist — validateWorkflowStructure
+        // flags this as a structural error.
+        connections: {
+          'Orphan': {
+            main: [[{ node: 'NonExistent', type: 'main', index: 0 }]],
+          },
+        },
+      });
+
+      mockApiClient.getWorkflow.mockResolvedValue(createTestWorkflow());
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: brokenWorkflow,
+        operationsApplied: 1,
+        message: 'Operations applied',
+        errors: [],
+        warnings: [],
+      });
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-workflow-id',
+        operations: [{ type: 'updateName', name: 'Anything' }],
+        validateOnly: true,
+      }, mockRepository);
+
+      expect(result.success).toBe(true);
+      const data = result.data as { valid: boolean; structureErrors?: string[] };
+      expect(data.valid).toBe(false);
+      expect(data.structureErrors).toBeDefined();
       expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
     });
 
@@ -362,28 +630,86 @@ describe('handlers-workflow-diff', () => {
       });
     });
 
-    it('should handle API errors during update', async () => {
-      const testWorkflow = createTestWorkflow();
+    it('should roll back to prior state when n8n PUT fails after persisting body', async () => {
+      // n8n's PUT can fail AFTER persisting the body (e.g. unsupported
+      // typeVersion trips the activation step). The handler GETs the server
+      // state, sees versionId moved past the snapshot, and re-PUTs the
+      // prior snapshot to restore state.
+      const before = createTestWorkflow({ versionId: 'v1' });
+      const afterPersist = createTestWorkflow({ versionId: 'v2' });
       const validationError = new N8nValidationError('Invalid workflow structure', {
         field: 'connections',
         message: 'Invalid connection configuration',
       });
 
-      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      // 1st GET = pre-mutation snapshot; 2nd GET = post-failure state (persisted, new versionId).
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(afterPersist);
       mockDiffEngine.applyDiff.mockResolvedValue({
         success: true,
-        workflow: testWorkflow,
+        workflow: before,
         operationsApplied: 1,
         message: 'Success',
         errors: [],
       });
-      mockApiClient.updateWorkflow.mockRejectedValue(validationError);
+      // First call (mutation) rejects; second call (rollback) resolves.
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockResolvedValueOnce(before);
 
       const result = await handleUpdatePartialWorkflow({
         id: 'test-id',
         operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
       }, mockRepository);
 
+      // updateWorkflow called twice: once with mutated body, once with snapshot.
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(mockApiClient.updateWorkflow).toHaveBeenNthCalledWith(2, 'test-id', before);
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Invalid request: Invalid workflow structure (workflow restored to prior state)',
+        code: 'VALIDATION_ERROR',
+        details: {
+          field: 'connections',
+          message: 'Invalid connection configuration',
+          rollbackPerformed: true,
+          priorVersionId: 'v1',
+        },
+      });
+    });
+
+    it('should NOT roll back when n8n rejected the PUT before persisting', async () => {
+      // If versionId is unchanged after the failed PUT, the body never
+      // persisted. Rolling back would be a wasted PUT and the
+      // "(restored to prior state)" suffix would mislead the caller.
+      const before = createTestWorkflow({ versionId: 'v1' });
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+
+      // Both GETs return the same versionId — no persistence happened.
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(before);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: before,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow.mockRejectedValueOnce(validationError);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      // Only the original PUT — no rollback PUT.
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(1);
       expect(result).toEqual({
         success: false,
         error: 'Invalid request: Invalid workflow structure',
@@ -391,7 +717,166 @@ describe('handlers-workflow-diff', () => {
         details: {
           field: 'connections',
           message: 'Invalid connection configuration',
+          rollbackPerformed: false,
         },
+      });
+    });
+
+    it('should detect persistence via versionCounter when versionId is unavailable', async () => {
+      // Older n8n responses may omit versionId but still expose versionCounter
+      // (n8n 1.118.1+). Rollback must still trigger on that signal alone, and
+      // priorVersionId should be omitted from details since the snapshot has
+      // no versionId to surface.
+      const before = createTestWorkflow({ versionCounter: 5 });
+      const afterPersist = createTestWorkflow({ versionCounter: 6 });
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(afterPersist);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: before,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockResolvedValueOnce(before);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(result.error).toContain('(workflow restored to prior state)');
+      expect(result.details).toMatchObject({ rollbackPerformed: true });
+      // No versionId on the snapshot → no priorVersionId in details.
+      expect((result.details as Record<string, unknown>).priorVersionId).toBeUndefined();
+    });
+
+    it('should attempt rollback when version fields are unavailable on both sides', async () => {
+      // Some n8n versions may strip versionId / versionCounter / updatedAt
+      // entirely from the GET response. With no comparable signal we cannot
+      // determine whether the body persisted, so rollback must fire as a
+      // safety net — the silent-corruption bug class is far worse than a
+      // redundant PUT.
+      const base = createTestWorkflow();
+      const { versionId, versionCounter, updatedAt, createdAt, ...rest } = base as any;
+      const noVersionFields = rest;
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(noVersionFields)
+        .mockResolvedValueOnce(noVersionFields);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: noVersionFields,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockResolvedValueOnce(noVersionFields);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(result.error).toContain('(workflow restored to prior state)');
+      expect(result.details).toMatchObject({ rollbackPerformed: true });
+    });
+
+    it('should attempt rollback when post-failure GET itself fails', async () => {
+      // If we can't determine server state, fall back to best-effort
+      // rollback so we don't lose the safety net for the typeVersion
+      // class of bug reported in #770.
+      const before = createTestWorkflow({ versionId: 'v1' });
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+
+      // 1st GET succeeds (snapshot); 2nd GET (post-failure check) rejects.
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockRejectedValueOnce(new N8nServerError('n8n unreachable', 503));
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: before,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockResolvedValueOnce(before);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('(workflow restored to prior state)');
+      expect(result.details).toMatchObject({ rollbackPerformed: true, priorVersionId: 'v1' });
+    });
+
+    it('should report rollback failure when both PUTs fail', async () => {
+      // If the rollback PUT also fails, surface BOTH errors so the caller
+      // knows the workflow may be in a broken state. priorVersionId points
+      // at the snapshot to recover via n8n_workflow_versions.
+      const before = createTestWorkflow({ versionId: 'v1' });
+      const afterPersist = createTestWorkflow({ versionId: 'v2' });
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+      const rollbackFailure = new N8nServerError('n8n unreachable', 503);
+
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(afterPersist);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: before,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockRejectedValueOnce(rollbackFailure);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('Invalid request: Invalid workflow structure');
+      expect(result.error).toContain('rollback also failed');
+      expect(result.error).toContain('n8n_workflow_versions');
+      expect(result.details).toMatchObject({
+        field: 'connections',
+        message: 'Invalid connection configuration',
+        rollbackPerformed: false,
+        rollbackError: 'n8n unreachable',
+        priorVersionId: 'v1',
       });
     });
 

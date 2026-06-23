@@ -42,7 +42,17 @@ export class NodeSpecificValidators {
   static validateSlack(context: NodeValidationContext): void {
     const { config, errors, warnings, suggestions, autofix } = context;
     const { resource, operation } = config;
-    
+
+    // NOTE (QA #3, deferred): a hardcoded resource→operations map was
+    // considered here, but the real n8n Slack node exposes many more
+    // operations per resource than easy to keep in sync (e.g. `post`,
+    // `sendAndWait`, `getPermalink`, `search` for `message`). Rejecting
+    // based on a stale list produced false positives on valid configs.
+    // The proper fix is to derive the allowed set from the node's loaded
+    // `properties_schema` — tracked as a follow-up. Until then, the switch
+    // statements below perform operation-specific field checks for the
+    // operations we know about, and unknown operations are not rejected.
+
     // Message operations
     if (resource === 'message') {
       switch (operation) {
@@ -57,7 +67,7 @@ export class NodeSpecificValidators {
           break;
       }
     }
-    
+
     // Channel operations
     else if (resource === 'channel') {
       switch (operation) {
@@ -70,7 +80,7 @@ export class NodeSpecificValidators {
           break;
       }
     }
-    
+
     // User operations
     else if (resource === 'user') {
       if (operation === 'get' && !config.user) {
@@ -1216,7 +1226,8 @@ export class NodeSpecificValidators {
     }
     
     // Check return statement and format
-    this.validateReturnStatement(code, language, errors, warnings, suggestions);
+    const mode = config.mode || 'runOnceForAllItems';
+    this.validateReturnStatement(code, language, errors, warnings, suggestions, mode);
     
     // Check n8n variable usage
     this.validateN8nVariables(code, language, warnings, suggestions, errors);
@@ -1372,7 +1383,8 @@ export class NodeSpecificValidators {
     language: string,
     errors: ValidationError[],
     warnings: ValidationWarning[],
-    suggestions: string[]
+    suggestions: string[],
+    mode: string = 'runOnceForAllItems'
   ): void {
     const hasReturn = /return\s+/.test(code);
     
@@ -1390,8 +1402,13 @@ export class NodeSpecificValidators {
     
     // JavaScript return format validation
     if (language === 'javaScript') {
+      // In runOnceForEachItem mode, bare objects and primitives are valid
+      // because n8n auto-wraps them in [{json: ...}].
+      // Only check return format in runOnceForAllItems mode (the default).
+      const isRunOncePerItem = mode === 'runOnceForEachItem';
+
       // Check for object return without array
-      if (/return\s+{(?!.*\[).*}\s*;?$/s.test(code) && !code.includes('json:')) {
+      if (!isRunOncePerItem && /return\s+{(?!.*\[).*}\s*;?$/s.test(code) && !code.includes('json:')) {
         errors.push({
           type: 'invalid_value',
           property: 'jsCode',
@@ -1399,7 +1416,7 @@ export class NodeSpecificValidators {
           fix: 'Wrap in array: return [{json: yourObject}]'
         });
       }
-      
+
       // Skip primitive return check when helper functions are present,
       // since we can't distinguish top-level vs nested returns without AST.
       // Matches: function name(), const/let/var name = [async] function/arrow.
@@ -1407,7 +1424,7 @@ export class NodeSpecificValidators {
       // alternation with nested `[^)]*` groups.
       const hasHelperFunctions = code.length <= MAX_CODE_LENGTH
         && /(?:function\s+\w+\s*\(|(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>|\w+\s*=>))/.test(code);
-      if (!hasHelperFunctions && /return\s+(true|false|null|undefined|\d+|['"`])/m.test(code)) {
+      if (!isRunOncePerItem && !hasHelperFunctions && /return\s+(true|false|null|undefined|\d+|['"`])/m.test(code)) {
         errors.push({
           type: 'invalid_value',
           property: 'jsCode',
@@ -1437,8 +1454,10 @@ export class NodeSpecificValidators {
     
     // Python return format validation
     if (language === 'python') {
+      const isRunOncePerItem = mode === 'runOnceForEachItem';
+
       // Check for dict return without list
-      if (/return\s+{(?!.*\[).*}$/s.test(code)) {
+      if (!isRunOncePerItem && /return\s+{(?!.*\[).*}$/s.test(code)) {
         errors.push({
           type: 'invalid_value',
           property: 'pythonCode',
@@ -1446,9 +1465,9 @@ export class NodeSpecificValidators {
           fix: 'Wrap in list: return [{"json": your_dict}]'
         });
       }
-      
+
       // Check for primitive return
-      if (/return\s+(True|False|None|\d+|['"`])/m.test(code)) {
+      if (!isRunOncePerItem && /return\s+(True|False|None|\d+|['"`])/m.test(code)) {
         errors.push({
           type: 'invalid_value',
           property: 'pythonCode',

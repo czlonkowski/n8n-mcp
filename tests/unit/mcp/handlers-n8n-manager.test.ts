@@ -205,7 +205,7 @@ describe('handlers-n8n-manager', () => {
       // First call with initial config
       const client1 = handlers.getN8nApiClient();
       expect(N8nApiClient).toHaveBeenCalledTimes(1);
-      
+
       // Change the config URL
       vi.mocked(getN8nApiConfig).mockReturnValue({
         baseUrl: 'https://different.test.com',
@@ -213,17 +213,54 @@ describe('handlers-n8n-manager', () => {
         timeout: 30000,
         maxRetries: 3,
       });
-      
+
       // Second call should create a new client
       const client2 = handlers.getN8nApiClient();
       expect(N8nApiClient).toHaveBeenCalledTimes(2);
-      
+
       // Verify the second call used the new config
       expect(N8nApiClient).toHaveBeenNthCalledWith(2, {
         baseUrl: 'https://different.test.com',
         apiKey: 'test-key',
         timeout: 30000,
         maxRetries: 3,
+      });
+    });
+
+    describe('GHSA-jxx9-px88-pj69 — multi-tenant fail-closed', () => {
+      const originalMultiTenant = process.env.ENABLE_MULTI_TENANT;
+
+      beforeEach(() => {
+        process.env.ENABLE_MULTI_TENANT = 'true';
+      });
+
+      afterEach(() => {
+        if (originalMultiTenant === undefined) {
+          delete process.env.ENABLE_MULTI_TENANT;
+        } else {
+          process.env.ENABLE_MULTI_TENANT = originalMultiTenant;
+        }
+      });
+
+      it('returns null when called with no context in multi-tenant mode', () => {
+        // Env config is intentionally available; the guard must still refuse it.
+        const client = handlers.getN8nApiClient();
+        expect(client).toBeNull();
+        expect(N8nApiClient).not.toHaveBeenCalled();
+      });
+
+      it('returns null when called with empty context in multi-tenant mode', () => {
+        const client = handlers.getN8nApiClient({});
+        expect(client).toBeNull();
+        expect(N8nApiClient).not.toHaveBeenCalled();
+      });
+
+      it('returns null when called with context missing the API key', () => {
+        const client = handlers.getN8nApiClient({
+          n8nApiUrl: 'https://tenant.example.com',
+        });
+        expect(client).toBeNull();
+        expect(N8nApiClient).not.toHaveBeenCalled();
       });
     });
   });
@@ -255,6 +292,60 @@ describe('handlers-n8n-manager', () => {
       // Should send input as-is to API (n8n expects FULL form: n8n-nodes-base.*)
       expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input);
       expect(n8nValidation.validateWorkflowStructure).toHaveBeenCalledWith(input);
+    });
+
+    it('normalizes HTTP MCP serialized workflow fields before validation and create (#814)', async () => {
+      const input = {
+        name: 'Serialized Workflow',
+        nodes: [{
+          id: 'node1',
+          name: 'Set',
+          type: 'n8n-nodes-base.set',
+          typeVersion: '3',
+          position: { '0': 100, '1': 100 },
+          parameters: '{"values":{"0":{"name":"message","value":"Hello"}}}',
+        }],
+        connections: {
+          Set: {
+            main: {
+              '0': {
+                '0': { node: 'Set', type: 'main', index: 0 },
+              },
+            },
+          },
+        },
+      };
+      const normalizedInput = {
+        name: 'Serialized Workflow',
+        nodes: [{
+          id: 'node1',
+          name: 'Set',
+          type: 'n8n-nodes-base.set',
+          typeVersion: 3,
+          position: [100, 100],
+          parameters: {
+            values: [{ name: 'message', value: 'Hello' }],
+          },
+        }],
+        connections: {
+          Set: {
+            main: [[{ node: 'Set', type: 'main', index: 0 }]],
+          },
+        },
+      };
+
+      mockApiClient.createWorkflow.mockResolvedValue(createTestWorkflow({
+        id: 'serialized-workflow-id',
+        name: 'Serialized Workflow',
+        nodes: normalizedInput.nodes,
+        connections: normalizedInput.connections,
+      }));
+
+      const result = await handlers.handleCreateWorkflow(input);
+
+      expect(result.success).toBe(true);
+      expect(n8nValidation.validateWorkflowStructure).toHaveBeenCalledWith(normalizedInput);
+      expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(normalizedInput);
     });
 
     it('should handle validation errors', async () => {
@@ -684,6 +775,67 @@ describe('handlers-n8n-manager', () => {
       expect(mockApiClient.getWorkflow).toHaveBeenCalledWith('test-workflow-id');
     });
 
+    it('strips the heavy activeVersion payload but keeps activeVersionId (issue #777)', async () => {
+      // n8n's draft/publish model returns an activeVersion object that duplicates
+      // the published nodes/connections. Stripping it cuts response size ~50% on
+      // active workflows and keeps Claude Code under its per-tool size cap.
+      const testWorkflow = createTestWorkflow({
+        activeVersionId: 'v-123',
+        activeVersion: {
+          versionId: 'v-123',
+          nodes: [{ id: 'published-node', name: 'Published', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: {} }],
+          connections: {},
+        },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflow({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data).not.toHaveProperty('activeVersion');
+      expect(result.data.activeVersionId).toBe('v-123');
+      expect(result.data.nodes).toEqual(testWorkflow.nodes);
+    });
+
+    it('mode=full returns the DRAFT nodes/connections, not the published ones', async () => {
+      // Regression guard: someone re-wiring stripActiveVersion to also overwrite
+      // workflow.nodes with activeVersion.nodes would break the draft/publish split
+      // but still pass the "no activeVersion key" assertion above.
+      const draftNodes = [
+        { id: 'd1', name: 'Draft Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'draft' } },
+      ];
+      const publishedNodes = [
+        { id: 'd1', name: 'Draft Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'published' } },
+      ];
+      const draftConnections = { 'Draft Set': { main: [[{ node: 'Other', type: 'main', index: 0 }]] } };
+      const testWorkflow = createTestWorkflow({
+        nodes: draftNodes,
+        connections: draftConnections,
+        activeVersionId: 'v-1',
+        activeVersion: { versionId: 'v-1', nodes: publishedNodes, connections: {} },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflow({ id: 'test-workflow-id' });
+
+      expect(result.data.nodes).toEqual(draftNodes);
+      expect(result.data.nodes).not.toEqual(publishedNodes);
+      expect(result.data.connections).toEqual(draftConnections);
+    });
+
+    it('passes through workflows that have no activeVersion key at all (older n8n versions)', async () => {
+      // Pre-draft/publish n8n versions don't return activeVersion at all. The strip
+      // must be a no-op on those, not mangle the response.
+      const testWorkflow = createTestWorkflow();
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflow({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data).not.toHaveProperty('activeVersion');
+      expect(result.data.nodes).toEqual(testWorkflow.nodes);
+    });
+
     it('should handle not found error', async () => {
       const notFoundError = new N8nNotFoundError('Workflow', 'non-existent');
       mockApiClient.getWorkflow.mockRejectedValue(notFoundError);
@@ -762,6 +914,297 @@ describe('handlers-n8n-manager', () => {
       expect(result.success).toBe(true);
       expect(result.data).toHaveProperty('hasWebhookTrigger', true);
       expect(result.data).toHaveProperty('webhookPath', '/webhook/test-webhook');
+    });
+
+    it('strips activeVersion from the nested workflow object but preserves draft nodes/connections (issue #777)', async () => {
+      const draftNodes = [
+        { id: 'd1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'draft' } },
+      ];
+      const draftConnections = { Set: { main: [[]] } };
+      const testWorkflow = createTestWorkflow({
+        nodes: draftNodes,
+        connections: draftConnections,
+        activeVersionId: 'v-456',
+        activeVersion: {
+          versionId: 'v-456',
+          nodes: [{ id: 'd1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'published' } }],
+          connections: {},
+        },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockApiClient.listExecutions.mockResolvedValue({ data: [], nextCursor: null });
+
+      const result = await handlers.handleGetWorkflowDetails({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data.workflow).not.toHaveProperty('activeVersion');
+      expect(result.data.workflow.activeVersionId).toBe('v-456');
+      expect(result.data.workflow.nodes).toEqual(draftNodes);
+      expect(result.data.workflow.connections).toEqual(draftConnections);
+    });
+  });
+
+  describe('handleGetWorkflowActive', () => {
+    it('returns the published graph from activeVersion as the top-level nodes/connections', async () => {
+      const draftNodes = [
+        { id: 'n1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'draft' } },
+      ];
+      const publishedNodes = [
+        { id: 'n1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { value: 'published' } },
+      ];
+      const testWorkflow = createTestWorkflow({
+        nodes: draftNodes,
+        activeVersionId: 'v-789',
+        activeVersion: {
+          versionId: 'v-789',
+          name: 'Version v-789',
+          createdAt: '2026-05-14T07:57:33.701Z',
+          nodes: publishedNodes,
+          connections: { Set: { main: [[]] } },
+        },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data).not.toHaveProperty('activeVersion');
+      expect(result.data.nodes).toEqual(publishedNodes);
+      expect(result.data.nodes).not.toEqual(draftNodes);
+      expect(result.data.activeVersionId).toBe('v-789');
+      expect(result.data.versionCreatedAt).toBe('2026-05-14T07:57:33.701Z');
+      expect(result.data.versionName).toBe('Version v-789');
+    });
+
+    it('returns NO_ACTIVE_VERSION when the workflow is inactive and was never published', async () => {
+      const testWorkflow = createTestWorkflow({ active: false, activeVersionId: null });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('NO_ACTIVE_VERSION');
+      expect(result.error).toMatch(/no published version/i);
+    });
+
+    it('falls back to workflow.nodes for older n8n versions that have no activeVersion field but are active', async () => {
+      // Pre-draft/publish n8n doesn't carry activeVersionId at all; workflow.nodes IS
+      // the running graph when workflow.active is true. The same fallback covers the
+      // rare orphan case in newer n8n where activeVersionId got nulled.
+      const draftNodes = [
+        { id: 'r1', name: 'Running', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: {} },
+      ];
+      const testWorkflow = createTestWorkflow({
+        active: true,
+        activeVersionId: null,
+        nodes: draftNodes,
+      });
+      // activeVersion key intentionally absent (matches older-n8n shape)
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data.activeVersionId).toBeNull();
+      expect(result.data.versionCreatedAt).toBeNull();
+      expect(result.data.versionName).toBeNull();
+      expect(result.data.nodes).toEqual(draftNodes);
+    });
+
+    it('falls back to workflow.nodes when activeVersionId points at a missing version but workflow is active', async () => {
+      const testWorkflow = createTestWorkflow({
+        active: true,
+        activeVersionId: 'v-orphan',
+        activeVersion: null,
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data.nodes).toEqual(testWorkflow.nodes);
+    });
+
+    it('returns NO_ACTIVE_VERSION when the orphan case occurs on an inactive workflow', async () => {
+      const testWorkflow = createTestWorkflow({
+        active: false,
+        activeVersionId: 'v-orphan',
+        activeVersion: null,
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('NO_ACTIVE_VERSION');
+    });
+
+    it('should handle invalid input via the Zod catch path', async () => {
+      const result = await handlers.handleGetWorkflowActive({ notId: 'test' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid input');
+      expect(result.details?.errors).toBeDefined();
+    });
+
+    it('should map N8nApiError through the friendly-message path', async () => {
+      const notFoundError = new N8nNotFoundError('Workflow', 'non-existent');
+      mockApiClient.getWorkflow.mockRejectedValue(notFoundError);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'non-existent' });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Workflow with ID non-existent not found',
+        code: 'NOT_FOUND',
+      });
+    });
+
+    it('should fall through to the generic Error catch on unexpected failures', async () => {
+      mockApiClient.getWorkflow.mockRejectedValue(new Error('boom'));
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('boom');
+    });
+
+    it('defaults versionCreatedAt and versionName to null when the source values are missing', async () => {
+      const testWorkflow = createTestWorkflow({
+        activeVersionId: 'v-bare',
+        activeVersion: {
+          nodes: [],
+          connections: {},
+        },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleGetWorkflowActive({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(true);
+      expect(result.data.versionCreatedAt).toBeNull();
+      expect(result.data.versionName).toBeNull();
+    });
+  });
+
+  describe('handleGetWorkflowFiltered', () => {
+    const multiNodeWorkflow = () => createTestWorkflow({
+      nodes: [
+        { id: 'node1', name: 'Start', type: 'n8n-nodes-base.start', typeVersion: 1, position: [100, 100], parameters: {} },
+        { id: 'node2', name: 'Process Data', type: 'n8n-nodes-base.code', typeVersion: 2, position: [300, 100], parameters: { jsCode: 'return items;' } },
+        { id: 'node3', name: 'Save', type: 'n8n-nodes-base.set', typeVersion: 3, position: [500, 100], parameters: { value: 'x' } },
+      ],
+    });
+
+    it('returns only the requested node with its full config', async () => {
+      mockApiClient.getWorkflow.mockResolvedValue(multiNodeWorkflow());
+
+      const result = await handlers.handleGetWorkflowFiltered({ id: 'test-workflow-id', nodeNames: ['Process Data'] });
+
+      expect(result.success).toBe(true);
+      expect(result.data.nodes).toHaveLength(1);
+      expect(result.data.nodes[0].name).toBe('Process Data');
+      expect(result.data.nodes[0].parameters).toEqual({ jsCode: 'return items;' });
+      expect(result.data.nodeCount).toBe(3);
+      expect(result.data.returnedCount).toBe(1);
+      expect(result.data).not.toHaveProperty('notFound');
+    });
+
+    it('matches by node ID as well as node name', async () => {
+      mockApiClient.getWorkflow.mockResolvedValue(multiNodeWorkflow());
+
+      const result = await handlers.handleGetWorkflowFiltered({ id: 'test-workflow-id', nodeNames: ['node3'] });
+
+      expect(result.success).toBe(true);
+      expect(result.data.nodes).toHaveLength(1);
+      expect(result.data.nodes[0].name).toBe('Save');
+    });
+
+    it('resolves a mix of name and id keys in a single call', async () => {
+      mockApiClient.getWorkflow.mockResolvedValue(multiNodeWorkflow());
+
+      // "Start" matches by name, "node2" matches by id - both must resolve and neither
+      // appears in notFound.
+      const result = await handlers.handleGetWorkflowFiltered({
+        id: 'test-workflow-id',
+        nodeNames: ['Start', 'node2'],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.returnedCount).toBe(2);
+      expect(result.data.nodes.map((n: any) => n.name)).toEqual(['Start', 'Process Data']);
+      expect(result.data).not.toHaveProperty('notFound');
+    });
+
+    it('returns every node sharing a duplicated name (returnedCount can exceed the key count)', async () => {
+      // n8n's editor enforces unique names, but imported/API-created workflows can carry
+      // duplicates. Pin the best-effort behavior: a single key returns all matches, so the
+      // caller must disambiguate by id. (Documented as a pitfall on the tool.)
+      mockApiClient.getWorkflow.mockResolvedValue(createTestWorkflow({
+        nodes: [
+          { id: 'a', name: 'Twin', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { v: 1 } },
+          { id: 'b', name: 'Twin', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: { v: 2 } },
+        ],
+      }));
+
+      const result = await handlers.handleGetWorkflowFiltered({ id: 'test-workflow-id', nodeNames: ['Twin'] });
+
+      expect(result.success).toBe(true);
+      expect(result.data.returnedCount).toBe(2);
+      expect(result.data.nodes.map((n: any) => n.id)).toEqual(['a', 'b']);
+      expect(result.data).not.toHaveProperty('notFound');
+    });
+
+    it('returns multiple matched nodes and reports unmatched keys in notFound', async () => {
+      mockApiClient.getWorkflow.mockResolvedValue(multiNodeWorkflow());
+
+      const result = await handlers.handleGetWorkflowFiltered({
+        id: 'test-workflow-id',
+        nodeNames: ['Start', 'Process Data', 'Ghost'],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.returnedCount).toBe(2);
+      expect(result.data.nodes.map((n: any) => n.name)).toEqual(['Start', 'Process Data']);
+      expect(result.data.notFound).toEqual(['Ghost']);
+    });
+
+    it('reports every key in notFound when nothing matches', async () => {
+      mockApiClient.getWorkflow.mockResolvedValue(multiNodeWorkflow());
+
+      const result = await handlers.handleGetWorkflowFiltered({ id: 'test-workflow-id', nodeNames: ['Nope'] });
+
+      expect(result.success).toBe(true);
+      expect(result.data.returnedCount).toBe(0);
+      expect(result.data.nodes).toEqual([]);
+      expect(result.data.notFound).toEqual(['Nope']);
+    });
+
+    it('rejects an empty nodeNames array via the Zod catch path', async () => {
+      const result = await handlers.handleGetWorkflowFiltered({ id: 'test-workflow-id', nodeNames: [] });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid input');
+      expect(result.details?.errors).toBeDefined();
+    });
+
+    it('rejects a missing nodeNames param', async () => {
+      const result = await handlers.handleGetWorkflowFiltered({ id: 'test-workflow-id' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid input');
+    });
+
+    it('maps N8nApiError through the friendly-message path', async () => {
+      mockApiClient.getWorkflow.mockRejectedValue(new N8nNotFoundError('Workflow', 'non-existent'));
+
+      const result = await handlers.handleGetWorkflowFiltered({ id: 'non-existent', nodeNames: ['Start'] });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Workflow with ID non-existent not found',
+        code: 'NOT_FOUND',
+      });
     });
   });
 
@@ -877,6 +1320,20 @@ describe('handlers-n8n-manager', () => {
       });
     });
 
+    it('normalizes a tags array mangled into a dense-index record (#814)', async () => {
+      mockApiClient.listWorkflows.mockResolvedValue({ data: [], nextCursor: null });
+
+      const result = await handlers.handleListWorkflows({
+        tags: { '0': 'production', '1': 'critical' },
+      });
+
+      expect(result.success).toBe(true);
+      // The handler joins the normalized array into the comma string the n8n API expects
+      expect(mockApiClient.listWorkflows).toHaveBeenCalledWith(
+        expect.objectContaining({ tags: 'production,critical' })
+      );
+    });
+
     it('should handle invalid input with ZodError', async () => {
       const result = await handlers.handleListWorkflows({
         limit: 'invalid',  // Should be a number
@@ -970,6 +1427,52 @@ describe('handlers-n8n-manager', () => {
       expect(mockApiClient.listWorkflows).toHaveBeenCalledWith(
         expect.objectContaining({
           tags: undefined,
+        })
+      );
+    });
+
+    // Issue #774: opencode and similar MCP clients serialize all schema fields,
+    // including optional ones, as empty strings. Empty strings must be coerced
+    // to undefined so they don't reach the n8n API as `?cursor=&projectId=`.
+    it('should coerce empty-string optional params to undefined (issue #774)', async () => {
+      mockApiClient.listWorkflows.mockResolvedValue({ data: [], nextCursor: null });
+
+      const result = await handlers.handleListWorkflows({
+        cursor: '',
+        projectId: '',
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockApiClient.listWorkflows).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cursor: undefined,
+          projectId: undefined,
+        })
+      );
+    });
+  });
+
+  describe('handleListExecutions', () => {
+    // Issue #774: opencode and similar MCP clients serialize all schema fields,
+    // including optional ones, as empty strings. Empty strings must be coerced
+    // to undefined so they don't reach the n8n API as `?cursor=&workflowId=`.
+    it('should coerce empty-string optional params to undefined (issue #774)', async () => {
+      mockApiClient.listExecutions.mockResolvedValue({ data: [], nextCursor: null });
+
+      const result = await handlers.handleListExecutions({
+        cursor: '',
+        workflowId: '',
+        projectId: '',
+        status: '',
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockApiClient.listExecutions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cursor: undefined,
+          workflowId: undefined,
+          projectId: undefined,
+          status: undefined,
         })
       );
     });
@@ -1126,6 +1629,61 @@ describe('handlers-n8n-manager', () => {
       });
 
       // Clean up env vars
+      process.env.N8N_API_URL = undefined as any;
+      process.env.N8N_API_KEY = undefined as any;
+    });
+  });
+
+  describe('GHSA-jxx9-px88-pj69 — handler responses do not leak operator URL', () => {
+    const originalMultiTenant = process.env.ENABLE_MULTI_TENANT;
+
+    beforeEach(() => {
+      process.env.ENABLE_MULTI_TENANT = 'true';
+    });
+
+    afterEach(() => {
+      if (originalMultiTenant === undefined) {
+        delete process.env.ENABLE_MULTI_TENANT;
+      } else {
+        process.env.ENABLE_MULTI_TENANT = originalMultiTenant;
+      }
+    });
+
+    it('handleHealthCheck without context returns no apiUrl in multi-tenant mode', async () => {
+      // getN8nApiClient returns null in multi-tenant mode + no context,
+      // so ensureApiConfigured throws and the response goes through the
+      // generic-error branch (no apiUrl field at all).
+      const result = await handlers.handleHealthCheck();
+      expect(result.success).toBe(false);
+      // Must not surface the env config's baseUrl in the error.
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain('https://n8n.test.com');
+    });
+
+    it('handleDiagnostic without context reports apiConfiguration as not configured', async () => {
+      process.env.N8N_API_URL = 'https://n8n.test.com';
+      process.env.N8N_API_KEY = 'test-key';
+
+      const result = await handlers.handleDiagnostic({ params: { arguments: {} } });
+
+      expect(result.success).toBe(true);
+      expect(result.data).toMatchObject({
+        apiConfiguration: {
+          configured: false,
+          config: null,
+        },
+        environment: {
+          N8N_API_URL: null,
+          N8N_API_KEY: null,
+        },
+      });
+      // Defense-in-depth: scan the whole response body, not just one
+      // section, so a future field that surfaces the operator URL is
+      // caught even if it lives outside apiConfiguration.
+      const serialized = JSON.stringify(result.data);
+      expect(serialized).not.toContain('https://n8n.test.com');
+      expect(serialized).not.toContain('***configured***');
+
       process.env.N8N_API_URL = undefined as any;
       process.env.N8N_API_KEY = undefined as any;
     });
@@ -1485,6 +2043,740 @@ describe('handlers-n8n-manager', () => {
 
       const sentNodes = getSentNodes();
       expect(sentNodes[0].credentials).toEqual({ postgresApi: { id: 'cred-123', name: 'My Postgres' } });
+    });
+
+    it('should preserve name and settings from current workflow when the update omits them', async () => {
+      // Regression: n8n PUT /workflows requires name, nodes, connections AND settings.
+      // n8n_update_full_workflow lists name as optional; without merging from the current
+      // workflow, a nodes-only update would fail with
+      // "request/body must have required property 'name'".
+      const workflow = createTestWorkflow({
+        id: 'wf-1',
+        name: 'Original Name',
+        active: false,
+        nodes: [{ id: 'node-1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [0, 0], parameters: {} }],
+        settings: { executionOrder: 'v1', timezone: 'Europe/Warsaw' },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(workflow);
+      mockApiClient.updateWorkflow.mockResolvedValue({ ...workflow, updatedAt: '2024-01-02' });
+
+      await handlers.handleUpdateWorkflow(
+        {
+          id: 'wf-1',
+          // No name, no settings — only nodes/connections provided
+          nodes: [{ id: 'node-1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [10, 10], parameters: { mode: 'manual' } }],
+          connections: {},
+        },
+        mockRepository,
+      );
+
+      const sentWorkflow = mockApiClient.updateWorkflow.mock.calls[0][1];
+      expect(sentWorkflow.name).toBe('Original Name');
+      expect(sentWorkflow.settings).toMatchObject({ executionOrder: 'v1', timezone: 'Europe/Warsaw' });
+    });
+
+    it('should fetch and merge current workflow even when no nodes/connections are provided', async () => {
+      // Regression: handleUpdateWorkflow used to fetch the current workflow only when
+      // nodes/connections changed. A settings-only update then sent a partial body and
+      // failed the API's required-fields check. It must now always fetch + merge so the
+      // PUT carries name, nodes and connections from the current workflow.
+      const workflow = createTestWorkflow({
+        id: 'wf-1',
+        name: 'Keep Me',
+        active: false,
+        nodes: [{ id: 'node-1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [0, 0], parameters: {} }],
+        connections: { Set: { main: [[]] } },
+        // Two settings keys: only executionOrder is updated below; timezone must survive.
+        settings: { executionOrder: 'v1', timezone: 'Europe/Warsaw' },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(workflow);
+      mockApiClient.updateWorkflow.mockResolvedValue({ ...workflow, updatedAt: '2024-01-02' });
+
+      const result = await handlers.handleUpdateWorkflow(
+        { id: 'wf-1', settings: { executionOrder: 'v0' } }, // partial settings: only executionOrder
+        mockRepository,
+      );
+
+      expect(result.success).toBe(true);
+      expect(mockApiClient.getWorkflow).toHaveBeenCalledWith('wf-1');
+      const sentWorkflow = mockApiClient.updateWorkflow.mock.calls[0][1];
+      expect(sentWorkflow.name).toBe('Keep Me');
+      expect(sentWorkflow.nodes).toHaveLength(1);
+      expect(sentWorkflow.connections).toEqual({ Set: { main: [[]] } });
+      // Partial settings are merged over current settings, not replaced wholesale:
+      // the updated key changes and the untouched key (timezone) is preserved.
+      expect(sentWorkflow.settings).toEqual({ executionOrder: 'v0', timezone: 'Europe/Warsaw' });
+    });
+
+    it('should not wipe current settings when the update passes a null/non-object settings value', async () => {
+      // The Zod schema allows `settings` to be null/any. A null value must not clobber the
+      // current workflow's settings (which would otherwise be reduced to minimal defaults).
+      const workflow = createTestWorkflow({
+        id: 'wf-1',
+        name: 'Keep Me',
+        active: false,
+        nodes: [{ id: 'node-1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [0, 0], parameters: {} }],
+        connections: { Set: { main: [[]] } },
+        settings: { executionOrder: 'v1', timezone: 'Europe/Warsaw' },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(workflow);
+      mockApiClient.updateWorkflow.mockResolvedValue({ ...workflow, updatedAt: '2024-01-02' });
+
+      const result = await handlers.handleUpdateWorkflow(
+        { id: 'wf-1', name: 'Renamed', settings: null } as any,
+        mockRepository,
+      );
+
+      expect(result.success).toBe(true);
+      const sentWorkflow = mockApiClient.updateWorkflow.mock.calls[0][1];
+      expect(sentWorkflow.name).toBe('Renamed');
+      // Current settings are preserved intact, not nulled or reduced to defaults.
+      expect(sentWorkflow.settings).toEqual({ executionOrder: 'v1', timezone: 'Europe/Warsaw' });
+    });
+  });
+
+  describe('handleAuditInstance — error message surfacing (#736)', () => {
+    beforeEach(() => {
+      mockApiClient.generateAudit = vi.fn();
+      mockApiClient.listAllWorkflows = vi.fn().mockResolvedValue([]);
+    });
+
+    it('includes the HTTP status when n8n responds with a server error', async () => {
+      const apiError: any = new Error('Invalid URL');
+      apiError.statusCode = 500;
+      mockApiClient.generateAudit.mockRejectedValue(apiError);
+
+      const result = await handlers.handleAuditInstance({ includeCustomScan: false });
+
+      expect(result.success).toBe(true);
+      expect(result.data.report).toContain('Built-in audit failed (HTTP 500): Invalid URL');
+    });
+
+    it('reports "no response from n8n" when the error has no status code', async () => {
+      mockApiClient.generateAudit.mockRejectedValue(new Error('connect ECONNREFUSED'));
+
+      const result = await handlers.handleAuditInstance({ includeCustomScan: false });
+
+      expect(result.data.report).toContain('Built-in audit failed (no response from n8n): connect ECONNREFUSED');
+    });
+
+    it('keeps the special-case 404 message for older n8n versions', async () => {
+      const notFound: any = new Error('Not Found');
+      notFound.statusCode = 404;
+      mockApiClient.generateAudit.mockRejectedValue(notFound);
+
+      const result = await handlers.handleAuditInstance({ includeCustomScan: false });
+
+      expect(result.data.report).toContain('Built-in audit endpoint not available on this n8n version.');
+    });
+  });
+
+  describe('handleCreateCredential — oAuth2 clientCredentials shim (#740)', () => {
+    beforeEach(() => {
+      mockApiClient.createCredential = vi.fn().mockResolvedValue({
+        id: 'cred-1',
+        name: 'shim-test',
+      });
+    });
+
+    function callCreateOAuth2(extra: Record<string, any> = {}) {
+      return handlers.handleCreateCredential({
+        action: 'create',
+        name: 'shim-test',
+        type: 'oAuth2Api',
+        data: {
+          grantType: 'clientCredentials',
+          accessTokenUrl: 'https://login.example.com/token',
+          clientId: 'cid',
+          clientSecret: 'secret',
+          scope: 'https://example.com/.default',
+          authentication: 'header',
+          ...extra,
+        },
+      });
+    }
+
+    it('strips useDynamicClientRegistration: false and injects required defaults', async () => {
+      await callCreateOAuth2({ useDynamicClientRegistration: false });
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData).not.toHaveProperty('useDynamicClientRegistration');
+      expect(sentData.sendAdditionalBodyProperties).toBe(false);
+      expect(sentData.additionalBodyProperties).toBe('');
+      // serverUrl is required by the spuriously-fired DCR branch when
+      // useDynamicClientRegistration is absent — empty string satisfies it.
+      expect(sentData.serverUrl).toBe('');
+    });
+
+    it('injects required defaults when useDynamicClientRegistration is absent', async () => {
+      await callCreateOAuth2();
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData.sendAdditionalBodyProperties).toBe(false);
+      expect(sentData.additionalBodyProperties).toBe('');
+      expect(sentData.serverUrl).toBe('');
+    });
+
+    it('does not strip useDynamicClientRegistration when explicitly true', async () => {
+      await callCreateOAuth2({ useDynamicClientRegistration: true, serverUrl: 'https://dcr.example.com' });
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData.useDynamicClientRegistration).toBe(true);
+      // Caller-supplied serverUrl must be preserved, not overwritten with the empty default.
+      expect(sentData.serverUrl).toBe('https://dcr.example.com');
+    });
+
+    it('does not shim other grant types', async () => {
+      await handlers.handleCreateCredential({
+        action: 'create',
+        name: 'auth-code',
+        type: 'oAuth2Api',
+        data: {
+          grantType: 'authorizationCode',
+          authUrl: 'https://example.com/auth',
+          accessTokenUrl: 'https://example.com/token',
+          clientId: 'cid',
+          clientSecret: 'secret',
+        },
+      });
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData).not.toHaveProperty('sendAdditionalBodyProperties');
+      expect(sentData).not.toHaveProperty('additionalBodyProperties');
+    });
+
+    it('does not shim non-oAuth2Api credential types', async () => {
+      await handlers.handleCreateCredential({
+        action: 'create',
+        name: 'pg',
+        type: 'postgres',
+        data: { host: 'db.example.com' },
+      });
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData).toEqual({ host: 'db.example.com' });
+    });
+
+    it('does NOT inject serverUrl when DCR is explicitly enabled (lets n8n surface real missing-field error)', async () => {
+      // Caller opted into Dynamic Client Registration but forgot serverUrl.
+      // Pre-fix this would silently inject "" and n8n would error with an
+      // "invalid empty URL" message that hides the real problem.
+      await callCreateOAuth2({ useDynamicClientRegistration: true });
+
+      const sentData = mockApiClient.createCredential.mock.calls[0][0].data;
+      expect(sentData).not.toHaveProperty('serverUrl');
+      expect(sentData.useDynamicClientRegistration).toBe(true);
+    });
+
+    it('applies the same shim on the update path (#740)', async () => {
+      mockApiClient.updateCredential = vi.fn().mockResolvedValue({
+        id: 'cred-99',
+        name: 'shim-update',
+      });
+
+      await handlers.handleUpdateCredential({
+        action: 'update',
+        id: 'cred-99',
+        type: 'oAuth2Api',
+        data: {
+          grantType: 'clientCredentials',
+          accessTokenUrl: 'https://login.example.com/token',
+          clientId: 'cid',
+          clientSecret: 'secret',
+          scope: 'https://example.com/.default',
+          authentication: 'header',
+          useDynamicClientRegistration: false,
+        },
+      });
+
+      const updatePayload = mockApiClient.updateCredential.mock.calls[0][1];
+      expect(updatePayload.data).not.toHaveProperty('useDynamicClientRegistration');
+      expect(updatePayload.data.sendAdditionalBodyProperties).toBe(false);
+      expect(updatePayload.data.additionalBodyProperties).toBe('');
+      expect(updatePayload.data.serverUrl).toBe('');
+    });
+
+    it('derives credential type from server when omitted on update (#740)', async () => {
+      // Common partial-update pattern: caller passes only `data` and relies on
+      // n8n to keep the existing type. Pre-fix the shim never fired.
+      mockApiClient.updateCredential = vi.fn().mockResolvedValue({
+        id: 'cred-100',
+        name: 'shim-derived',
+      });
+      mockApiClient.getCredential = vi.fn().mockResolvedValue({
+        id: 'cred-100',
+        name: 'shim-derived',
+        type: 'oAuth2Api',
+      });
+
+      await handlers.handleUpdateCredential({
+        action: 'update',
+        id: 'cred-100',
+        // type intentionally omitted
+        data: {
+          grantType: 'clientCredentials',
+          accessTokenUrl: 'https://login.example.com/token',
+          clientId: 'cid',
+          clientSecret: 'secret',
+          scope: 'https://example.com/.default',
+          authentication: 'header',
+        },
+      });
+
+      expect(mockApiClient.getCredential).toHaveBeenCalledWith('cred-100');
+      const updatePayload = mockApiClient.updateCredential.mock.calls[0][1];
+      expect(updatePayload.data.sendAdditionalBodyProperties).toBe(false);
+      expect(updatePayload.data.additionalBodyProperties).toBe('');
+      expect(updatePayload.data.serverUrl).toBe('');
+    });
+
+    it('skips the type-derivation fetch when data is not clientCredentials (avoids extra round-trip)', async () => {
+      mockApiClient.updateCredential = vi.fn().mockResolvedValue({
+        id: 'cred-101',
+        name: 'no-fetch',
+      });
+      mockApiClient.getCredential = vi.fn();
+
+      await handlers.handleUpdateCredential({
+        action: 'update',
+        id: 'cred-101',
+        // type omitted, but data is not a clientCredentials oAuth2 payload
+        data: { host: 'db.example.com' },
+      });
+
+      expect(mockApiClient.getCredential).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('credential usage enrichment (includeUsage)', () => {
+    const credA = { id: 'cred-A', name: 'BaseLinker API', type: 'httpHeaderAuth' };
+    const credB = { id: 'cred-B', name: 'Slack Bot', type: 'slackApi' };
+    const credC = { id: 'cred-C', name: 'Unused Key', type: 'httpHeaderAuth' };
+
+    const wfUsesA = {
+      id: 'wf-1',
+      name: 'BaseLinker Sync',
+      active: true,
+      nodes: [
+        {
+          id: 'n1',
+          name: 'HTTP Request',
+          type: 'n8n-nodes-base.httpRequest',
+          credentials: { httpHeaderAuth: { id: 'cred-A', name: 'BaseLinker API' } },
+        },
+        // Second reference to the same credential — must dedupe to one workflow entry.
+        {
+          id: 'n2',
+          name: 'Another HTTP',
+          type: 'n8n-nodes-base.httpRequest',
+          credentials: { httpHeaderAuth: { id: 'cred-A', name: 'BaseLinker API' } },
+        },
+      ],
+    };
+    const wfUsesAandB = {
+      id: 'wf-2',
+      name: 'BaseLinker + Slack',
+      active: false,
+      nodes: [
+        {
+          id: 'n1',
+          type: 'n8n-nodes-base.httpRequest',
+          credentials: { httpHeaderAuth: { id: 'cred-A' } },
+        },
+        {
+          id: 'n2',
+          type: 'n8n-nodes-base.slack',
+          credentials: { slackApi: { id: 'cred-B' } },
+        },
+      ],
+    };
+    const wfNoCreds = {
+      id: 'wf-3',
+      name: 'Plain Webhook',
+      active: true,
+      nodes: [{ id: 'n1', type: 'n8n-nodes-base.webhook' }],
+    };
+
+    beforeEach(() => {
+      mockApiClient.listCredentials = vi.fn().mockResolvedValue({
+        data: [credA, credB, credC],
+        nextCursor: null,
+      });
+      // includeUsage uses the full-scan helper; default it to the same set.
+      mockApiClient.listAllCredentials = vi.fn().mockResolvedValue([credA, credB, credC]);
+      mockApiClient.getCredential = vi.fn();
+      mockApiClient.listAllWorkflows = vi.fn().mockResolvedValue([
+        wfUsesA,
+        wfUsesAandB,
+        wfNoCreds,
+      ]);
+    });
+
+    it('list without includeUsage does not scan workflows or change shape', async () => {
+      const result = await handlers.handleListCredentials({ action: 'list' });
+
+      expect(mockApiClient.listAllWorkflows).not.toHaveBeenCalled();
+      expect(result.success).toBe(true);
+      expect(result.data.credentials).toEqual([credA, credB, credC]);
+      expect(result.data.credentials[0]).not.toHaveProperty('usedIn');
+    });
+
+    it('list with includeUsage attaches deduplicated workflow refs and counts', async () => {
+      const result = await handlers.handleListCredentials({
+        action: 'list',
+        includeUsage: true,
+      });
+
+      expect(mockApiClient.listAllWorkflows).toHaveBeenCalledTimes(1);
+      const byId = Object.fromEntries(
+        result.data.credentials.map((c: any) => [c.id, c])
+      );
+
+      expect(byId['cred-A'].usageCount).toBe(2);
+      expect(byId['cred-A'].usedIn).toEqual([
+        { id: 'wf-1', name: 'BaseLinker Sync', active: true },
+        { id: 'wf-2', name: 'BaseLinker + Slack', active: false },
+      ]);
+
+      expect(byId['cred-B'].usageCount).toBe(1);
+      expect(byId['cred-B'].usedIn).toEqual([
+        { id: 'wf-2', name: 'BaseLinker + Slack', active: false },
+      ]);
+
+      expect(byId['cred-C'].usageCount).toBe(0);
+      expect(byId['cred-C'].usedIn).toEqual([]);
+    });
+
+    it('get with includeUsage enriches a single credential', async () => {
+      mockApiClient.getCredential.mockResolvedValue(credA);
+
+      const result = await handlers.handleGetCredential({
+        action: 'get',
+        id: 'cred-A',
+        includeUsage: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.usageCount).toBe(2);
+      expect(result.data.usedIn).toEqual([
+        { id: 'wf-1', name: 'BaseLinker Sync', active: true },
+        { id: 'wf-2', name: 'BaseLinker + Slack', active: false },
+      ]);
+    });
+
+    it('get without includeUsage skips the workflow scan', async () => {
+      mockApiClient.getCredential.mockResolvedValue(credA);
+
+      const result = await handlers.handleGetCredential({
+        action: 'get',
+        id: 'cred-A',
+      });
+
+      expect(mockApiClient.listAllWorkflows).not.toHaveBeenCalled();
+      expect(result.data).not.toHaveProperty('usedIn');
+      expect(result.data).not.toHaveProperty('usageCount');
+    });
+
+    it('ignores nodes with malformed credential refs (empty id, missing id, missing wf.id)', async () => {
+      mockApiClient.listAllWorkflows.mockResolvedValue([
+        {
+          id: 'wf-bad-1',
+          name: 'Empty cred id',
+          active: true,
+          nodes: [{ id: 'n', type: 'x', credentials: { httpHeaderAuth: { id: '' } } }],
+        },
+        {
+          id: 'wf-bad-2',
+          name: 'Missing cred id',
+          active: true,
+          nodes: [{ id: 'n', type: 'x', credentials: { httpHeaderAuth: { name: 'no id' } } }],
+        },
+        {
+          // Workflow without an id should be skipped entirely.
+          name: 'Draft no id',
+          active: true,
+          nodes: [{ id: 'n', type: 'x', credentials: { httpHeaderAuth: { id: 'cred-A' } } }],
+        },
+        wfUsesA,
+      ]);
+
+      const result = await handlers.handleListCredentials({
+        action: 'list',
+        includeUsage: true,
+      });
+
+      const byId = Object.fromEntries(
+        result.data.credentials.map((c: any) => [c.id, c])
+      );
+      expect(byId['cred-A'].usageCount).toBe(1);
+      expect(byId['cred-A'].usedIn).toEqual([
+        { id: 'wf-1', name: 'BaseLinker Sync', active: true },
+      ]);
+    });
+
+    it('defaults workflow.active to false when omitted', async () => {
+      mockApiClient.listAllWorkflows.mockResolvedValue([
+        {
+          id: 'wf-no-active',
+          name: 'Active omitted',
+          // active intentionally omitted
+          nodes: [{ id: 'n', type: 'x', credentials: { httpHeaderAuth: { id: 'cred-A' } } }],
+        },
+      ]);
+
+      const result = await handlers.handleListCredentials({
+        action: 'list',
+        includeUsage: true,
+      });
+
+      const byId = Object.fromEntries(
+        result.data.credentials.map((c: any) => [c.id, c])
+      );
+      expect(byId['cred-A'].usedIn).toEqual([
+        { id: 'wf-no-active', name: 'Active omitted', active: false },
+      ]);
+    });
+
+    it('list degrades gracefully when the workflow scan fails', async () => {
+      mockApiClient.listAllWorkflows.mockRejectedValue(new Error('network down'));
+
+      const result = await handlers.handleListCredentials({
+        action: 'list',
+        includeUsage: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.credentials).toEqual([credA, credB, credC]);
+      expect(result.data.usageScanError).toBe('network down');
+    });
+
+    it('get degrades gracefully when the workflow scan fails', async () => {
+      mockApiClient.getCredential.mockResolvedValue(credA);
+      mockApiClient.listAllWorkflows.mockRejectedValue(new Error('boom'));
+
+      const result = await handlers.handleGetCredential({
+        action: 'get',
+        id: 'cred-A',
+        includeUsage: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.id).toBe('cred-A');
+      expect(result.data.usageScanError).toBe('boom');
+      expect(result.data).not.toHaveProperty('usedIn');
+    });
+  });
+
+  describe('credential pagination (#816)', () => {
+    const credPage1 = { id: 'cred-1', name: 'Page 1 cred', type: 'httpHeaderAuth' };
+    const credPage2 = { id: 'cred-101', name: 'Page 2 cred', type: 'httpHeaderAuth' };
+
+    beforeEach(() => {
+      mockApiClient.listCredentials = vi.fn();
+      mockApiClient.listAllCredentials = vi.fn();
+      mockApiClient.getCredential = vi.fn();
+      mockApiClient.listAllWorkflows = vi.fn().mockResolvedValue([]);
+    });
+
+    it('forwards cursor and limit to the API client on plain list', async () => {
+      mockApiClient.listCredentials.mockResolvedValue({
+        data: [credPage2],
+        nextCursor: null,
+      });
+
+      const result = await handlers.handleListCredentials({
+        action: 'list',
+        cursor: 'cursor-abc',
+        limit: 50,
+      });
+
+      expect(mockApiClient.listCredentials).toHaveBeenCalledWith({
+        cursor: 'cursor-abc',
+        limit: 50,
+      });
+      expect(mockApiClient.listAllCredentials).not.toHaveBeenCalled();
+      expect(result.success).toBe(true);
+      expect(result.data.credentials).toEqual([credPage2]);
+    });
+
+    it('returns nextCursor so callers can page further', async () => {
+      mockApiClient.listCredentials.mockResolvedValue({
+        data: [credPage1],
+        nextCursor: 'next-page-token',
+      });
+
+      const result = await handlers.handleListCredentials({ action: 'list' });
+
+      expect(result.data.nextCursor).toBe('next-page-token');
+    });
+
+    it('includeUsage scans all pages via listAllCredentials and omits nextCursor', async () => {
+      mockApiClient.listAllCredentials.mockResolvedValue([credPage1, credPage2]);
+
+      const result = await handlers.handleListCredentials({
+        action: 'list',
+        includeUsage: true,
+      });
+
+      expect(mockApiClient.listAllCredentials).toHaveBeenCalledTimes(1);
+      expect(mockApiClient.listCredentials).not.toHaveBeenCalled();
+      expect(result.data.credentials).toHaveLength(2);
+      expect(result.data.credentials.map((c: any) => c.id)).toEqual(['cred-1', 'cred-101']);
+      expect(result.data).not.toHaveProperty('nextCursor');
+    });
+
+    it('get fallback finds a credential living beyond the first page', async () => {
+      // Direct GET unsupported -> fall back to paginated list scan.
+      mockApiClient.getCredential.mockRejectedValue(
+        Object.assign(new Error('Method not allowed'), { statusCode: 405 })
+      );
+      mockApiClient.listAllCredentials.mockResolvedValue([credPage1, credPage2]);
+
+      const result = await handlers.handleGetCredential({
+        action: 'get',
+        id: 'cred-101',
+      });
+
+      expect(mockApiClient.listAllCredentials).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(true);
+      expect(result.data.id).toBe('cred-101');
+    });
+
+    it('get fallback still reports not found for a genuinely absent id', async () => {
+      mockApiClient.getCredential.mockRejectedValue(
+        Object.assign(new Error('Method not allowed'), { statusCode: 405 })
+      );
+      mockApiClient.listAllCredentials.mockResolvedValue([credPage1, credPage2]);
+
+      const result = await handlers.handleGetCredential({
+        action: 'get',
+        id: 'cred-does-not-exist',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not found');
+    });
+
+    it('list explains NOT_SUPPORTED when the instance rejects GET /credentials (#809)', async () => {
+      mockApiClient.listCredentials.mockRejectedValue(
+        new N8nApiError('GET method not allowed', 405)
+      );
+
+      const result = await handlers.handleListCredentials({ action: 'list' });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('NOT_SUPPORTED');
+      expect(result.error).toContain('rejected the credential read');
+      expect(result.error).toContain('create, delete, and getSchema');
+      // The underlying error is preserved for diagnosis (405-version vs 403-permissions).
+      expect(result.details).toEqual({ statusCode: 405, cause: 'GET method not allowed' });
+    });
+
+    it('list explains NOT_SUPPORTED on 403 (API key scope / instance settings) (#809)', async () => {
+      mockApiClient.listCredentials.mockRejectedValue(
+        new N8nApiError('Forbidden', 403)
+      );
+
+      const result = await handlers.handleListCredentials({ action: 'list' });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('NOT_SUPPORTED');
+      expect(result.details).toEqual({ statusCode: 403, cause: 'Forbidden' });
+    });
+
+    it('list detects unsupported reads from unwrapped errors via the reason phrase, case-insensitively (#809)', async () => {
+      mockApiClient.listCredentials.mockRejectedValue(new Error('Method Not Allowed'));
+
+      const result = await handlers.handleListCredentials({ action: 'list' });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('NOT_SUPPORTED');
+    });
+
+    it('list does NOT map other errors to NOT_SUPPORTED (#809)', async () => {
+      // A concrete non-405/403 status wins over a "not allowed" message…
+      mockApiClient.listCredentials.mockRejectedValue(
+        new N8nApiError('Sharing not allowed on this plan', 400)
+      );
+      const badRequest = await handlers.handleListCredentials({ action: 'list' });
+      expect(badRequest.success).toBe(false);
+      expect(badRequest.code).not.toBe('NOT_SUPPORTED');
+
+      // …and a plain server error keeps the handleCrudError shape.
+      mockApiClient.listCredentials.mockRejectedValue(
+        new N8nApiError('Internal server error', 500, 'SERVER_ERROR')
+      );
+      const serverError = await handlers.handleListCredentials({ action: 'list' });
+      expect(serverError.success).toBe(false);
+      expect(serverError.code).not.toBe('NOT_SUPPORTED');
+    });
+
+    it('list with includeUsage explains NOT_SUPPORTED when the full scan is rejected (#809)', async () => {
+      mockApiClient.listAllCredentials.mockRejectedValue(
+        new N8nApiError('GET method not allowed', 405)
+      );
+
+      const result = await handlers.handleListCredentials({ action: 'list', includeUsage: true });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('NOT_SUPPORTED');
+    });
+
+    it('get explains NOT_SUPPORTED when both direct GET and the list fallback are rejected (#809)', async () => {
+      mockApiClient.getCredential.mockRejectedValue(
+        new N8nApiError('GET method not allowed', 405)
+      );
+      mockApiClient.listAllCredentials.mockRejectedValue(
+        new N8nApiError('GET method not allowed', 405)
+      );
+
+      const result = await handlers.handleGetCredential({ action: 'get', id: 'cred-1' });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('NOT_SUPPORTED');
+      expect(result.error).toContain('rejected the credential read');
+    });
+
+    it('get still reports a direct 404 as not found, not NOT_SUPPORTED (#809)', async () => {
+      mockApiClient.getCredential.mockRejectedValue(
+        new N8nApiError('Credential not found', 404, 'NOT_FOUND')
+      );
+
+      const result = await handlers.handleGetCredential({ action: 'get', id: 'cred-1' });
+
+      expect(result.success).toBe(false);
+      expect(result.code).not.toBe('NOT_SUPPORTED');
+      expect(mockApiClient.listAllCredentials).not.toHaveBeenCalled();
+    });
+
+    it('normalizes an empty-string cursor to undefined (not forwarded to the API)', async () => {
+      mockApiClient.listCredentials.mockResolvedValue({ data: [credPage1], nextCursor: null });
+
+      await handlers.handleListCredentials({ action: 'list', cursor: '' });
+
+      expect(mockApiClient.listCredentials).toHaveBeenCalledWith({
+        cursor: undefined,
+        limit: undefined,
+      });
+    });
+
+    it('rejects an out-of-range limit rather than forwarding it', async () => {
+      const result = await handlers.handleListCredentials({ action: 'list', limit: 5000 });
+
+      expect(result.success).toBe(false);
+      expect(mockApiClient.listCredentials).not.toHaveBeenCalled();
+    });
+
+    it('strips the sensitive data field from listed credentials (both paths)', async () => {
+      const withSecret = { id: 'cred-secret', name: 'Has data', type: 'httpHeaderAuth', data: { value: 'sk-secret' } };
+
+      mockApiClient.listCredentials.mockResolvedValue({ data: [withSecret], nextCursor: null });
+      const paged = await handlers.handleListCredentials({ action: 'list' });
+      expect(paged.data.credentials[0]).not.toHaveProperty('data');
+
+      mockApiClient.listAllCredentials.mockResolvedValue([withSecret]);
+      const scanned = await handlers.handleListCredentials({ action: 'list', includeUsage: true });
+      expect(scanned.data.credentials[0]).not.toHaveProperty('data');
     });
   });
 });

@@ -68,6 +68,32 @@ describe('n8n-validation', () => {
         expect(result).toEqual(minimalNode);
       });
 
+      it('normalizes HTTP MCP serialized node fields before validation (#814)', () => {
+        const serializedNode = {
+          id: 'node-1',
+          name: 'Test Node',
+          type: 'n8n-nodes-base.set',
+          typeVersion: '3',
+          position: { '0': 100, '1': 200 },
+          parameters: '{"assignments":{"assignments":{"0":{"id":"1","name":"message","value":"Hello","type":"string"}}}}',
+        };
+
+        const result = workflowNodeSchema.parse(serializedNode);
+
+        expect(result.typeVersion).toBe(3);
+        expect(result.position).toEqual([100, 200]);
+        expect(result.parameters).toEqual({
+          assignments: {
+            assignments: [{
+              id: '1',
+              name: 'message',
+              value: 'Hello',
+              type: 'string',
+            }],
+          },
+        });
+      });
+
       it('should reject node with missing required fields', () => {
         const invalidNode = {
           name: 'Test Node',
@@ -95,7 +121,7 @@ describe('n8n-validation', () => {
           id: 'node-1',
           name: 'Test Node',
           type: 'n8n-nodes-base.set',
-          typeVersion: '3', // Should be number
+          typeVersion: 'not-a-number',
           position: [100, 200],
           parameters: {},
         };
@@ -130,6 +156,26 @@ describe('n8n-validation', () => {
         expect(result).toEqual(emptyConnections);
       });
 
+      it('normalizes HTTP MCP serialized connection arrays before validation (#814)', () => {
+        const serializedConnections = {
+          Start: {
+            main: {
+              '0': {
+                '0': { node: 'End', type: 'main', index: 0 },
+              },
+            },
+          },
+        };
+
+        const result = workflowConnectionSchema.parse(serializedConnections);
+
+        expect(result).toEqual({
+          Start: {
+            main: [[{ node: 'End', type: 'main', index: 0 }]],
+          },
+        });
+      });
+
       it('should reject invalid connection structure', () => {
         const invalidConnections = {
           'node-1': {
@@ -148,6 +194,22 @@ describe('n8n-validation', () => {
         };
 
         expect(() => workflowConnectionSchema.parse(invalidConnections)).toThrow();
+      });
+
+      it('accepts node names with spaces and hyphens as connection keys (#744)', () => {
+        // Pre-fix, the single-arg z.record(valueSchema) form was reinterpreted as
+        // z.record(keySchema=valueSchema) by Zod 4 (bundled by @modelcontextprotocol/sdk),
+        // causing node-name strings like "W-05b Set Context" to fail with "Invalid key
+        // in record". The two-arg form locks the key schema to z.string() in both Zods.
+        const connections = {
+          'W-05b Webhook Trigger': {
+            main: [[{ node: 'W-05b Set Context', type: 'main', index: 0 }]],
+          },
+          'W-05b Set Context': {
+            main: [[{ node: 'W-05b Respond To Webhook', type: 'main', index: 0 }]],
+          },
+        };
+        expect(() => workflowConnectionSchema.parse(connections)).not.toThrow();
       });
     });
 
@@ -395,6 +457,56 @@ describe('n8n-validation', () => {
         // Should keep name and filter settings to safe properties
         expect(cleaned.name).toBe('Updated Workflow');
         expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
+      });
+
+      it('should strip unknown top-level fields echoed back on read (allowlist, not denylist)', () => {
+        // Regression: n8n's GET response returns server-managed fields that are not in the
+        // PUT write schema (which declares additionalProperties: false). Newer n8n versions
+        // add fields not even covered by any denylist (e.g. a top-level availableInMCP column,
+        // activeVersionId, nodeGroups, or future fields). Echoing them back triggers
+        // "request/body must NOT have additional properties". The allowlist must drop them all.
+        // Covers issues #831/#838 (nodeGroups) and the availableInMCP top-level echo.
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: { executionOrder: 'v1' },
+          // Fields n8n returns on read but rejects on write:
+          availableInMCP: true,        // top-level MCP column (n8n 2.x), not in write schema
+          activeVersionId: 'av-123',   // not in OpenAPI spec, returned by GET
+          versionCounter: 7,
+          nodeGroups: [],              // n8n 2.x top-level field (#831, #838)
+          someFutureField: 'whatever',  // any field a future n8n version might start echoing
+        } as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+
+        // Only the writable allowlist fields survive
+        expect(Object.keys(cleaned).sort()).toEqual(['connections', 'name', 'nodes', 'settings']);
+        expect(cleaned).not.toHaveProperty('availableInMCP');
+        expect(cleaned).not.toHaveProperty('activeVersionId');
+        expect(cleaned).not.toHaveProperty('nodeGroups');
+        expect(cleaned).not.toHaveProperty('someFutureField');
+        expect(cleaned.name).toBe('Test Workflow');
+        // (availableInMCP *inside* settings is covered by the next test.)
+      });
+
+      it('should keep availableInMCP inside settings while stripping it at top level', () => {
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          availableInMCP: true, // top-level: must be stripped
+          settings: {
+            executionOrder: 'v1',
+            availableInMCP: false, // nested in settings: must be kept (writable per spec)
+          },
+        } as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+
+        expect(cleaned).not.toHaveProperty('availableInMCP');
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1', availableInMCP: false });
       });
 
       it('should exclude versionCounter for n8n 1.118.1+ compatibility', () => {

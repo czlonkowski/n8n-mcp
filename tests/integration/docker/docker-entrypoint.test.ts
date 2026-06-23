@@ -1,23 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { exec, waitForHealthy, isRunningInHttpMode, getProcessEnv } from './test-helpers';
+import {
+  exec,
+  waitForHealthy,
+  isRunningInHttpMode,
+  getProcessEnv,
+  ensureDockerTestImage,
+  DOCKER_TEST_IMAGE_NAME
+} from './test-helpers';
 
 // Skip tests if not in CI or if Docker is not available
 const SKIP_DOCKER_TESTS = process.env.CI !== 'true' && !process.env.RUN_DOCKER_TESTS;
 const describeDocker = SKIP_DOCKER_TESTS ? describe.skip : describe;
-
-// Helper to check if Docker is available
-async function isDockerAvailable(): Promise<boolean> {
-  try {
-    await exec('docker --version');
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 // Helper to generate unique container names
 function generateContainerName(suffix: string): string {
@@ -61,44 +57,23 @@ async function runContainerWithTimeout(
 
 describeDocker('Docker Entrypoint Script', () => {
   let tempDir: string;
+  // True when Docker is available AND the test image is ready to use.
+  // Tests gated by `if (!dockerAvailable) return;` skip silently otherwise.
   let dockerAvailable: boolean;
-  const imageName = 'n8n-mcp-test:latest';
+  const imageName = DOCKER_TEST_IMAGE_NAME;
   const containers: string[] = [];
 
   beforeAll(async () => {
-    dockerAvailable = await isDockerAvailable();
-    if (!dockerAvailable) {
+    const result = await ensureDockerTestImage();
+    dockerAvailable = result.status === 'ready';
+    if (result.status === 'skip-no-docker') {
       console.warn('Docker not available, skipping Docker entrypoint tests');
-      return;
+    } else if (result.status === 'missing') {
+      console.warn(result.message);
     }
-
-    // Check if image exists
-    let imageExists = false;
-    try {
-      await exec(`docker image inspect ${imageName}`);
-      imageExists = true;
-    } catch {
-      imageExists = false;
-    }
-
-    // Build test image if in CI or if explicitly requested or if image doesn't exist
-    if (!imageExists || process.env.CI === 'true' || process.env.BUILD_DOCKER_TEST_IMAGE === 'true') {
-      const projectRoot = path.resolve(__dirname, '../../../');
-      console.log('Building Docker image for tests...');
-      try {
-        execSync(`docker build -t ${imageName} .`, {
-          cwd: projectRoot,
-          stdio: 'inherit'
-        });
-        console.log('Docker image built successfully');
-      } catch (error) {
-        console.error('Failed to build Docker image:', error);
-        throw new Error('Docker image build failed - tests cannot continue');
-      }
-    } else {
-      console.log(`Using existing Docker image: ${imageName}`);
-    }
-  }, 60000); // Increase timeout to 60s for Docker build
+    // Inspect-only path is sub-second. The 5-minute window covers BUILD_DOCKER_TEST_IMAGE=true
+    // local auto-builds, which need to finish the npm install in the builder stage.
+  }, 300000);
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docker-entrypoint-test-'));
