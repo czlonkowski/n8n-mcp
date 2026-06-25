@@ -1121,7 +1121,7 @@ export class SingleSessionHTTPServer {
       if (sessionId && !existingTransport) {
         res.status(404).json({
           jsonrpc: '2.0',
-          error: { code: -32001, message: 'Session not found or expired' },
+          error: { code: -32000, message: 'Session not found or expired' },
           id: null
         });
         return;
