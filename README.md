@@ -67,6 +67,14 @@ Want to use n8n-MCP with your n8n instance? Check out our comprehensive [n8n Dep
 - Cloud deployment on Hetzner, AWS, and other providers
 - Troubleshooting and security best practices
 
+### n8n Version Compatibility
+
+The n8n version badge at the top of this README shows the version of the upstream n8n node packages bundled with this n8n-MCP release. The node database is built from the shared open-source packages `n8n-nodes-base` and `@n8n/n8n-nodes-langchain`, which are used by both n8n Cloud and self-hosted Community Edition.
+
+There is no separate Cloud-only or Community-only node database in n8n-MCP. Edition differences in n8n are about platform features, not a separate node catalog exposed by this project.
+
+If you run an older self-hosted n8n instance, choose an n8n-MCP release whose n8n badge version is at or below your n8n instance version. Using a newer n8n-MCP release with an older n8n instance can surface node parameters or type versions that your instance does not support yet.
+
 ## Connect your IDE
 
 n8n-MCP works with multiple AI-powered IDEs and tools:
