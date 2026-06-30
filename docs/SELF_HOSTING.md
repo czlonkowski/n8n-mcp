@@ -215,6 +215,37 @@ If you're running n8n locally (e.g., `http://localhost:5678` or Docker), you nee
 
 > ⚠️ **Important:** Set `WEBHOOK_SECURITY_MODE=moderate` whenever `N8N_API_URL` points at localhost or `host.docker.internal`. The same SSRF gate covers webhook triggers and the n8n API client; default `strict` mode rejects loopback addresses for both. `moderate` allows localhost while still blocking RFC1918 private networks and cloud metadata.
 
+### Private-network n8n instances
+
+If your n8n instance is reachable only on a private network address, such as
+`http://192.168.x.x:5678`, `http://10.x.x.x:5678`, or
+`http://172.16.x.x:5678`, `WEBHOOK_SECURITY_MODE=moderate` is not enough.
+Use `WEBHOOK_SECURITY_MODE=permissive` for this private-network test setup:
+
+```json
+{
+  "mcpServers": {
+    "n8n-mcp": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm", "--init",
+        "-e", "MCP_MODE=stdio",
+        "-e", "LOG_LEVEL=error",
+        "-e", "DISABLE_CONSOLE_OUTPUT=true",
+        "-e", "N8N_API_URL=http://192.168.1.50:5678",
+        "-e", "N8N_API_KEY=your-api-key",
+        "-e", "WEBHOOK_SECURITY_MODE=permissive",
+        "ghcr.io/czlonkowski/n8n-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+`permissive` allows localhost and RFC1918 private IP ranges, but still blocks
+cloud metadata endpoints such as `169.254.169.254`. Treat it as a local lab or
+private-network setting, not a default for public deployments.
+
 **Important:** The `-i` flag is required for MCP stdio communication.
 
 > 🔧 If you encounter any issues with Docker, check our [Docker Troubleshooting Guide](./DOCKER_TROUBLESHOOTING.md).
