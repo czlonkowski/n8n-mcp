@@ -9,11 +9,47 @@
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fczlonkowski%2Fn8n--mcp-green.svg)](https://github.com/czlonkowski/n8n-mcp/pkgs/container/n8n-mcp)
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/n8n-mcp?referralCode=n8n-mcp)
 
-A Model Context Protocol (MCP) server that provides AI assistants with comprehensive access to n8n node documentation, properties, and operations. Deploy in minutes to give Claude and other AI assistants deep knowledge about n8n's 2,063 workflow automation nodes (816 core + 1,247 community).
+A Model Context Protocol (MCP) server for running n8n workflows in production. It gives AI assistants the tools for the operational side of the workflow lifecycle — validation that actually fails on broken workflows, diff-based and surgical editing, execution debugging, version history and rollback, security auditing — backed by deep documentation for 2,063 nodes (816 core + 1,247 community), community nodes included.
+
+The official n8n MCP server is becoming the way workflows get *written*; n8n-mcp focuses on everything that keeps them *working*. Both connect to the same n8n instance and compose without conflict — see [Which MCP server should I use?](#which-mcp-server-should-i-use) below, and [Discussion #900](https://github.com/czlonkowski/n8n-mcp/discussions/900) for where the project is going.
+
+## Which MCP server should I use?
+
+Run both. n8n ships a first-party MCP server inside the product — it is good at drafting workflows from built-in nodes on a current n8n version, and improving fast. n8n-mcp covers the production side of the lifecycle and the parts of the ecosystem the in-product server structurally can't reach. Every claim below is measured, not asserted — probe workflows and payload measurements are in the [July 2026 head-to-head analysis](./docs/competitive-analysis-july-2026.md).
+
+| Use case | Official n8n MCP | n8n-mcp |
+|---|---|---|
+| Drafting workflows (built-in nodes, current n8n) | ✅ Recommended | ✅ |
+| Validation as a stop signal | ❌ All five broken-workflow probes return `valid:true` | ✅ All five return errors |
+| Community & custom nodes | ❌ Search only — no schemas, no validation | ✅ 1,247 nodes documented and validated |
+| Surgical edits inside large fields (e.g. Code nodes) | Resends the whole field | ✅ `patchNodeField` find/replace — measured 5.3× cheaper on a ~1 KB field, scales with field size |
+| Workflow version history & rollback | ❌ | ✅ |
+| Templates | ❌ | ✅ 2,352 searchable and deployable |
+| Instance security audit | ❌ | ✅ |
+| Credential management | Read-only list | ✅ Full CRUD + schema discovery |
+| Autofix for common workflow errors | ❌ | ✅ 13 fix types |
+| Older n8n versions (including the 1.x fleet) | ❌ Capability tracks the instance version | ✅ |
+| Multiple instances / environments | One instance | ✅ |
+| Drafts/publish lifecycle, folders, pin-data testing | ✅ | ❌ |
+
+Two honest notes. For standard whole-value edits on current n8n versions, the two servers now cost about the same per edit (measured 509 vs ~492 characters for the same insert-a-node edit) — older claims of large per-edit token multiples are retired. And if your AI agent treats `valid:true` as "done", the validation row is the one that matters: the official validator accepts all five of our broken-workflow probes (unknown node type, impossible typeVersion, missing required field, duplicate node names, AI Agent without a model); n8n-mcp rejects all five with specific errors.
 
 ## Overview
 
-n8n-MCP serves as a bridge between n8n's workflow automation platform and AI models, enabling them to understand and work with n8n nodes effectively. It provides structured access to:
+n8n-mcp covers the production lifecycle — validate, deploy, test, debug, audit — plus the knowledge layer AI assistants need to configure nodes correctly.
+
+**Production lifecycle:**
+
+- **Trustworthy validation** - Strict-by-default validation with 4 profiles; broken workflows return errors, not `valid:true` — community and custom nodes included
+- **Autofix** - Automatic repair of 13 classes of common workflow errors
+- **Diff-based editing** - 19 operation types including `patchNodeField` for surgical in-field edits, with dry-run (`validateOnly`) and best-effort modes
+- **Version history & rollback** - List, inspect, roll back, and prune workflow versions
+- **Execution debugging** - List, filter, and inspect workflow executions
+- **Testing** - Trigger workflows via webhook, form, or chat and read the results
+- **Security & audit** - Combines n8n's built-in audit API with deep workflow scanning
+- **Credential management** - Full CRUD with schema discovery
+
+**Knowledge layer:**
 
 - **2,063 n8n nodes** - 816 core nodes + 1,247 community nodes (1,113 verified)
 - **Node properties** - 99% coverage with detailed schemas
@@ -33,6 +69,10 @@ n8n-MCP serves as a bridge between n8n's workflow automation platform and AI mod
 </div>
 
 **n8n-mcp** started as a personal tool but now helps tens of thousands of developers automate their workflows efficiently. Maintaining and developing this project competes with my paid work. Your sponsorship helps me dedicate focused time to new features, respond quickly to issues, keep documentation up-to-date, and ensure compatibility with latest n8n releases. **[Become a sponsor](https://github.com/sponsors/czlonkowski)**
+
+## Work with the Maintainer
+
+I run [AiAdvisors](https://www.aiadvisors.pl/en), an automation practice built on the same tooling as this project. If you want hands-on help — an automation audit, a workflow build, or ongoing production operations for your n8n estate — **[book an audit](https://www.aiadvisors.pl/en)**.
 
 ## Important Safety Warning
 
@@ -342,27 +382,8 @@ Save these instructions in your Claude Project for optimal n8n workflow assistan
 
 ## Available MCP Tools
 
-### Core Tools (7 tools)
-- **`tools_documentation`** - Get documentation for any MCP tool (START HERE!)
-- **`search_nodes`** - Full-text search across all nodes. Use `source: 'community'|'verified'` for community nodes, `includeExamples: true` for configs
-- **`get_node`** - Unified node information tool with multiple modes:
-  - **Info mode** (default): `detail: 'minimal'|'standard'|'full'`, `includeExamples: true`
-  - **Docs mode**: `mode: 'docs'` - Human-readable markdown documentation
-  - **Property search**: `mode: 'search_properties'`, `propertyQuery: 'auth'`
-  - **Versions**: `mode: 'versions'|'compare'|'breaking'|'migrations'`
-- **`validate_node`** - Unified node validation:
-  - `mode: 'minimal'` - Quick required fields check (<100ms)
-  - `mode: 'full'` - Comprehensive validation with profiles (minimal, runtime, ai-friendly, strict)
-- **`validate_workflow`** - Complete workflow validation including AI Agent validation
-- **`search_templates`** - Unified template search:
-  - `searchMode: 'keyword'` (default) - Text search with `query` parameter
-  - `searchMode: 'by_nodes'` - Find templates using specific `nodeTypes`
-  - `searchMode: 'by_task'` - Curated templates for common `task` types
-  - `searchMode: 'by_metadata'` - Filter by `complexity`, `requiredService`, `targetAudience`
-- **`get_template`** - Get complete workflow JSON (modes: nodes_only, structure, full)
-
-### n8n Management Tools (16 tools - Requires API Configuration)
-These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
+### Production Lifecycle Tools (16 tools - Requires API Configuration)
+The core of the project: deploy, edit, validate, test, debug, and audit workflows on a live n8n instance. These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
 
 #### Workflow Management
 - **`n8n_create_workflow`** - Create new workflows with nodes and connections
@@ -392,6 +413,27 @@ These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
 #### System Tools
 - **`n8n_health_check`** - Check n8n API connectivity and features
 
+### Documentation & Validation Tools (7 tools - No n8n Connection Required)
+These tools work offline against the bundled node database — no n8n API configuration needed.
+
+- **`tools_documentation`** - Get documentation for any MCP tool (START HERE!)
+- **`validate_node`** - Unified node validation:
+  - `mode: 'minimal'` - Quick required fields check (<100ms)
+  - `mode: 'full'` - Comprehensive validation with profiles (minimal, runtime, ai-friendly, strict)
+- **`validate_workflow`** - Complete workflow validation including AI Agent validation
+- **`search_nodes`** - Full-text search across all nodes. Use `source: 'community'|'verified'` for community nodes, `includeExamples: true` for configs
+- **`get_node`** - Unified node information tool with multiple modes:
+  - **Info mode** (default): `detail: 'minimal'|'standard'|'full'`, `includeExamples: true`
+  - **Docs mode**: `mode: 'docs'` - Human-readable markdown documentation
+  - **Property search**: `mode: 'search_properties'`, `propertyQuery: 'auth'`
+  - **Versions**: `mode: 'versions'|'compare'|'breaking'|'migrations'`
+- **`search_templates`** - Unified template search:
+  - `searchMode: 'keyword'` (default) - Text search with `query` parameter
+  - `searchMode: 'by_nodes'` - Find templates using specific `nodeTypes`
+  - `searchMode: 'by_task'` - Curated templates for common `task` types
+  - `searchMode: 'by_metadata'` - Filter by `complexity`, `requiredService`, `targetAudience`
+- **`get_template`** - Get complete workflow JSON (modes: nodes_only, structure, full)
+
 ### Read-Only Deployment
 
 For governance-sensitive environments, use both env vars together. Fully disable tools that are write/destructive or handle sensitive data (`n8n_manage_credentials` and `n8n_manage_datatable` also offer read operations, but are removed entirely here because even reads expose sensitive material):
@@ -417,6 +459,7 @@ Combine with a read-only n8n API key (Settings → API in your n8n instance) for
 - [Privacy & Telemetry](./PRIVACY.md) - What we collect and how to opt out
 - [Workflow Diff Operations](./docs/workflow-diff-examples.md) - Token-efficient workflow updates
 - [HTTP Deployment](./docs/HTTP_DEPLOYMENT.md) - Remote server setup
+- [Competitive Analysis (July 2026)](./docs/competitive-analysis-july-2026.md) - Measured head-to-head with the official n8n MCP server
 - [Change Log](./CHANGELOG.md) - Complete version history
 
 ## License

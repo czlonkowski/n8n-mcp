@@ -25,6 +25,7 @@
 
 ## Reference
 - [Workflow Diff Operations](./workflow-diff-examples.md) - Token-efficient workflow updates
+- [Competitive Analysis (July 2026)](./competitive-analysis-july-2026.md) - Measured head-to-head with the official n8n MCP server
 - [Automated Releases](./AUTOMATED_RELEASES.md) - Release process for maintainers
 - [Acknowledgments](./ACKNOWLEDGMENTS.md) - Credits and template attribution
 
