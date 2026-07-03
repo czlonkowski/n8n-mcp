@@ -681,6 +681,24 @@ describe('WorkflowValidator - false-positive audit fixes (Stage 2)', () => {
       expect(warnings).toHaveLength(1);
     });
 
+    it("guard: explicit onError: 'stopWorkflow' (fail-loud default) still gets the advisory under strict", async () => {
+      const wf = httpWorkflow() as any;
+      const http = wf.nodes.find((n: any) => n.name === 'HTTP');
+      http.onError = 'stopWorkflow';
+      const result = await validator.validateWorkflow(wf, { profile: 'strict' });
+      const warnings = result.warnings.filter(w => w.nodeName === 'HTTP' && w.message.includes('without error handling'));
+      expect(warnings).toHaveLength(1);
+    });
+
+    it("onError: 'continueRegularOutput' counts as error handling and suppresses the advisory", async () => {
+      const wf = httpWorkflow() as any;
+      const http = wf.nodes.find((n: any) => n.name === 'HTTP');
+      http.onError = 'continueRegularOutput';
+      const result = await validator.validateWorkflow(wf, { profile: 'strict' });
+      const warnings = result.warnings.filter(w => w.nodeName === 'HTTP' && w.message.includes('without error handling'));
+      expect(warnings).toHaveLength(0);
+    });
+
     it('does not warn for AI sub-nodes without a main output, even under strict', async () => {
       const workflow = {
         nodes: [

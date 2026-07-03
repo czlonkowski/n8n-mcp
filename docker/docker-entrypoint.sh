@@ -24,6 +24,20 @@ if [ -n "$AUTH_TOKEN_FILE" ] && [ ! -f "$AUTH_TOKEN_FILE" ]; then
     exit 1
 fi
 
+# Initialize the database at $1. Prefer seeding from the pristine bundled
+# copy (/app/.db-seed/nodes.db, kept outside /app/data because volume mounts
+# mask that directory) — the runtime image has no n8n packages, so an
+# in-container rebuild only works in dev images that ship them.
+initialize_database() {
+    target_db="$1"
+    if [ -f "/app/.db-seed/nodes.db" ]; then
+        log_message "Seeding database from bundled copy..."
+        cp /app/.db-seed/nodes.db "$target_db"
+    else
+        cd /app && NODE_DB_PATH="$target_db" node dist/scripts/rebuild.js
+    fi
+}
+
 # Database path configuration - respect NODE_DB_PATH if set
 if [ -n "$NODE_DB_PATH" ]; then
     # Basic validation - must end with .db
@@ -77,10 +91,7 @@ if [ ! -f "$DB_PATH" ]; then
                 # Double-check inside the lock
                 if [ ! -f "$DB_PATH" ]; then
                     log_message "Initializing database at $DB_PATH..."
-                    cd /app && NODE_DB_PATH="$DB_PATH" node dist/scripts/rebuild.js || {
-                        log_message "ERROR: Database initialization failed" >&2
-                        exit 1
-                    }
+                    initialize_database "$DB_PATH" || log_message "WARNING: Could not initialize database at $DB_PATH (unwritable volume?). The server will attempt to open it and report an error if it is required." >&2
                 fi
             ) 200>"$LOCK_FILE"
         else
@@ -88,10 +99,7 @@ if [ ! -f "$DB_PATH" ]; then
             # Fallback without locking if we can't create the lock file
             if [ ! -f "$DB_PATH" ]; then
                 log_message "Initializing database at $DB_PATH..."
-                cd /app && NODE_DB_PATH="$DB_PATH" node dist/scripts/rebuild.js || {
-                    log_message "ERROR: Database initialization failed" >&2
-                    exit 1
-                }
+                initialize_database "$DB_PATH" || log_message "WARNING: Could not initialize database at $DB_PATH (unwritable volume?). The server will attempt to open it and report an error if it is required." >&2
             fi
         fi
     else
@@ -99,10 +107,7 @@ if [ ! -f "$DB_PATH" ]; then
         log_message "WARNING: flock not available, database initialization may have race conditions"
         if [ ! -f "$DB_PATH" ]; then
             log_message "Initializing database at $DB_PATH..."
-            cd /app && NODE_DB_PATH="$DB_PATH" node dist/scripts/rebuild.js || {
-                log_message "ERROR: Database initialization failed" >&2
-                exit 1
-            }
+            initialize_database "$DB_PATH" || log_message "WARNING: Could not initialize database at $DB_PATH (unwritable volume?). The server will attempt to open it and report an error if it is required." >&2
         fi
     fi
 fi

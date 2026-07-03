@@ -48,6 +48,10 @@ COPY --from=builder /app/dist ./dist
 # Copy pre-built database and required files
 # Cache bust: 2025-07-06-trigger-fix-v3 - includes is_trigger=true for webhook,cron,interval,emailReadImap
 COPY data/nodes.db ./data/
+# Pristine seed copy outside /app/data: volume mounts over /app/data mask the
+# bundled database, and the runtime image cannot rebuild it (no n8n packages),
+# so the entrypoint seeds custom/empty DB paths from here.
+COPY data/nodes.db ./.db-seed/nodes.db
 COPY data/skills ./data/skills
 COPY src/database/schema-optimized.sql ./src/database/
 COPY .env.example ./

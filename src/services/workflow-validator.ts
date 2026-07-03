@@ -2195,7 +2195,10 @@ export class WorkflowValidator {
     // advisory profiles. onError applies to main-branch execution only, so
     // AI sub-nodes/Tool variants (no main output) and non-webhook triggers
     // are skipped. The branches are exclusive: one warning per node at most.
-    const hasErrorHandling = node.onError || node.continueOnFail || node.retryOnFail;
+    // onError: 'stopWorkflow' is n8n's fail-loud default, not error handling
+    // (consistent with workflowHasErrorHandling)
+    const hasErrorHandling = (node.onError && node.onError !== 'stopWorkflow') ||
+      node.continueOnFail || node.retryOnFail;
     const advisoryProfile = this.isAdvisoryProfile(profile);
 
     if (isErrorProne && !hasErrorHandling && advisoryProfile) {
