@@ -1878,7 +1878,10 @@ export class NodeSpecificValidators {
       ? ['items', '$input', '$json', '$node', '$prevNode', '$(', '$getWorkflowStaticData', '$workflow', '$execution', '$vars']
       : ['items', '_input'];
 
-    const usesInput = inputPatterns.some(pattern => code.includes(pattern));
+    // Scan the stripped view so a pattern inside a string literal or comment
+    // (e.g. a log message mentioning "$json") doesn't count as input access;
+    // template-literal interpolation code is preserved in the view.
+    const usesInput = inputPatterns.some(pattern => scanView.includes(pattern));
 
     if (!usesInput && code.length > 50) {
       warnings.push({

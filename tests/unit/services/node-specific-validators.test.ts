@@ -3872,6 +3872,31 @@ Always be professional and concise.`;
           message: 'Code doesn\'t reference input data'
         }));
       });
+
+      it('should warn when input patterns appear only inside string literals', () => {
+        context.config = {
+          language: 'javaScript',
+          jsCode: 'const note = "this code never reads $json or $input directly";\nreturn [{json: {note, id: Math.random()}}];'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        const inputWarnings = context.warnings.filter(w => w.message === 'Code doesn\'t reference input data');
+        expect(inputWarnings).toHaveLength(1);
+      });
+
+      it('should not warn when input is referenced inside template-literal interpolation', () => {
+        context.config = {
+          language: 'javaScript',
+          // eslint-disable-next-line no-template-curly-in-string
+          jsCode: 'const greeting = `Hello ${$json.name}, welcome back to the workflow`;\nreturn [{json: {greeting}}];'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        const inputWarnings = context.warnings.filter(w => w.message === 'Code doesn\'t reference input data');
+        expect(inputWarnings).toHaveLength(0);
+      });
     });
 
     describe('Google Sheets read does not require range', () => {
