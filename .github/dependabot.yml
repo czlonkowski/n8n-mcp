@@ -64,6 +64,15 @@ updates:
       # so the intent is unambiguous for the package we actually depend on.
       - dependency-name: "@n8n/*"
       - dependency-name: "@n8n/n8n-nodes-langchain"
+      # @modelcontextprotocol/sdk and zod are pinned to exact versions on purpose:
+      # zod v4 breaks the MCP SDK ("_zod" property errors) and the SDK/zod pair is
+      # verified by the "Fresh Install Dependency Check" CI guard (see issues
+      # #440, #444, #446, #447, #450). Their versions are also mirrored in
+      # package.runtime.json, which Dependabot cannot manage. A Dependabot bump
+      # therefore always fails CI, so exclude them and update via a manual,
+      # compatibility-tested change instead.
+      - dependency-name: "@modelcontextprotocol/sdk"
+      - dependency-name: "zod"
     rebase-strategy: "auto"
 
   # Monitor the UI apps package (its own lockfile; built by `npm run build:ui`).
