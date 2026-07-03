@@ -17,11 +17,10 @@ n8n-mcp provides tools organized into categories:
 2. **Configuration Validation** → [VALIDATION_GUIDE.md](VALIDATION_GUIDE.md)
 3. **Workflow Management** → [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md)
 4. **Template Library** - Search and deploy 2,700+ real workflows
-5. **Workflow Generation** - Natural-language → workflow with proposal review (`n8n_generate_workflow`, hosted-only)
-6. **Data Tables** - Manage n8n data tables and rows (`n8n_manage_datatable`)
-7. **Credential Management** - Full credential CRUD + schema discovery (`n8n_manage_credentials`)
-8. **Security & Audit** - Instance security auditing with custom deep scan (`n8n_audit_instance`)
-9. **Documentation & Guides** - Tool docs, AI agent guide, Code node guides
+5. **Data Tables** - Manage n8n data tables and rows (`n8n_manage_datatable`)
+6. **Credential Management** - Full credential CRUD + schema discovery (`n8n_manage_credentials`)
+7. **Security & Audit** - Instance security auditing with custom deep scan (`n8n_audit_instance`)
+8. **Documentation & Guides** - Tool docs, AI agent guide, Code node guides
 
 ---
 
@@ -38,7 +37,6 @@ n8n-mcp provides tools organized into categories:
 | `n8n_update_partial_workflow` | Editing workflows (MOST USED!) | 50-200ms |
 | `validate_workflow` | Checking complete workflow | 100-500ms |
 | `n8n_deploy_template` | Deploy template to n8n instance | 200-500ms |
-| `n8n_generate_workflow` | NL → workflow (proposals → deploy), hosted-only | 2-15s |
 | `n8n_manage_datatable` | Managing data tables and rows | 50-500ms |
 | `n8n_manage_credentials` | Credential CRUD + schema discovery | 50-500ms |
 | `n8n_audit_instance` | Security audit (built-in + custom scan) | 500-5000ms |
@@ -98,6 +96,24 @@ get_node({nodeType: "nodes-base.slack", mode: "docs"})
 
 **Common pattern**: iterative updates (56s average between edits)
 
+### Critical: Node JSON Hygiene When Creating Workflows
+
+Three structural mistakes in generated node JSON break the n8n UI even when the workflow validates:
+
+1. **Never emit a `credentials` block with a placeholder ID.** A fake ID like `"id": "REPLACE_ME"` renders the credential selector permanently disabled and non-clickable in the n8n UI ("No credentials yet") — the user has to recreate the node from scratch. If you don't know the real credential ID, **omit the `credentials` block entirely**; an absent block shows a normal empty dropdown the user can click. Use `n8n_manage_credentials({action: "list"})` to discover real credential IDs first.
+
+```javascript
+// ❌ Breaks the credential selector
+"credentials": {"httpHeaderAuth": {"id": "REPLACE_ME", "name": "My API Key"}}
+
+// ✅ Unknown ID → omit credentials block; user picks in UI
+// ✅ Known ID (from n8n_manage_credentials list) → use the real ID
+```
+
+2. **Generate UUID v4 values for node `id`** — not human-readable strings like `"http-list-node"`. n8n's frontend uses node IDs for form binding and credential component initialization; non-UUID IDs cause subtle UI breakage.
+
+3. **Use the current `typeVersion`** for each node — check `get_node` rather than hardcoding remembered versions (e.g. httpRequest is at 4.4+, not 4.2).
+
 ---
 
 ## Critical: nodeType Formats
@@ -146,271 +162,41 @@ get_node({nodeType: "nodes-base.slack", mode: "docs"})
 
 ## Common Mistakes
 
-### Mistake 1: Wrong nodeType Format
-
-**Problem**: "Node not found" error
+Eight recurring mistakes. Two are worth showing in full because they silently corrupt structure:
 
 ```javascript
-// WRONG
-get_node({nodeType: "slack"})  // Missing prefix
-get_node({nodeType: "n8n-nodes-base.slack"})  // Wrong prefix
+// nodeType prefix (search/validate tools want the SHORT form)
+get_node({nodeType: "slack"})              // ❌ missing prefix → "Node not found"
+get_node({nodeType: "n8n-nodes-base.slack"}) // ❌ FULL prefix is for workflow tools
+get_node({nodeType: "nodes-base.slack"})     // ✅
 
-// CORRECT
-get_node({nodeType: "nodes-base.slack"})
+// credentials must be nested by type with {id, name} — not a flat string
+updates: {credentials: "myApiKey"}                              // ❌
+updates: {credentials: {httpHeaderAuth: {id: "abc123", name: "My API Key"}}}  // ✅
 ```
 
-### Mistake 2: Using detail="full" by Default
+| # | Mistake | Fix |
+|---|---------|-----|
+| 1 | Wrong nodeType format | SHORT `nodes-base.*` for search/validate; FULL `n8n-nodes-base.*` for workflow tools (see above) |
+| 2 | `detail: "full"` by default | Default `standard` covers 95%; reach for `docs`/`search_properties` instead of `full` |
+| 3 | No validation profile | Pass `profile: "runtime"` explicitly (`minimal`/`ai-friendly`/`strict` for other stages) |
+| 4 | Ignoring auto-sanitization | ALL nodes sanitized on ANY update (operator structures, IF/Switch metadata); it can't fix broken connections or branch-count mismatches |
+| 5 | Not using smart parameters | Use `branch: "true"` / `case: 0` instead of fragile `sourceIndex` math |
+| 6 | Omitting `intent` | Always include `intent` on `n8n_update_partial_workflow` for better responses |
+| 7 | `parameters` instead of `updates` | `updateNode` takes `updates: {...}`, not `parameters: {...}` |
+| 8 | Wrong credential format | Nest by type with `{id, name}` (see above) |
 
-**Problem**: Huge payload, slower response, token waste
-
-```javascript
-// WRONG - Returns 3-8K tokens, use sparingly
-get_node({nodeType: "nodes-base.slack", detail: "full"})
-
-// CORRECT - Returns 1-2K tokens, covers 95% of use cases
-get_node({nodeType: "nodes-base.slack"})  // detail="standard" is default
-get_node({nodeType: "nodes-base.slack", detail: "standard"})
-```
-
-**When to use detail="full"**:
-- Debugging complex configuration issues
-- Need complete property schema with all nested options
-- Exploring advanced features
-
-**Better alternatives**:
-1. `get_node({detail: "standard"})` - for operations list (default)
-2. `get_node({mode: "docs"})` - for readable documentation
-3. `get_node({mode: "search_properties", propertyQuery: "auth"})` - for specific property
-
-### Mistake 3: Not Using Validation Profiles
-
-**Problem**: Too many false positives OR missing real errors
-
-**Profiles**:
-- `minimal` - Only required fields (fast, permissive)
-- `runtime` - Values + types (recommended for pre-deployment)
-- `ai-friendly` - Reduce false positives (for AI configuration)
-- `strict` - Maximum validation (for production)
-
-```javascript
-// WRONG - Uses default profile
-validate_node({nodeType, config})
-
-// CORRECT - Explicit profile
-validate_node({nodeType, config, profile: "runtime"})
-```
-
-### Mistake 4: Ignoring Auto-Sanitization
-
-**What happens**: ALL nodes sanitized on ANY workflow update
-
-**Auto-fixes**:
-- Binary operators (equals, contains) → removes singleValue
-- Unary operators (isEmpty, isNotEmpty) → adds singleValue: true
-- IF/Switch nodes → adds missing metadata
-
-**Cannot fix**:
-- Broken connections
-- Branch count mismatches
-- Paradoxical corrupt states
-
-```javascript
-// After ANY update, auto-sanitization runs on ALL nodes
-n8n_update_partial_workflow({id, operations: [...]})
-// → Automatically fixes operator structures
-```
-
-### Mistake 5: Not Using Smart Parameters
-
-**Problem**: Complex sourceIndex calculations for multi-output nodes
-
-**Old way** (manual):
-```javascript
-// IF node connection
-{
-  type: "addConnection",
-  source: "IF",
-  target: "Handler",
-  sourceIndex: 0  // Which output? Hard to remember!
-}
-```
-
-**New way** (smart parameters):
-```javascript
-// IF node - semantic branch names
-{
-  type: "addConnection",
-  source: "IF",
-  target: "True Handler",
-  branch: "true"  // Clear and readable!
-}
-
-{
-  type: "addConnection",
-  source: "IF",
-  target: "False Handler",
-  branch: "false"
-}
-
-// Switch node - semantic case numbers
-{
-  type: "addConnection",
-  source: "Switch",
-  target: "Handler A",
-  case: 0
-}
-```
-
-### Mistake 7: Wrong Parameter Name for updateNode
-
-**Problem**: Using `parameters` instead of `updates`
-
-```javascript
-// WRONG
-n8n_update_partial_workflow({
-  id: "wf-123",
-  operations: [{
-    type: "updateNode",
-    nodeName: "HTTP Request",
-    parameters: {url: "..."}  // ❌ Wrong key
-  }]
-})
-
-// CORRECT
-n8n_update_partial_workflow({
-  id: "wf-123",
-  operations: [{
-    type: "updateNode",
-    nodeName: "HTTP Request",
-    updates: {url: "..."}  // ✅ Correct key
-  }]
-})
-```
-
-### Mistake 8: Wrong Credential Attachment Format
-
-**Problem**: Credentials not attaching to nodes
-
-```javascript
-// WRONG - credentials as flat object
-updates: {credentials: "myApiKey"}
-
-// CORRECT - credentials nested by type with id and name
-updates: {
-  credentials: {
-    httpHeaderAuth: {
-      id: "abc123",
-      name: "My API Key"
-    }
-  }
-}
-```
-
-### Mistake 6: Not Using intent Parameter
-
-**Problem**: Less helpful tool responses
-
-```javascript
-// WRONG - No context for response
-n8n_update_partial_workflow({
-  id: "abc",
-  operations: [{type: "addNode", node: {...}}]
-})
-
-// CORRECT - Better AI responses
-n8n_update_partial_workflow({
-  id: "abc",
-  intent: "Add error handling for API failures",
-  operations: [{type: "addNode", node: {...}}]
-})
-```
+Full WRONG/CORRECT examples for each: see [VALIDATION_GUIDE.md → Common Mistakes](VALIDATION_GUIDE.md).
 
 ---
 
 ## Tool Usage Patterns
 
-### Pattern 1: Node Discovery (Most Common)
+Three patterns dominate real usage. Worked, step-by-step examples for each live in the reference guides.
 
-**Common workflow**: 18s average between steps
-
-```javascript
-// Step 1: Search (fast!)
-const results = await search_nodes({
-  query: "slack",
-  mode: "OR",  // Default: any word matches
-  limit: 20
-});
-// → Returns: nodes-base.slack, nodes-base.slackTrigger
-
-// Step 2: Get details (~18s later, user reviewing results)
-const details = await get_node({
-  nodeType: "nodes-base.slack",
-  includeExamples: true  // Get real template configs
-});
-// → Returns: operations, properties, metadata
-```
-
-### Pattern 2: Validation Loop
-
-**Typical cycle**: 23s thinking, 58s fixing
-
-```javascript
-// Step 1: Validate
-const result = await validate_node({
-  nodeType: "nodes-base.slack",
-  config: {
-    resource: "channel",
-    operation: "create"
-  },
-  profile: "runtime"
-});
-
-// Step 2: Check errors (~23s thinking)
-if (!result.valid) {
-  console.log(result.errors);  // "Missing required field: name"
-}
-
-// Step 3: Fix config (~58s fixing)
-config.name = "general";
-
-// Step 4: Validate again
-await validate_node({...});  // Repeat until clean
-```
-
-### Pattern 3: Workflow Editing
-
-**Most used update tool**: 99.0% success rate, 56s average between edits
-
-```javascript
-// Iterative workflow building (NOT one-shot!)
-// Edit 1
-await n8n_update_partial_workflow({
-  id: "workflow-id",
-  intent: "Add webhook trigger",
-  operations: [{type: "addNode", node: {...}}]
-});
-
-// ~56s later...
-
-// Edit 2
-await n8n_update_partial_workflow({
-  id: "workflow-id",
-  intent: "Connect webhook to processor",
-  operations: [{type: "addConnection", source: "...", target: "..."}]
-});
-
-// ~56s later...
-
-// Edit 3 (validation)
-await n8n_validate_workflow({id: "workflow-id"});
-
-// Ready? Activate!
-await n8n_update_partial_workflow({
-  id: "workflow-id",
-  intent: "Activate workflow for production",
-  operations: [{type: "activateWorkflow"}]
-});
-```
+- **Pattern 1 — Node Discovery** (18s avg between steps): `search_nodes({query})` → `get_node({nodeType, includeExamples: true})`. See [SEARCH_GUIDE.md](SEARCH_GUIDE.md).
+- **Pattern 2 — Validation Loop** (23s thinking, 58s fixing): `validate_node({profile: "runtime"})` → read `errors` → fix config → validate again until clean. See [VALIDATION_GUIDE.md](VALIDATION_GUIDE.md).
+- **Pattern 3 — Workflow Editing** (99.0% success, 56s avg between edits): iterate `n8n_update_partial_workflow` (with `intent`) → `n8n_validate_workflow` → finally `activateWorkflow`. Build iteratively, NOT one-shot. See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md).
 
 ---
 
@@ -442,362 +228,53 @@ See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for:
 - n8n_manage_credentials (credential CRUD + schema discovery)
 - n8n_audit_instance (security auditing)
 
+### Templates, Data Tables & Self-Help
+See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for:
+- search_templates / get_template / n8n_deploy_template examples
+- n8n_manage_datatable (full actions, filter conditions, examples)
+- tools_documentation, ai_agents_guide, n8n_health_check
+
 ---
 
 ## Template Usage
 
-### Search Templates
+The 2,700+ template library has three tools: `search_templates` (modes `query`/`by_nodes`/`by_task`/`by_metadata`), `get_template` (modes `structure`/`full`), and `n8n_deploy_template` (deploys to your instance with `autoFix`/`autoUpgradeVersions`, returns workflow ID + required credentials + fixes applied).
 
-```javascript
-// Search by keyword (default mode)
-search_templates({
-  query: "webhook slack",
-  limit: 20
-});
-
-// Search by node types
-search_templates({
-  searchMode: "by_nodes",
-  nodeTypes: ["n8n-nodes-base.httpRequest", "n8n-nodes-base.slack"]
-});
-
-// Search by task type
-search_templates({
-  searchMode: "by_task",
-  task: "webhook_processing"
-});
-
-// Search by metadata (complexity, setup time)
-search_templates({
-  searchMode: "by_metadata",
-  complexity: "simple",
-  maxSetupMinutes: 15
-});
-```
-
-### Get Template Details
-
-```javascript
-get_template({
-  templateId: 2947,
-  mode: "structure"  // nodes+connections only
-});
-
-get_template({
-  templateId: 2947,
-  mode: "full"  // complete workflow JSON
-});
-```
-
-### Deploy Template Directly
-
-```javascript
-// Deploy template to your n8n instance
-n8n_deploy_template({
-  templateId: 2947,
-  name: "My Weather to Slack",  // Custom name (optional)
-  autoFix: true,  // Auto-fix common issues (default)
-  autoUpgradeVersions: true  // Upgrade node versions (default)
-});
-// Returns: workflow ID, required credentials, fixes applied
-```
-
----
-
-## Workflow Generation
-
-### n8n_generate_workflow
-
-Generates an n8n workflow from a natural-language description via a multi-step flow with a review checkpoint. **Hosted-only** — self-hosted instances receive a redirect message rather than a workflow.
-
-**Two paths:**
-
-**Path A — pick a proposal** (default; cheapest, recommended):
-```javascript
-// Step 1: Get up to 5 proposals (NOT deployed)
-n8n_generate_workflow({
-  description: "Send a Slack message every morning at 9am with a daily standup reminder"
-})
-// → { status: "proposals", proposals: [{id, name, description, flow_summary, credentials_needed}, ...] }
-
-// Step 2: Deploy the proposal you want
-n8n_generate_workflow({
-  description: "Send a Slack message every morning at 9am with a daily standup reminder",
-  deploy_id: "uuid-from-proposals"
-})
-// → { status: "deployed", workflow_id, workflow_name, workflow_url, node_count, node_summary }
-```
-
-**Path B — fresh generation** (when no proposal fits):
-```javascript
-// Step 1: Skip the proposal cache, get a preview (NOT deployed)
-n8n_generate_workflow({
-  description: "Webhook → transform JSON → POST to REST API",
-  skip_cache: true
-})
-// → { status: "preview", ... }
-
-// Step 2: Deploy the preview
-n8n_generate_workflow({
-  description: "Webhook → transform JSON → POST to REST API",
-  confirm_deploy: true
-})
-// → { status: "deployed", ... }
-```
-
-**Description tips** (more specific = better results):
-- Trigger type: webhook, schedule (with cadence), manual, form, chat
-- Services to integrate: name them (Slack, Gmail, Postgres, etc.)
-- Logic/flow: what transforms, branches, or aggregations are needed
-
-**Caveats:**
-- **Hosted-only** — on self-hosted, the response is `{hosted_only: true, ...}` with a redirect message
-- Generated workflows are deployed in **inactive** state — credentials must be configured in the n8n UI before activation
-- Proposals/preview live in per-MCP-session state; switching sessions loses pending state
-- Always run `n8n_validate_workflow({id})` after deployment to catch any issues
-- For self-hosted instances, fall back to `n8n_deploy_template` (curated templates) or `n8n_create_workflow` (full control)
-
-**When to use which:**
-| Goal | Tool |
-|------|------|
-| Pick from a curated 2,700+ template library | `n8n_deploy_template` |
-| Describe what you want in plain English (hosted only) | `n8n_generate_workflow` |
-| Build node-by-node with full control | `n8n_create_workflow` |
+See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for full search/get/deploy examples.
 
 ---
 
 ## Data Table Management
 
-### n8n_manage_datatable
+`n8n_manage_datatable` is the MCP tool for managing data tables and rows from *outside* a workflow (table actions `createTable`/`listTables`/`getTable`/`updateTable`/`deleteTable`; row actions `getRows`/`insertRows`/`updateRows`/`upsertRows`/`deleteRows`, with filtering, pagination, and `dryRun`). Don't confuse it with the in-workflow `nodes-base.dataTable` node, which reads/writes rows *during execution* (see [n8n-node-configuration → OPERATION_PATTERNS.md](../n8n-node-configuration/OPERATION_PATTERNS.md#data-table-nodes-basedatatable)). Rule of thumb: MCP tool to set up a table once, workflow node to read/write on every execution. `deleteRows` requires a filter; use `dryRun: true` before bulk changes.
 
-Unified tool for managing n8n data tables and rows. Supports CRUD operations on tables and rows with filtering, pagination, and dry-run support.
-
-**Table Actions**: `createTable`, `listTables`, `getTable`, `updateTable`, `deleteTable`
-**Row Actions**: `getRows`, `insertRows`, `updateRows`, `upsertRows`, `deleteRows`
-
-```javascript
-// Create a data table
-n8n_manage_datatable({
-  action: "createTable",
-  name: "Contacts",
-  columns: [
-    {name: "email", type: "string"},
-    {name: "score", type: "number"}
-  ]
-})
-
-// Get rows with filter
-n8n_manage_datatable({
-  action: "getRows",
-  tableId: "dt-123",
-  filter: {
-    filters: [{columnName: "status", condition: "eq", value: "active"}]
-  },
-  limit: 50
-})
-
-// Insert rows
-n8n_manage_datatable({
-  action: "insertRows",
-  tableId: "dt-123",
-  data: [{email: "a@b.com", score: 10}],
-  returnType: "all"
-})
-
-// Update with dry run (preview changes)
-n8n_manage_datatable({
-  action: "updateRows",
-  tableId: "dt-123",
-  filter: {filters: [{columnName: "score", condition: "lt", value: 5}]},
-  data: {status: "inactive"},
-  dryRun: true
-})
-
-// Upsert (update or insert)
-n8n_manage_datatable({
-  action: "upsertRows",
-  tableId: "dt-123",
-  filter: {filters: [{columnName: "email", condition: "eq", value: "a@b.com"}]},
-  data: {score: 15},
-  returnData: true
-})
-```
-
-**Filter conditions**: `eq`, `neq`, `like`, `ilike`, `gt`, `gte`, `lt`, `lte`
-
-**Best practices**:
-- Use `dryRun: true` before bulk updates/deletes to verify filter correctness
-- Define column types upfront (`string`, `number`, `boolean`, `date`)
-- Use `returnType: "count"` (default) for insertRows to minimize response size
-- `deleteRows` requires a filter - cannot delete all rows without one
+See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for all actions, filter conditions, and examples.
 
 ---
 
 ## Credential Management
 
-### n8n_manage_credentials
+`n8n_manage_credentials` is the unified credential tool: actions `list`, `get`, `create`, `update`, `delete`, `getSchema`. It never returns secrets — `get`/`create`/`update` strip the `data` field. Use `getSchema` before `create` to discover required fields. The optional `includeUsage: true` flag (on `list`/`get`) reverse-scans workflows and attaches `usedIn: [{id, name, active}]` + `usageCount` — use it before deleting or rotating a credential to see what breaks (it triggers a full client-side scan, caps at 5000 workflows, excludes archived, and degrades to a `usageScanError` field on failure).
 
-Unified tool for managing n8n credentials. Supports full CRUD operations, schema discovery, and reverse-lookup of which workflows use each credential.
-
-**Actions**: `list`, `get`, `create`, `update`, `delete`, `getSchema`
-
-**Optional flag**: `includeUsage` (boolean, default `false`) — on `list` and `get`, attaches a `usedIn: [{id, name, active}]` array and `usageCount` to every credential by reverse-scanning workflows. Default behavior is unchanged when omitted.
-
-```javascript
-// List all credentials
-n8n_manage_credentials({action: "list"})
-// → Returns: id, name, type, createdAt, updatedAt (never exposes secrets)
-
-// Get credential by ID
-n8n_manage_credentials({action: "get", id: "123"})
-// → Returns: credential metadata (data field stripped for security)
-
-// Discover required fields for a credential type
-n8n_manage_credentials({action: "getSchema", type: "httpHeaderAuth"})
-// → Returns: required fields, types, descriptions
-
-// Create credential
-n8n_manage_credentials({
-  action: "create",
-  name: "My Slack Token",
-  type: "slackApi",
-  data: {accessToken: "xoxb-..."}
-})
-
-// Update credential
-n8n_manage_credentials({
-  action: "update",
-  id: "123",
-  name: "Updated Name",
-  data: {accessToken: "xoxb-new-..."},
-  type: "slackApi"  // Optional, needed by some n8n versions
-})
-
-// Delete credential
-n8n_manage_credentials({action: "delete", id: "123"})
-
-// List credentials WITH the workflows that reference each one
-n8n_manage_credentials({action: "list", includeUsage: true})
-// → Each credential gains: usedIn: [{id, name, active}], usageCount: N
-//   Response may include usageScanError if the workflow scan failed
-//   (base credential list still returned in that case)
-
-// Get one credential and the workflows that reference it
-n8n_manage_credentials({action: "get", id: "123", includeUsage: true})
-// → Adds usedIn and usageCount; on scan failure, response sets
-//   usageScanError and omits usedIn/usageCount
-```
-
-**When to use `includeUsage`**:
-- Pre-deletion safety check: confirm a credential isn't referenced before `delete`
-- Credential rotation impact analysis: list affected workflows before updating secrets
-- Remediating findings from `n8n_audit_instance` (e.g., shared/over-privileged credentials)
-
-**`includeUsage` caveats**:
-- Triggers a full workflow scan client-side (n8n's API has no native lookup) — slower on large instances, especially when scanning hundreds of workflows
-- Capped at 5000 workflows (same ceiling as `n8n_audit_instance`); archived workflows are excluded by n8n
-- A "no usages" result does **not** guarantee the credential is unused — verify before destructive actions
-- On scan failure the response degrades gracefully: base credentials are returned with a `usageScanError` field rather than failing the whole call
-
-**Security**:
-- `get`, `create`, and `update` responses strip the `data` field (defense-in-depth)
-- `get` action falls back to list+filter if direct GET returns 403/405 (not all n8n versions expose this endpoint)
-- Credential request bodies are redacted from debug logs
-
-**Best practices**:
-- Use `getSchema` before `create` to discover required fields for a credential type
-- The `data` field contains the actual secret values — provide it only on create/update
-- Always verify credential creation by listing afterward
-- Before `delete`, run `get` with `includeUsage: true` to see what breaks
+See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for all actions, the includeUsage shape, security notes, and the safe delete/rotate workflow.
 
 ---
 
 ## Security & Audit
 
-### n8n_audit_instance
+`n8n_audit_instance` combines n8n's built-in audit (categories `credentials`/`database`/`nodes`/`instance`/`filesystem`) with a custom deep scan (`hardcoded_secrets`, `unauthenticated_webhooks`, `error_handling`, `data_retention`). All parameters optional: `categories`, `includeCustomScan` (default `true`), `customChecks`, `daysAbandonedWorkflow`. Detected secrets are masked (first 6 + last 4 chars). Output is an actionable markdown report — summary table, findings by workflow, and a Remediation Playbook split into auto-fixable / requires-review / requires-user-action.
 
-Security audit tool that combines n8n's built-in audit with custom deep scanning of all workflows.
-
-```javascript
-// Full audit (default — runs both built-in + custom scan)
-n8n_audit_instance()
-
-// Built-in audit only (specific categories)
-n8n_audit_instance({
-  categories: ["credentials", "nodes"],
-  includeCustomScan: false
-})
-
-// Custom scan only (specific checks)
-n8n_audit_instance({
-  customChecks: ["hardcoded_secrets", "unauthenticated_webhooks"]
-})
-```
-
-**Built-in audit categories**: `credentials`, `database`, `nodes`, `instance`, `filesystem`
-
-**Custom deep scan checks**:
-- `hardcoded_secrets` — Detects 50+ patterns for API keys, tokens, passwords (OpenAI, AWS, Stripe, GitHub, Slack, etc.) plus PII (email, phone, credit card). Secrets are masked in output (first 6 + last 4 chars).
-- `unauthenticated_webhooks` — Flags webhook/form triggers without authentication
-- `error_handling` — Flags workflows with 3+ nodes and no error handling
-- `data_retention` — Flags workflows saving all execution data (success + failure)
-
-**Parameters** (all optional):
-- `categories` — Array of built-in audit categories
-- `includeCustomScan` — Boolean (default: `true`)
-- `customChecks` — Array subset of the 4 custom checks
-- `daysAbandonedWorkflow` — Days threshold for abandoned workflow detection
-
-**Output**: Actionable markdown report with:
-- Summary table (critical/high/medium/low finding counts)
-- Findings grouped by workflow
-- Remediation Playbook with three sections:
-  - **Auto-fixable** — Items you can fix with tool chains (e.g., add auth to webhooks)
-  - **Requires review** — Items needing human judgment (e.g., PII detection)
-  - **Requires user action** — Items needing manual intervention (e.g., rotate exposed keys)
+See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for the two scanning approaches, examples, and remediation types in full.
 
 ---
 
 ## Self-Help Tools
 
-### Get Tool Documentation
+- `tools_documentation()` — overview of all tools; `tools_documentation({topic, depth: "full"})` for a specific tool. Code node guides via topics `javascript_code_node_guide` / `python_code_node_guide`.
+- **AI agent guide** — `tools_documentation({topic: "ai_agents_guide", depth: "full"})` (no standalone tool); returns architecture, connections, tools, validation, best practices.
+- `n8n_health_check()` — quick check; `n8n_health_check({mode: "diagnostic"})` returns status, env vars, tool status, API connectivity.
 
-```javascript
-// Overview of all tools
-tools_documentation()
-
-// Specific tool details
-tools_documentation({
-  topic: "search_nodes",
-  depth: "full"
-})
-
-// Code node guides
-tools_documentation({topic: "javascript_code_node_guide", depth: "full"})
-tools_documentation({topic: "python_code_node_guide", depth: "full"})
-```
-
-### AI Agent Guide
-
-```javascript
-// Comprehensive AI workflow guide
-ai_agents_guide()
-// Returns: Architecture, connections, tools, validation, best practices
-
-// Or via tools_documentation
-tools_documentation({topic: "ai_agents_guide", depth: "full"})
-```
-
-### Health Check
-
-```javascript
-// Quick health check
-n8n_health_check()
-
-// Detailed diagnostics
-n8n_health_check({mode: "diagnostic"})
-// → Returns: status, env vars, tool status, API connectivity
-```
+See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for examples.
 
 ---
 
@@ -807,7 +284,7 @@ n8n_health_check({mode: "diagnostic"})
 - search_nodes, get_node
 - validate_node, validate_workflow
 - search_templates, get_template
-- tools_documentation, ai_agents_guide
+- tools_documentation (includes the ai_agents_guide topic)
 
 **Requires n8n API** (N8N_API_URL + N8N_API_KEY):
 - n8n_create_workflow
@@ -829,55 +306,8 @@ If API tools unavailable, use templates and validation-only workflows.
 
 ## Unified Tool Reference
 
-### get_node (Unified Node Information)
-
-**Detail Levels** (mode="info", default):
-- `minimal` (~200 tokens) - Basic metadata only
-- `standard` (~1-2K tokens) - Essential properties + operations (RECOMMENDED)
-- `full` (~3-8K tokens) - Complete schema (use sparingly)
-
-**Operation Modes**:
-- `info` (default) - Node schema with detail level
-- `docs` - Readable markdown documentation
-- `search_properties` - Find specific properties (use with propertyQuery)
-- `versions` - List all versions with breaking changes
-- `compare` - Compare two versions
-- `breaking` - Show only breaking changes
-- `migrations` - Show auto-migratable changes
-
-```javascript
-// Standard (recommended)
-get_node({nodeType: "nodes-base.httpRequest"})
-
-// Get documentation
-get_node({nodeType: "nodes-base.webhook", mode: "docs"})
-
-// Search for properties
-get_node({nodeType: "nodes-base.httpRequest", mode: "search_properties", propertyQuery: "auth"})
-
-// Check versions
-get_node({nodeType: "nodes-base.executeWorkflow", mode: "versions"})
-```
-
-### validate_node (Unified Validation)
-
-**Modes**:
-- `full` (default) - Comprehensive validation with errors/warnings/suggestions
-- `minimal` - Quick required fields check only
-
-**Profiles** (for mode="full"):
-- `minimal` - Very lenient
-- `runtime` - Standard (default, recommended)
-- `ai-friendly` - Balanced for AI workflows
-- `strict` - Most thorough (production)
-
-```javascript
-// Full validation with runtime profile
-validate_node({nodeType: "nodes-base.slack", config: {...}, profile: "runtime"})
-
-// Quick required fields check
-validate_node({nodeType: "nodes-base.webhook", config: {}, mode: "minimal"})
-```
+- **`get_node`** — detail levels (`minimal` ~200 tok / `standard` ~1-2K, RECOMMENDED / `full` ~3-8K, sparingly) and modes (`info` default, `docs`, `search_properties` + `propertyQuery`, `versions`, `compare`, `breaking`, `migrations`). Deep dive in [SEARCH_GUIDE.md](SEARCH_GUIDE.md).
+- **`validate_node`** — modes `full` (default, errors/warnings/suggestions) and `minimal` (required-fields check); profiles `minimal`/`runtime` (default, recommended)/`ai-friendly`/`strict`. Deep dive in [VALIDATION_GUIDE.md](VALIDATION_GUIDE.md).
 
 ---
 
@@ -939,7 +369,7 @@ validate_node({nodeType: "nodes-base.webhook", config: {}, mode: "minimal"})
 9. **Data tables** managed with `n8n_manage_datatable` (CRUD + filtering)
 10. **Credentials** managed with `n8n_manage_credentials` (CRUD + schema discovery)
 11. **Security audits** via `n8n_audit_instance` (built-in + custom deep scan)
-12. **AI agent guide** available via `ai_agents_guide()` tool
+12. **AI agent guide** available via `tools_documentation({topic: "ai_agents_guide", depth: "full"})`
 
 **Common Workflow**:
 1. search_nodes → find node
@@ -952,8 +382,9 @@ validate_node({nodeType: "nodes-base.webhook", config: {}, mode: "minimal"})
 
 For details, see:
 - [SEARCH_GUIDE.md](SEARCH_GUIDE.md) - Node discovery
-- [VALIDATION_GUIDE.md](VALIDATION_GUIDE.md) - Configuration validation
+- [VALIDATION_GUIDE.md](VALIDATION_GUIDE.md) - Configuration validation + common mistakes
 - [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) - Workflow management
+- [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) - Templates, data tables, self-help tools
 
 ---
 

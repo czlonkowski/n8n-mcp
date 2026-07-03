@@ -21,7 +21,7 @@ Teaches how to use n8n-mcp MCP server tools correctly for efficient workflow bui
 
 ## File Count
 
-5 files, ~1,150 lines total
+5 files
 
 ## Priority
 
@@ -75,10 +75,10 @@ Teaches how to use n8n-mcp MCP server tools correctly for efficient workflow bui
 
 ## Files
 
-- **SKILL.md** (480 lines) - Core tool usage guide
-- **SEARCH_GUIDE.md** (220 lines) - Node discovery tools
-- **VALIDATION_GUIDE.md** (250 lines) - Validation tools and profiles
-- **WORKFLOW_GUIDE.md** (200 lines) - Workflow management
+- **SKILL.md** - Core tool usage guide
+- **SEARCH_GUIDE.md** - Node discovery tools
+- **VALIDATION_GUIDE.md** - Validation tools and profiles
+- **WORKFLOW_GUIDE.md** - Workflow management
 - **README.md** (this file) - Skill metadata
 
 ## What You'll Learn

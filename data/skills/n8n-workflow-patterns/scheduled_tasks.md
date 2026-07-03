@@ -106,6 +106,10 @@ Schedule Trigger → [Fetch Data] → [Process] → [Deliver] → [Log/Notify]
 }
 ```
 
+### Timezone Gotcha (applies to all modes)
+
+`triggerAtHour` / `hour` values use the **instance timezone, not UTC**. n8n resolves it from the `GENERIC_TIMEZONE` env var (or the workflow's timezone setting); when neither is set, it falls back to the host system timezone. A trigger set to hour 21 on a server in `America/Edmonton` fires at 9 PM MST, not 21:00 UTC. Always confirm the instance timezone before scheduling, or set the workflow timezone explicitly.
+
 ### Cron Mode (Advanced)
 **Best for**: Complex schedules
 

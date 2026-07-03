@@ -63,27 +63,39 @@ validate_node({
 
 ## Validation Profiles
 
-Choose based on your stage:
+The profile controls **which advisory findings you see** — not how likely the validator is to be
+wrong. What flips `valid: false` (real errors) and what counts as a security/deprecation warning is
+the same under every profile; the profiles differ only in how many *best-practice advisories* ride
+along (n8n-mcp ≥ 2.63.0). Choose by how much lint you want at this stage:
 
-**minimal** - Only required fields
-- Fastest
-- Most permissive
-- Use: Quick checks during editing
+**minimal** - Required fields only
+- Fastest, leanest output
+- Errors for missing required fields; nothing advisory
+- Use: Quick checks while you are still assembling a config
 
-**runtime** - Values + types (**RECOMMENDED**)
-- Balanced validation
-- Catches real errors
+**runtime** - Errors + security/deprecation warnings (**RECOMMENDED**)
+- The profile that decides valid/invalid for deployment
+- Real value/type errors, plus warnings that matter for safety (security, deprecated nodes)
+- Stays signal-heavy: no per-node best-practice warnings and no outdated-`typeVersion` notes
+  (at most a single top-level "add error handling" suggestion)
 - Use: Pre-deployment validation
 
-**ai-friendly** - Reduce false positives
-- For AI-generated configs
-- Tolerates minor issues
-- Use: When AI configures nodes
+**ai-friendly** - runtime + best-practice advisories
+- Everything `runtime` reports, *plus* advisory notes: outdated-`typeVersion` suggestions,
+  per-node "without error handling" warnings, resource-locator `cachedResultName` advice,
+  long-chain hints
+- These advisories are informational — they never flip `valid: false`
+- Use: Reviewing an AI-built or hand-built workflow for polish
 
-**strict** - Maximum validation
-- Strictest rules
-- May have false positives
-- Use: Production deployment
+**strict** - ai-friendly + strict-only checks
+- Everything `ai-friendly` reports, plus checks like "Property 'X' won't be used" for
+  leftover parameters hidden by the current settings
+- The most verbose profile — expect the most advisory notes, not more real errors
+- Use: A final lint pass before shipping
+
+> These are advisory tiers, not accuracy tiers. `ai-friendly` is **not** "more tolerant" and
+> `strict` is **not** "more likely to be wrong" — a config that is `valid` under `runtime` stays
+> `valid` under `strict`; `strict` just adds more suggestions and warnings to read.
 
 ---
 
@@ -123,11 +135,15 @@ Choose based on your stage:
 
 ### Error Types
 
-- `missing_required` - Must fix
-- `invalid_value` - Must fix
-- `type_mismatch` - Must fix
-- `best_practice` - Should fix (warning)
-- `suggestion` - Optional improvement
+- `missing_required` - Must fix (flips `valid:false`)
+- `invalid_value` - Must fix (flips `valid:false`)
+- `type_mismatch` - Must fix (flips `valid:false`)
+- `best_practice` - Advisory warning; surfaces under `ai-friendly`/`strict` (security/deprecation warnings surface under every profile)
+- `suggestion` - Optional improvement; surfaces under `ai-friendly`/`strict`
+
+The `best_practice` warning shown above (rate-limit / error-handling advice) is one of the
+advisories gated to `ai-friendly`/`strict` — under `runtime` this same config reports the error
+with no such warning.
 
 ---
 
@@ -317,37 +333,48 @@ n8n_autofix_workflow({
 
 ```
 1. Read error message carefully
-2. Check if it's a known false positive
-3. Fix real errors
+2. Separate real errors (they flip valid:false) from advisory notes
+3. Fix the errors
 4. Validate again
 5. Iterate until clean
 ```
 
+Only findings in `errors` flip `valid: false`. `warnings` and `suggestions` are advice — an
+outdated-`typeVersion` note or a "without error handling" suggestion under `ai-friendly`/`strict`
+does not make the workflow invalid, so treat them as a to-review list, not a blocker.
+
 ### Common Errors
 
-**"Required field missing"**
-→ Add the field with appropriate value
+**"Required field missing"** / **"Required property 'X' cannot be empty"**
+→ Add the field with a real value. This is a true error even when the field looks optional — n8n's
+own publish validation rejects the same empty value, so the workflow will not save.
 
 **"Invalid value"**
-→ Check allowed values in get_node output
+→ Check allowed values in get_node output. Fires only on an explicitly wrong enum value; an
+*omitted* operation on a multi-resource node (Gmail, Slack, Telegram…) is no longer flagged
+(n8n-mcp ≥ 2.63.0 resolves the correct per-resource default before checking).
 
 **"Type mismatch"**
 → Convert to correct type (string/number/boolean)
 
-**"Cannot have singleValue"**
-→ Auto-sanitization will fix on next update
+**"Code cannot be empty"**
+→ Fill in the Code node's `jsCode`/`pythonCode`. Kept as a true error — n8n refuses to run an
+empty Code node.
 
-**"Missing operator metadata"**
-→ Auto-sanitization will fix on next update
+> Operator shapes (`singleValue`, IF/Switch `conditions.options` metadata) are **no longer
+> validation errors**. The save-time sanitizer normalizes them (see Auto-Sanitization), and
+> validate-only calls leave them alone — so you will not see "Cannot have singleValue" or
+> "Missing operator metadata" from the validator anymore.
 
-### False Positives
+### Errors vs advisories
 
-Some validation warnings may be acceptable:
-- Optional best practices
-- Node-specific edge cases
-- Profile-dependent issues
-
-Use **ai-friendly** profile to reduce false positives.
+There is no standing list of validator false positives to ignore (n8n-mcp ≥ 2.63.0 removed the
+classes that used to require it — template literals inside `{{ }}`, optional chaining `?.`,
+string-keyed bracket access like `$json['some-prop']`, legacy IF v1 condition shapes, the
+Webhook → Respond-to-Webhook pattern, and outdated-but-supported typeVersions all validate cleanly
+now). If something lands in `errors`, treat it as real. If you want the leanest output while
+building, validate under `runtime` (errors + security/deprecation only); switch to
+`ai-friendly`/`strict` when you want the best-practice advisories.
 
 ---
 
@@ -368,7 +395,7 @@ Use **ai-friendly** profile to reduce false positives.
 
 - Skip validation before deployment
 - Ignore error messages
-- Use strict profile during development (too many warnings)
+- Use strict profile mid-build (it layers on best-practice advisories that are noise until the workflow is nearly done)
 - Assume validation passed (check result)
 - Try to manually fix auto-sanitization issues
 
@@ -441,6 +468,193 @@ n8n_autofix_workflow({
 - **validate_workflow**: Complete workflow check
 - **n8n_validate_workflow({id})**: Validate existing workflow
 - **n8n_autofix_workflow({id})**: Auto-fix common issues
+
+---
+
+## Common Mistakes (Full Deep-Dive)
+
+The eight most common tool-usage mistakes, with WRONG vs CORRECT examples.
+
+### Mistake 1: Wrong nodeType Format
+
+**Problem**: "Node not found" error
+
+```javascript
+// WRONG
+get_node({nodeType: "slack"})  // Missing prefix
+get_node({nodeType: "n8n-nodes-base.slack"})  // Wrong prefix
+
+// CORRECT
+get_node({nodeType: "nodes-base.slack"})
+```
+
+### Mistake 2: Using detail="full" by Default
+
+**Problem**: Huge payload, slower response, token waste
+
+```javascript
+// WRONG - Returns 3-8K tokens, use sparingly
+get_node({nodeType: "nodes-base.slack", detail: "full"})
+
+// CORRECT - Returns 1-2K tokens, covers 95% of use cases
+get_node({nodeType: "nodes-base.slack"})  // detail="standard" is default
+get_node({nodeType: "nodes-base.slack", detail: "standard"})
+```
+
+**When to use detail="full"**:
+- Debugging complex configuration issues
+- Need complete property schema with all nested options
+- Exploring advanced features
+
+**Better alternatives**:
+1. `get_node({detail: "standard"})` - for operations list (default)
+2. `get_node({mode: "docs"})` - for readable documentation
+3. `get_node({mode: "search_properties", propertyQuery: "auth"})` - for specific property
+
+### Mistake 3: Not Using Validation Profiles
+
+**Problem**: Missing real errors, or drowning in advisory notes at the wrong stage
+
+**Profiles** (they gate advisory volume, not accuracy — see [Validation Profiles](#validation-profiles)):
+- `minimal` - Required fields only (fast, leanest)
+- `runtime` - Errors + security/deprecation warnings (recommended for pre-deployment; decides valid/invalid)
+- `ai-friendly` - runtime + best-practice advisories (outdated-typeVersion, error-handling suggestions…)
+- `strict` - ai-friendly + strict-only checks (e.g. "property won't be used")
+
+```javascript
+// WRONG - Uses default profile
+validate_node({nodeType, config})
+
+// CORRECT - Explicit profile
+validate_node({nodeType, config, profile: "runtime"})
+```
+
+### Mistake 4: Ignoring Auto-Sanitization
+
+**What happens**: ALL nodes sanitized on ANY workflow update
+
+**Auto-fixes**:
+- Binary operators (equals, contains) → removes singleValue
+- Unary operators (isEmpty, isNotEmpty) → adds singleValue: true
+- IF/Switch nodes → adds missing metadata
+
+**Cannot fix**:
+- Broken connections
+- Branch count mismatches
+- Paradoxical corrupt states
+
+```javascript
+// After ANY update, auto-sanitization runs on ALL nodes
+n8n_update_partial_workflow({id, operations: [...]})
+// → Automatically fixes operator structures
+```
+
+### Mistake 5: Not Using Smart Parameters
+
+**Problem**: Complex sourceIndex calculations for multi-output nodes
+
+**Old way** (manual):
+```javascript
+// IF node connection
+{
+  type: "addConnection",
+  source: "IF",
+  target: "Handler",
+  sourceIndex: 0  // Which output? Hard to remember!
+}
+```
+
+**New way** (smart parameters):
+```javascript
+// IF node - semantic branch names
+{
+  type: "addConnection",
+  source: "IF",
+  target: "True Handler",
+  branch: "true"  // Clear and readable!
+}
+
+{
+  type: "addConnection",
+  source: "IF",
+  target: "False Handler",
+  branch: "false"
+}
+
+// Switch node - semantic case numbers
+{
+  type: "addConnection",
+  source: "Switch",
+  target: "Handler A",
+  case: 0
+}
+```
+
+### Mistake 7: Wrong Parameter Name for updateNode
+
+**Problem**: Using `parameters` instead of `updates`
+
+```javascript
+// WRONG
+n8n_update_partial_workflow({
+  id: "wf-123",
+  operations: [{
+    type: "updateNode",
+    nodeName: "HTTP Request",
+    parameters: {url: "..."}  // ❌ Wrong key
+  }]
+})
+
+// CORRECT
+n8n_update_partial_workflow({
+  id: "wf-123",
+  operations: [{
+    type: "updateNode",
+    nodeName: "HTTP Request",
+    updates: {url: "..."}  // ✅ Correct key
+  }]
+})
+```
+
+### Mistake 8: Wrong Credential Attachment Format
+
+**Problem**: Credentials not attaching to nodes
+
+```javascript
+// WRONG - credentials as flat object
+updates: {credentials: "myApiKey"}
+
+// CORRECT - credentials nested by type with id and name
+updates: {
+  credentials: {
+    httpHeaderAuth: {
+      id: "abc123",
+      name: "My API Key"
+    }
+  }
+}
+```
+
+### Mistake 6: Not Using intent Parameter
+
+**Problem**: Less helpful tool responses
+
+```javascript
+// WRONG - No context for response
+n8n_update_partial_workflow({
+  id: "abc",
+  operations: [{type: "addNode", node: {...}}]
+})
+
+// CORRECT - Better AI responses
+n8n_update_partial_workflow({
+  id: "abc",
+  intent: "Add error handling for API failures",
+  operations: [{type: "addNode", node: {...}}]
+})
+```
+
+---
 
 **Related**:
 - [SEARCH_GUIDE.md](SEARCH_GUIDE.md) - Find nodes

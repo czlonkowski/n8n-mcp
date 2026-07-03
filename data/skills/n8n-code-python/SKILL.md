@@ -1,6 +1,6 @@
 ---
 name: n8n-code-python
-description: Write Python code in n8n Code nodes. Use when writing Python in n8n, using _input/_json/_node syntax, working with standard library, or need to understand Python limitations in n8n Code nodes. Use this skill when the user specifically requests Python for an n8n Code node. Note — JavaScript is recommended for 95% of use cases — only use Python when the user explicitly prefers it or the task requires Python-specific standard library capabilities (regex, hashlib, statistics).
+description: Write Python code in n8n Code nodes. Use when writing Python in n8n, using _input/_json/_node syntax, working with standard library, or need to understand Python limitations in n8n Code nodes. Use this skill when the user specifically requests Python for an n8n Code node. Note — JavaScript is recommended for 95% of use cases — only use Python when the user explicitly prefers it or the task requires Python-specific standard library capabilities (regex, hashlib, statistics). EXCEPTION — for Python in the AI-agent-callable Custom Code Tool (@n8n/n8n-nodes-langchain.toolCode), use the n8n-code-tool skill instead (input is _query, return must be a string).
 ---
 
 # Python Code Node (Beta)
@@ -17,7 +17,7 @@ Expert guidance for writing Python code in n8n Code nodes.
 - You're doing data transformations better suited to Python
 
 **Why JavaScript is preferred:**
-- Full n8n helper functions ($helpers.httpRequest, etc.)
+- Full n8n helper functions (`this.helpers.httpRequest`, etc.)
 - Luxon DateTime library for advanced date/time operations
 - No external library limitations
 - Better n8n documentation and community support
@@ -156,82 +156,24 @@ return processed
 
 ## Data Access Patterns
 
-### Pattern 1: _input.all() - Most Common
-
-**Use when**: Processing arrays, batch operations, aggregations
+Access input data through underscore-prefixed variables. Each item is a dict shaped `{"json": {...}}`, so the actual fields live under `["json"]`.
 
 ```python
-# Get all items from previous node
-all_items = _input.all()
+# Pattern 1: _input.all() - Most common. Arrays, batch ops, aggregations
+all_items = _input.all()            # list of {"json": {...}} dicts
 
-# Filter, transform as needed
-valid = [item for item in all_items if item["json"].get("status") == "active"]
+# Pattern 2: _input.first() - Very common. Single objects, API responses
+data = _input.first()["json"]       # built-in safety vs all_items[0]
 
-processed = []
-for item in valid:
-    processed.append({
-        "json": {
-            "id": item["json"]["id"],
-            "name": item["json"]["name"]
-        }
-    })
+# Pattern 3: _input.item - "Run Once for Each Item" mode ONLY
+current = _input.item["json"]       # None/error in All Items mode
 
-return processed
-```
-
-### Pattern 2: _input.first() - Very Common
-
-**Use when**: Working with single objects, API responses
-
-```python
-# Get first item only
-first_item = _input.first()
-data = first_item["json"]
-
-return [{
-    "json": {
-        "result": process_data(data),
-        "processed_at": datetime.now().isoformat()
-    }
-}]
-```
-
-### Pattern 3: _input.item - Each Item Mode Only
-
-**Use when**: In "Run Once for Each Item" mode
-
-```python
-# Current item in loop (Each Item mode only)
-current_item = _input.item
-
-return [{
-    "json": {
-        **current_item["json"],
-        "item_processed": True
-    }
-}]
-```
-
-### Pattern 4: _node - Reference Other Nodes
-
-**Use when**: Need data from specific nodes in workflow
-
-```python
-# Get output from specific node
+# Pattern 4: _node - Reference a specific named node
 webhook_data = _node["Webhook"]["json"]
 http_data = _node["HTTP Request"]["json"]
-
-return [{
-    "json": {
-        "combined": {
-            "webhook": webhook_data,
-            "api": http_data
-        }
-    }
-}]
 ```
 
-**See**: [DATA_ACCESS.md](DATA_ACCESS.md) for comprehensive guide
+**See**: [DATA_ACCESS.md](DATA_ACCESS.md) for the comprehensive guide — six `_input.all()` recipes (filter, transform, aggregate, sort, group, deduplicate), `_input.first()` and `_input.item` examples, multi-node combining, the JS-vs-Python variable table, and the decision tree.
 
 ---
 
@@ -324,40 +266,19 @@ return [{"data": value}]  # Should be {"json": value}
 
 ## Critical Limitation: No External Libraries
 
-**MOST IMPORTANT PYTHON LIMITATION**: Cannot import external packages
+**MOST IMPORTANT PYTHON LIMITATION**: Cannot import external packages on default installs.
 
-### What's NOT Available
+> **Self-hosted exception**: external package availability depends entirely on the instance's Python runner configuration. If the user states their self-hosted instance has specific packages available in the Python runner environment, use them — don't refuse. When unsure, ask or write standard-library-only code.
 
-```python
-# ❌ NOT AVAILABLE - Will raise ModuleNotFoundError
-import requests  # ❌ No
-import pandas  # ❌ No
-import numpy  # ❌ No
-import scipy  # ❌ No
-from bs4 import BeautifulSoup  # ❌ No
-import lxml  # ❌ No
-```
+**❌ NOT available** (raise `ModuleNotFoundError`): `requests`, `pandas`, `numpy`, `scipy`, `bs4`/BeautifulSoup, `lxml`.
 
-### What IS Available (Standard Library)
-
-```python
-# ✅ AVAILABLE - Standard library only
-import json  # ✅ JSON parsing
-import datetime  # ✅ Date/time operations
-import re  # ✅ Regular expressions
-import base64  # ✅ Base64 encoding/decoding
-import hashlib  # ✅ Hashing functions
-import urllib.parse  # ✅ URL parsing
-import math  # ✅ Math functions
-import random  # ✅ Random numbers
-import statistics  # ✅ Statistical functions
-```
+**✅ Available** (standard library only): `json`, `datetime`, `re`, `base64`, `hashlib`, `urllib.parse`, `math`, `random`, `statistics`.
 
 ### Workarounds
 
 **Need HTTP requests?**
 - ✅ Use **HTTP Request node** before Code node
-- ✅ Or switch to **JavaScript** and use `$helpers.httpRequest()`
+- ✅ Or switch to **JavaScript** and use `this.helpers.httpRequest()` (the bare `$helpers` global is undefined in the task-runner sandbox)
 
 **Need data analysis (pandas/numpy)?**
 - ✅ Use Python **statistics** module for basic stats
@@ -374,229 +295,35 @@ import statistics  # ✅ Statistical functions
 
 ## Common Patterns Overview
 
-Based on production workflows, here are the most useful Python patterns:
+Based on production workflows, the most useful Python patterns are:
 
-### 1. Data Transformation
-Transform all items with list comprehensions
+1. **Data Transformation** - Transform all items with list comprehensions
+2. **Filtering & Aggregation** - Sum, filter, count with built-in functions
+3. **String Processing with Regex** - Extract patterns from text with `re`
+4. **Data Validation** - Validate and clean data, attach error lists
+5. **Statistical Analysis** - Calculate mean/median/stdev with the `statistics` module
 
-```python
-items = _input.all()
-
-return [
-    {
-        "json": {
-            "id": item["json"].get("id"),
-            "name": item["json"].get("name", "Unknown").upper(),
-            "processed": True
-        }
-    }
-    for item in items
-]
-```
-
-### 2. Filtering & Aggregation
-Sum, filter, count with built-in functions
-
-```python
-items = _input.all()
-total = sum(item["json"].get("amount", 0) for item in items)
-valid_items = [item for item in items if item["json"].get("amount", 0) > 0]
-
-return [{
-    "json": {
-        "total": total,
-        "count": len(valid_items)
-    }
-}]
-```
-
-### 3. String Processing with Regex
-Extract patterns from text
-
-```python
-import re
-
-items = _input.all()
-email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-
-all_emails = []
-for item in items:
-    text = item["json"].get("text", "")
-    emails = re.findall(email_pattern, text)
-    all_emails.extend(emails)
-
-# Remove duplicates
-unique_emails = list(set(all_emails))
-
-return [{
-    "json": {
-        "emails": unique_emails,
-        "count": len(unique_emails)
-    }
-}]
-```
-
-### 4. Data Validation
-Validate and clean data
-
-```python
-items = _input.all()
-validated = []
-
-for item in items:
-    data = item["json"]
-    errors = []
-
-    # Validate fields
-    if not data.get("email"):
-        errors.append("Email required")
-    if not data.get("name"):
-        errors.append("Name required")
-
-    validated.append({
-        "json": {
-            **data,
-            "valid": len(errors) == 0,
-            "errors": errors if errors else None
-        }
-    })
-
-return validated
-```
-
-### 5. Statistical Analysis
-Calculate statistics with statistics module
-
-```python
-from statistics import mean, median, stdev
-
-items = _input.all()
-values = [item["json"].get("value", 0) for item in items if "value" in item["json"]]
-
-if values:
-    return [{
-        "json": {
-            "mean": mean(values),
-            "median": median(values),
-            "stdev": stdev(values) if len(values) > 1 else 0,
-            "min": min(values),
-            "max": max(values),
-            "count": len(values)
-        }
-    }]
-else:
-    return [{"json": {"error": "No values found"}}]
-```
-
-**See**: [COMMON_PATTERNS.md](COMMON_PATTERNS.md) for 10 detailed Python patterns
+Copy-ready snippets for all five live in [COMMON_PATTERNS.md](COMMON_PATTERNS.md#quick-pattern-snippets), alongside 10 fully detailed production patterns (multi-source aggregation, markdown parsing, JSON comparison, CRM normalization, dictionary lookup, top-N filtering, and more).
 
 ---
 
 ## Error Prevention - Top 5 Mistakes
 
-### #1: Importing External Libraries (Python-Specific!)
+1. **Importing external libraries** (Python-specific) → `import requests` raises `ModuleNotFoundError`. Use the HTTP Request node or JavaScript instead.
+2. **Empty code or missing return** → every path must end with `return [{"json": ...}]`.
+3. **Incorrect return format** → wrap in a list: `{"json": {...}}` becomes `[{"json": {...}}]`.
+4. **KeyError on dictionary access** → use `.get()`: `_json.get("user", {}).get("name", "Unknown")`.
+5. **Webhook body nesting** → read via `["body"]`: `_json.get("body", {}).get("email", "no-email")`.
 
-```python
-# ❌ WRONG: Trying to import external library
-import requests  # ModuleNotFoundError!
-
-# ✅ CORRECT: Use HTTP Request node or JavaScript
-# Add HTTP Request node before Code node
-# OR switch to JavaScript and use $helpers.httpRequest()
-```
-
-### #2: Empty Code or Missing Return
-
-```python
-# ❌ WRONG: No return statement
-items = _input.all()
-# Processing...
-# Forgot to return!
-
-# ✅ CORRECT: Always return data
-items = _input.all()
-# Processing...
-return [{"json": item["json"]} for item in items]
-```
-
-### #3: Incorrect Return Format
-
-```python
-# ❌ WRONG: Returning dict instead of list
-return {"json": {"result": "success"}}
-
-# ✅ CORRECT: List wrapper required
-return [{"json": {"result": "success"}}]
-```
-
-### #4: KeyError on Dictionary Access
-
-```python
-# ❌ WRONG: Direct access crashes if missing
-name = _json["user"]["name"]  # KeyError!
-
-# ✅ CORRECT: Use .get() for safe access
-name = _json.get("user", {}).get("name", "Unknown")
-```
-
-### #5: Webhook Body Nesting
-
-```python
-# ❌ WRONG: Direct access to webhook data
-email = _json["email"]  # KeyError!
-
-# ✅ CORRECT: Webhook data under ["body"]
-email = _json["body"]["email"]
-
-# ✅ BETTER: Safe access with .get()
-email = _json.get("body", {}).get("email", "no-email")
-```
-
-**See**: [ERROR_PATTERNS.md](ERROR_PATTERNS.md) for comprehensive error guide
+**See**: [ERROR_PATTERNS.md](ERROR_PATTERNS.md) for the comprehensive guide — each error with wrong-vs-right code, error messages, nested-access fixes, an `AttributeError` bonus case, a prevention checklist, and a quick-fix table.
 
 ---
 
 ## Standard Library Reference
 
-### Most Useful Modules
+Most useful modules: `json` (parse/generate), `datetime` (dates + `timedelta`), `re` (regex), `base64` (encode/decode), `hashlib` (hashing), `urllib.parse` (URL ops), and `statistics` (mean/median/stdev). Also available: `math`, `random`, `collections`, `itertools`, `functools`.
 
-```python
-# JSON operations
-import json
-data = json.loads(json_string)
-json_output = json.dumps({"key": "value"})
-
-# Date/time
-from datetime import datetime, timedelta
-now = datetime.now()
-tomorrow = now + timedelta(days=1)
-formatted = now.strftime("%Y-%m-%d")
-
-# Regular expressions
-import re
-matches = re.findall(r'\d+', text)
-cleaned = re.sub(r'[^\w\s]', '', text)
-
-# Base64 encoding
-import base64
-encoded = base64.b64encode(data).decode()
-decoded = base64.b64decode(encoded)
-
-# Hashing
-import hashlib
-hash_value = hashlib.sha256(text.encode()).hexdigest()
-
-# URL parsing
-import urllib.parse
-params = urllib.parse.urlencode({"key": "value"})
-parsed = urllib.parse.urlparse(url)
-
-# Statistics
-from statistics import mean, median, stdev
-average = mean([1, 2, 3, 4, 5])
-```
-
-**See**: [STANDARD_LIBRARY.md](STANDARD_LIBRARY.md) for complete reference
+For a condensed cheat sheet plus full per-module examples, see [STANDARD_LIBRARY.md](STANDARD_LIBRARY.md#quick-reference-most-useful-modules).
 
 ---
 
@@ -692,7 +419,7 @@ data = _node['HTTP Request'].first()['json']
 - ✅ You need specific standard library functions
 
 ### Use JavaScript When:
-- ✅ You need HTTP requests ($helpers.httpRequest())
+- ✅ You need HTTP requests (`this.helpers.httpRequest()`)
 - ✅ You need advanced date/time (DateTime/Luxon)
 - ✅ You want better n8n integration
 - ✅ **For 95% of use cases** (recommended)

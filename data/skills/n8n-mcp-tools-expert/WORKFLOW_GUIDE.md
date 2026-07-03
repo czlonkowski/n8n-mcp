@@ -436,112 +436,6 @@ const result = n8n_deploy_template({
 
 ---
 
-## n8n_generate_workflow (NATURAL LANGUAGE → WORKFLOW)
-
-**Speed**: Proposals ~2s, fresh generation 5–15s, deploy ~3s
-
-**Use when**: User describes the workflow in plain English and wants the system to draft (and optionally deploy) it.
-
-> ⚠️ **Hosted-only feature.** On self-hosted instances the tool returns `{hosted_only: true}` with a redirect message rather than a workflow. For self-hosted, use `n8n_deploy_template` (templates) or `n8n_create_workflow` (manual).
-
-### How It Works
-
-It's a **multi-step flow with a review checkpoint** — proposals/preview are returned first, deployment requires a second call. This avoids deploying low-quality drafts.
-
-### Path A: Proposals → Deploy (default, recommended)
-
-```javascript
-// Step 1: Generate proposals (NOT deployed, returns up to 5 candidates)
-n8n_generate_workflow({
-  description: "Slack daily standup reminder at 9am every weekday"
-})
-// → {
-//     status: "proposals",
-//     proposals: [
-//       {
-//         id: "uuid-1",
-//         name: "Daily Standup Reminder",
-//         description: "...",
-//         flow_summary: "Schedule trigger → Slack message",
-//         credentials_needed: ["slackApi"]
-//       },
-//       ...
-//     ]
-//   }
-
-// Step 2: Deploy the proposal you picked
-n8n_generate_workflow({
-  description: "Slack daily standup reminder at 9am every weekday",
-  deploy_id: "uuid-1"
-})
-// → { status: "deployed", workflow_id, workflow_name, workflow_url,
-//     node_count, node_summary }
-```
-
-### Path B: Skip Cache → Preview → Confirm
-
-Use when none of the proposals match what you want.
-
-```javascript
-// Step 1: Bypass proposals; get a fresh preview (NOT deployed)
-n8n_generate_workflow({
-  description: "Webhook receives JSON, transforms it, POSTs to a REST API",
-  skip_cache: true
-})
-// → { status: "preview", ... }
-
-// Step 2: Deploy the preview
-n8n_generate_workflow({
-  description: "Webhook receives JSON, transforms it, POSTs to a REST API",
-  confirm_deploy: true
-})
-// → { status: "deployed", ... }
-```
-
-### Writing a Good Description
-
-The quality of the generated workflow is bound by the clarity of the description. Always include:
-
-- **Trigger type**: `webhook`, `schedule` (with cadence — "every 15 min", "weekdays at 9am"), `manual`, `form`, `chat`
-- **Services involved**: name them explicitly (Slack, Gmail, HubSpot, Postgres, etc.) — generic terms ("a chat tool") yield generic results
-- **Logic / flow**: branches, transforms, aggregation, deduplication, retry behavior
-
-**Bad**: `"Send a notification when something happens"`
-
-**Good**: `"When a new row is added to the 'leads' Postgres table, enrich it with Clearbit, then post a summary to the #sales Slack channel. Skip rows where 'company' is empty."`
-
-### Parameters
-
-| Parameter | Type | Use |
-|-----------|------|-----|
-| `description` | string (required) | Natural-language description |
-| `deploy_id` | string | ID of a proposal from a prior call — deploys it |
-| `skip_cache` | boolean | Skip proposals; generate from scratch and return a preview |
-| `confirm_deploy` | boolean | Deploy the most recent preview from this session |
-
-### Common Pitfalls
-
-- **Hosted-only** — on self-hosted, no workflow is generated; fall back to `n8n_deploy_template` or `n8n_create_workflow`
-- **Proposals are NOT deployed** — until you call again with `deploy_id` or `confirm_deploy`, nothing exists in n8n
-- **Inactive on deploy** — generated workflows are created in **inactive** state; credentials must be configured in the n8n UI before activation
-- **Per-session state** — pending proposals/preview live in MCP-session state; reconnecting loses them, and you'll need to re-issue the description
-
-### Recommended Follow-Up
-
-Always validate after deploying:
-```javascript
-n8n_generate_workflow({description: "...", deploy_id: "uuid-1"})
-// → workflow_id: "abc"
-
-n8n_validate_workflow({id: "abc"})
-// → catches any node-version or connection issues the generator missed
-
-// If issues found, n8n_autofix_workflow can resolve common ones
-n8n_autofix_workflow({id: "abc", applyFixes: true})
-```
-
----
-
 ## n8n_workflow_versions (VERSION CONTROL)
 
 **Use when**: Managing workflow history, rollback, cleanup
@@ -869,22 +763,42 @@ n8n_validate_workflow({
 
 **Use when**: Retrieving workflow details
 
+n8n has a **draft/publish model**: the workflow body holds the draft (your latest edits),
+while `mode: "active"` returns the published graph that's actually running. Pick the mode by
+how much you need and how big the workflow is.
+
 **Modes**:
-- `full` (default) - Complete workflow JSON
-- `details` - Full + execution stats
-- `structure` - Nodes + connections only
-- `minimal` - ID, name, active, tags
+- `full` (default) - Draft workflow JSON + metadata
+- `details` - Full + execution stats (success/error counts, last run)
+- `active` - The published (running) graph; returns `code: "NO_ACTIVE_VERSION"` if the workflow was never activated
+- `structure` - Nodes + connections only (topology, no `parameters`)
+- `filtered` - Full config of **only** the nodes named in `nodeNames` (matched by node name *or* node id), plus light metadata. Use it to read one heavy node — e.g. a Code node with long `jsCode`/`pythonCode` — on a large workflow that would otherwise get truncated client-side when fetched whole
+- `minimal` - ID, name, active, tags (fastest)
 
 ```javascript
-// Full workflow
+// Full draft workflow
 n8n_get_workflow({id: "workflow-id"})
 
-// Just structure
+// Just the topology (cheap; strips parameters)
 n8n_get_workflow({id: "workflow-id", mode: "structure"})
+
+// Read one heavy node without the whole workflow (avoids client-side truncation)
+n8n_get_workflow({id: "workflow-id", mode: "filtered", nodeNames: ["Process Data"]})
 
 // Minimal metadata
 n8n_get_workflow({id: "workflow-id", mode: "minimal"})
 ```
+
+**Recommended flow for big workflows**: `mode: "structure"` to discover node names cheaply →
+`mode: "filtered"` with those names to pull the specific heavy node's full config. This is the
+fix for the case where `full`/`active` returns a payload large enough that the client truncates
+it and you can't read the Code-node source at all.
+
+**`filtered` mode returns**: `{ id, name, active, isArchived, nodes[] (full config of matched nodes only), nodeCount (total in workflow), returnedCount, notFound? }`. It omits `connections` and the rest of the graph by design, so the response stays small.
+
+**`filtered` pitfalls**:
+- Requires a non-empty `nodeNames` array. Entries that match nothing come back in a `notFound` list rather than erroring, so a partial request stays transparent — check `notFound` before assuming a node is missing.
+- `nodeNames` matches each entry against node **name OR id** in one namespace, so `returnedCount` can exceed `nodeNames.length` when a name collides with another node's id, or when the workflow has duplicate node names. Disambiguate by the `id` on each returned node.
 
 ---
 

@@ -1108,3 +1108,102 @@ return [{json: {report, items: top10}}];
 - [DATA_ACCESS.md](DATA_ACCESS.md) - Data access methods
 - [ERROR_PATTERNS.md](ERROR_PATTERNS.md) - Avoid common mistakes
 - [BUILTIN_FUNCTIONS.md](BUILTIN_FUNCTIONS.md) - Built-in helpers
+
+---
+
+## Best Practices
+
+### 1. Always Validate Input Data
+
+```javascript
+const items = $input.all();
+
+// Check if data exists
+if (!items || items.length === 0) {
+  return [];
+}
+
+// Validate structure
+if (!items[0].json) {
+  return [{json: {error: 'Invalid input format'}}];
+}
+
+// Continue processing...
+```
+
+### 2. Use Try-Catch for Error Handling
+
+```javascript
+try {
+  const response = await this.helpers.httpRequest({
+    url: 'https://api.example.com/data'
+  });
+
+  return [{json: {success: true, data: response}}];
+} catch (error) {
+  return [{
+    json: {
+      success: false,
+      error: error.message
+    }
+  }];
+}
+```
+
+### 3. Prefer Array Methods Over Loops
+
+```javascript
+// ✅ GOOD: Functional approach
+const processed = $input.all()
+  .filter(item => item.json.valid)
+  .map(item => ({json: {id: item.json.id}}));
+
+// ❌ SLOWER: Manual loop
+const processed = [];
+for (const item of $input.all()) {
+  if (item.json.valid) {
+    processed.push({json: {id: item.json.id}});
+  }
+}
+```
+
+### 4. Filter Early, Process Late
+
+```javascript
+// ✅ GOOD: Filter first to reduce processing
+const processed = $input.all()
+  .filter(item => item.json.status === 'active')  // Reduce dataset first
+  .map(item => expensiveTransformation(item));  // Then transform
+
+// ❌ WASTEFUL: Transform everything, then filter
+const processed = $input.all()
+  .map(item => expensiveTransformation(item))  // Wastes CPU
+  .filter(item => item.json.status === 'active');
+```
+
+### 5. Use Descriptive Variable Names
+
+```javascript
+// ✅ GOOD: Clear intent
+const activeUsers = $input.all().filter(item => item.json.active);
+const totalRevenue = activeUsers.reduce((sum, user) => sum + user.json.revenue, 0);
+
+// ❌ BAD: Unclear purpose
+const a = $input.all().filter(item => item.json.active);
+const t = a.reduce((s, u) => s + u.json.revenue, 0);
+```
+
+### 6. Debug with console.log()
+
+```javascript
+// Debug statements appear in browser console
+const items = $input.all();
+console.log(`Processing ${items.length} items`);
+
+for (const item of items) {
+  console.log('Item data:', item.json);
+  // Process...
+}
+
+return result;
+```

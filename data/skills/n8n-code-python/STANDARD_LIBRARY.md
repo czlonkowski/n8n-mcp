@@ -949,6 +949,48 @@ return [{
 
 ---
 
+## Quick Reference: Most Useful Modules
+
+A condensed cheat sheet of the most common standard-library calls.
+
+```python
+# JSON operations
+import json
+data = json.loads(json_string)
+json_output = json.dumps({"key": "value"})
+
+# Date/time
+from datetime import datetime, timedelta
+now = datetime.now()
+tomorrow = now + timedelta(days=1)
+formatted = now.strftime("%Y-%m-%d")
+
+# Regular expressions
+import re
+matches = re.findall(r'\d+', text)
+cleaned = re.sub(r'[^\w\s]', '', text)
+
+# Base64 encoding
+import base64
+encoded = base64.b64encode(data).decode()
+decoded = base64.b64decode(encoded)
+
+# Hashing
+import hashlib
+hash_value = hashlib.sha256(text.encode()).hexdigest()
+
+# URL parsing
+import urllib.parse
+params = urllib.parse.urlencode({"key": "value"})
+parsed = urllib.parse.urlparse(url)
+
+# Statistics
+from statistics import mean, median, stdev
+average = mean([1, 2, 3, 4, 5])
+```
+
+---
+
 ## Summary
 
 **Most Useful Modules**:

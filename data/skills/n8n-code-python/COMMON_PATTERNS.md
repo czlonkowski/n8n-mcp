@@ -755,6 +755,129 @@ import numpy as np  # ModuleNotFoundError!
 
 ---
 
+## Quick Pattern Snippets
+
+Condensed, copy-ready versions of the most common Python operations. Use these as starting points before reaching for the full patterns above.
+
+### 1. Data Transformation
+
+Transform all items with list comprehensions.
+
+```python
+items = _input.all()
+
+return [
+    {
+        "json": {
+            "id": item["json"].get("id"),
+            "name": item["json"].get("name", "Unknown").upper(),
+            "processed": True
+        }
+    }
+    for item in items
+]
+```
+
+### 2. Filtering & Aggregation
+
+Sum, filter, count with built-in functions.
+
+```python
+items = _input.all()
+total = sum(item["json"].get("amount", 0) for item in items)
+valid_items = [item for item in items if item["json"].get("amount", 0) > 0]
+
+return [{
+    "json": {
+        "total": total,
+        "count": len(valid_items)
+    }
+}]
+```
+
+### 3. String Processing with Regex
+
+Extract patterns from text.
+
+```python
+import re
+
+items = _input.all()
+email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+
+all_emails = []
+for item in items:
+    text = item["json"].get("text", "")
+    emails = re.findall(email_pattern, text)
+    all_emails.extend(emails)
+
+# Remove duplicates
+unique_emails = list(set(all_emails))
+
+return [{
+    "json": {
+        "emails": unique_emails,
+        "count": len(unique_emails)
+    }
+}]
+```
+
+### 4. Data Validation
+
+Validate and clean data.
+
+```python
+items = _input.all()
+validated = []
+
+for item in items:
+    data = item["json"]
+    errors = []
+
+    # Validate fields
+    if not data.get("email"):
+        errors.append("Email required")
+    if not data.get("name"):
+        errors.append("Name required")
+
+    validated.append({
+        "json": {
+            **data,
+            "valid": len(errors) == 0,
+            "errors": errors if errors else None
+        }
+    })
+
+return validated
+```
+
+### 5. Statistical Analysis
+
+Calculate statistics with the statistics module.
+
+```python
+from statistics import mean, median, stdev
+
+items = _input.all()
+values = [item["json"].get("value", 0) for item in items if "value" in item["json"]]
+
+if values:
+    return [{
+        "json": {
+            "mean": mean(values),
+            "median": median(values),
+            "stdev": stdev(values) if len(values) > 1 else 0,
+            "min": min(values),
+            "max": max(values),
+            "count": len(values)
+        }
+    }]
+else:
+    return [{"json": {"error": "No values found"}}]
+```
+
+---
+
 ## When to Use Each Pattern
 
 | Pattern | When to Use |

@@ -705,6 +705,25 @@ SELECT 1000000 records → Process all → OOM error
 SELECT records → Split In Batches (1000) → Process → Loop
 ```
 
+### 5. ❌ Wrong: Expecting output items from write operations
+```
+INSERT INTO table ... → Next node never executes (0 output items)
+```
+
+Database write operations (INSERT, UPDATE, DELETE) may return **0 result rows** from the database engine — reliably so for raw query execution (e.g. `executeQuery` with an INSERT), while some database nodes return the affected rows instead.
+When 0 rows come back, n8n translates this to **0 output items**, silently breaking any downstream chain.
+
+### ✅ Correct: Set `alwaysOutputData` on write nodes
+```
+INSERT INTO table ... (alwaysOutputData: true) → Next node executes with 1 empty item
+```
+
+Set `alwaysOutputData: true` on any node that executes INSERT, UPDATE, or DELETE.
+This ensures at least 1 empty item (`{json: {}}`) flows downstream.
+
+> **Tip:** If downstream nodes need actual data (not the empty passthrough item),
+> reference the upstream node directly: `$('DataSource Node').all()`
+
 ---
 
 ## Real Template Examples

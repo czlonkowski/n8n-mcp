@@ -19,7 +19,7 @@ Teaches correct n8n expression syntax ({{ }} patterns) and fixes common mistakes
 
 ## File Count
 
-4 files, ~450 lines total
+4 files
 
 ## Dependencies
 
@@ -70,9 +70,9 @@ Teaches correct n8n expression syntax ({{ }} patterns) and fixes common mistakes
 
 ## Files
 
-- **SKILL.md** (285 lines) - Main content with all essential knowledge
-- **COMMON_MISTAKES.md** (380 lines) - Complete error catalog with 15 common mistakes
-- **EXAMPLES.md** (450 lines) - 10 real working examples
+- **SKILL.md** - Main content with all essential knowledge
+- **COMMON_MISTAKES.md** - Complete error catalog with 15 common mistakes
+- **EXAMPLES.md** - 10 real working examples
 - **README.md** (this file) - Skill metadata
 
 ## Success Metrics

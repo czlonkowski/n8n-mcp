@@ -32,11 +32,11 @@ Validation errors are common:
    - Average 2-3 iterations to success
    - 23 seconds thinking + 58 seconds fixing per cycle
 
-3. **Validation Profiles**
-   - `minimal` - Quick checks, most permissive
-   - `runtime` - Recommended for most use cases
-   - `ai-friendly` - Reduces false positives for AI workflows
-   - `strict` - Maximum safety, many warnings
+3. **Validation Profiles** (cumulative — each adds to the one below)
+   - `minimal` - Errors only; quick structural checks
+   - `runtime` - Errors + security/deprecation warnings; recommended default
+   - `ai-friendly` - Adds best-practice advisories (error-handling, rate-limit, outdated-typeVersion)
+   - `strict` - Adds leftover-property checks; maximum lint
 
 4. **Auto-Sanitization System**
    - Automatically fixes operator structure issues
@@ -45,16 +45,16 @@ Validation errors are common:
    - Adds IF/Switch metadata
 
 5. **False Positives**
-   - Not all warnings need fixing
-   - 40% of warnings are acceptable in context
-   - Use `ai-friendly` profile to reduce by 60%
-   - Document accepted warnings
+   - The classic false positives were fixed at the source (n8n-mcp ≥ 2.63.0) — nothing to ignore
+   - Remaining warnings are best-practice advisories (`ai-friendly` / `strict`) or security/deprecation notices (every profile)
+   - Not every advisory needs fixing — weigh it against your use case
+   - Document accepted advisories
 
 ## File Structure
 
 ```
 n8n-validation-expert/
-├── SKILL.md (690 lines)
+├── SKILL.md
 │   Core validation concepts and workflow
 │   - Validation philosophy
 │   - Error severity levels
@@ -66,7 +66,7 @@ n8n-validation-expert/
 │   - Recovery strategies
 │   - Best practices
 │
-├── ERROR_CATALOG.md (865 lines)
+├── ERROR_CATALOG.md
 │   Complete error reference with examples
 │   - 9 error types with real examples
 │   - missing_required (45% of errors)
@@ -78,21 +78,21 @@ n8n-validation-expert/
 │   - Recovery patterns
 │   - Summary with frequencies
 │
-├── FALSE_POSITIVES.md (669 lines)
+├── FALSE_POSITIVES.md
 │   When warnings are acceptable
-│   - Philosophy of warning acceptance
-│   - 6 common false positive types
+│   - Philosophy of advisory acceptance
+│   - 6 common context-dependent advisories
 │   - When acceptable vs when to fix
 │   - Validation profile strategies
 │   - Decision framework
 │   - Documentation template
-│   - Known n8n issues (#304, #306, #338)
+│   - What the validator no longer flags (≥ 2.63.0)
 │
 └── README.md (this file)
     Skill metadata and statistics
 ```
 
-**Total**: ~2,224 lines across 4 files
+**Total**: 4 files
 
 ## Common Error Types
 
@@ -103,23 +103,23 @@ n8n-validation-expert/
 | type_mismatch | Medium | ❌ | Error |
 | invalid_expression | Medium | ❌ | Error |
 | invalid_reference | Low | ❌ | Error |
-| operator_structure | Low | ✅ | Warning |
+| operator_structure | Low | ✅ (normalized on save) | Not flagged (≥ 2.63.0) |
 
 ## Key Insights
 
 ### 1. Validation is Iterative
 Don't expect to get it right on the first try. Multiple validation cycles (typically 2-3) are normal and expected!
 
-### 2. False Positives Exist
-Many validation warnings are acceptable in production workflows. This skill helps you recognize which ones to address vs. which to ignore.
+### 2. Advisories vs. Errors
+The classic false positives are fixed at the source (n8n-mcp ≥ 2.63.0). Warnings you now see are either security/deprecation notices (act on them) or best-practice advisories (weigh per-case). This skill helps you tell them apart.
 
 ### 3. Auto-Sanitization Works
-Certain error types (like operator structure issues) are automatically fixed by n8n. Don't waste time manually fixing these!
+Operator structures (binary/unary `singleValue`, IF/Switch metadata) are normalized on save, and validation no longer errors on the un-normalized shape. Don't waste time hand-fixing these!
 
 ### 4. Profile Matters
-- `ai-friendly` reduces false positives by 60%
-- `runtime` is the sweet spot for most use cases
-- `strict` has value pre-production but is noisy
+- Profiles are cumulative: `minimal` ⊂ `runtime` ⊂ `ai-friendly` ⊂ `strict`
+- `runtime` is the everyday default (errors + security/deprecation)
+- `ai-friendly` / `strict` add best-practice advisories for pre-deploy review
 
 ### 5. Error Messages Help
 Validation errors include fix guidance - read them carefully!
@@ -273,7 +273,7 @@ if (preview.fixCount > 0) {
 
 - **n8n-mcp MCP Server**: Provides validation tools
 - **n8n Validation API**: validate_node, validate_workflow, n8n_autofix_workflow
-- **n8n Issues**: #304 (IF metadata), #306 (Switch branches), #338 (credentials)
+- **Validator overhaul (n8n-mcp 2.63.0)**: fixed the false-positive classes this guide used to warn about
 
 ## Version History
 

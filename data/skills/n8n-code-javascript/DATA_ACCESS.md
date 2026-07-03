@@ -345,7 +345,7 @@ const item = $input.item;
 const userId = item.json.userId;
 
 // Make API call specific to this item
-const response = await $helpers.httpRequest({
+const response = await this.helpers.httpRequest({
   method: 'GET',
   url: `https://api.example.com/users/${userId}/details`
 });
@@ -358,7 +358,7 @@ return [{
 }];
 ```
 
-> ⚠️ **For authenticated APIs, don't extend this pattern.** `$helpers.httpRequestWithAuthentication` is blocked in the Code node sandbox (since n8n v2.0). Use an HTTP Request node with the credential attached, or delegate to a sub-workflow whose HTTP Request node holds the credential. See ERROR_PATTERNS.md Error #6.
+> ⚠️ **Use `this.helpers.httpRequest`, not `$helpers`.** In the Code node's task-runner sandbox (default since n8n v2.0) the bare `$helpers` global is undefined — `$helpers.httpRequest()` throws `ReferenceError: $helpers is not defined`. **For authenticated APIs, don't extend this pattern.** `this.helpers.httpRequestWithAuthentication` is blocked in the task-runner sandbox. Use an HTTP Request node with the credential attached, or delegate to a sub-workflow whose HTTP Request node holds the credential. For anything beyond a trivial unauthenticated GET, prefer the HTTP Request node anyway. See ERROR_PATTERNS.md Error #6.
 
 ### Example 4: Conditional Processing
 
@@ -782,3 +782,116 @@ return allData.map(item => ({json: item}));
 - [SKILL.md](SKILL.md) - Overview and quick start
 - [COMMON_PATTERNS.md](COMMON_PATTERNS.md) - Production patterns
 - [ERROR_PATTERNS.md](ERROR_PATTERNS.md) - Avoid common mistakes
+
+---
+
+## Mode Performance: Why "All Items" Is Faster
+
+Mode choice is the single biggest performance lever in a Code node, and the reason generalizes to the rest of your workflow. Every time n8n hands items to a *per-item* execution context it pays a setup cost. Measured on an n8n 2.x instance (small records, ~10k items):
+
+| What runs per item | Approx. cost | Why |
+|---|---|---|
+| Code **All Items** (one run for the whole set) | ~0.02 ms/item | one context setup, then plain JS — the loop is free |
+| Expression in any node (IF / Set / etc.) | ~0.2 ms/item | a light eval context per item |
+| Code **Each Item** | ~0.6 ms/item | a full code sandbox per item — ~3× an expression, ~25–30× All Items |
+
+So `Run Once for Each Item` over 10k items is ~6 s of pure overhead vs ~0.2 s for the same logic in `Run Once for All Items`. Use Each Item only when an item genuinely needs isolating (independent error handling, or a per-item API call you can't batch); otherwise loop *inside* one All Items node.
+
+Two corollaries you will hit constantly:
+
+- **Expression complexity is essentially free.** An elaborate `{{ }}` measures the same as a trivial one — ~90% of the cost is n8n building the per-item context, not running your code. Don't simplify expressions for speed; reduce the *number* of per-item boundaries instead.
+- **Every node→node hop re-copies all items** (~0.05 ms/item per hop). Six chained All Items Code nodes cost ~7× a single node doing the same six steps, so consolidate a hot transform chain into one All Items node — and never build a chain of *Each Item* Code nodes, where the per-item tax multiplies by node count (a 6-node Each-Item chain over 2k items ≈ 7 s).
+
+**Scale check:** below a few hundred items this is all sub-100 ms and not worth a thought, and most real workflows are dominated by I/O (HTTP / DB / Sheets round-trips) that dwarfs node overhead. Reach for these rules on the hot path — large item counts with little I/O — not everywhere.
+
+---
+
+## Production Gotchas
+
+Hard-won lessons from real-world n8n workflow deployments.
+
+### SplitInBatches Loop Semantics
+
+The SplitInBatches node has two outputs — and the naming is counterintuitive:
+- `main[0]` = **done** — fires ONCE after all batches are processed
+- `main[1]` = **each batch** — fires for every batch (this is the loop body)
+
+Always add a **Limit 1** node after the done output before downstream processing, as a safety against edge cases where done fires with extra items.
+
+### SplitInBatches: Iteration Count Is the Cost
+
+Each loop iteration re-executes the entire loop body through the workflow engine — ~0.8 ms per iteration of pure overhead, on top of whatever the body does. Total ≈ `⌈items / batchSize⌉ × (~0.8 ms + body cost)`:
+
+- `batchSize: 1` over N items pays that N times — it's the loop equivalent of *Run Once for Each Item* (and if the body has several nodes, each iteration re-pays all of them).
+- Raising `batchSize` cuts iterations proportionally; the body still sees every item. Use the **largest batch your real constraint allows** (API rate limit, page size, memory). If you don't need batching at all, don't loop — process the whole set in one All Items node.
+
+### Cross-Iteration Data Accumulation (CRITICAL)
+
+After a SplitInBatches loop, `$('Node Inside Loop').all()` returns **ONLY the last iteration's items**, not cumulative results. This silently drops data from all but the final batch.
+
+**Fix**: Use workflow static data to accumulate across iterations:
+
+```javascript
+// BEFORE the loop (reset accumulator):
+const staticData = $getWorkflowStaticData('global');
+staticData.results = [];
+return $input.all();
+
+// INSIDE the loop body (accumulate):
+const staticData = $getWorkflowStaticData('global');
+const results = [];
+for (const item of $input.all()) {
+  const processed = { /* ... */ };
+  results.push({ json: processed });
+  staticData.results.push(processed);
+}
+return results;
+
+// AFTER the loop (read accumulated data):
+const staticData = $getWorkflowStaticData('global');
+const allResults = staticData.results || [];
+// Now aggregate across ALL iterations
+```
+
+### pairedItem for New Output Items
+
+When creating new items that don't map 1:1 to input items, include `pairedItem` — otherwise downstream Set nodes fail with `paired_item_no_info`:
+
+```javascript
+const results = [];
+for (let i = 0; i < $input.all().length; i++) {
+  const item = $input.all()[i];
+  results.push({
+    json: { /* new data */ },
+    pairedItem: { item: i }
+  });
+}
+return results;
+```
+
+### Correct Node Reference Syntax
+
+```javascript
+// ❌ WRONG - .json directly on node reference
+const data = $('HTTP Request').json;
+
+// ✅ CORRECT - call .first() then access .json
+const data = $('HTTP Request').first().json;
+
+// ✅ Also correct - get all items
+const allData = $('HTTP Request').all();
+```
+
+### Float Precision for Price/Currency Comparison
+
+When comparing prices or currency values, floating point noise can cause false positives. Round to cents:
+
+```javascript
+// ❌ Unreliable - float comparison
+if (newPrice !== oldPrice) { /* triggers on noise */ }
+
+// ✅ Reliable - compare at cent level
+if (Math.round(newPrice * 100) !== Math.round(oldPrice * 100)) {
+  // Real price change detected
+}
+```

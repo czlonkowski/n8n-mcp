@@ -44,8 +44,8 @@ response = requests.get("https://api.example.com/data")
 **Option 1: Use JavaScript Instead** (Recommended for 95% of cases)
 
 ```javascript
-// ✅ JavaScript Code node with $helpers.httpRequest()
-const response = await $helpers.httpRequest({
+// ✅ JavaScript Code node with this.helpers.httpRequest()
+const response = await this.helpers.httpRequest({
   method: 'GET',
   url: 'https://api.example.com/data'
 });

@@ -15,7 +15,9 @@ Common validation errors by priority:
 | type_mismatch | Medium | Error | ❌ |
 | invalid_expression | Medium | Error | ❌ |
 | invalid_reference | Low | Error | ❌ |
-| operator_structure | Lowest | Warning | ✅ |
+| operator_structure | Lowest | Not flagged | ✅ normalized on save |
+
+> **operator_structure** is no longer a validation finding (n8n-mcp ≥ 2.63.0). n8n derives unary/binary operators from the operator name and defaults the metadata, so both the raw and normalized shapes validate clean; the sanitizer just tidies the canonical form on save. See section 9.
 
 ---
 
@@ -30,7 +32,7 @@ Common validation errors by priority:
 - Copying configurations between different operations
 - Switching operations that have different requirements
 
-**Most common validation error**
+**Most common validation error.** In practice the message reads **`Required property 'X' cannot be empty`** (e.g. `Required property 'URL' cannot be empty`, or `Code cannot be empty` for an empty Code node) — using the field's display name. This is a genuine error under every profile: n8n's own publish validation rejects these identically. It is *not* a false positive, even on templates where the field was stripped.
 
 #### Example 1: Slack Channel Missing
 
@@ -183,6 +185,8 @@ const info = get_node({
 - Invalid format for specialized fields (emails, URLs, channels)
 
 **Second most common error**
+
+> **This fires only for an *explicitly wrong* value.** Omitting `operation` on a multi-resource node (Gmail, Telegram, Slack, Google Drive, Discord, Notion, …) no longer produces a fabricated "Invalid value for 'operation'" error (n8n-mcp ≥ 2.63.0) — the validator now resolves the correct per-resource default first. Expression values (`=...`) and dynamically-loaded option lists are also skipped. Under the `minimal` profile the operation enum check is not run at all.
 
 #### Example 1: Invalid Operation
 
@@ -454,37 +458,37 @@ const info = get_node({
 
 **Related**: See **n8n Expression Syntax** skill for comprehensive expression guidance
 
-#### Example 1: Missing Curly Braces
+> **Static validation catches expression *format*, not *resolution*.** `validate_node` / `validate_workflow` flag a missing `=` prefix (error) and a bare unwrapped `$json` reference (warning). They do **not** resolve node names or property paths *inside* an expression — a typo'd `$('Node')` reference or a missing property (Examples 2–4 below) surfaces at *execution* time, not during validation. Backtick template literals with `${...}` interpolation inside `{{ }}` are valid and are **not** flagged (n8n-mcp ≥ 2.63.0).
+
+#### Example 1: Missing `=` Prefix
+
+An expression field whose value contains `{{ }}` but doesn't start with `=` is treated as literal text — this is a real, static error.
 
 **Error**:
 ```json
 {
-  "type": "invalid_expression",
-  "property": "text",
-  "message": "Expressions must be wrapped in {{}}",
-  "current": "$json.name"
+  "type": "error",
+  "property": "assignments.assignments[0].value",
+  "message": "Expression requires = prefix to be evaluated",
+  "current": "{{ $json.name }}"
 }
 ```
 
 **Broken Configuration**:
 ```javascript
 {
-  "resource": "message",
-  "operation": "post",
-  "channel": "#general",
-  "text": "$json.name"  // ❌ Missing {{}}
+  "text": "{{ $json.name }}"  // ❌ Has braces but no leading =
 }
 ```
 
 **Fix**:
 ```javascript
 {
-  "resource": "message",
-  "operation": "post",
-  "channel": "#general",
-  "text": "={{$json.name}}"  // ✅ Wrapped in {{}}
+  "text": "={{ $json.name }}"  // ✅ Leading = makes it an expression
 }
 ```
+
+> A *bare* reference with no braces at all — `"$json.name"` — is a **warning**, not an error ("possible unwrapped expression"); n8n treats it as literal text, so wrap it as `={{ $json.name }}` if you meant to evaluate it. `n8n_autofix_workflow` can add the missing `=` for you.
 
 #### Example 2: Invalid Node Reference
 
@@ -583,6 +587,8 @@ const info = get_node({
 
 **Less common error**
 
+> **Which of these validation actually catches**: a broken *connection* to a missing node (Example 2) is a hard error under every profile — `Connection to non-existent node: "X" from "Y"`. A node reference *inside an expression* (Examples 1 & 3, e.g. `$('Old Name')`) is **not** statically resolved — it fails at execution, not during validation. Fix expression references by hand or with the n8n Expression Syntax skill; fix connection references with `cleanStaleConnections`.
+
 #### Example 1: Deleted Node Reference
 
 **Error**:
@@ -672,7 +678,7 @@ n8n_update_partial_workflow({
 
 **What it means**: Configuration works but doesn't follow best practices
 
-**Severity**: Warning (doesn't block execution)
+**Severity**: Warning (doesn't block execution) — surfaces under `ai-friendly` / `strict` only (n8n-mcp ≥ 2.63.0). Error-handling *style* is never a hard error.
 
 **When acceptable**: Development, testing, simple workflows
 
@@ -700,15 +706,16 @@ n8n_update_partial_workflow({
 }
 ```
 
-**Recommended Fix**:
+**Recommended Fix** (modern `onError`, set at node level):
 ```javascript
 {
-  "resource": "message",
-  "operation": "post",
-  "channel": "#alerts",
-  "continueOnFail": true,
-  "retryOnFail": true,
-  "maxTries": 3
+  "onError": "continueRegularOutput",  // prefer this over deprecated continueOnFail
+  "retryOnFail": true,                 // maxTries defaults to 3 — stating it isn't required
+  "parameters": {
+    "resource": "message",
+    "operation": "post",
+    "channel": "#alerts"
+  }
 }
 ```
 
@@ -732,33 +739,30 @@ n8n_update_partial_workflow({
 
 ### 7. deprecated
 
-**What it means**: Using old API version or deprecated feature
+**What it means**: Using a genuinely deprecated feature (e.g. `continueOnFail: true` — the validator suggests `onError: 'continueRegularOutput'` instead)
 
-**Severity**: Warning (still works but may stop working in future)
+**Severity**: Warning (still works but may stop working in future) — surfaces under every profile
 
 **When to fix**: Always (eventually)
 
-#### Example 1: Old typeVersion
+#### Example 1: Outdated typeVersion (suggestion, not a deprecation)
 
-**Warning**:
-```json
-{
-  "type": "deprecated",
-  "property": "typeVersion",
-  "message": "typeVersion 1 is deprecated for Slack node, use version 2",
-  "current": 1,
-  "recommended": 2
-}
+Running an older-but-supported `typeVersion` is **normal, supported n8n behavior** — the vast majority of production workflows do. It is now a **suggestion** surfaced only under `ai-friendly` / `strict` (n8n-mcp ≥ 2.63.0), not a deprecation warning, and never an error. A `typeVersion` that *never existed* on a core node is still a hard error (it fails activation).
+
+**Suggestion** (plain-string, `ai-friendly` / `strict`):
+```
+Outdated typeVersion for node "Slack": 1. Latest is 2.3.
 ```
 
-**Fix**:
+**Fix** (optional — only if you want the newer node behavior):
 ```javascript
 {
   "type": "n8n-nodes-base.slack",
-  "typeVersion": 2,  // ✅ Updated
-  // May need to update configuration for new version
+  "typeVersion": 2.3,  // ✅ Updated — may need config changes for the new version
 }
 ```
+
+> `n8n_autofix_workflow` offers `typeversion-upgrade` (to latest, with migration) and `typeversion-correction` (downgrade an *unsupported* version to a real one).
 
 ---
 
@@ -798,15 +802,17 @@ SELECT * FROM users WHERE active = true LIMIT 1000
 
 ### 9. operator_structure
 
-**What it means**: IF/Switch operator structure issues
+**What it means**: The exact shape of an IF/Switch/Filter condition (`singleValue`, `conditions.options` metadata)
 
-**Severity**: Warning
+**Severity**: Not a validation finding (n8n-mcp ≥ 2.63.0)
 
-**Auto-Fix**: ✅ YES - Fixed automatically on workflow save
+**Auto-Fix**: ✅ Normalized automatically on workflow save
 
-**Rare** (mostly auto-fixed)
+Validation **accepts** a condition whether or not `singleValue` and the `conditions.options` sub-fields are present — n8n derives unary-ness from the operator name and defaults the metadata. The sanitizer still tidies these into the canonical form on save, so you never need to hand-write them either way. The before/after below is what the sanitizer produces, **not** something the validator errors on.
 
-#### Fixed Automatically: Binary Operators
+**Still real errors** (these are *not* auto-fixed — they change behavior): a legacy v1 operator name (e.g. `smaller`) inside a v2 structure (`"Operation 'smaller' is not valid for type 'string'"`), a v1-shaped `conditions` object on a v2 node (silently evaluates true), and a filter object with no conditions at all.
+
+#### Normalized on Save: Binary Operators
 
 **Before** (you create this):
 ```javascript
@@ -828,7 +834,7 @@ SELECT * FROM users WHERE active = true LIMIT 1000
 
 **You don't need to do anything** - this is fixed on save!
 
-#### Fixed Automatically: Unary Operators
+#### Normalized on Save: Unary Operators
 
 **Before**:
 ```javascript
@@ -849,6 +855,68 @@ SELECT * FROM users WHERE active = true LIMIT 1000
 ```
 
 **What you should do**: Trust auto-sanitization, don't manually fix these!
+
+---
+
+## patchNodeField Errors
+
+**What it means**: A `patchNodeField` operation failed during `n8n_update_partial_workflow`
+
+The `patchNodeField` operation is strict by design — it errors instead of silently continuing when something is wrong. This catches mistakes early but means you need to handle these specific error cases.
+
+### Error: Find string not found
+
+The patch's `find` value doesn't exist in the target field. This usually means the content was already changed, or the find string has a typo.
+
+```
+patchNodeField: find string not found in field "parameters.jsCode"
+```
+
+**How to fix**: Double-check the exact string. Use `n8n_get_workflow` to inspect the current field value. Whitespace and line endings matter — if unsure, use `regex: true` with `\s+` for flexible whitespace matching.
+
+### Error: Ambiguous match (multiple occurrences)
+
+The find string appears more than once in the field. Without `replaceAll: true`, this is treated as ambiguous and rejected.
+
+```
+patchNodeField: find string matches 3 times in field "parameters.jsCode" — set replaceAll: true to replace all, or use a more specific find string
+```
+
+**How to fix**: Either set `replaceAll: true` if you want to replace all occurrences, or make your find string more specific to match only the intended location.
+
+### Error: Invalid regex pattern
+
+When `regex: true`, the pattern is validated for correctness and safety.
+
+```
+patchNodeField: invalid or unsafe regex pattern
+```
+
+**How to fix**: Check regex syntax. Nested quantifiers like `(a+)+` and overlapping alternations like `(\w|\d)+` are rejected as ReDoS risks. Simplify the pattern.
+
+---
+
+## Auto-Sanitization: What It CANNOT Fix
+
+Auto-sanitization handles operator structure (binary/unary `singleValue`, IF/Switch metadata) automatically on every save. It does **not** fix these — you must handle them manually:
+
+### Broken Connections
+
+References to non-existent nodes.
+
+**Solution**: Use the `cleanStaleConnections` operation in `n8n_update_partial_workflow`.
+
+### Branch Count Mismatches
+
+3 Switch rules but only 2 output connections.
+
+**Solution**: Add missing connections or remove extra rules.
+
+### Paradoxical Corrupt States
+
+API returns corrupt data but rejects updates.
+
+**Solution**: May require manual database intervention.
 
 ---
 

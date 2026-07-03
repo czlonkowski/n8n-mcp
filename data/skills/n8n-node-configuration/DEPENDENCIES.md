@@ -787,3 +787,157 @@ get_node({
 **Related Files**:
 - **[SKILL.md](SKILL.md)** - Main configuration guide
 - **[OPERATION_PATTERNS.md](OPERATION_PATTERNS.md)** - Common patterns by node type
+
+---
+
+## Quick Reference: displayOptions and Common Dependency Patterns
+
+A condensed introduction to the displayOptions mechanism and the three most common dependency patterns, plus how to find them.
+
+### displayOptions Mechanism
+
+**Fields have visibility rules**:
+
+```javascript
+{
+  "name": "body",
+  "displayOptions": {
+    "show": {
+      "sendBody": [true],
+      "method": ["POST", "PUT", "PATCH"]
+    }
+  }
+}
+```
+
+**Translation**: "body" field shows when:
+- sendBody = true AND
+- method = POST, PUT, or PATCH
+
+### Common Dependency Patterns
+
+#### Pattern 1: Boolean Toggle
+
+**Example**: HTTP Request sendBody
+```javascript
+// sendBody controls body visibility
+{
+  "sendBody": true   // → body field appears
+}
+```
+
+#### Pattern 2: Operation Switch
+
+**Example**: Slack resource/operation
+```javascript
+// Different operations → different fields
+{
+  "resource": "message",
+  "operation": "post"
+  // → Shows: channel, text, attachments, etc.
+}
+
+{
+  "resource": "message",
+  "operation": "update"
+  // → Shows: messageId, text (different fields!)
+}
+```
+
+#### Pattern 3: Type Selection
+
+**Example**: IF node conditions
+```javascript
+{
+  "type": "string",
+  "operation": "contains"
+  // → Shows: value1, value2
+}
+
+{
+  "type": "boolean",
+  "operation": "equals"
+  // → Shows: value1, value2, different operators
+}
+```
+
+### Finding Property Dependencies
+
+**Use get_node with search_properties mode**:
+```javascript
+get_node({
+  nodeType: "nodes-base.httpRequest",
+  mode: "search_properties",
+  propertyQuery: "body"
+});
+
+// Returns property paths matching "body" with descriptions
+```
+
+**Or use full detail for complete schema**:
+```javascript
+get_node({
+  nodeType: "nodes-base.httpRequest",
+  detail: "full"
+});
+
+// Returns complete schema with displayOptions rules
+```
+
+**Use this when**: Validation fails and you don't understand why field is missing/required
+
+---
+
+## Handling Conditional Requirements
+
+How to discover and satisfy fields that are required only under certain conditions.
+
+### Example: HTTP Request Body
+
+**Scenario**: body field required, but only sometimes
+
+**Rule**:
+```
+body is required when:
+  - sendBody = true AND
+  - method IN (POST, PUT, PATCH, DELETE)
+```
+
+**How to discover**:
+```javascript
+// Option 1: Read validation error
+validate_node({...});
+// Error: "body required when sendBody=true"
+
+// Option 2: Search for the property
+get_node({
+  nodeType: "nodes-base.httpRequest",
+  mode: "search_properties",
+  propertyQuery: "body"
+});
+// Shows: body property with displayOptions rules
+
+// Option 3: Try minimal config and iterate
+// Start without body, validation will tell you if needed
+```
+
+### Example: IF Node singleValue
+
+**Scenario**: singleValue property appears for unary operators
+
+**Rule**:
+```
+singleValue should be true when:
+  - operation IN (isEmpty, isNotEmpty, true, false)
+```
+
+**Good news**: Auto-sanitization fixes this!
+
+**Manual check**:
+```javascript
+get_node({
+  nodeType: "nodes-base.if",
+  detail: "full"
+});
+// Shows complete schema with operator-specific rules
+```

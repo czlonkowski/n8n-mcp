@@ -25,7 +25,7 @@ Teaches architectural patterns for building n8n workflows. Provides structure, b
 
 ## File Count
 
-7 files, ~3,700 lines total
+7 files
 
 ## Priority
 
@@ -37,7 +37,7 @@ Teaches architectural patterns for building n8n workflows. Provides structure, b
 - search_nodes (find nodes for patterns)
 - get_node (understand node operations)
 - search_templates (find example workflows)
-- ai_agents_guide (AI pattern guidance)
+- tools_documentation with topic "ai_agents_guide" (AI pattern guidance)
 
 **Related skills**:
 - n8n MCP Tools Expert (find and configure nodes)
@@ -103,12 +103,12 @@ Teaches architectural patterns for building n8n workflows. Provides structure, b
 
 ## Files
 
-- **SKILL.md** (486 lines) - Pattern overview, selection guide, checklist
-- **webhook_processing.md** (554 lines) - Webhook patterns, data structure, auth
-- **http_api_integration.md** (763 lines) - REST APIs, pagination, rate limiting
-- **database_operations.md** (854 lines) - DB operations, batch processing, security
-- **ai_agent_workflow.md** (918 lines) - AI agents, tools, memory, 8 connection types
-- **scheduled_tasks.md** (845 lines) - Cron schedules, timezone, monitoring
+- **SKILL.md** - Pattern overview, selection guide, checklist
+- **webhook_processing.md** - Webhook patterns, data structure, auth
+- **http_api_integration.md** - REST APIs, pagination, rate limiting
+- **database_operations.md** - DB operations, batch processing, security
+- **ai_agent_workflow.md** - AI agents, tools, memory, 8 connection types
+- **scheduled_tasks.md** - Cron schedules, timezone, monitoring
 - **README.md** (this file) - Skill metadata
 
 ## Success Metrics

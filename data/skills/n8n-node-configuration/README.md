@@ -55,7 +55,7 @@ Node configuration patterns:
 
 ```
 n8n-node-configuration/
-├── SKILL.md (692 lines)
+├── SKILL.md
 │   Main configuration guide
 │   - Configuration philosophy (progressive disclosure)
 │   - Core concepts (operation-aware, dependencies)
@@ -67,7 +67,7 @@ n8n-node-configuration/
 │   - Conditional requirements
 │   - Anti-patterns and best practices
 │
-├── DEPENDENCIES.md (671 lines)
+├── DEPENDENCIES.md
 │   Property dependencies reference
 │   - displayOptions mechanism
 │   - show vs hide rules
@@ -81,7 +81,7 @@ n8n-node-configuration/
 │   - Troubleshooting guide
 │   - Advanced patterns
 │
-├── OPERATION_PATTERNS.md (783 lines)
+├── OPERATION_PATTERNS.md
 │   Common configurations by node type
 │   - HTTP Request (GET/POST/PUT/DELETE)
 │   - Webhook (basic/auth/response)
@@ -100,7 +100,7 @@ n8n-node-configuration/
     Skill metadata and statistics
 ```
 
-**Total**: ~2,146 lines across 4 files + 4 evaluations
+**Total**: 4 files + 4 evaluations
 
 ## Usage Statistics
 

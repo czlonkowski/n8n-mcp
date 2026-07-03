@@ -462,6 +462,168 @@ Database operations - 456 templates
 
 ---
 
+## Storage Nodes
+
+### Data Table (nodes-base.dataTable)
+
+Persistent, structured per-project key-value storage — an in-n8n alternative to external SQL for small state like buffers, de-dup sets, counters, or lookup caches. **Do not confuse with the MCP tool `n8n_manage_datatable`** — that tool manages tables from outside n8n (create/list/delete tables and rows from Claude). The **`nodes-base.dataTable` node** below is what you drop *into a workflow* to read/write rows during execution.
+
+> **Verified end-to-end against live n8n on 2026-04-08** with a 15-node assertion harness exercising every claim below: insert returning rows with system `id`, `like` operator, `returnAll`, `allConditions` AND-of-multiple-filters, `isTrue` unary boolean condition, `upsert` with `matchingColumns` (no duplicates), `defineBelow` resourceMapper writing values, `deleteRows` (the reserved-word workaround) returning affected rows, and `dataTableId` resourceLocator in `mode: "name"`. All 6 assertions passed.
+
+**Node shape**:
+- `type`: `n8n-nodes-base.dataTable`
+- `typeVersion`: `1.1` (also `1`)
+- `resource`: `"row"` or `"table"`
+- Row `operation` values — note the reserved-word workaround on delete:
+  - `"insert"` — Insert row
+  - `"get"` — Get row(s)
+  - `"update"` — Update row(s) matching conditions
+  - `"upsert"` — Update if match, else insert
+  - `"deleteRows"` — Delete row(s) matching conditions (**not `"delete"`** — `delete` is a JS reserved word, the node uses `deleteRows`)
+  - `"rowExists"` — Pass through input if at least one match
+  - `"rowNotExists"` — Pass through input if zero matches
+
+**Table selection** — always a resourceLocator parameter named `dataTableId`:
+```javascript
+"dataTableId": {
+  "__rl": true,
+  "mode": "list",      // or "name" or "id"
+  "value": "dt_xyz123" // or the name when mode=name
+}
+```
+
+**Row mapping** (insert/update/upsert) — resourceMapper parameter named `columns`:
+```javascript
+"columns": {
+  "mappingMode": "defineBelow",    // or "autoMapInputData"
+  "value": {
+    "user_email": "={{ $json.email }}",
+    "score": "={{ $json.score }}",
+    "active": true
+  },
+  "matchingColumns": [],           // filled for update/upsert match keys
+  "schema": [],                    // n8n re-loads at runtime; safe to leave empty
+  "attemptToConvertTypes": false,
+  "convertFieldsToString": false
+}
+```
+In `autoMapInputData` mode, incoming item field names must match column names exactly and `value` is ignored.
+
+**Filtering** (get/update/upsert/deleteRows/rowExists/rowNotExists):
+```javascript
+"matchType": "anyCondition",   // or "allConditions"
+"filters": {
+  "conditions": [
+    { "keyName": "user_email", "condition": "eq",        "keyValue": "a@b.com" },
+    { "keyName": "score",      "condition": "gte",       "keyValue": 10 },
+    { "keyName": "archived",   "condition": "isNotEmpty"  }
+  ]
+}
+```
+Supported `condition` values: `eq, neq, like, ilike, gt, gte, lt, lte, isEmpty, isNotEmpty, isTrue, isFalse`. The last four are unary — omit `keyValue`.
+
+**Get options**: `returnAll: true` bypasses the default 50-row limit. `options` can include ordering.
+
+**Insert option**: `options.optimizeBulk: true` skips returning inserted rows for ~5x bulk throughput. Do not use when downstream nodes need the inserted row ids.
+
+**Mutating ops** (update/upsert/deleteRows) accept `options.dryRun: true` — returns the rows that *would* be affected with before/after states, without writing.
+
+#### Minimal Insert
+```javascript
+{
+  "resource": "row",
+  "operation": "insert",
+  "dataTableId": { "__rl": true, "mode": "name", "value": "email_buffer" },
+  "columns": {
+    "mappingMode": "defineBelow",
+    "value": {
+      "from_name": "={{ $json.from_name }}",
+      "subject":   "={{ $json.subject }}"
+    },
+    "matchingColumns": [],
+    "schema": []
+  },
+  "options": {}
+}
+```
+
+#### Get All Rows
+`Get` requires at least one condition — a bare "return everything" isn't allowed. Trick: filter on the always-populated system `id` column with `isNotEmpty`.
+```javascript
+{
+  "resource": "row",
+  "operation": "get",
+  "dataTableId": { "__rl": true, "mode": "name", "value": "email_buffer" },
+  "matchType": "anyCondition",
+  "filters": {
+    "conditions": [ { "keyName": "id", "condition": "isNotEmpty" } ]
+  },
+  "returnAll": true,
+  "options": {}
+}
+```
+
+#### Delete All Rows
+Same `id isNotEmpty` trick — a delete without conditions throws `At least one condition is required`.
+```javascript
+{
+  "resource": "row",
+  "operation": "deleteRows",
+  "dataTableId": { "__rl": true, "mode": "name", "value": "email_buffer" },
+  "matchType": "anyCondition",
+  "filters": {
+    "conditions": [ { "keyName": "id", "condition": "isNotEmpty" } ]
+  },
+  "options": {}
+}
+```
+
+#### Upsert by Natural Key
+```javascript
+{
+  "resource": "row",
+  "operation": "upsert",
+  "dataTableId": { "__rl": true, "mode": "name", "value": "user_scores" },
+  "matchType": "allConditions",
+  "filters": {
+    "conditions": [ { "keyName": "user_email", "condition": "eq", "keyValue": "={{ $json.email }}" } ]
+  },
+  "columns": {
+    "mappingMode": "defineBelow",
+    "value": {
+      "user_email": "={{ $json.email }}",
+      "score":      "={{ $json.score }}"
+    },
+    "matchingColumns": ["user_email"],
+    "schema": []
+  },
+  "options": {}
+}
+```
+
+**System columns**: every table auto-has `id` plus created/updated timestamps — you don't declare these and can't write to them. They're usable in filters.
+
+**When to reach for Data Table vs alternatives**:
+
+| Need | Use |
+|------|-----|
+| Small per-workflow scratch state, single workflow, not durable across workflow edits | `$getWorkflowStaticData('global')` inside a Code node |
+| Persistent structured state, queryable by column, survives workflow rename/edit/deactivation, shared across multiple workflows in the same project | **Data Table node** |
+| Large datasets (>>10k rows), complex joins, transactions, FKs, indexes | External Postgres/MySQL |
+| Unstructured key-value cache with TTL | Redis |
+
+**Gotchas**:
+- Scope is **per project** — Data Tables are not shared across n8n projects. Move a workflow to another project and its Data Table references break.
+- Filter operator `eq` on a column that doesn't exist in the table returns a validation error at execution, not at import — always verify column names match the live table.
+- Expression values in `columns.value` are evaluated per input item. If the upstream node emits N items, Insert runs N times unless you explicitly use `optimizeBulk`.
+- `deleteRows` is the operation value, not `delete`. Using `delete` will import but fail at execution with "unknown operation".
+- Race condition in buffer/flush patterns: rows added between `Get` and `deleteRows` will be wiped without being read. For at-least-once semantics, delete by specific row ids returned from `Get` instead of by a broad filter.
+- **Zero-match halts the chain.** When `get`, `deleteRows`, `update`, or `upsert` matches 0 rows, the node emits 0 output items and n8n stops the downstream branch silently — no error, just nothing happens. This bites cleanup steps in idempotent test/setup workflows where the table starts empty. Fix: set node-level `"alwaysOutputData": true` (sibling of `parameters`/`type`, NOT inside `parameters`) on any DT node that may legitimately match nothing. The node will then emit a single empty item and the chain continues.
+- **DT operations execute once per input item.** A `Get` node fed 3 input items will run 3 separate queries and concatenate the results — usually not what you want. Insert a "collapse" Code node (`return [{ json: {} }];`) between any multi-item-emitting node and a downstream DT op that should run exactly once.
+- DT nodes do not natively offer a "run once for all items" mode like the Code node — the collapse-node pattern is currently the only clean workaround.
+
+---
+
 ## Data Transformation Nodes
 
 ### Set (nodes-base.set)
@@ -911,3 +1073,194 @@ Time-based workflows - 28% have schedule triggers
 **Related Files**:
 - **[SKILL.md](SKILL.md)** - Configuration workflow and philosophy
 - **[DEPENDENCIES.md](DEPENDENCIES.md)** - Property dependency rules
+
+---
+
+## Worked Example: Configuring HTTP Request Step by Step
+
+A full validate-driven walkthrough of building a `POST` JSON request from minimal config, letting validation surface each required field.
+
+**Step 1**: Identify what you need
+```javascript
+// Goal: POST JSON to API
+```
+
+**Step 2**: Get node info
+```javascript
+const info = get_node({
+  nodeType: "nodes-base.httpRequest"
+});
+
+// Returns: method, url, sendBody, body, authentication required/optional
+```
+
+**Step 3**: Minimal config
+```javascript
+{
+  "method": "POST",
+  "url": "https://api.example.com/create",
+  "authentication": "none"
+}
+```
+
+**Step 4**: Validate
+```javascript
+validate_node({
+  nodeType: "nodes-base.httpRequest",
+  config,
+  profile: "runtime"
+});
+// → Error: "sendBody required for POST"
+```
+
+**Step 5**: Add required field
+```javascript
+{
+  "method": "POST",
+  "url": "https://api.example.com/create",
+  "authentication": "none",
+  "sendBody": true
+}
+```
+
+**Step 6**: Validate again
+```javascript
+validate_node({...});
+// → Error: "body required when sendBody=true"
+```
+
+**Step 7**: Complete configuration
+```javascript
+{
+  "method": "POST",
+  "url": "https://api.example.com/create",
+  "authentication": "none",
+  "sendBody": true,
+  "body": {
+    "contentType": "json",
+    "content": {
+      "name": "={{$json.name}}",
+      "email": "={{$json.email}}"
+    }
+  }
+}
+```
+
+**Step 8**: Final validation
+```javascript
+validate_node({...});
+// → Valid! ✅
+```
+
+---
+
+## Operation-Specific Configuration Examples
+
+Concrete minimal configs showing how required fields differ by resource + operation.
+
+### Slack Node Examples
+
+#### Post Message
+```javascript
+{
+  "resource": "message",
+  "operation": "post",
+  "channel": "#general",      // Required
+  "text": "Hello!",           // Required
+  "attachments": [],          // Optional
+  "blocks": []                // Optional
+}
+```
+
+#### Update Message
+```javascript
+{
+  "resource": "message",
+  "operation": "update",
+  "messageId": "1234567890",  // Required (different from post!)
+  "text": "Updated!",         // Required
+  "channel": "#general"       // Optional (can be inferred)
+}
+```
+
+#### Create Channel
+```javascript
+{
+  "resource": "channel",
+  "operation": "create",
+  "name": "new-channel",      // Required
+  "isPrivate": false          // Optional
+  // Note: text NOT required for this operation
+}
+```
+
+### HTTP Request Node Examples
+
+#### GET Request
+```javascript
+{
+  "method": "GET",
+  "url": "https://api.example.com/users",
+  "authentication": "predefinedCredentialType",
+  "nodeCredentialType": "httpHeaderAuth",
+  "sendQuery": true,                    // Optional
+  "queryParameters": {                  // Shows when sendQuery=true
+    "parameters": [
+      {
+        "name": "limit",
+        "value": "100"
+      }
+    ]
+  }
+}
+```
+
+#### POST with JSON
+```javascript
+{
+  "method": "POST",
+  "url": "https://api.example.com/users",
+  "authentication": "none",
+  "sendBody": true,                     // Required for POST
+  "body": {                             // Required when sendBody=true
+    "contentType": "json",
+    "content": {
+      "name": "John Doe",
+      "email": "john@example.com"
+    }
+  }
+}
+```
+
+### IF Node Examples
+
+#### String Comparison (Binary)
+```javascript
+{
+  "conditions": {
+    "string": [
+      {
+        "value1": "={{$json.status}}",
+        "operation": "equals",
+        "value2": "active"              // Binary: needs value2
+      }
+    ]
+  }
+}
+```
+
+#### Empty Check (Unary)
+```javascript
+{
+  "conditions": {
+    "string": [
+      {
+        "value1": "={{$json.email}}",
+        "operation": "isEmpty",
+        // No value2 - unary operator
+        "singleValue": true             // Auto-added by sanitization
+      }
+    ]
+  }
+}
+```

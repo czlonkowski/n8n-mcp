@@ -16,7 +16,7 @@ Python in n8n has **NO external libraries** (no requests, pandas, numpy).
 - You're more comfortable with Python than JavaScript
 
 **When to use JavaScript** (recommended):
-- HTTP requests ($helpers.httpRequest available)
+- HTTP requests (this.helpers.httpRequest available)
 - Date/time operations (Luxon library included)
 - Most data transformations
 - When in doubt
@@ -67,7 +67,7 @@ This skill activates when you:
 
 ## File Structure
 
-### SKILL.md (719 lines)
+### SKILL.md
 **Quick start** and overview
 - When to use Python vs JavaScript
 - Critical limitation (no external libraries)
@@ -76,7 +76,7 @@ This skill activates when you:
 - Return format requirements
 - Standard library overview
 
-### DATA_ACCESS.md (703 lines)
+### DATA_ACCESS.md
 **Complete data access patterns**
 - `_input.all()` - Process all items
 - `_input.first()` - Get first item
@@ -85,7 +85,7 @@ This skill activates when you:
 - Webhook body structure (critical gotcha!)
 - Pattern selection guide
 
-### STANDARD_LIBRARY.md (850 lines)
+### STANDARD_LIBRARY.md
 **Available Python modules**
 - json - JSON parsing
 - datetime - Date/time operations
@@ -97,7 +97,7 @@ This skill activates when you:
 - What's NOT available (requests, pandas, numpy)
 - Workarounds for missing libraries
 
-### COMMON_PATTERNS.md (895 lines)
+### COMMON_PATTERNS.md
 **10 production-tested patterns**
 1. Multi-source data aggregation
 2. Regex-based filtering
@@ -110,7 +110,7 @@ This skill activates when you:
 9. Top N filtering
 10. String aggregation
 
-### ERROR_PATTERNS.md (730 lines)
+### ERROR_PATTERNS.md
 **Top 5 errors with solutions**
 1. ModuleNotFoundError (external libraries)
 2. Empty code / missing return

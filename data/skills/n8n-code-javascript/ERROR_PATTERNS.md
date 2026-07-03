@@ -8,12 +8,12 @@ Complete guide to avoiding the most common Code node errors.
 
 This guide covers the **top 5 error patterns** encountered in n8n Code nodes. Understanding and avoiding these errors will save you significant debugging time.
 
-**Error Frequency**:
-1. Empty Code / Missing Return - **38% of failures**
-2. Expression Syntax Confusion - **8% of failures**
-3. Incorrect Return Wrapper - **5% of failures**
-4. Unmatched Expression Brackets - **6% of failures**
-5. Missing Null Checks - **Common runtime error**
+**Error frequency (roughly ordered)**:
+1. Empty Code / Missing Return - the dominant error n8n itself rejects
+2. Expression Syntax used as Code - `{{ }}` written where JavaScript belongs
+3. Return Shape - primitive/`null` returns (bare objects auto-wrap)
+4. Broken Strings / Escaping - unbalanced quotes/brackets throw a JS syntax error
+5. Missing Null Checks - common runtime error
 
 ---
 
@@ -115,23 +115,20 @@ if (items.length === 0) {
 
 ## Error #2: Expression Syntax Confusion
 
-**Frequency**: 8% of validation failures
-
-**What Happens**:
-- Syntax error in code execution
-- Error: "Unexpected token" or "Expression syntax is not valid in Code nodes"
-- Template variables not evaluated
+**What Happens** — there are two distinct cases, and only one is a syntax error:
+- **`{{ }}` inside a string literal**: valid JavaScript that runs fine, but you get the *literal text* `{{ ... }}` instead of a value — n8n does not evaluate expressions inside Code-node code. A logic bug, not a validation error. (n8n-mcp ≥ 2.63.0 no longer flags `{{ }}` inside string literals — prompt templates, payload placeholders, and `.replace()` tokens are legitimate.)
+- **`{{ }}` written as bare code** (e.g. `return {{ $json.x }}`): a genuine JavaScript syntax error. The validator reports "Expression syntax {{...}} is not valid in Code nodes" and n8n throws "Unexpected token".
 
 ### The Problem
 
 n8n has TWO distinct syntaxes:
 1. **Expression syntax** `{{ }}` - Used in OTHER nodes (Set, IF, HTTP Request)
-2. **JavaScript** - Used in CODE nodes (no `{{ }}`)
+2. **JavaScript** - Used in CODE nodes
 
-Many developers mistakenly use expression syntax inside Code nodes.
+Many developers mistakenly reach for expression syntax inside a Code node when they want a *value*. Putting `{{ }}` in a string does not interpolate it:
 
 ```javascript
-// ❌ WRONG: Using n8n expression syntax in Code node
+// ❌ LOGIC BUG: n8n never evaluates {{ }} in Code-node strings
 const userName = "{{ $json.name }}";
 const userEmail = "{{ $json.body.email }}";
 
@@ -143,11 +140,12 @@ return [{
 }];
 
 // Result: Literal string "{{ $json.name }}", NOT the value!
+// (This runs — it just doesn't do what you meant. Use $json.name directly.)
 ```
 
 ```javascript
-// ❌ WRONG: Trying to evaluate expressions
-const value = "{{ $now.toFormat('yyyy-MM-dd') }}";
+// ❌ SYNTAX ERROR: {{ }} used as code, not inside a string
+const value = {{ $now.toFormat('yyyy-MM-dd') }};  // "Unexpected token"
 ```
 
 ### The Solution
@@ -219,55 +217,48 @@ return [{
 
 ---
 
-## Error #3: Incorrect Return Wrapper Format
+## Error #3: Return Shape
 
-**Frequency**: 5% of validation failures
+**What actually happens** — n8n is more forgiving than the old advice implied:
+- In *Run Once for All Items* mode, n8n **auto-normalizes** a single bare object, or an array of bare objects, by wrapping each under a `json` property. So these run.
+- What genuinely fails, with "Code doesn't return items properly", is returning a **primitive** (string/number/boolean) or **`null`/`undefined`** — there is nothing to wrap.
 
-**What Happens**:
-- Error: "Return value must be an array of objects"
-- Error: "Each item must have a json property"
-- Next nodes receive malformed data
+(n8n-mcp ≥ 2.63.0 no longer errors "Return value must be an array of objects" on a bare-object return; the earlier claim contradicted n8n's auto-wrap behavior.)
 
-### The Problem
+### Prefer the Canonical Form
 
-Code nodes MUST return:
-- **Array** of objects
-- Each object MUST have a **`json` property**
+The canonical `[{json: {...}}]` is unambiguous and behaves identically in both execution modes, so make it your default even though looser shapes are auto-wrapped:
 
 ```javascript
-// ❌ WRONG: Returning object instead of array
+// ⚠️ Auto-wrapped → [{json: {result: 'success'}}]. Runs, but prefer the array + json form.
 return {
   json: {
     result: 'success'
   }
 };
-// Missing array wrapper []
 ```
 
 ```javascript
-// ❌ WRONG: Returning array without json wrapper
+// ⚠️ Auto-wrapped → each object gets a json wrapper. Runs, but be explicit.
 return [
   {id: 1, name: 'Alice'},
   {id: 2, name: 'Bob'}
 ];
-// Missing json property
 ```
 
 ```javascript
-// ❌ WRONG: Returning plain value
+// ✅ Fine — input items already carry a json property; returning them unchanged is a valid passthrough
+return $input.all();
+```
+
+```javascript
+// ❌ FAILS: primitive value — nothing to wrap into an item
 return "processed";
 ```
 
 ```javascript
-// ❌ WRONG: Returning items without mapping
-return $input.all();
-// Works if items already have json property, but not guaranteed
-```
-
-```javascript
-// ❌ WRONG: Incomplete structure
-return [{data: {result: 'success'}}];
-// Should be {json: {...}}, not {data: {...}}
+// ❌ FAILS: null / undefined — no items to pass on
+return null;
 ```
 
 ### The Solution
@@ -321,11 +312,10 @@ if (shouldProcess) {
 
 ### Return Format Checklist
 
-- [ ] Return value is an **array** `[...]`
-- [ ] Each array element has **`json` property**
+- [ ] Return value is an **array** `[...]` (canonical — preferred)
+- [ ] Each array element has a **`json` property**
 - [ ] Structure is `[{json: {...}}]` or `[{json: {...}}, {json: {...}}]`
-- [ ] NOT `{json: {...}}` (missing array wrapper)
-- [ ] NOT `[{...}]` (missing json property)
+- [ ] Not a primitive (string/number/boolean) or `null`/`undefined` — those are the shapes that actually fail
 
 ### Common Scenarios
 
@@ -333,30 +323,30 @@ if (shouldProcess) {
 // Scenario 1: Single object from API
 const response = $input.first().json;
 
-// ✅ CORRECT
+// ✅ CANONICAL
 return [{json: response}];
 
-// ❌ WRONG
+// ⚠️ Auto-wrapped to the same thing — runs, but prefer the array form
 return {json: response};
 
 
 // Scenario 2: Array of objects
 const users = $input.all();
 
-// ✅ CORRECT
+// ✅ CANONICAL
 return users.map(user => ({json: user.json}));
 
-// ❌ WRONG
-return users;  // Risky - depends on existing structure
+// ✅ Also fine — a passthrough of items that already carry json
+return users;
 
 
 // Scenario 3: Computed result
 const total = $input.all().reduce((sum, item) => sum + item.json.amount, 0);
 
-// ✅ CORRECT
+// ✅ CANONICAL
 return [{json: {total}}];
 
-// ❌ WRONG
+// ⚠️ Auto-wrapped → [{json: {total}}] in All Items mode — runs, but be explicit
 return {total};
 
 
@@ -364,61 +354,55 @@ return {total};
 // ✅ CORRECT
 return [];
 
-// ❌ WRONG
+// ❌ FAILS — null has no items to pass on
 return null;
 ```
 
 ---
 
-## Error #4: Unmatched Expression Brackets
-
-**Frequency**: 6% of validation failures
+## Error #4: Broken Strings & Escaping (JavaScript syntax errors)
 
 **What Happens**:
-- Parsing error during save
-- Error: "Unmatched expression brackets"
-- Code appears correct but fails validation
+- The Code node throws a JavaScript syntax error at execution: "Unexpected token" or "Unexpected end of input"
+- Cause is your own JS — unbalanced quotes or a raw newline inside a plain quoted string
+
+This is a plain JavaScript concern, **not** a validator check. The validator (n8n-mcp ≥ 2.63.0) does not flag balanced apostrophes, `{ }` in regex, or `{{ }}` sitting inside a string literal — those are all valid JavaScript. Only genuinely malformed JS throws, and it throws at runtime.
 
 ### The Problem
 
-This error typically occurs when:
-1. Strings contain unbalanced quotes
-2. Multi-line strings with special characters
-3. Template literals with nested brackets
+This happens when:
+1. A quote inside a same-quoted string is left unescaped
+2. A plain (non-template) string spans multiple lines
+3. Backslashes in paths/regex are not escaped
 
 ```javascript
-// ❌ WRONG: Unescaped quote in string
+// ✅ FINE: an apostrophe inside a double-quoted string is valid JavaScript
 const message = "It's a nice day";
-// Single quote breaks string
+
+// ✅ FINE: braces in a regex literal are valid
+const pattern = /\{(\w+)\}/;
 ```
 
 ```javascript
-// ❌ WRONG: Unbalanced brackets in regex
-const pattern = /\{(\w+)\}/;  // JSON storage issue
-```
-
-```javascript
-// ❌ WRONG: Multi-line string with quotes
+// ❌ SYNTAX ERROR: raw newline + unescaped inner double-quotes in a plain string
 const html = "
   <div class="container">
     <p>Hello</p>
   </div>
 ";
-// Quote balance issues
 ```
 
 ### The Solution
 
 ```javascript
-// ✅ CORRECT: Escape quotes
-const message = "It\\'s a nice day";
-// Or use different quotes
-const message = "It's a nice day";  // Double quotes work
+// ✅ Mix quote styles or escape, whichever reads cleaner
+const message = "It's a nice day";     // double quotes around an apostrophe — fine
+const other   = 'She said "hello"';    // single quotes around double quotes — fine
 ```
 
 ```javascript
-// ✅ CORRECT: Escape regex properly
-const pattern = /\\{(\\w+)\\}/;
+// ✅ Regex literals need no extra escaping of their own braces
+const pattern = /\{(\w+)\}/;
 ```
 
 ```javascript
@@ -652,7 +636,7 @@ Since n8n v2.0, Code nodes execute in the **task runner sandbox** which delibera
 
 ```javascript
 // ❌ BLOCKED in task runner sandbox (default since v2.0)
-const data = await $helpers.httpRequestWithAuthentication.call(
+const data = await this.helpers.httpRequestWithAuthentication.call(
   this,
   'baseLinkerApi',
   { url: '...', method: 'POST' }
@@ -686,7 +670,7 @@ Then wire to **Execute Workflow** → child workflow with **Execute Workflow Tri
 // ✅ Works — manual auth header, token came from upstream
 const token = $('Get Token').first().json.access_token;
 
-const data = await $helpers.httpRequest({
+const data = await this.helpers.httpRequest({
   url: 'https://api.example.com/data',
   headers: { 'Authorization': `Bearer ${token}` }
 });
@@ -698,7 +682,7 @@ const data = await $helpers.httpRequest({
 |------|-----|
 | Single authenticated API call | HTTP Request node directly |
 | Many API calls + pre/post processing | Sub-workflow pattern (Option B) |
-| Token already in the data flow | Manual `$helpers.httpRequest()` with header |
+| Token already in the data flow | Manual `this.helpers.httpRequest()` with header |
 | `httpRequestWithAuthentication` | **Doesn't work — pick A, B, or C above** |
 
 ---
@@ -753,12 +737,11 @@ Use this checklist before deploying Code nodes:
 - [ ] All code paths return data
 
 ### Return Format
-- [ ] Returns array: `[...]`
-- [ ] Each item has `json` property: `{json: {...}}`
-- [ ] Format is `[{json: {...}}]`
+- [ ] Returns items, not a primitive/`null`
+- [ ] Canonical shape `[{json: {...}}]` (bare objects auto-wrap, but be explicit)
 
 ### Syntax
-- [ ] No `{{ }}` expression syntax (use JavaScript)
+- [ ] No `{{ }}` written as code (it's for other nodes' fields; in a string it's just literal text)
 - [ ] Template literals use backticks: `` `${variable}` ``
 - [ ] All quotes and brackets balanced
 - [ ] Strings properly escaped
@@ -784,12 +767,12 @@ Use this checklist before deploying Code nodes:
 |---------------|--------------|-----|
 | "Code cannot be empty" | Empty code field | Add meaningful code |
 | "Code must return data" | Missing return statement | Add `return [...]` |
-| "Return value must be an array" | Returning object instead of array | Wrap in `[...]` |
-| "Each item must have json property" | Missing `json` wrapper | Use `{json: {...}}` |
-| "Unexpected token" | Expression syntax `{{ }}` in code | Remove `{{ }}`, use JavaScript |
+| "Code doesn't return items properly" | Returned a primitive (string/number) or `null` | Return `[{json:{...}}]` (objects/arrays auto-wrap; primitives don't) |
+| "Not all items have a json key" | Mixed return — some items wrapped, some bare | Wrap every item: `{json: {...}}` |
+| "Expression syntax {{...}} is not valid in Code nodes" / "Unexpected token" | `{{ }}` written as code (not inside a string) | Use JavaScript: `$json.x` or `` `${$json.x}` `` |
 | "Cannot read property X of undefined" | Missing null check | Use optional chaining `?.` |
 | "Cannot read property X of null" | Null value access | Add guard clause or default |
-| "Unmatched expression brackets" | Quote/bracket imbalance | Check string escaping |
+| "Unexpected end of input" | Unbalanced quotes/brackets in your JS | Escape strings or use backtick template literals |
 | "UnsupportedFunctionError ... httpRequestWithAuthentication" | Auth helper blocked in task runner | Use HTTP Request node + credential, or sub-workflow pattern (Error #6) |
 | "$env is not defined" | `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` | Route secrets through credentials, not `$env` (Error #7) |
 | "Cannot find module 'crypto'" | `require()` allowlist not set | Move logic out of Code node, or set `N8N_RUNNERS_ALLOWED_BUILT_IN_MODULES` |
@@ -853,17 +836,17 @@ console.log('Input structure:', JSON.stringify(items[0], null, 2));
 ## Summary
 
 **Top 7 Errors to Avoid**:
-1. **Empty code / missing return** (38%) - Always return data
-2. **Expression syntax `{{ }}`** (8%) - Use JavaScript, not expressions
-3. **Wrong return format** (5%) - Always `[{json: {...}}]`
-4. **Unmatched brackets** (6%) - Escape strings properly
+1. **Empty code / missing return** - Always return data
+2. **Expression syntax as code** - Use JavaScript, not `{{ }}` (in-string `{{ }}` is just literal text)
+3. **Return shape** - prefer `[{json: {...}}]`; primitives/`null` fail (bare objects auto-wrap)
+4. **Broken strings** - unbalanced quotes/brackets throw a JS syntax error; escape or use template literals
 5. **Missing null checks** - Use optional chaining `?.`
 6. **`httpRequestWithAuthentication` blocked** - Use HTTP Request node + credential
 7. **`$env` blocked** - Route secrets through credentials, not env access
 
 **Quick Prevention**:
-- Return `[{json: {...}}]` format
-- Use JavaScript, NOT `{{ }}` expressions
+- Prefer the canonical `[{json: {...}}]` return; never return a primitive or `null`
+- Write JavaScript — don't put `{{ }}` where code belongs
 - Check for null/undefined before accessing
 - Test with empty and invalid data
 - Use browser console for debugging

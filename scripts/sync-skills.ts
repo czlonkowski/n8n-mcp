@@ -28,6 +28,9 @@ async function copyMarkdownTree(src: string, dst: string): Promise<number> {
     const srcPath = path.join(src, entry.name);
     const dstPath = path.join(dst, entry.name);
     if (entry.isDirectory()) {
+      // Skill-creator eval workspaces (skills/*-workspace/) are local debris,
+      // untracked in n8n-skills and excluded from its dist builds — skip them.
+      if (entry.name.endsWith('-workspace')) continue;
       copied += await copyMarkdownTree(srcPath, dstPath);
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
       await fs.copyFile(srcPath, dstPath);

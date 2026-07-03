@@ -18,7 +18,7 @@ Teaches how to write effective JavaScript in n8n Code nodes, avoid common errors
 - "code node javascript"
 - "$input syntax"
 - "$json syntax"
-- "$helpers.httpRequest"
+- "this.helpers.httpRequest" / "$helpers.httpRequest"
 - "DateTime luxon"
 - "code node error"
 - "webhook data code"
@@ -71,7 +71,7 @@ Top 5 errors to avoid:
 5. **Missing null checks** (crashes on undefined)
 
 ### Built-in Functions
-- **$helpers.httpRequest()** - Make HTTP requests
+- **this.helpers.httpRequest()** - Make HTTP requests (the bare `$helpers` global is undefined in the task-runner sandbox; prefer the HTTP Request node for anything beyond a trivial unauthenticated GET)
 - **DateTime (Luxon)** - Advanced date/time operations
 - **$jmespath()** - Query JSON structures
 - **$getWorkflowStaticData()** - Persistent storage
@@ -84,7 +84,7 @@ Top 5 errors to avoid:
 
 ```
 n8n-code-javascript/
-├── SKILL.md (500 lines)
+├── SKILL.md
 │   Overview, quick start, mode selection, best practices
 │   - Mode selection guide (All Items vs Each Item)
 │   - Data access patterns overview
@@ -93,7 +93,7 @@ n8n-code-javascript/
 │   - Error prevention overview
 │   - Quick reference checklist
 │
-├── DATA_ACCESS.md (400 lines)
+├── DATA_ACCESS.md
 │   Complete data access patterns
 │   - $input.all() - Most common (26% usage)
 │   - $input.first() - Very common (25% usage)
@@ -103,7 +103,7 @@ n8n-code-javascript/
 │   - Choosing the right pattern
 │   - Common mistakes to avoid
 │
-├── COMMON_PATTERNS.md (600 lines)
+├── COMMON_PATTERNS.md
 │   10 production-tested patterns
 │   - Pattern 1: Multi-source Aggregation
 │   - Pattern 2: Regex Filtering
@@ -117,7 +117,7 @@ n8n-code-javascript/
 │   - Pattern 10: String Aggregation
 │   - Pattern selection guide
 │
-├── ERROR_PATTERNS.md (450 lines)
+├── ERROR_PATTERNS.md
 │   Top 5 errors with solutions
 │   - Error #1: Empty Code / Missing Return (38%)
 │   - Error #2: Expression Syntax Confusion (8%)
@@ -128,9 +128,9 @@ n8n-code-javascript/
 │   - Quick error reference
 │   - Debugging tips
 │
-├── BUILTIN_FUNCTIONS.md (450 lines)
+├── BUILTIN_FUNCTIONS.md
 │   Complete built-in function reference
-│   - $helpers.httpRequest() API reference
+│   - this.helpers.httpRequest() API reference
 │   - DateTime (Luxon) complete guide
 │   - $jmespath() JSON querying
 │   - $getWorkflowStaticData() persistent storage
@@ -142,7 +142,7 @@ n8n-code-javascript/
     Skill metadata and overview
 ```
 
-**Total**: ~2,400 lines across 6 files
+**Total**: 6 files
 
 ---
 
@@ -172,7 +172,7 @@ n8n-code-javascript/
 - Pattern selection guide
 
 ### Built-in Functions
-- Complete $helpers.httpRequest() reference
+- Complete this.helpers.httpRequest() reference
 - DateTime/Luxon operations (formatting, parsing, arithmetic)
 - $jmespath() for JSON queries
 - Persistent storage with $getWorkflowStaticData()
@@ -194,13 +194,13 @@ const name = $json.body.name;
 ```
 
 ### #2: Return Format
-**CRITICAL**: Must return array with json property
+**Prefer the canonical `[{json: {...}}]`** — unambiguous in both execution modes. A bare object auto-wraps in *Run Once for All Items* mode, so it runs too; what actually fails is returning a primitive (string/number) or `null`.
 
 ```javascript
-// ❌ WRONG
+// ⚠️ Auto-wrapped in All Items mode → [{json: {result: 'success'}}]. Runs, but prefer the array form.
 return {json: {result: 'success'}};
 
-// ✅ CORRECT
+// ✅ CANONICAL
 return [{json: {result: 'success'}}];
 ```
 
@@ -290,7 +290,7 @@ const value = $json.field;
 ### Essential Rules
 1. Choose "All Items" mode (recommended)
 2. Access data: `$input.all()`, `$input.first()`, `$input.item`
-3. **MUST return**: `[{json: {...}}]` format
+3. **Return** the canonical `[{json: {...}}]` (bare objects auto-wrap in All Items mode; primitives/`null` fail)
 4. **Webhook data**: Under `.body` property
 5. **No `{{}}` syntax**: Use JavaScript directly
 
@@ -298,7 +298,7 @@ const value = $json.field;
 - Batch processing → $input.all() + map/filter
 - Single item → $input.first()
 - Aggregation → reduce()
-- HTTP requests → $helpers.httpRequest()
+- HTTP requests → this.helpers.httpRequest()
 - Date handling → DateTime (Luxon)
 
 ### Error Prevention
@@ -323,7 +323,7 @@ const value = $json.field;
 **5 test scenarios** covering:
 1. Webhook body gotcha (most common mistake)
 2. Return format error (missing array wrapper)
-3. HTTP request with $helpers.httpRequest()
+3. HTTP request with this.helpers.httpRequest()
 4. Aggregation pattern with $input.all()
 5. Expression syntax confusion (using `{{}}`)
 

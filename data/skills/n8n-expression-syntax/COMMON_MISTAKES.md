@@ -312,24 +312,32 @@ path: "user-webhook/:userId"    // Use dynamic URL parameters instead
 
 ---
 
-## 14. String Concatenation Confusion
+## 14. Template Literals & Concatenation Outside `{{ }}`
 
-**Problem**: Attempting JavaScript template literals
+**Problem**: A backtick template literal or `+` concatenation shows up as literal text
 
-❌ **Wrong**:
+❌ **Wrong** (written as the whole field value, with no `{{ }}`):
 ```
-`Hello ${$json.name}!`          // Template literal syntax
-"Hello " + $json.name + "!"     // String concatenation
-```
-
-✅ **Correct**:
-```
-Hello {{$json.name}}!           // n8n expressions auto-concatenate
+`Hello ${$json.name}!`          // bare backticks — printed verbatim
+"Hello " + $json.name + "!"     // bare concatenation — printed verbatim
 ```
 
-**Why it fails**: n8n expressions don't use JavaScript template literal syntax. Adjacent text and expressions are automatically concatenated.
+✅ **Correct** (any of these):
+```
+Hello {{$json.name}}!                   // adjacent text + {{ }} auto-concatenate
+{{ `Hello ${$json.name}!` }}            // a template literal INSIDE {{ }}
+{{ "Hello " + $json.name + "!" }}       // + concatenation INSIDE {{ }}
+```
 
-**How to identify**: Literal backticks or + symbols appear in output.
+**Why it fails**: n8n only evaluates what's inside `{{ }}`; everything else is literal text. The backticks and `+` aren't the problem — the **missing `{{ }}`** is. **Inside** an expression, backtick template literals with `${...}` interpolation are fully supported modern JavaScript, so this is valid and evaluates:
+
+```
+={{ $json.items.map(i => `${i.name} — ${i.qty}`).join(', ') }}
+```
+
+The same holds for optional chaining (`{{ $json.user?.email }}`) and string-keyed bracket access (`{{ $json['some-prop'] }}`) — both are valid n8n expressions. As of n8n-mcp ≥ 2.63.0 the validator no longer flags template literals, optional chaining, or bracket access inside expressions (earlier versions raised false-positive errors on them).
+
+**How to identify**: Literal backticks or `+` symbols appear in output → the code wasn't wrapped in `{{ }}`.
 
 ---
 
@@ -371,7 +379,7 @@ Hello {{$json.name}}!           // n8n expressions auto-concatenate
 | = in text | Literal = | Remove = prefix |
 | Dynamic path | Doesn't work | Use static path |
 | Missing .json | Undefined | Add .json |
-| Template literals | Literal text | Use {{ }} |
+| Template literal / `+` outside {{ }} | Literal text | Wrap in {{ }} (both work inside) |
 | Empty {{ }} | Literal braces | Add expression |
 
 ---
