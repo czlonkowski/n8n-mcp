@@ -30,6 +30,7 @@ export class NodeSimilarityService {
   // Constants to avoid magic numbers
   private static readonly SCORING_THRESHOLD = 50; // Minimum 50% confidence to suggest
   private static readonly TYPO_EDIT_DISTANCE = 2; // Max 2 character differences for typo detection
+  private static readonly MIN_CATEGORY_MATCH_LENGTH = 4; // 2-char categories like "ai" match almost anything
   private static readonly SHORT_SEARCH_LENGTH = 5; // Searches ≤5 chars need special handling
   private static readonly CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
   private static readonly AUTO_FIX_CONFIDENCE = 0.9; // 90% confidence for auto-fix
@@ -280,12 +281,17 @@ export class NodeSimilarityService {
       nameSimilarity = Math.max(nameSimilarity, 10);
     }
 
-    // Category match (20% weight)
+    // Category match (20% weight) — whole-token match only. Substring matching
+    // let short categories like "ai" match inside unrelated long type names
+    // (e.g. the "ai" in "langchain"), surfacing nonsense suggestions.
     let categoryMatch = 0;
     if (node.category) {
       const categoryClean = this.normalizeNodeType(node.category);
-      if (cleanInvalid.includes(categoryClean) || categoryClean.includes(cleanInvalid)) {
-        categoryMatch = 20;
+      if (categoryClean.length >= NodeSimilarityService.MIN_CATEGORY_MATCH_LENGTH) {
+        const invalidTokens = invalidType.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+        if (invalidTokens.includes(categoryClean)) {
+          categoryMatch = 20;
+        }
       }
     }
 
@@ -369,11 +375,17 @@ export class NodeSimilarityService {
   /**
    * Calculate string similarity (0-1)
    */
-  private getStringSimilarity(s1: string, s2: string): number {
+  private getStringSimilarity(s1: string, s2: string, maxDistance: number = 5): number {
     if (s1 === s2) return 1;
     if (!s1 || !s2) return 0;
 
-    const distance = this.getEditDistance(s1, s2);
+    const distance = this.getEditDistance(s1, s2, maxDistance);
+
+    // getEditDistance caps at maxDistance + 1 (a sentinel, not a real
+    // distance). Dividing the sentinel by string length would report high
+    // similarity for long, completely unrelated strings.
+    if (distance > maxDistance) return 0;
+
     const maxLen = Math.max(s1.length, s2.length);
 
     return 1 - (distance / maxLen);

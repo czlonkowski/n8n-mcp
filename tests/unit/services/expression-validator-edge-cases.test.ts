@@ -96,19 +96,34 @@ describe('ExpressionValidator - Edge Cases', () => {
   });
 
   describe('Invalid Syntax Handling', () => {
-    it('should detect unclosed expressions', () => {
+    it('should detect unclosed expressions in =-prefixed values', () => {
       const expressions = [
-        '{{ $json.field',
-        '$json.field }}',
-        '{{ $json.field }',
-        '{ $json.field }}'
+        '={{ $json.field',
+        '={{ $json.field }'
       ];
-      
+
       const context = { availableNodes: [] };
-      
+
       expressions.forEach(expr => {
         const result = ExpressionValidator.validateExpression(expr, context);
         expect(result.errors.some(e => e.includes('Unmatched'))).toBe(true);
+      });
+    });
+
+    it('should not flag unprefixed values or stray closing braces (n8n renders them as literal text)', () => {
+      const expressions = [
+        '{{ $json.field',      // no = prefix: n8n never evaluates it
+        '$json.field }}',      // stray closer, no opener
+        '{ $json.field }}',    // single-brace opener (tpl-6191 shape)
+        '=$json.field }}',     // = prefix but no {{ — leftover }} is literal
+        '={ $json.field }}'    // = prefix, single-brace opener
+      ];
+
+      const context = { availableNodes: [] };
+
+      expressions.forEach(expr => {
+        const result = ExpressionValidator.validateExpression(expr, context);
+        expect(result.errors.some(e => e.includes('Unmatched')), expr).toBe(false);
       });
     });
 

@@ -1,9 +1,33 @@
 import path from 'path';
+import { Module } from 'module';
 
 export interface LoadedNode {
   packageName: string;
   nodeName: string;
   NodeClass: any;
+}
+
+/**
+ * Constructible/callable stand-in for a module that cannot be resolved.
+ * Any property access returns the stub itself so top-level destructuring,
+ * subclassing and instantiation in node description files don't throw at
+ * index time — the real dependency is only needed when the node executes.
+ */
+function createMissingDependencyStub(): any {
+  const stub: any = new Proxy(class MissingOptionalDependency {}, {
+    get(target, prop) {
+      if (prop in target) return Reflect.get(target, prop);
+      if (typeof prop === 'symbol') return undefined;
+      return stub;
+    },
+    apply() {
+      return stub;
+    },
+    construct() {
+      return {};
+    }
+  });
+  return stub;
 }
 
 export class N8nNodeLoader {
@@ -44,9 +68,62 @@ export class N8nNodeLoader {
    * Load a node module by absolute file path, bypassing package.json "exports".
    * Some packages (e.g. @n8n/n8n-nodes-langchain >=2.9) restrict exports but
    * still list node files in the n8n.nodes array — we need direct filesystem access.
+   *
+   * If the module fails with MODULE_NOT_FOUND — typically an optional peer
+   * dependency the node only needs at execution time (e.g.
+   * EmbeddingsHuggingFaceInference requiring @huggingface/inference) — retry
+   * with the unresolvable dependencies stubbed so the node description can
+   * still be extracted and indexed instead of silently dropping the node.
    */
   private loadNodeModule(absolutePath: string): any {
-    return require(absolutePath);
+    try {
+      return require(absolutePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND') {
+        throw error;
+      }
+      return this.loadNodeModuleWithStubbedDependencies(absolutePath);
+    }
+  }
+
+  private loadNodeModuleWithStubbedDependencies(absolutePath: string): any {
+    const moduleInternals = Module as any;
+    const originalLoad = moduleInternals._load;
+    const stubbedDependencies = new Set<string>();
+
+    moduleInternals._load = function (request: string, parent: any, isMain: boolean) {
+      try {
+        return originalLoad.call(this, request, parent, isMain);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        // Only stub BARE specifiers (optional peer deps). A missing relative
+        // ('./x') or absolute sibling is a real packaging bug that must fail
+        // loudly, never the node entry file, and never errors unrelated to
+        // module resolution.
+        if (
+          err.code === 'MODULE_NOT_FOUND' &&
+          request !== absolutePath &&
+          !request.startsWith('.') &&
+          !path.isAbsolute(request) &&
+          typeof err.message === 'string' &&
+          err.message.includes(`'${request}'`)
+        ) {
+          stubbedDependencies.add(request);
+          return createMissingDependencyStub();
+        }
+        throw error;
+      }
+    };
+
+    try {
+      const nodeModule = require(absolutePath);
+      console.warn(
+        `  ⚠ Loaded ${path.basename(absolutePath)} with stubbed missing dependencies: ${[...stubbedDependencies].join(', ')}`
+      );
+      return nodeModule;
+    } finally {
+      moduleInternals._load = originalLoad;
+    }
   }
 
   private async loadPackageNodes(packageName: string, packagePath: string, packageJson: any): Promise<LoadedNode[]> {

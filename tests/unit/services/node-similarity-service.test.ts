@@ -173,6 +173,76 @@ describe('NodeSimilarityService', () => {
     });
   });
 
+  describe('False positive regression: long unknown types (validator FP audit)', () => {
+    // Reproduces the audit finding: for the long unknown type
+    // @n8n/n8n-nodes-langchain.embeddingsHuggingFaceInference the scorer
+    // suggested unrelated short-name AI-category community nodes (Z.ai Image,
+    // Zenlayer) at 55% because (a) the capped edit-distance sentinel was
+    // divided by string length and (b) the 2-char category "ai" substring
+    // matched inside "langchain".
+    const createCategorizedNode = (type: string, displayName: string, category: string): any => ({
+      ...createMockNode(type, displayName),
+      category
+    });
+
+    it('should not suggest unrelated short-name nodes for an unknown langchain embeddings type', async () => {
+      const nodes = [
+        createCategorizedNode('n8n-nodes-zai.zaiImage', 'Z.ai Image', 'AI'),
+        createCategorizedNode('n8n-nodes-zenlayer.zenlayer', 'Zenlayer', 'AI')
+      ];
+      vi.spyOn(mockRepository, 'getAllNodes').mockReturnValue(nodes);
+
+      const suggestions = await service.findSimilarNodes(
+        '@n8n/n8n-nodes-langchain.embeddingsHuggingFaceInference',
+        5
+      );
+
+      expect(suggestions).toEqual([]);
+    });
+
+    it('should treat a capped edit distance as no similarity', () => {
+      const similarity = service['getStringSimilarity'](
+        'n8nn8nnodeslangchainembeddingshuggingfaceinference',
+        'zaiimage'
+      );
+      expect(similarity).toBe(0);
+    });
+
+    it('should not award category match when a short category is only a substring', () => {
+      const node = createCategorizedNode('n8n-nodes-zai.zaiImage', 'Z.ai Image', 'AI');
+      const score = service['calculateSimilarityScore'](
+        '@n8n/n8n-nodes-langchain.embeddingsHuggingFaceInference',
+        node
+      );
+      expect(score.categoryMatch).toBe(0);
+    });
+
+    it('should still award category match on a whole-token category match', () => {
+      const node = createCategorizedNode('nodes-base.set', 'Edit Fields', 'Transform');
+      const score = service['calculateSimilarityScore']('transform', node);
+      expect(score.categoryMatch).toBe(20);
+    });
+
+    it('should still compute real similarity for distances within the cap', () => {
+      const similarity = service['getStringSimilarity']('htprequest', 'httprequest');
+      expect(similarity).toBeCloseTo(1 - 1 / 11, 5);
+    });
+
+    it('should still suggest the right node for a genuine typo (guard)', async () => {
+      const nodes = [
+        createMockNode('nodes-base.httpRequest', 'HTTP Request', 'Make HTTP requests'),
+        createCategorizedNode('n8n-nodes-zai.zaiImage', 'Z.ai Image', 'AI')
+      ];
+      vi.spyOn(mockRepository, 'getAllNodes').mockReturnValue(nodes);
+
+      const suggestions = await service.findSimilarNodes('htpRequest', 3);
+
+      expect(suggestions.length).toBeGreaterThan(0);
+      expect(suggestions[0].nodeType).toBe('nodes-base.httpRequest');
+      expect(suggestions.some(s => s.nodeType === 'n8n-nodes-zai.zaiImage')).toBe(false);
+    });
+  });
+
   describe('Constants Usage', () => {
     it('should use proper constants for scoring', () => {
       expect(NodeSimilarityService['SCORING_THRESHOLD']).toBe(50);

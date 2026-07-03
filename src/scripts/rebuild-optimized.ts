@@ -8,6 +8,7 @@ import { N8nNodeLoader } from '../loaders/node-loader';
 import { NodeParser } from '../parsers/node-parser';
 import { DocsMapper } from '../mappers/docs-mapper';
 import { NodeRepository } from '../database/node-repository';
+import { assertCoreNodesPresent } from './core-node-check';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -205,7 +206,22 @@ async function rebuildOptimized() {
   // Create FTS index
   console.log('\n🔍 Building full-text search index...');
   db.exec('INSERT INTO nodes_fts(nodes_fts) VALUES("rebuild")');
-  
+
+  // Hard completeness gate: every canonical core node must exist after a
+  // rebuild (raw lookup — the optimized schema differs from NodeRepository's).
+  console.log('\n🧩 Checking core node completeness...');
+  try {
+    assertCoreNodesPresent({
+      getNode: (nodeType: string) =>
+        db.prepare('SELECT node_type FROM nodes WHERE node_type = ?').get(nodeType)
+    });
+    console.log('✅ All canonical core nodes present');
+  } catch (error) {
+    console.error(`❌ ${(error as Error).message}`);
+    db.close();
+    process.exit(1);
+  }
+
   // Summary
   console.log('\n📊 Summary:');
   console.log(`   Total nodes: ${nodes.length}`);
@@ -230,5 +246,8 @@ async function rebuildOptimized() {
 
 // Run if called directly
 if (require.main === module) {
-  rebuildOptimized().catch(console.error);
+  rebuildOptimized().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
 }

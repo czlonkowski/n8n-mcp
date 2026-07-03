@@ -37,9 +37,11 @@ describe('ExpressionValidator', () => {
     });
 
     it('should detect malformed expressions', () => {
-      const invalidExpr = '{{ $json.field'; // Missing closing braces
+      // Missing closing braces on an =-prefixed value (n8n treats unprefixed
+      // values as literal text, so only =-values get bracket errors)
+      const invalidExpr = '={{ $json.field';
       const result = ExpressionValidator.validateExpression(invalidExpr, defaultContext);
-      
+
       expect(result.errors.length).toBeGreaterThan(0);
     });
   });
@@ -63,7 +65,7 @@ describe('ExpressionValidator', () => {
 
     it('should collect errors from invalid expressions', () => {
       const parameters = {
-        badExpr: '{{ $json.field', // Missing closing
+        badExpr: '={{ $json.field', // Missing closing on an evaluated (=) value
         goodExpr: '{{ $json.field }}'
       };
 
@@ -207,6 +209,84 @@ describe('ExpressionValidator', () => {
       const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
       // The expression in someOtherField should still be validated
       expect(result.valid).toBeDefined();
+    });
+  });
+
+  describe('template literals inside expressions (#338, audit A4)', () => {
+    // n8n's Tournament engine evaluates {{ }} content as full JavaScript,
+    // including backtick template literals with ${} interpolation.
+    it('accepts a ternary selecting backtick template literals (live-verified httpRequest body shape)', () => {
+      const params = {
+        body: '={{ $json.vat_id ? `<value>${$json.vat_id}</value>` : `<value>${$json.customer_email}</value>` }}'
+      };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+
+      expect(result.errors).toEqual([]);
+      expect(result.valid).toBe(true);
+    });
+
+    it('accepts .map() with a template literal', () => {
+      const params = { value: '={{ [1,2,3].map(i => `v${i}`).join(",") }}' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+
+      expect(result.errors).toEqual([]);
+    });
+  });
+
+  describe('stale common-mistake warnings removed (audit B4)', () => {
+    it('does not warn on optional chaining', () => {
+      const params = { value: '={{ $json.user?.profile?.name }}' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('does not warn on bracket access with a dashed key', () => {
+      const params = { value: "={{ $json['some-prop'] }}" };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('does not warn on a field literally named test', () => {
+      const params = { value: '={{ $json.test }}' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('still warns on a probable missing $ prefix', () => {
+      const params = { value: '={{ json.field }}' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+
+      expect(result.warnings.some(w => w.includes('missing $ prefix'))).toBe(true);
+    });
+  });
+
+  describe('bracket balance on literal and JSON-body fields (audit A6)', () => {
+    it('does not error on =-prefixed JSON body with stray closing braces', () => {
+      const params = {
+        body: '={"chat_id": {{ $json.id }}, "reply_markup": {"keyboard": {{ $json.kb }}}}'
+      };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+
+      expect(result.errors).toEqual([]);
+    });
+
+    it('does not error on an unprefixed literal with unbalanced braces', () => {
+      const params = {
+        html: '<p>{{ $json.title }}</p> <style>.a{color:red}}</style>'
+      };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+
+      expect(result.errors).toEqual([]);
+    });
+
+    it('still errors on an =-prefixed expression with a dangling {{', () => {
+      const params = { value: '={{ $json.name' };
+      const result = ExpressionValidator.validateNodeExpressions(params, defaultContext);
+
+      expect(result.errors.some(e => e.includes('Unmatched expression brackets'))).toBe(true);
     });
   });
 

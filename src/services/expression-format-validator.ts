@@ -9,6 +9,7 @@
 
 import { UniversalExpressionValidator, UniversalValidationResult } from './universal-expression-validator';
 import { ConfidenceScorer } from './confidence-scorer';
+import type { ValidationProfile } from './enhanced-config-validator';
 
 export interface ExpressionFormatIssue {
   fieldPath: string;
@@ -258,46 +259,36 @@ export class ExpressionFormatValidator {
       };
     }
 
-    // Universal validation passed, now check for node-specific improvements
-    // Only if the value has expressions
-    const hasExpression = universalResults.some(r => r.hasExpression);
-    if (hasExpression && typeof value === 'string') {
-      const fieldName = fieldPath.split('.').pop() || '';
-      const confidenceScore = ConfidenceScorer.scoreResourceLocatorRecommendation(
-        fieldName,
-        context.nodeType,
-        value
-      );
-
-      // Only suggest resource locator for medium-high confidence as a warning
-      if (confidenceScore.value >= 0.5) {
-        // Has prefix but should use resource locator format
-        return {
-          fieldPath,
-          currentValue: value,
-          correctedValue: this.generateCorrection(value, true),
-          issueType: 'needs-resource-locator',
-          explanation: `Field '${fieldName}' should use resource locator format for better compatibility. (Confidence: ${Math.round(confidenceScore.value * 100)}%)`,
-          severity: 'warning',
-          confidence: confidenceScore.value
-        };
-      }
-    }
-
+    // Note: correctly formatted expressions get no "should use resource
+    // locator format" recommendation. The name-suffix heuristic behind it was
+    // 98.9% false-positive on the template corpus (plain string params like
+    // telegram chatId are not resourceLocator-typed) and its autofix corrupted
+    // working configs. Resource locator format is only suggested above when a
+    // prefix issue already exists and confidence is high.
     return null;
   }
 
   /**
-   * Validate all expressions in a node's parameters recursively
+   * Validate all expressions in a node's parameters recursively.
+   *
+   * When a profile is provided, the missing-cachedResultName advisory is only
+   * emitted under the advisory profiles (ai-friendly/strict) — it is
+   * UI-guidance, not runtime-blocking (#715). Callers that omit the profile
+   * (e.g. the autofix pipeline) receive all issues.
    */
   static validateNodeParameters(
     parameters: any,
-    context: ValidationContext
+    context: ValidationContext,
+    profile?: ValidationProfile
   ): ExpressionFormatIssue[] {
     const issues: ExpressionFormatIssue[] = [];
     const visited = new WeakSet();
 
     this.validateRecursive(parameters, '', context, issues, visited);
+
+    if (profile === 'minimal' || profile === 'runtime') {
+      return issues.filter(i => i.issueType !== 'missing-cached-result-name');
+    }
 
     return issues;
   }
@@ -362,6 +353,13 @@ export class ExpressionFormatValidator {
         // and false-positives on JS object literals like `[{json:{x:1}}]` (#746).
         // Mirrors the existing guard in expression-validator.ts.
         if (key === 'jsCode' || key === 'pythonCode' || key === 'functionCode') return;
+
+        // Skip junk keys with bracket-index notation (e.g. "assignments[5]") —
+        // botched partial-update artifacts that n8n stores but ignores at
+        // runtime. No legitimate n8n parameter key embeds array-index brackets,
+        // and descending into one builds a path that collides with the real
+        // array element, misattributing errors to a healthy field.
+        if (/\[\d+\]/.test(key)) return;
 
         const newPath = path ? `${path}.${key}` : key;
         this.validateRecursive(value, newPath, context, issues, visited, depth + 1);

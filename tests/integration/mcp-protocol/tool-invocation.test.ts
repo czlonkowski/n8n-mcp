@@ -294,8 +294,9 @@ describe('MCP Tool Invocation', () => {
                 values: {
                   string: [
                     {
-                      name: 'test',
-                      value: '={{ $json.invalidExpression }}'
+                      // Genuinely malformed: unclosed expression brackets
+                      name: 'broken',
+                      value: '={{ $json.field'
                     }
                   ]
                 }

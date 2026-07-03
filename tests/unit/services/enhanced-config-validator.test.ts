@@ -955,7 +955,9 @@ describe('EnhancedConfigValidator', () => {
       );
     });
 
-    it('should warn about missing protocol in expressions with template markers', () => {
+    it('should NOT warn about expressions whose protocol lives in the variable', () => {
+      // Live-verified (audit B6): the resolved variable usually carries the
+      // protocol; warning on the literal text was a 100% false positive.
       const nodeType = 'nodes-base.httpRequest';
       const config = {
         url: '={{ $json.domain }}/api/data',
@@ -973,13 +975,10 @@ describe('EnhancedConfigValidator', () => {
         'ai-friendly'
       );
 
-      expect(result.warnings).toContainEqual(
-        expect.objectContaining({
-          type: 'invalid_value',
-          property: 'url',
-          message: expect.stringContaining('missing http:// or https://')
-        })
+      const urlWarning = result.warnings.find(
+        (w: any) => w.property === 'url' && w.message.includes('protocol')
       );
+      expect(urlWarning).toBeUndefined();
     });
 
     it('should NOT warn when expression includes http protocol', () => {
@@ -1210,7 +1209,9 @@ describe('EnhancedConfigValidator', () => {
         expect(result.valid).toBe(true);
       });
 
-      it('should detect missing combinator in filter', () => {
+      it('should accept a filter without combinator (n8n defaults it)', () => {
+        // Live-verified: n8n applies a default combinator when omitted, so
+        // requiring it was a false positive (audit A3).
         const config = {
           conditions: {
             conditions: [{ id: '1', operator: { type: 'string', operation: 'equals' }, leftValue: 'test', rightValue: 'value' }],
@@ -1218,8 +1219,8 @@ describe('EnhancedConfigValidator', () => {
         };
         const properties = [{ name: 'conditions', type: 'filter', required: true }];
         const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', config, properties, 'operation', 'ai-friendly');
-        expect(result.valid).toBe(false);
-        expect(result.errors).toContainEqual(expect.objectContaining({ property: expect.stringMatching(/conditions/), type: 'invalid_configuration' }));
+        expect(result.valid).toBe(true);
+        expect(result.errors).toHaveLength(0);
       });
 
       it('should detect invalid combinator value', () => {

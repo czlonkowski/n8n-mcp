@@ -54,10 +54,10 @@ describe('Integration: AI Tool Validation', () => {
   // ======================================================================
 
   describe('HTTP Request Tool', () => {
-    it('should detect missing toolDescription', async () => {
+    it('should warn (not error) on missing toolDescription', async () => {
       const httpTool = createHTTPRequestToolNode({
         name: 'HTTP Request Tool',
-        toolDescription: '', // Missing
+        toolDescription: '', // Missing - n8n still runs the tool
         url: 'https://api.example.com/data',
         method: 'GET'
       });
@@ -83,11 +83,11 @@ describe('Integration: AI Tool Validation', () => {
       expect(response.success).toBe(true);
       const data = response.data as ValidationResponse;
 
-      expect(data.valid).toBe(false);
-      expect(data.errors).toBeDefined();
+      const errorCodes = (data.errors ?? []).map(e => e.details?.code || e.code);
+      expect(errorCodes).not.toContain('MISSING_TOOL_DESCRIPTION');
 
-      const errorCodes = data.errors!.map(e => e.details?.code || e.code);
-      expect(errorCodes).toContain('MISSING_TOOL_DESCRIPTION');
+      const warningCodes = (data.warnings ?? []).map(w => w.details?.code || w.code);
+      expect(warningCodes).toContain('MISSING_TOOL_DESCRIPTION');
     });
 
     it('should detect missing URL', async () => {
@@ -238,10 +238,10 @@ describe('Integration: AI Tool Validation', () => {
   // ======================================================================
 
   describe('Vector Store Tool', () => {
-    it('should detect missing toolDescription', async () => {
+    it('should warn (not error) on missing toolDescription', async () => {
       const vectorTool = createVectorStoreToolNode({
         name: 'Vector Store Tool',
-        toolDescription: '' // Missing
+        toolDescription: '' // Missing - n8n still runs the tool
       });
 
       const workflow = createAIWorkflow(
@@ -265,11 +265,11 @@ describe('Integration: AI Tool Validation', () => {
       expect(response.success).toBe(true);
       const data = response.data as ValidationResponse;
 
-      expect(data.valid).toBe(false);
-      expect(data.errors).toBeDefined();
+      const errorCodes = (data.errors ?? []).map(e => e.details?.code || e.code);
+      expect(errorCodes).not.toContain('MISSING_TOOL_DESCRIPTION');
 
-      const errorCodes = data.errors!.map(e => e.details?.code || e.code);
-      expect(errorCodes).toContain('MISSING_TOOL_DESCRIPTION');
+      const warningCodes = (data.warnings ?? []).map(w => w.details?.code || w.code);
+      expect(warningCodes).toContain('MISSING_TOOL_DESCRIPTION');
     });
 
     it('should validate valid Vector Store Tool', async () => {

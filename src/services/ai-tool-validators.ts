@@ -31,9 +31,9 @@ export interface WorkflowNode {
 /**
  * Get tool description from node, checking all possible property locations.
  * Different n8n tool types store descriptions in different places:
- * - toolDescription: HTTP Request Tool, Vector Store Tool
- * - description: Workflow Tool, Code Tool, AI Agent Tool
- * - options.description: SerpApi, Wikipedia, SearXNG
+ * - toolDescription: HTTP Request Tool, Vector Store Tool, AI Agent Tool
+ * - description: Workflow Tool, Code Tool
+ * - options.description: WolframAlpha
  */
 function getToolDescription(node: WorkflowNode): string | undefined {
   return (
@@ -72,10 +72,11 @@ export interface ValidationIssue {
 export function validateHTTPRequestTool(node: WorkflowNode): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // 1. Check toolDescription (REQUIRED)
+  // 1. Check toolDescription (optional in n8n - the tool runs without it, but
+  // the LLM has little to go on when selecting tools)
   if (!getToolDescription(node)) {
     issues.push({
-      severity: 'error',
+      severity: 'warning',
       nodeId: node.id,
       nodeName: node.name,
       message: `HTTP Request Tool "${node.name}" has no toolDescription. Add a clear description to help the LLM know when to use this API.`,
@@ -294,10 +295,10 @@ export function validateVectorStoreTool(
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // 1. Check toolDescription (REQUIRED)
+  // 1. Check toolDescription (optional in n8n - the tool runs without it)
   if (!getToolDescription(node)) {
     issues.push({
-      severity: 'error',
+      severity: 'warning',
       nodeId: node.id,
       nodeName: node.name,
       message: `Vector Store Tool "${node.name}" has no toolDescription. Add one to explain what data it searches.`,
@@ -335,10 +336,10 @@ export function validateVectorStoreTool(
 export function validateWorkflowTool(node: WorkflowNode, reverseConnections?: Map<string, ReverseConnection[]>): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // 1. Check toolDescription (REQUIRED)
+  // 1. Check toolDescription (optional in n8n - the tool runs without it)
   if (!getToolDescription(node)) {
     issues.push({
-      severity: 'error',
+      severity: 'warning',
       nodeId: node.id,
       nodeName: node.name,
       message: `Workflow Tool "${node.name}" has no toolDescription. Add one to help the LLM know when to use this tool.`,
@@ -370,14 +371,14 @@ export function validateAIAgentTool(
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // 1. Check toolDescription (REQUIRED)
+  // 1. Check toolDescription (n8n applies the schema default when unset, so
+  // execution is fine - a specific description just improves tool selection)
   if (!getToolDescription(node)) {
     issues.push({
-      severity: 'error',
+      severity: 'info',
       nodeId: node.id,
       nodeName: node.name,
-      message: `AI Agent Tool "${node.name}" has no toolDescription. Add one to help the LLM know when to use this tool.`,
-      code: 'MISSING_TOOL_DESCRIPTION'
+      message: `AI Agent Tool "${node.name}" has no toolDescription. n8n uses the generic default "AI Agent that can call other tools" - add a specific description to improve tool selection.`
     });
   }
 
@@ -411,25 +412,25 @@ export function validateAIAgentTool(
 export function validateMCPClientTool(node: WorkflowNode): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // 1. Check toolDescription (REQUIRED)
-  if (!getToolDescription(node)) {
-    issues.push({
-      severity: 'error',
-      nodeId: node.id,
-      nodeName: node.name,
-      message: `MCP Client Tool "${node.name}" has no toolDescription. Add one to help the LLM know when to use this tool.`,
-      code: 'MISSING_TOOL_DESCRIPTION'
-    });
-  }
+  // No toolDescription check: the node has no description parameter -
+  // per-tool descriptions come from the MCP server itself.
 
-  // 2. Check serverUrl (REQUIRED)
-  if (!node.parameters.serverUrl) {
+  // Check MCP endpoint (REQUIRED): sseEndpoint for the "sse" transport,
+  // endpointUrl for "httpStreamable". When serverTransport is unset the
+  // default depends on typeVersion, so accept either field.
+  const transport = node.parameters.serverTransport;
+  const hasEndpoint =
+    transport === 'sse' ? Boolean(node.parameters.sseEndpoint) :
+    transport === 'httpStreamable' ? Boolean(node.parameters.endpointUrl) :
+    Boolean(node.parameters.sseEndpoint || node.parameters.endpointUrl);
+
+  if (!hasEndpoint) {
     issues.push({
       severity: 'error',
       nodeId: node.id,
       nodeName: node.name,
-      message: `MCP Client Tool "${node.name}" has no serverUrl. Configure the MCP server URL.`,
-      code: 'MISSING_SERVER_URL'
+      message: `MCP Client Tool "${node.name}" has no MCP endpoint configured. Set sseEndpoint (SSE transport) or endpointUrl (HTTP Streamable transport).`,
+      code: 'MISSING_MCP_ENDPOINT'
     });
   }
 
@@ -457,18 +458,10 @@ export function validateThinkTool(_node: WorkflowNode): ValidationIssue[] {
 export function validateSerpApiTool(node: WorkflowNode): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // 1. Check toolDescription (REQUIRED)
-  if (!getToolDescription(node)) {
-    issues.push({
-      severity: 'error',
-      nodeId: node.id,
-      nodeName: node.name,
-      message: `SerpApi Tool "${node.name}" has no toolDescription. Add one to explain when to use Google search.`,
-      code: 'MISSING_TOOL_DESCRIPTION'
-    });
-  }
+  // SerpApi Tool has a built-in description and no description parameter -
+  // no toolDescription check (same as Calculator/Think)
 
-  // 2. Check credentials (RECOMMENDED)
+  // 1. Check credentials (RECOMMENDED)
   if (!node.credentials || !node.credentials.serpApiApi) {
     issues.push({
       severity: 'warning',
@@ -484,18 +477,10 @@ export function validateSerpApiTool(node: WorkflowNode): ValidationIssue[] {
 export function validateWikipediaTool(node: WorkflowNode): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // 1. Check toolDescription (REQUIRED)
-  if (!getToolDescription(node)) {
-    issues.push({
-      severity: 'error',
-      nodeId: node.id,
-      nodeName: node.name,
-      message: `Wikipedia Tool "${node.name}" has no toolDescription. Add one to explain when to use Wikipedia.`,
-      code: 'MISSING_TOOL_DESCRIPTION'
-    });
-  }
+  // Wikipedia Tool has a built-in description and no description parameter -
+  // no toolDescription check (same as Calculator/Think)
 
-  // 2. Validate language if specified
+  // 1. Validate language if specified
   if (node.parameters.language) {
     const validLanguageCodes = /^[a-z]{2,3}$/;  // ISO 639 codes
     if (!validLanguageCodes.test(node.parameters.language)) {
@@ -514,18 +499,10 @@ export function validateWikipediaTool(node: WorkflowNode): ValidationIssue[] {
 export function validateSearXngTool(node: WorkflowNode): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // 1. Check toolDescription (REQUIRED)
-  if (!getToolDescription(node)) {
-    issues.push({
-      severity: 'error',
-      nodeId: node.id,
-      nodeName: node.name,
-      message: `SearXNG Tool "${node.name}" has no toolDescription. Add one to explain when to use SearXNG.`,
-      code: 'MISSING_TOOL_DESCRIPTION'
-    });
-  }
+  // SearXNG Tool has a built-in description and no description parameter -
+  // no toolDescription check (same as Calculator/Think)
 
-  // 2. Check baseUrl (REQUIRED)
+  // 1. Check baseUrl (REQUIRED)
   if (!node.parameters.baseUrl) {
     issues.push({
       severity: 'error',

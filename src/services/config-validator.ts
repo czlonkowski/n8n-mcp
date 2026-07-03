@@ -289,9 +289,21 @@ export class ConfigValidator {
     errors: ValidationError[]
   ): void {
     for (const [key, value] of Object.entries(config)) {
-      const prop = properties.find(p => p.name === key);
-      if (!prop) continue;
-      
+      const candidates = properties.filter(p => p && p.name === key);
+      if (candidates.length === 0) continue;
+
+      // Several definitions can share a name (one per resource/operation);
+      // validate against the one visible for the current config rather than
+      // whichever happens to come first in the schema array.
+      const prop = candidates.find(p => this.isPropertyVisible(p, config)) ?? candidates[0];
+
+      // A value equal to a same-named definition's schema default was injected
+      // by default resolution rather than set by the user; type-checking it
+      // against a different variant's type produces false errors.
+      if (candidates.some(p => 'default' in p && JSON.stringify(value) === JSON.stringify(p.default))) {
+        continue;
+      }
+
       // Type validation
       if (prop.type === 'string' && typeof value !== 'string') {
         errors.push({
@@ -329,8 +341,10 @@ export class ConfigValidator {
             fix: `Change ${key} to { mode: "list", value: ${JSON.stringify(fixValue)} } or { mode: "id", value: ${JSON.stringify(fixValue)} }`
           });
         } else {
-          // Check required properties
-          if (!value.mode) {
+          // Check required properties. An empty-string mode is a UI-persisted
+          // artifact that n8n tolerates (the value/expression still resolves),
+          // so only undefined/null count as a missing mode.
+          if (value.mode === undefined || value.mode === null) {
             errors.push({
               type: 'missing_required',
               property: `${key}.mode`,
@@ -344,7 +358,7 @@ export class ConfigValidator {
               message: `resourceLocator '${key}.mode' must be a string, got ${typeof value.mode}`,
               fix: `Set mode to a valid string value`
             });
-          } else if (prop.modes) {
+          } else if (value.mode !== '' && prop.modes) {
             // Schema-based validation: Check if mode exists in the modes definition
             // In n8n, modes are defined at the top level of resourceLocator properties
             // Modes can be defined in different ways:
@@ -396,11 +410,26 @@ export class ConfigValidator {
 
       // Options validation
       if (prop.type === 'options' && prop.options) {
-        const validValues = prop.options.map((opt: any) => 
+        const validValues = prop.options.map((opt: any) =>
           typeof opt === 'string' ? opt : opt.value
         );
-        
-        if (!validValues.includes(value)) {
+
+        // Expression values resolve at runtime and cannot be enum-checked
+        const isExpression = typeof value === 'string' && value.startsWith('=');
+        // Dynamic option lists are fetched at runtime; the static list is
+        // empty or incomplete, so enum-checking rejects valid values
+        const hasDynamicOptions = !!(prop.typeOptions?.loadOptionsMethod || prop.typeOptions?.loadOptions);
+        // Legacy Code-node language value that n8n still executes
+        // (renamed to pythonNative but kept for backwards compatibility)
+        const isLegacyCodeLanguage = key === 'language' && value === 'python' && validValues.includes('pythonNative');
+
+        if (
+          validValues.length > 0 &&
+          !isExpression &&
+          !hasDynamicOptions &&
+          !isLegacyCodeLanguage &&
+          !validValues.includes(value)
+        ) {
           errors.push({
             type: 'invalid_value',
             property: key,
@@ -644,6 +673,18 @@ export class ConfigValidator {
 
       // Check if property is visible with current settings
       if (!visibleProps.find(p => p.name === key)) {
+        const value = config[key];
+
+        // A property with no value (or still at its schema default) has no
+        // runtime effect regardless of visibility — warning about such
+        // UI-persisted leftovers is pure noise.
+        if (value === null || value === undefined || value === '') {
+          continue;
+        }
+        if (prop && 'default' in prop && JSON.stringify(value) === JSON.stringify(prop.default)) {
+          continue;
+        }
+
         // Get visibility requirements for better error message
         const visibilityReq = this.getVisibilityRequirement(prop, config);
 

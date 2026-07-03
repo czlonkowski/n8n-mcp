@@ -95,14 +95,50 @@ describe('UniversalExpressionValidator', () => {
       expect(result.hasExpression).toBe(true);
       expect(result.isMixedContent).toBe(true);
     });
+
+    // n8n pairs each {{ with the next }} and renders leftover braces as
+    // literal text — a raw {{ vs }} count mismatch is not an error (audit A6).
+    it('should not flag =-prefixed JSON bodies with stray closing braces', () => {
+      const result = UniversalExpressionValidator.validateExpressionSyntax(
+        '={"chat_id": {{ $json.id }}, "reply_markup": {"inline_keyboard": {{ JSON.stringify($json.kb) }}}}'
+      );
+
+      expect(result.isValid).toBe(true);
+    });
+
+    it('should not flag =-prefixed Graph-API field syntax with unbalanced braces', () => {
+      const result = UniversalExpressionValidator.validateExpressionSyntax(
+        '=ads{id,status,insights{clicks,impressions}}'
+      );
+
+      expect(result.isValid).toBe(true);
+    });
+
+    it('should not flag literal fields (no = prefix) containing braces', () => {
+      const result = UniversalExpressionValidator.validateExpressionSyntax(
+        '<p>{{ $json.title }}</p> <style>.a{color:red}}</style>'
+      );
+
+      expect(result.isValid).toBe(true);
+    });
+
+    it('should still flag a dangling {{ in an =-prefixed value', () => {
+      const result = UniversalExpressionValidator.validateExpressionSyntax(
+        '=Hello {{ $json.first }} and {{ $json.second'
+      );
+
+      expect(result.isValid).toBe(false);
+      expect(result.explanation).toContain('Unmatched expression brackets');
+    });
   });
 
   describe('validateCommonPatterns', () => {
-    it('should detect template literal syntax', () => {
-      const result = UniversalExpressionValidator.validateCommonPatterns('={{ ${json.value} }}');
+    // n8n's Tournament engine fully supports backtick template literals with
+    // ${} interpolation inside {{ }} — live-verified in issue #338 (audit A4).
+    it('should accept backtick template literals inside expressions', () => {
+      const result = UniversalExpressionValidator.validateCommonPatterns('={{ `v${$json.x}` }}');
 
-      expect(result.isValid).toBe(false);
-      expect(result.explanation).toContain('Template literal syntax');
+      expect(result.isValid).toBe(true);
     });
 
     it('should detect double prefix', () => {
@@ -132,18 +168,27 @@ describe('UniversalExpressionValidator', () => {
 
   describe('validate (comprehensive)', () => {
     it('should return all validation issues', () => {
-      const results = UniversalExpressionValidator.validate('{{ ${json.value} }}');
+      const results = UniversalExpressionValidator.validate('{{ =$json.value }}');
 
       expect(results.length).toBeGreaterThan(0);
       const issues = results.filter(r => !r.isValid);
       expect(issues.length).toBeGreaterThan(0);
 
-      // Should detect both missing prefix and template literal syntax
+      // Should detect both missing prefix and double-prefix pattern
       const prefixIssue = issues.find(i => i.needsPrefix);
-      const patternIssue = issues.find(i => i.explanation.includes('Template literal'));
+      const patternIssue = issues.find(i => i.explanation.includes('Double prefix'));
 
       expect(prefixIssue).toBeTruthy();
       expect(patternIssue).toBeTruthy();
+    });
+
+    it('should return success for a ternary with backtick template literals (#338)', () => {
+      const results = UniversalExpressionValidator.validate(
+        '={{ $json.vat_id ? `<x>${$json.vat_id}</x>` : `<y>${$json.customer_email}</y>` }}'
+      );
+
+      expect(results).toHaveLength(1);
+      expect(results[0].isValid).toBe(true);
     });
 
     it('should return success for valid expression', () => {

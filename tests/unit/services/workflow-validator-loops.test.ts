@@ -1036,7 +1036,7 @@ describe('WorkflowValidator - Loop Node Validation', () => {
       expect(cycleErrors).toHaveLength(0);
     });
 
-    it('should still flag pure cycle without conditional or loop nodes', async () => {
+    it('should still flag pure cycle without conditional or loop nodes (as a warning)', async () => {
       mockNodeRepository.getNode.mockReturnValue({
         nodeType: 'nodes-base.set',
         properties: []
@@ -1060,8 +1060,12 @@ describe('WorkflowValidator - Loop Node Validation', () => {
 
       const result = await validator.validateWorkflow(workflow as any);
 
+      // Demoted to warning: n8n does not statically reject cycles, and static
+      // analysis cannot prove non-termination.
       const cycleErrors = result.errors.filter(e => e.message?.includes('cycle'));
-      expect(cycleErrors).toHaveLength(1);
+      expect(cycleErrors).toHaveLength(0);
+      const cycleWarnings = result.warnings.filter(w => w.message?.includes('cycle'));
+      expect(cycleWarnings).toHaveLength(1);
     });
   });
 });

@@ -274,9 +274,16 @@ describe('WorkflowValidator', () => {
       expect(result.errors.some(e => e.message.includes('Invalid typeVersion: invalid'))).toBe(true);
     });
 
-    it('should warn for outdated typeVersion', async () => {
-      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [100, 100], parameters: {}, typeVersion: 1 }], connections: {} } as any);
-      expect(result.warnings.some(w => w.message.includes('Outdated typeVersion: 1. Latest is 2'))).toBe(true);
+    it('should suggest (not warn) for outdated typeVersion under advisory profiles only', async () => {
+      // Advisory profile: demoted to a suggestion
+      const aiFriendly = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [100, 100], parameters: {}, typeVersion: 1 }], connections: {} } as any, { profile: 'ai-friendly' });
+      expect(aiFriendly.warnings.some(w => w.message.includes('Outdated typeVersion'))).toBe(false);
+      expect(aiFriendly.suggestions.some(s => s.includes('Outdated typeVersion') && s.includes('Latest is 2'))).toBe(true);
+
+      // Default runtime profile: silent (old typeVersions are supported by design)
+      const runtime = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [100, 100], parameters: {}, typeVersion: 1 }], connections: {} } as any);
+      expect(runtime.warnings.some(w => w.message.includes('Outdated typeVersion'))).toBe(false);
+      expect(runtime.suggestions.some(s => s.includes('Outdated typeVersion'))).toBe(false);
     });
 
     it('should error for typeVersion exceeding maximum', async () => {
@@ -437,9 +444,10 @@ describe('WorkflowValidator', () => {
       expect(result.warnings.some(w => w.message.includes('not reachable from any trigger node') && w.nodeName === 'Orphaned')).toBe(true);
     });
 
-    it('should detect cycles in workflow', async () => {
+    it('should detect cycles in workflow as a warning (n8n does not reject cycles statically)', async () => {
       const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Node1', type: 'n8n-nodes-base.set', position: [100, 100], parameters: {} }, { id: '2', name: 'Node2', type: 'n8n-nodes-base.set', position: [300, 100], parameters: {} }, { id: '3', name: 'Node3', type: 'n8n-nodes-base.set', position: [500, 100], parameters: {} }], connections: { 'Node1': { main: [[{ node: 'Node2', type: 'main', index: 0 }]] }, 'Node2': { main: [[{ node: 'Node3', type: 'main', index: 0 }]] }, 'Node3': { main: [[{ node: 'Node1', type: 'main', index: 0 }]] } } } as any);
-      expect(result.errors.some(e => e.message.includes('Workflow contains a cycle'))).toBe(true);
+      expect(result.warnings.some(w => w.message.includes('Workflow contains a cycle'))).toBe(true);
+      expect(result.errors.some(e => e.message.includes('Workflow contains a cycle'))).toBe(false);
     });
 
     it('should handle null connections properly', async () => {
@@ -534,15 +542,18 @@ describe('WorkflowValidator', () => {
         connections: {}
       });
 
-      for (const profile of ['runtime', 'ai-friendly', 'strict'] as const) {
+      for (const profile of ['ai-friendly', 'strict'] as const) {
         const result = await validator.validateWorkflow(buildAirtableWorkflow() as any, { profile });
         const cachedNameWarnings = result.warnings.filter(w => w.message.includes('cachedResultName'));
         expect(cachedNameWarnings.length, `profile=${profile}`).toBe(2);
       }
 
-      const minimalResult = await validator.validateWorkflow(buildAirtableWorkflow() as any, { profile: 'minimal' });
-      const minimalCachedNameWarnings = minimalResult.warnings.filter(w => w.message.includes('cachedResultName'));
-      expect(minimalCachedNameWarnings).toHaveLength(0);
+      // UI-guidance only — suppressed under minimal and runtime (audit noise fix)
+      for (const profile of ['minimal', 'runtime'] as const) {
+        const result = await validator.validateWorkflow(buildAirtableWorkflow() as any, { profile });
+        const cachedNameWarnings = result.warnings.filter(w => w.message.includes('cachedResultName'));
+        expect(cachedNameWarnings.length, `profile=${profile}`).toBe(0);
+      }
     });
   });
 
@@ -576,9 +587,10 @@ describe('WorkflowValidator', () => {
 
   describe('onError Property Validation', () => {
     it('should validate onError property combinations', async () => {
-      // onError set but no error connections -> error
+      // onError set but error output unwired -> warning (n8n runs it; failed items are dropped)
       const r1 = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Test', type: 'n8n-nodes-base.httpRequest', position: [0, 0], parameters: {}, onError: 'continueErrorOutput' }, { id: '2', name: 'Next', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} }], connections: { 'Test': { main: [[{ node: 'Next', type: 'main', index: 0 }]] } } } as any);
-      expect(r1.errors.some(e => e.message.includes("has onError: 'continueErrorOutput' but no error output connections"))).toBe(true);
+      expect(r1.warnings.some(w => w.message.includes("has onError: 'continueErrorOutput'") && w.message.includes('silently dropped'))).toBe(true);
+      expect(r1.errors.some(e => e.message.includes("onError: 'continueErrorOutput'"))).toBe(false);
 
       // error connections but no onError -> warning
       const r2 = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Test', type: 'n8n-nodes-base.httpRequest', position: [0, 0], parameters: {} }, { id: '2', name: 'Success', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} }, { id: '3', name: 'ErrH', type: 'n8n-nodes-base.set', position: [200, 100], parameters: {} }], connections: { 'Test': { main: [[{ node: 'Success', type: 'main', index: 0 }], [{ node: 'ErrH', type: 'main', index: 0 }]] } } } as any);
@@ -596,28 +608,37 @@ describe('WorkflowValidator', () => {
   // ─── Workflow Patterns ─────────────────────────────────────────────
 
   describe('checkWorkflowPatterns', () => {
-    it('should suggest error handling for large workflows', async () => {
+    it('should suggest error handling for large workflows under advisory profiles', async () => {
       const builder = createWorkflow('Large');
       for (let i = 0; i < 5; i++) builder.addCustomNode('n8n-nodes-base.set', 3, {}, { name: `Set${i}` });
-      expect((await validator.validateWorkflow(builder.build() as any)).warnings.some(w => w.message.includes('Consider adding error handling'))).toBe(true);
+      // Advisory-only (RC-2): fires under ai-friendly/strict, not runtime
+      expect((await validator.validateWorkflow(builder.build() as any, { profile: 'ai-friendly' })).warnings.some(w => w.message.includes('Consider adding error handling'))).toBe(true);
+      expect((await validator.validateWorkflow(builder.build() as any)).warnings.some(w => w.message.includes('Consider adding error handling'))).toBe(false);
     });
 
-    it('should warn about long linear chains', async () => {
+    it('should suggest breaking up long linear chains under advisory profiles', async () => {
       const builder = createWorkflow('Linear');
       const names: string[] = [];
       for (let i = 0; i < 12; i++) { const n = `Node${i}`; builder.addCustomNode('n8n-nodes-base.set', 3, {}, { name: n }); names.push(n); }
       builder.connectSequentially(names);
-      expect((await validator.validateWorkflow(builder.build() as any)).warnings.some(w => w.message.includes('Long linear chain detected'))).toBe(true);
+      // Maintainability note: suggestion under ai-friendly/strict, silent at runtime
+      const aiFriendly = await validator.validateWorkflow(builder.build() as any, { profile: 'ai-friendly' });
+      expect(aiFriendly.warnings.some(w => w.message.includes('Long linear chain detected'))).toBe(false);
+      expect(aiFriendly.suggestions.some(s => s.includes('Long linear chain detected'))).toBe(true);
+      expect((await validator.validateWorkflow(builder.build() as any)).suggestions.some(s => s.includes('Long linear chain detected'))).toBe(false);
     });
 
-    it('should warn about AI agents without tools', async () => {
+    it('should suggest (not warn) about AI agents without tools', async () => {
       const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent', position: [100, 100], parameters: {} }], connections: {} } as any);
-      expect(result.warnings.some(w => w.message.includes('AI Agent has no tools connected'))).toBe(true);
+      // Single advisory from ai-node-validator, routed to suggestions
+      expect(result.warnings.some(w => w.message.includes('has no tools connected') || w.message.includes('no ai_tool connections'))).toBe(false);
+      expect(result.suggestions.some(s => s.includes('no ai_tool connections') && s.includes('Agent'))).toBe(true);
     });
 
-    it('should NOT warn about AI agents WITH tools', async () => {
+    it('should NOT advise about AI agents WITH tools', async () => {
       const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Tool', type: 'n8n-nodes-base.httpRequest', position: [100, 100], parameters: {} }, { id: '2', name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent', position: [300, 100], parameters: {} }], connections: { 'Tool': { ai_tool: [[{ node: 'Agent', type: 'ai_tool', index: 0 }]] } } } as any);
-      expect(result.warnings.some(w => w.message.includes('AI Agent has no tools connected'))).toBe(false);
+      expect(result.warnings.some(w => w.message.includes('has no tools connected') || w.message.includes('no ai_tool connections'))).toBe(false);
+      expect(result.suggestions.some(s => s.includes('no ai_tool connections'))).toBe(false);
     });
   });
 
@@ -725,7 +746,9 @@ describe('WorkflowValidator', () => {
     it('should infer googleDriveTool when googleDrive exists', async () => {
       const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'GDT', type: 'n8n-nodes-base.googleDriveTool', typeVersion: 3, position: [250, 300], parameters: {} }], connections: {} } as any);
       expect(result.errors.filter(e => e.message?.includes('Unknown node type'))).toHaveLength(0);
-      expect(result.warnings.filter(e => (e as any).code === 'INFERRED_TOOL_VARIANT')).toHaveLength(1);
+      // Informational note rides the suggestions channel, not warnings
+      expect(result.warnings.filter(e => (e as any).code === 'INFERRED_TOOL_VARIANT')).toHaveLength(0);
+      expect(result.suggestions.filter(s => s.includes('dynamic AI Tool variant'))).toHaveLength(1);
     });
 
     it('should error for unknownNodeTool when base does not exist', async () => {
@@ -736,7 +759,7 @@ describe('WorkflowValidator', () => {
     it('should prefer database record over inference for supabaseTool', async () => {
       const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'ST', type: 'n8n-nodes-base.supabaseTool', typeVersion: 1, position: [250, 300], parameters: {} }], connections: {} } as any);
       expect(result.errors.filter(e => e.message?.includes('Unknown node type'))).toHaveLength(0);
-      expect(result.warnings.filter(e => (e as any).code === 'INFERRED_TOOL_VARIANT')).toHaveLength(0);
+      expect(result.suggestions.filter(s => s.includes('dynamic AI Tool variant'))).toHaveLength(0);
     });
   });
 
@@ -839,7 +862,7 @@ describe('WorkflowValidator', () => {
   // ─── If/Switch conditions validation ──────────────────────────────
 
   describe('If/Switch conditions validation (validateConditionNodeStructure)', () => {
-    it('If v2.3 missing conditions.options → error', () => {
+    it('If v2.3 missing conditions.options → no error (options are optional with defaults)', () => {
       const node = {
         id: '1', name: 'IF', type: 'n8n-nodes-base.if', typeVersion: 2.3,
         position: [0, 0] as [number, number],
@@ -851,8 +874,7 @@ describe('WorkflowValidator', () => {
         }
       };
       const errors = validateConditionNodeStructure(node);
-      expect(errors.length).toBeGreaterThan(0);
-      expect(errors.some(e => e.includes('options'))).toBe(true);
+      expect(errors).toHaveLength(0);
     });
 
     it('If v2.3 with complete options → no error', () => {
@@ -914,7 +936,7 @@ describe('WorkflowValidator', () => {
       expect(errors).toHaveLength(0);
     });
 
-    it('Switch v3.2 missing rule options → error', () => {
+    it('Switch v3.2 missing rule options → no error (options are optional with defaults)', () => {
       const node = {
         id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
         position: [0, 0] as [number, number],
@@ -931,8 +953,7 @@ describe('WorkflowValidator', () => {
         }
       };
       const errors = validateConditionNodeStructure(node);
-      expect(errors.length).toBeGreaterThan(0);
-      expect(errors.some(e => e.includes('rules.rules[0].conditions.options'))).toBe(true);
+      expect(errors).toHaveLength(0);
     });
 
     it('Switch v3.2 with complete options → no error', () => {

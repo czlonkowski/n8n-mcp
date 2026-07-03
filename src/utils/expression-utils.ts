@@ -104,6 +104,24 @@ export function extractBracketExpressions(value: string): string[] {
 }
 
 /**
+ * Detect a '{{' that has no matching '}}' anywhere after it, using the same
+ * left-to-right pairing n8n's renderer applies. Leftover braces without a
+ * dangling open (JSON bodies, Graph-API field syntax, stray '}}') render as
+ * literal text and are not flagged.
+ */
+export function hasDanglingOpenBracket(value: string): boolean {
+  let cursor = 0;
+  while (cursor < value.length) {
+    const start = value.indexOf('{{', cursor);
+    if (start === -1) return false;
+    const end = value.indexOf('}}', start + 2);
+    if (end === -1) return true;
+    cursor = end + 2;
+  }
+  return false;
+}
+
+/**
  * Check if a string contains at least one `{{...}}` expression. Linear
  * equivalent of `/\{\{[\s\S]+?\}\}/.test(value)` without the ReDoS risk.
  */

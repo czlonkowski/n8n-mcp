@@ -504,53 +504,24 @@ export function validateConditionNodeStructure(node: WorkflowNode): string[] {
   const errors: string[] = [];
   const typeVersion = node.typeVersion || 1;
 
+  // conditions.options and all its sub-fields (version, leftValue,
+  // caseSensitive, typeValidation) are optional in n8n — the runtime applies
+  // defaults — so only the operator structure is validated here.
   if (node.type === 'n8n-nodes-base.if') {
-    if (typeVersion >= 2.2) {
-      errors.push(...validateFilterOptionsRequired(node.parameters?.conditions, 'conditions'));
+    if (typeVersion >= 2) {
       errors.push(...validateFilterConditionOperators(node.parameters?.conditions, 'conditions'));
-    } else if (typeVersion >= 2) {
-      // v2 has conditions but no options requirement; just validate operators
-      errors.push(...validateFilterConditionOperators(node.parameters?.conditions as any, 'conditions'));
     }
   } else if (node.type === 'n8n-nodes-base.switch') {
     if (typeVersion >= 3.2) {
       const rules = node.parameters?.rules as any;
       if (rules?.rules && Array.isArray(rules.rules)) {
         rules.rules.forEach((rule: any, i: number) => {
-          errors.push(...validateFilterOptionsRequired(rule.conditions, `rules.rules[${i}].conditions`));
           errors.push(...validateFilterConditionOperators(rule.conditions, `rules.rules[${i}].conditions`));
         });
       }
     }
   }
 
-  return errors;
-}
-
-function validateFilterOptionsRequired(conditions: any, path: string): string[] {
-  const errors: string[] = [];
-  if (!conditions || typeof conditions !== 'object') return errors;
-
-  if (!conditions.options) {
-    errors.push(
-      `Missing required "${path}.options". ` +
-      'Filter-based nodes require: {version: 2, leftValue: "", caseSensitive: true, typeValidation: "strict"}'
-    );
-  } else {
-    const requiredFields: [string, string][] = [
-      ['version', '2'],
-      ['leftValue', '""'],
-      ['caseSensitive', 'true'],
-      ['typeValidation', '"strict"'],
-    ];
-    for (const [field, display] of requiredFields) {
-      if (!(field in conditions.options)) {
-        errors.push(
-          `Missing required field "${path}.options.${field}". Expected value: ${display}`
-        );
-      }
-    }
-  }
   return errors;
 }
 
@@ -609,29 +580,9 @@ export function validateOperatorStructure(operator: any, path: string): string[]
     );
   }
 
-  // Check singleValue based on operator type
-  if (operator.operation) {
-    const unaryOperators = ['empty', 'notEmpty', 'true', 'false', 'isNumeric', 'exists', 'notExists'];
-    const isUnary = unaryOperators.includes(operator.operation);
-
-    if (isUnary) {
-      // Unary operators MUST have singleValue: true
-      if (operator.singleValue !== true) {
-        errors.push(
-          `${path}: unary operator "${operator.operation}" requires "singleValue: true". ` +
-          'Unary operators do not use rightValue.'
-        );
-      }
-    } else {
-      // Binary operators should NOT have singleValue: true
-      if (operator.singleValue === true) {
-        errors.push(
-          `${path}: binary operator "${operator.operation}" should not have "singleValue: true". ` +
-          'Only unary operators (empty, notEmpty, true, false, isNumeric, exists, notExists) need this property.'
-        );
-      }
-    }
-  }
+  // "singleValue" is deliberately not validated: n8n derives unary-ness from
+  // the operation name and ignores the flag at runtime (it is UI metadata that
+  // the write-path sanitizer normalizes on save).
 
   return errors;
 }

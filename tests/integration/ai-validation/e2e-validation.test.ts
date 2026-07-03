@@ -214,9 +214,12 @@ describe('Integration: End-to-End AI Workflow Validation', () => {
 
     expect(errorCodes).toContain('MISSING_LANGUAGE_MODEL'); // AI Agent
     expect(errorCodes).toContain('MISSING_PROMPT_TEXT'); // AI Agent
-    expect(errorCodes).toContain('MISSING_TOOL_DESCRIPTION'); // HTTP Tool
     expect(errorCodes).toContain('MISSING_URL'); // HTTP Tool
     expect(errorCodes).toContain('MISSING_CODE'); // Code Tool
+
+    // Missing toolDescription on HTTP Tool is a warning (n8n runs the tool without it)
+    const warningCodes = (validationData.warnings ?? []).map(w => w.details?.code || w.code);
+    expect(warningCodes).toContain('MISSING_TOOL_DESCRIPTION'); // HTTP Tool
 
     // Should also have streaming error
     const streamingErrors = validationData.errors!.filter(e => {

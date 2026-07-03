@@ -161,15 +161,14 @@ describe('Workflow FixedCollection Validation', () => {
 
     expect(result.valid).toBe(false);
 
-    // Type Structure Validation (v2.23.0) now catches multiple filter structure errors:
-    // 1. Missing combinator field
-    // 2. Missing conditions field
-    // 3. Invalid nested structure (conditions.values)
-    expect(result.errors).toHaveLength(3);
+    // The invalid nested structure (conditions.values) is the one real defect.
+    // The former "missing combinator"/"missing conditions" companions were
+    // false positives (n8n defaults the combinator; audit A3) and are gone.
+    expect(result.errors).toHaveLength(1);
 
     // All errors should be for the If node
     const ifErrors = result.errors.filter(e => e.nodeId === 'if');
-    expect(ifErrors).toHaveLength(3);
+    expect(ifErrors).toHaveLength(1);
 
     // Check for the main structure error
     const structureError = ifErrors.find(e => e.message.includes('Invalid structure'));

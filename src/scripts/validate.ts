@@ -4,6 +4,7 @@
  * Licensed under the Sustainable Use License v1.0
  */
 import { createDatabaseAdapter } from '../database/database-adapter';
+import { CANONICAL_CORE_NODES, findMissingCoreNodes } from './core-node-check';
 
 interface NodeRow {
   node_type: string;
@@ -125,6 +126,22 @@ async function validate() {
     }
   }
   
+  // Core node completeness: every canonical core node must exist. A missing
+  // one (e.g. extractFromFile) makes the validator hard-error on valid workflows.
+  console.log('\n🧩 Checking core node completeness...');
+  const missingCoreNodes = findMissingCoreNodes({
+    getNode: (nodeType: string) =>
+      db.prepare('SELECT node_type FROM nodes WHERE node_type = ?').get(nodeType)
+  });
+
+  if (missingCoreNodes.length > 0) {
+    console.log(`❌ Missing core nodes: ${missingCoreNodes.join(', ')}`);
+    failed += missingCoreNodes.length;
+  } else {
+    console.log(`✅ All ${CANONICAL_CORE_NODES.length} canonical core nodes present`);
+    passed++;
+  }
+
   console.log(`\n📊 Results: ${passed} passed, ${failed} failed`);
   
   // Additional statistics
@@ -161,5 +178,8 @@ async function validate() {
 }
 
 if (require.main === module) {
-  validate().catch(console.error);
+  validate().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
 }

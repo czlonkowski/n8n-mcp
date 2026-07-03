@@ -178,7 +178,8 @@ export function validateAIAgent(
         severity: 'warning',
         nodeId: node.id,
         nodeName: node.name,
-        message: `AI Agent "${node.name}" has 2 language models but needsFallback is not enabled. Set needsFallback=true or remove the second model.`
+        message: `AI Agent "${node.name}" has 2 language models but needsFallback is not enabled. Set needsFallback=true or remove the second model.`,
+        code: 'MULTIPLE_LANGUAGE_MODELS_NO_FALLBACK'
       });
     }
   } else if (languageModelConnections.length === 1 && node.parameters.needsFallback === true) {
@@ -196,11 +197,13 @@ export function validateAIAgent(
 
   if (node.parameters.hasOutputParser === true) {
     if (outputParserConnections.length === 0) {
+      // n8n does not enforce this connection: the agent runs and returns a
+      // plain string, silently skipping structured output
       issues.push({
-        severity: 'error',
+        severity: 'warning',
         nodeId: node.id,
         nodeName: node.name,
-        message: `AI Agent "${node.name}" has hasOutputParser=true but no ai_outputParser connection. Connect an output parser or set hasOutputParser=false.`,
+        message: `AI Agent "${node.name}" has hasOutputParser=true but no ai_outputParser connection. The agent will run but return a plain string - connect an output parser or set hasOutputParser=false.`,
         code: 'MISSING_OUTPUT_PARSER'
       });
     }
@@ -459,10 +462,9 @@ export function validateChatTrigger(
  * From spec - simplified AI chain without agent loop
  *
  * Similar to AI Agent but simpler:
- * - Requires exactly 1 language model
+ * - Requires 1 language model (or 2 when needsFallback is enabled)
  * - Can have 0-1 memory
  * - No tools (not an agent)
- * - No fallback model support
  */
 export function validateBasicLLMChain(
   node: WorkflowNode,
@@ -471,7 +473,7 @@ export function validateBasicLLMChain(
   const issues: ValidationIssue[] = [];
   const incoming = reverseConnections.get(node.name) || [];
 
-  // 1. Validate language model connection (REQUIRED: exactly 1)
+  // 1. Validate language model connections (REQUIRED: 1, or 2 with needsFallback)
   const languageModelConnections = incoming.filter(c => c.type === 'ai_languageModel');
 
   if (languageModelConnections.length === 0) {
@@ -482,13 +484,22 @@ export function validateBasicLLMChain(
       message: `Basic LLM Chain "${node.name}" requires an ai_languageModel connection. Connect a language model node.`,
       code: 'MISSING_LANGUAGE_MODEL'
     });
-  } else if (languageModelConnections.length > 1) {
+  } else if (languageModelConnections.length > 2) {
     issues.push({
       severity: 'error',
       nodeId: node.id,
       nodeName: node.name,
-      message: `Basic LLM Chain "${node.name}" has ${languageModelConnections.length} ai_languageModel connections. Basic LLM Chain only supports 1 language model (no fallback).`,
+      message: `Basic LLM Chain "${node.name}" has ${languageModelConnections.length} ai_languageModel connections. Maximum is 2 (for fallback model support).`,
       code: 'MULTIPLE_LANGUAGE_MODELS'
+    });
+  } else if (languageModelConnections.length === 2 && !node.parameters.needsFallback) {
+    // n8n uses only the first model when needsFallback is off - not fatal
+    issues.push({
+      severity: 'warning',
+      nodeId: node.id,
+      nodeName: node.name,
+      message: `Basic LLM Chain "${node.name}" has 2 language models but needsFallback is not enabled. n8n will only use the first model. Set needsFallback=true or remove the second model.`,
+      code: 'MULTIPLE_LANGUAGE_MODELS_NO_FALLBACK'
     });
   }
 

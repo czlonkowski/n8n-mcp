@@ -111,10 +111,15 @@ export class EnhancedConfigValidator extends ConfigValidator {
     
     // Apply profile-based filtering
     this.applyProfileFilters(enhancedResult, profile);
-    
+
     // Add operation-specific enhancements
     this.addOperationSpecificEnhancements(nodeType, config, filteredProperties, enhancedResult);
-    
+
+    // Node-specific validators append warnings AFTER the profile filter above
+    // has run, so re-apply the warning gating here — otherwise best-practice
+    // advice leaks into minimal/runtime results.
+    this.filterWarningsByProfile(enhancedResult, profile);
+
     // Deduplicate errors
     enhancedResult.errors = this.deduplicateErrors(enhancedResult.errors);
     
@@ -181,14 +186,31 @@ export class EnhancedConfigValidator extends ConfigValidator {
   }
 
   /**
-   * Apply node defaults to configuration for accurate visibility checking
+   * Apply node defaults to configuration for accurate visibility checking.
+   *
+   * Only injects a default when the property is visible under the current
+   * (progressively resolved) config. Multi-resource nodes define one
+   * same-named property (e.g. `operation`) per resource; injecting the first
+   * default regardless of displayOptions used to inject another resource's
+   * operation. Iterates to a fixpoint so `resource` resolves before
+   * `operation` regardless of schema array order.
    */
   private static applyNodeDefaults(properties: any[], config: Record<string, any>): Record<string, any> {
     const result = { ...config };
 
-    for (const prop of properties) {
-      if (prop.name && prop.default !== undefined && result[prop.name] === undefined) {
-        result[prop.name] = prop.default;
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const prop of properties) {
+        if (
+          prop.name &&
+          prop.default !== undefined &&
+          result[prop.name] === undefined &&
+          this.isPropertyVisible(prop, result)
+        ) {
+          result[prop.name] = prop.default;
+          changed = true;
+        }
       }
     }
 
@@ -460,13 +482,13 @@ export class EnhancedConfigValidator extends ConfigValidator {
 
     // 3. Enhanced URL protocol validation for expressions
     if (url && url.startsWith('=')) {
-      // Expression-based URL - check for common protocol issues
+      // Expression-based URL - check for common protocol issues.
+      // Only a literal `www.` prefix is a reliable signal: expressions like
+      // `={{ $json.baseUrl }}/path` usually carry the protocol inside the
+      // resolved variable, so the absence of a literal "http" proves nothing.
       const expressionContent = url.slice(1); // Remove = prefix
-      const lowerExpression = expressionContent.toLowerCase();
 
-      // Check for missing protocol in expression (case-insensitive)
-      if (expressionContent.startsWith('www.') ||
-          (expressionContent.includes('{{') && !lowerExpression.includes('http'))) {
+      if (expressionContent.startsWith('www.')) {
         result.warnings.push({
           type: 'invalid_value',
           property: 'url',
@@ -559,15 +581,6 @@ export class EnhancedConfigValidator extends ConfigValidator {
       case 'minimal':
         // Only keep missing required errors
         result.errors = result.errors.filter(e => e.type === 'missing_required');
-        // Keep ONLY critical warnings (security and deprecated)
-        // But filter out hardcoded credential type warnings (only show in strict mode)
-        result.warnings = result.warnings.filter(w => {
-          if (this.shouldFilterCredentialWarning(w)) {
-            return false;
-          }
-          return w.type === 'security' || w.type === 'deprecated';
-        });
-        result.suggestions = [];
         break;
 
       case 'runtime':
@@ -577,20 +590,6 @@ export class EnhancedConfigValidator extends ConfigValidator {
           e.type === 'invalid_value' ||
           (e.type === 'invalid_type' && e.message.includes('undefined'))
         );
-        // Keep security and deprecated warnings, REMOVE property visibility warnings
-        result.warnings = result.warnings.filter(w => {
-          // Filter out hardcoded credential type warnings (only show in strict mode)
-          if (this.shouldFilterCredentialWarning(w)) {
-            return false;
-          }
-          if (w.type === 'security' || w.type === 'deprecated') return true;
-          // FILTER OUT property visibility warnings (too noisy)
-          if (w.type === 'inefficient' && w.message && w.message.includes('not visible')) {
-            return false;
-          }
-          return false;
-        });
-        result.suggestions = [];
         break;
 
       case 'strict':
@@ -605,8 +604,47 @@ export class EnhancedConfigValidator extends ConfigValidator {
 
       case 'ai-friendly':
       default:
-        // Current behavior - balanced for AI agents
-        // Filter out noise but keep helpful warnings
+        // Add error handling suggestions for AI-friendly profile
+        this.addErrorHandlingSuggestions(result);
+        break;
+    }
+
+    this.filterWarningsByProfile(result, profile);
+  }
+
+  /**
+   * Apply the profile's warning/suggestion gating.
+   *
+   * Called from applyProfileFilters AND re-applied after node-specific
+   * validators run, because those push warnings into the result after the
+   * initial filter pass: best-practice advice must never leak into
+   * minimal/runtime output.
+   */
+  private static filterWarningsByProfile(
+    result: EnhancedValidationResult,
+    profile: ValidationProfile
+  ): void {
+    switch (profile) {
+      case 'minimal':
+      case 'runtime':
+        // Keep ONLY critical warnings (security and deprecated)
+        // But filter out hardcoded credential type warnings (only show in strict mode)
+        result.warnings = result.warnings.filter(w => {
+          if (this.shouldFilterCredentialWarning(w)) {
+            return false;
+          }
+          return w.type === 'security' || w.type === 'deprecated';
+        });
+        result.suggestions = [];
+        break;
+
+      case 'strict':
+        // Keep everything
+        break;
+
+      case 'ai-friendly':
+      default:
+        // Balanced for AI agents - filter out noise but keep helpful warnings
         result.warnings = result.warnings.filter(w => {
           // Filter out hardcoded credential type warnings (only show in strict mode)
           if (this.shouldFilterCredentialWarning(w)) {
@@ -628,8 +666,6 @@ export class EnhancedConfigValidator extends ConfigValidator {
           }
           return true;
         });
-        // Add error handling suggestions for AI-friendly profile
-        this.addErrorHandlingSuggestions(result);
         break;
     }
   }
@@ -1034,6 +1070,10 @@ export class EnhancedConfigValidator extends ConfigValidator {
     properties: any[],
     result: EnhancedValidationResult
   ): void {
+    // The workflow path injects '@version' (node.typeVersion) into the config;
+    // structure checks use it to pick the right schema generation.
+    const typeVersion = typeof config['@version'] === 'number' ? config['@version'] : undefined;
+
     for (const [key, value] of Object.entries(config)) {
       if (value === undefined || value === null) continue;
 
@@ -1092,7 +1132,7 @@ export class EnhancedConfigValidator extends ConfigValidator {
 
       // Perform deep structure validation for complex types
       if (typeof value === 'object' && value !== null) {
-        this.validateComplexTypeStructure(key, value, structureType, structure, result);
+        this.validateComplexTypeStructure(key, value, structureType, structure, result, typeVersion);
       }
 
       // Special handling for filter operation validation
@@ -1110,19 +1150,34 @@ export class EnhancedConfigValidator extends ConfigValidator {
     value: any,
     type: NodePropertyTypes,
     structure: any,
-    result: EnhancedValidationResult
+    result: EnhancedValidationResult,
+    typeVersion?: number
   ): void {
     switch (type) {
-      case 'filter':
-        // Validate filter structure: must have combinator and conditions
-        if (!value.combinator) {
-          result.errors.push({
-            type: 'invalid_configuration',
-            property: `${propertyName}.combinator`,
-            message: 'Filter must have a combinator field',
-            fix: 'Add combinator: "and" or combinator: "or" to the filter configuration'
-          });
-        } else if (value.combinator !== 'and' && value.combinator !== 'or') {
+      case 'filter': {
+        // IF/Filter v1 nodes natively run the legacy shape
+        // conditions.{string|number|boolean|dateTime}: [...]. Only v2+ nodes
+        // use the { combinator, conditions } format, so the v2 demands must
+        // not be applied to a v1-shaped value.
+        const legacyConditionKeys = ['string', 'number', 'boolean', 'dateTime'];
+        const usedLegacyKeys = legacyConditionKeys.filter(k => Array.isArray(value[k]));
+        if (usedLegacyKeys.length > 0) {
+          // A v2+ node silently ignores v1-shaped conditions and always takes
+          // the true branch — that specific mismatch stays an error.
+          if (typeVersion !== undefined && typeVersion >= 2) {
+            result.errors.push({
+              type: 'invalid_configuration',
+              property: propertyName,
+              message: `Node typeVersion ${typeVersion} uses the v2 filter format, but '${propertyName}' contains v1-style conditions (${usedLegacyKeys.join(', ')}). n8n ignores them and the node will always take the true branch`,
+              fix: 'Convert to the v2 format: { combinator: "and", conditions: [{ leftValue, rightValue, operator: { type, operation } }] }'
+            });
+          }
+          break;
+        }
+
+        // Missing combinator is fine — n8n defaults it. Only reject explicit
+        // invalid values.
+        if (value.combinator !== undefined && value.combinator !== 'and' && value.combinator !== 'or') {
           result.errors.push({
             type: 'invalid_configuration',
             property: `${propertyName}.combinator`,
@@ -1131,14 +1186,20 @@ export class EnhancedConfigValidator extends ConfigValidator {
           });
         }
 
-        if (!value.conditions) {
+        // A filter object carrying only a combinator (or nothing) — no
+        // conditions field at all — resolves to a vacuous "always true" match,
+        // the same failure mode kept as an error for v1-in-v2 above. Other
+        // malformed shapes (e.g. the legacy conditions.values collection) are
+        // reported by their own structure checks, so don't double-flag them.
+        const nonCombinatorKeys = Object.keys(value).filter(k => k !== 'combinator');
+        if (value.conditions === undefined && nonCombinatorKeys.length === 0) {
           result.errors.push({
             type: 'invalid_configuration',
-            property: `${propertyName}.conditions`,
+            property: propertyName,
             message: 'Filter must have a conditions field',
-            fix: 'Add conditions array to the filter configuration'
+            fix: 'Add a conditions array: { combinator: "and", conditions: [{ leftValue, rightValue, operator: { type, operation } }] }'
           });
-        } else if (!Array.isArray(value.conditions)) {
+        } else if (value.conditions !== undefined && value.conditions !== null && !Array.isArray(value.conditions)) {
           result.errors.push({
             type: 'invalid_configuration',
             property: `${propertyName}.conditions`,
@@ -1147,17 +1208,21 @@ export class EnhancedConfigValidator extends ConfigValidator {
           });
         }
         break;
+      }
 
       case 'resourceLocator':
-        // Validate resourceLocator structure: must have mode and value
-        if (!value.mode) {
+        // Validate resourceLocator structure: must have mode and value.
+        // An empty-string mode is a UI-persisted artifact that n8n tolerates
+        // (the value/expression still resolves), so only undefined/null count
+        // as missing — the value check below covers genuinely absent values.
+        if (value.mode === undefined || value.mode === null) {
           result.errors.push({
             type: 'invalid_configuration',
             property: `${propertyName}.mode`,
             message: 'ResourceLocator must have a mode field',
             fix: 'Add mode: "id", mode: "url", or mode: "list" to the resourceLocator configuration'
           });
-        } else if (!['id', 'url', 'list', 'name'].includes(value.mode)) {
+        } else if (value.mode !== '' && !['id', 'url', 'list', 'name'].includes(value.mode)) {
           result.errors.push({
             type: 'invalid_configuration',
             property: `${propertyName}.mode`,

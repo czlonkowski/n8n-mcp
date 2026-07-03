@@ -242,6 +242,38 @@ describe('AI Node Validator', () => {
       expect(excessModelErrors).toHaveLength(0);
     });
 
+    it('should attach a code to the 2-models-without-fallback warning', () => {
+      const agent: WorkflowNode = {
+        id: 'agent1',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        position: [0, 0],
+        parameters: {}
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [agent],
+        connections: {
+          'OpenAI': {
+            'ai_languageModel': [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]]
+          },
+          'Anthropic': {
+            'ai_languageModel': [[{ node: 'AI Agent', type: 'ai_languageModel', index: 1 }]]
+          }
+        }
+      };
+
+      const reverseMap = buildReverseConnectionMap(workflow);
+      const issues = validateAIAgent(agent, reverseMap, workflow);
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          severity: 'warning',
+          code: 'MULTIPLE_LANGUAGE_MODELS_NO_FALLBACK'
+        })
+      );
+    });
+
     it('should error on more than 2 language model connections', () => {
       const agent: WorkflowNode = {
         id: 'agent1',
@@ -450,7 +482,8 @@ describe('AI Node Validator', () => {
       );
     });
 
-    it('should validate output parser with hasOutputParser flag', () => {
+    it('should warn (not error) on hasOutputParser=true without ai_outputParser connection', () => {
+      // n8n runs the agent and returns a plain string when no parser is connected
       const agent: WorkflowNode = {
         id: 'agent1',
         name: 'AI Agent',
@@ -476,10 +509,41 @@ describe('AI Node Validator', () => {
 
       expect(issues).toContainEqual(
         expect.objectContaining({
-          severity: 'error',
-          message: expect.stringContaining('output parser')
+          severity: 'warning',
+          code: 'MISSING_OUTPUT_PARSER'
         })
       );
+      expect(issues.filter(i => i.severity === 'error')).toHaveLength(0);
+    });
+
+    it('should not warn when hasOutputParser=true and a parser is connected', () => {
+      const agent: WorkflowNode = {
+        id: 'agent1',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        position: [0, 0],
+        parameters: {
+          promptType: 'auto',
+          hasOutputParser: true
+        }
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [agent],
+        connections: {
+          'OpenAI': {
+            'ai_languageModel': [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]]
+          },
+          'Structured Output Parser': {
+            'ai_outputParser': [[{ node: 'AI Agent', type: 'ai_outputParser', index: 0 }]]
+          }
+        }
+      };
+
+      const reverseMap = buildReverseConnectionMap(workflow);
+      const issues = validateAIAgent(agent, reverseMap, workflow);
+
+      expect(issues.filter(i => i.code === 'MISSING_OUTPUT_PARSER')).toHaveLength(0);
     });
   });
 
@@ -636,6 +700,107 @@ describe('AI Node Validator', () => {
       const errors = issues.filter(i => i.severity === 'error');
       expect(errors).toHaveLength(0);
     });
+
+    it('should accept 2 language models when needsFallback is enabled', () => {
+      const chain: WorkflowNode = {
+        id: 'chain1',
+        name: 'LLM Chain',
+        type: '@n8n/n8n-nodes-langchain.chainLlm',
+        position: [0, 0],
+        parameters: {
+          needsFallback: true
+        }
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [chain],
+        connections: {
+          'OpenAI': {
+            'ai_languageModel': [[{ node: 'LLM Chain', type: 'ai_languageModel', index: 0 }]]
+          },
+          'Auto Fallback': {
+            'ai_languageModel': [[{ node: 'LLM Chain', type: 'ai_languageModel', index: 1 }]]
+          }
+        }
+      };
+
+      const reverseMap = buildReverseConnectionMap(workflow);
+      const issues = validateBasicLLMChain(chain, reverseMap);
+
+      expect(issues.filter(i => i.severity === 'error')).toHaveLength(0);
+      expect(issues.filter(i => i.severity === 'warning')).toHaveLength(0);
+    });
+
+    it('should warn (not error) on 2 language models without needsFallback', () => {
+      const chain: WorkflowNode = {
+        id: 'chain1',
+        name: 'LLM Chain',
+        type: '@n8n/n8n-nodes-langchain.chainLlm',
+        position: [0, 0],
+        parameters: {}
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [chain],
+        connections: {
+          'OpenAI': {
+            'ai_languageModel': [[{ node: 'LLM Chain', type: 'ai_languageModel', index: 0 }]]
+          },
+          'Anthropic': {
+            'ai_languageModel': [[{ node: 'LLM Chain', type: 'ai_languageModel', index: 1 }]]
+          }
+        }
+      };
+
+      const reverseMap = buildReverseConnectionMap(workflow);
+      const issues = validateBasicLLMChain(chain, reverseMap);
+
+      expect(issues.filter(i => i.severity === 'error')).toHaveLength(0);
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          severity: 'warning',
+          message: expect.stringContaining('needsFallback'),
+          code: 'MULTIPLE_LANGUAGE_MODELS_NO_FALLBACK'
+        })
+      );
+    });
+
+    it('should error on more than 2 language model connections', () => {
+      const chain: WorkflowNode = {
+        id: 'chain1',
+        name: 'LLM Chain',
+        type: '@n8n/n8n-nodes-langchain.chainLlm',
+        position: [0, 0],
+        parameters: {
+          needsFallback: true
+        }
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [chain],
+        connections: {
+          'Model1': {
+            'ai_languageModel': [[{ node: 'LLM Chain', type: 'ai_languageModel', index: 0 }]]
+          },
+          'Model2': {
+            'ai_languageModel': [[{ node: 'LLM Chain', type: 'ai_languageModel', index: 1 }]]
+          },
+          'Model3': {
+            'ai_languageModel': [[{ node: 'LLM Chain', type: 'ai_languageModel', index: 2 }]]
+          }
+        }
+      };
+
+      const reverseMap = buildReverseConnectionMap(workflow);
+      const issues = validateBasicLLMChain(chain, reverseMap);
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          severity: 'error',
+          code: 'MULTIPLE_LANGUAGE_MODELS'
+        })
+      );
+    });
   });
 
   describe('validateAISpecificNodes', () => {
@@ -761,12 +926,89 @@ describe('AI Node Validator', () => {
 
       expect(issues.filter(i => i.severity === 'error').length).toBeGreaterThan(0);
     });
+
+    it('should validate agent with MCP Client Tool (endpointUrl) without errors', () => {
+      const agent: WorkflowNode = {
+        id: 'agent1',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        position: [0, 0],
+        parameters: { promptType: 'auto' }
+      };
+
+      const mcpTool: WorkflowNode = {
+        id: 'mcp1',
+        name: 'Apify MCP',
+        type: '@n8n/n8n-nodes-langchain.mcpClientTool',
+        position: [0, 100],
+        parameters: {
+          endpointUrl: 'https://mcp.apify.com/sse'
+        }
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [agent, mcpTool],
+        connections: {
+          'Model': {
+            'ai_languageModel': [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]]
+          },
+          'Apify MCP': {
+            'ai_tool': [[{ node: 'AI Agent', type: 'ai_tool', index: 0 }]]
+          }
+        }
+      };
+
+      const issues = validateAISpecificNodes(workflow);
+
+      expect(issues.filter(i => i.severity === 'error')).toHaveLength(0);
+    });
+
+    it('should still error on Workflow Tool without workflowId', () => {
+      const agent: WorkflowNode = {
+        id: 'agent1',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        position: [0, 0],
+        parameters: { promptType: 'auto' }
+      };
+
+      const workflowTool: WorkflowNode = {
+        id: 'tool1',
+        name: 'Sub Workflow',
+        type: '@n8n/n8n-nodes-langchain.toolWorkflow',
+        position: [0, 100],
+        parameters: {
+          description: 'Runs the data processing sub-workflow'
+        }
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [agent, workflowTool],
+        connections: {
+          'Model': {
+            'ai_languageModel': [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]]
+          },
+          'Sub Workflow': {
+            'ai_tool': [[{ node: 'AI Agent', type: 'ai_tool', index: 0 }]]
+          }
+        }
+      };
+
+      const issues = validateAISpecificNodes(workflow);
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          severity: 'error',
+          code: 'MISSING_WORKFLOW_ID'
+        })
+      );
+    });
   });
 });
 
 describe('AI Tool Validators', () => {
   describe('validateHTTPRequestTool', () => {
-    it('should error on missing toolDescription', () => {
+    it('should warn (not error) on missing toolDescription', () => {
       const node: WorkflowNode = {
         id: 'http1',
         name: 'Weather API',
@@ -782,10 +1024,11 @@ describe('AI Tool Validators', () => {
 
       expect(issues).toContainEqual(
         expect.objectContaining({
-          severity: 'error',
+          severity: 'warning',
           code: 'MISSING_TOOL_DESCRIPTION'
         })
       );
+      expect(issues.filter(i => i.severity === 'error')).toHaveLength(0);
     });
 
     it('should warn on short toolDescription', () => {
@@ -1043,7 +1286,7 @@ return { cost: cost.toFixed(2) };`,
   });
 
   describe('validateVectorStoreTool', () => {
-    it('should error on missing toolDescription', () => {
+    it('should warn (not error) on missing toolDescription', () => {
       const node: WorkflowNode = {
         id: 'vector1',
         name: 'Product Search',
@@ -1060,10 +1303,11 @@ return { cost: cost.toFixed(2) };`,
 
       expect(issues).toContainEqual(
         expect.objectContaining({
-          severity: 'error',
+          severity: 'warning',
           code: 'MISSING_TOOL_DESCRIPTION'
         })
       );
+      expect(issues.filter(i => i.severity === 'error')).toHaveLength(0);
     });
 
     it('should warn on high topK value', () => {
@@ -1112,13 +1356,15 @@ return { cost: cost.toFixed(2) };`,
   });
 
   describe('validateWorkflowTool', () => {
-    it('should error on missing toolDescription', () => {
+    it('should warn (not error) on missing toolDescription', () => {
       const node: WorkflowNode = {
         id: 'workflow1',
         name: 'Approval Process',
         type: '@n8n/n8n-nodes-langchain.toolWorkflow',
         position: [0, 0],
-        parameters: {}
+        parameters: {
+          workflowId: '123'
+        }
       };
 
       const reverseMap = new Map();
@@ -1126,10 +1372,11 @@ return { cost: cost.toFixed(2) };`,
 
       expect(issues).toContainEqual(
         expect.objectContaining({
-          severity: 'error',
+          severity: 'warning',
           code: 'MISSING_TOOL_DESCRIPTION'
         })
       );
+      expect(issues.filter(i => i.severity === 'error')).toHaveLength(0);
     });
 
     it('should error on missing workflowId', () => {
@@ -1175,7 +1422,7 @@ return { cost: cost.toFixed(2) };`,
   });
 
   describe('validateAIAgentTool', () => {
-    it('should error on missing toolDescription', () => {
+    it('should suggest (not error) on missing toolDescription since n8n applies a default', () => {
       const node: WorkflowNode = {
         id: 'agent1',
         name: 'Research Agent',
@@ -1187,10 +1434,11 @@ return { cost: cost.toFixed(2) };`,
       const reverseMap = new Map();
       const issues = validateAIAgentTool(node, reverseMap);
 
+      expect(issues.filter(i => i.severity === 'error')).toHaveLength(0);
       expect(issues).toContainEqual(
         expect.objectContaining({
-          severity: 'error',
-          code: 'MISSING_TOOL_DESCRIPTION'
+          severity: 'info',
+          message: expect.stringContaining('AI Agent that can call other tools')
         })
       );
     });
@@ -1239,35 +1487,100 @@ return { cost: cost.toFixed(2) };`,
   });
 
   describe('validateMCPClientTool', () => {
-    it('should error on missing toolDescription', () => {
+    it('should not require toolDescription (descriptions come from the MCP server)', () => {
       const node: WorkflowNode = {
         id: 'mcp1',
-        name: 'File Access',
+        name: 'Apify MCP',
         type: '@n8n/n8n-nodes-langchain.mcpClientTool',
         position: [0, 0],
         parameters: {
-          serverUrl: 'mcp://filesystem'
+          endpointUrl: 'https://mcp.apify.com/sse'
         }
       };
 
       const issues = validateMCPClientTool(node);
 
-      expect(issues).toContainEqual(
-        expect.objectContaining({
-          severity: 'error',
-          code: 'MISSING_TOOL_DESCRIPTION'
-        })
-      );
+      expect(issues.filter(i => i.code === 'MISSING_TOOL_DESCRIPTION')).toHaveLength(0);
     });
 
-    it('should error on missing serverUrl', () => {
+    it('should pass with endpointUrl set (httpStreamable transport)', () => {
+      const node: WorkflowNode = {
+        id: 'mcp1',
+        name: 'Apify MCP',
+        type: '@n8n/n8n-nodes-langchain.mcpClientTool',
+        position: [0, 0],
+        parameters: {
+          serverTransport: 'httpStreamable',
+          endpointUrl: 'https://mcp.apify.com/sse'
+        }
+      };
+
+      const issues = validateMCPClientTool(node);
+
+      expect(issues.filter(i => i.severity === 'error')).toHaveLength(0);
+    });
+
+    it('should pass with sseEndpoint set (sse transport)', () => {
       const node: WorkflowNode = {
         id: 'mcp1',
         name: 'MCP Tool',
         type: '@n8n/n8n-nodes-langchain.mcpClientTool',
         position: [0, 0],
         parameters: {
-          toolDescription: 'Access external MCP server'
+          serverTransport: 'sse',
+          sseEndpoint: 'https://mcp.example.com/sse'
+        }
+      };
+
+      const issues = validateMCPClientTool(node);
+
+      expect(issues.filter(i => i.severity === 'error')).toHaveLength(0);
+    });
+
+    it('should pass with an endpoint set and no serverTransport (transport defaults per typeVersion)', () => {
+      const node: WorkflowNode = {
+        id: 'mcp1',
+        name: 'MCP Tool',
+        type: '@n8n/n8n-nodes-langchain.mcpClientTool',
+        position: [0, 0],
+        parameters: {
+          endpointUrl: 'https://stitch.googleapis.com/mcp'
+        }
+      };
+
+      const issues = validateMCPClientTool(node);
+
+      expect(issues.filter(i => i.severity === 'error')).toHaveLength(0);
+    });
+
+    it('should error when no endpoint is configured', () => {
+      const node: WorkflowNode = {
+        id: 'mcp1',
+        name: 'MCP Tool',
+        type: '@n8n/n8n-nodes-langchain.mcpClientTool',
+        position: [0, 0],
+        parameters: {}
+      };
+
+      const issues = validateMCPClientTool(node);
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          severity: 'error',
+          code: 'MISSING_MCP_ENDPOINT'
+        })
+      );
+    });
+
+    it('should error when serverTransport is sse but only endpointUrl is set', () => {
+      const node: WorkflowNode = {
+        id: 'mcp1',
+        name: 'MCP Tool',
+        type: '@n8n/n8n-nodes-langchain.mcpClientTool',
+        position: [0, 0],
+        parameters: {
+          serverTransport: 'sse',
+          endpointUrl: 'https://mcp.example.com/mcp'
         }
       };
 
@@ -1276,27 +1589,9 @@ return { cost: cost.toFixed(2) };`,
       expect(issues).toContainEqual(
         expect.objectContaining({
           severity: 'error',
-          message: expect.stringContaining('serverUrl')
+          code: 'MISSING_MCP_ENDPOINT'
         })
       );
-    });
-
-    it('should pass valid MCP Client Tool configuration', () => {
-      const node: WorkflowNode = {
-        id: 'mcp1',
-        name: 'Filesystem Access',
-        type: '@n8n/n8n-nodes-langchain.mcpClientTool',
-        position: [0, 0],
-        parameters: {
-          toolDescription: 'Read and write files in the local filesystem',
-          serverUrl: 'mcp://filesystem'
-        }
-      };
-
-      const issues = validateMCPClientTool(node);
-
-      const errors = issues.filter(i => i.severity === 'error');
-      expect(errors).toHaveLength(0);
     });
   });
 
@@ -1367,23 +1662,21 @@ return { cost: cost.toFixed(2) };`,
   });
 
   describe('validateSerpApiTool', () => {
-    it('should error on missing toolDescription', () => {
+    it('should not require toolDescription (has built-in description)', () => {
       const node: WorkflowNode = {
         id: 'serp1',
         name: 'Web Search',
         type: '@n8n/n8n-nodes-langchain.toolSerpapi',
         position: [0, 0],
-        parameters: {}
+        parameters: {},
+        credentials: {
+          serpApiApi: 'serpapi-credentials'
+        }
       };
 
       const issues = validateSerpApiTool(node);
 
-      expect(issues).toContainEqual(
-        expect.objectContaining({
-          severity: 'error',
-          code: 'MISSING_TOOL_DESCRIPTION'
-        })
-      );
+      expect(issues).toHaveLength(0);
     });
 
     it('should warn on missing credentials', () => {
@@ -1429,7 +1722,7 @@ return { cost: cost.toFixed(2) };`,
   });
 
   describe('validateWikipediaTool', () => {
-    it('should error on missing toolDescription', () => {
+    it('should not require toolDescription (has built-in description)', () => {
       const node: WorkflowNode = {
         id: 'wiki1',
         name: 'Wiki Lookup',
@@ -1440,12 +1733,7 @@ return { cost: cost.toFixed(2) };`,
 
       const issues = validateWikipediaTool(node);
 
-      expect(issues).toContainEqual(
-        expect.objectContaining({
-          severity: 'error',
-          code: 'MISSING_TOOL_DESCRIPTION'
-        })
-      );
+      expect(issues).toHaveLength(0);
     });
 
     it('should pass valid Wikipedia Tool configuration', () => {
@@ -1467,23 +1755,20 @@ return { cost: cost.toFixed(2) };`,
   });
 
   describe('validateSearXngTool', () => {
-    it('should error on missing toolDescription', () => {
+    it('should not require toolDescription (has built-in description)', () => {
       const node: WorkflowNode = {
         id: 'searx1',
         name: 'Privacy Search',
         type: '@n8n/n8n-nodes-langchain.toolSearxng',
         position: [0, 0],
-        parameters: {}
+        parameters: {
+          baseUrl: 'https://searx.example.com'
+        }
       };
 
       const issues = validateSearXngTool(node);
 
-      expect(issues).toContainEqual(
-        expect.objectContaining({
-          severity: 'error',
-          code: 'MISSING_TOOL_DESCRIPTION'
-        })
-      );
+      expect(issues).toHaveLength(0);
     });
 
     it('should error on missing baseUrl', () => {

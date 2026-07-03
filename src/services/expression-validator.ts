@@ -3,7 +3,7 @@
  * Validates expression syntax, variable references, and context availability
  */
 
-import { extractBracketExpressions } from '../utils/expression-utils';
+import { extractBracketExpressions, hasDanglingOpenBracket } from '../utils/expression-utils';
 
 interface ExpressionValidationResult {
   valid: boolean;
@@ -103,11 +103,12 @@ export class ExpressionValidator {
   private static checkSyntaxErrors(expression: string): string[] {
     const errors: string[] = [];
 
-    // Check for unmatched brackets
-    const openBrackets = (expression.match(/\{\{/g) || []).length;
-    const closeBrackets = (expression.match(/\}\}/g) || []).length;
-    
-    if (openBrackets !== closeBrackets) {
+    // Bracket-balance errors only apply to values n8n actually evaluates
+    // (leading '='). n8n pairs each '{{' with the next '}}' and renders any
+    // leftover braces as literal text (JSON bodies, Graph-API field syntax,
+    // stray '}}' all run fine), so only a dangling '{{' with no closing '}}'
+    // after it is flagged.
+    if (expression.startsWith('=') && hasDanglingOpenBracket(expression)) {
       errors.push('Unmatched expression brackets {{ }}');
     }
 
@@ -157,15 +158,6 @@ export class ExpressionValidator {
       if (!context.hasInputData && !context.isInLoop) {
         result.warnings.push(
           'Using $json but node might not have input data'
-        );
-      }
-
-      // Check for suspicious property names that might be test/invalid data
-      const fullMatch = match[0];
-      if (fullMatch.includes('.invalid') || fullMatch.includes('.undefined') ||
-          fullMatch.includes('.null') || fullMatch.includes('.test')) {
-        result.warnings.push(
-          `Property access '${fullMatch}' looks suspicious - verify this property exists in your data`
         );
       }
     }
@@ -233,33 +225,10 @@ export class ExpressionValidator {
       );
     }
 
-    // Check for incorrect array access
-    if (expr.includes('$json[') && !expr.match(/\$json\[\d+\]/)) {
-      result.warnings.push(
-        'Array access should use numeric index: $json[0] or property access: $json.property'
-      );
-    }
-
-    // Check for Python-style property access
-    if (expr.match(/\$json\['[^']+'\]/)) {
-      result.warnings.push(
-        "Consider using dot notation: $json.property instead of $json['property']"
-      );
-    }
-
-    // Check for undefined/null access attempts
-    if (expr.match(/\?\./)) {
-      result.warnings.push(
-        'Optional chaining (?.) is not supported in n8n expressions'
-      );
-    }
-
-    // Check for template literals
-    if (expr.includes('${')) {
-      result.errors.push(
-        'Template literals ${} are not supported. Use string concatenation instead'
-      );
-    }
+    // Note: n8n's Tournament engine evaluates {{ }} content as full modern
+    // JavaScript — optional chaining, bracket access with any key, and
+    // backtick template literals with ${} interpolation are all supported
+    // (live-verified, issue #338). Do not flag them here.
   }
 
   /**

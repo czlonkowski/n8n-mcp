@@ -223,7 +223,8 @@ describe('Integration: Basic LLM Chain Validation', () => {
   // TEST 5: LLM Chain with Multiple Language Models (Error)
   // ======================================================================
 
-  it('should detect multiple language models', async () => {
+  it('should detect more than 2 language models', async () => {
+    // 2 models is valid (fallback support); only >2 is an error
     const languageModel1 = createLanguageModelNode('openai', {
       id: 'model-1',
       name: 'OpenAI Chat Model 1'
@@ -234,6 +235,11 @@ describe('Integration: Basic LLM Chain Validation', () => {
       name: 'Anthropic Chat Model'
     });
 
+    const languageModel3 = createLanguageModelNode('openai', {
+      id: 'model-3',
+      name: 'OpenAI Chat Model 2'
+    });
+
     const llmChain = createBasicLLMChainNode({
       name: 'Basic LLM Chain',
       promptType: 'define',
@@ -241,10 +247,11 @@ describe('Integration: Basic LLM Chain Validation', () => {
     });
 
     const workflow = createAIWorkflow(
-      [languageModel1, languageModel2, llmChain],
+      [languageModel1, languageModel2, languageModel3, llmChain],
       mergeConnections(
         createAIConnection('OpenAI Chat Model 1', 'Basic LLM Chain', 'ai_languageModel'),
-        createAIConnection('Anthropic Chat Model', 'Basic LLM Chain', 'ai_languageModel') // ERROR: multiple models
+        createAIConnection('Anthropic Chat Model', 'Basic LLM Chain', 'ai_languageModel'),
+        createAIConnection('OpenAI Chat Model 2', 'Basic LLM Chain', 'ai_languageModel') // ERROR: >2 models
       ),
       {
         name: createTestWorkflowName('LLM Chain - Multiple Models'),

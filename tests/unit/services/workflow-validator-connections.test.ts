@@ -56,6 +56,13 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
         outputs: ['main'],
         properties: [],
       },
+      'nodes-base.httpRequest': {
+        type: 'nodes-base.httpRequest',
+        displayName: 'HTTP Request',
+        package: 'n8n-nodes-base',
+        outputs: ['main'],
+        properties: [],
+      },
       'nodes-base.if': {
         type: 'nodes-base.if',
         displayName: 'IF',
@@ -1045,7 +1052,7 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       expect(result.errors.some(e => e.message.includes('Incorrect error output configuration'))).toBe(false);
     });
 
-    it('should detect onError without error connections', async () => {
+    it('should warn (not error) about onError without error connections', async () => {
       const workflow = {
         nodes: [
           { id: '1', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', typeVersion: 4, position: [100, 100], parameters: {}, onError: 'continueErrorOutput' },
@@ -1057,10 +1064,16 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       };
 
       const result = await validator.validateWorkflow(workflow as any);
-      expect(result.errors.some(e =>
-        e.nodeName === 'HTTP Request' &&
-        e.message.includes("has onError: 'continueErrorOutput' but no error output connections"),
+      // n8n accepts and runs this config (failed items are silently dropped),
+      // so it must not flip valid:false — warning only.
+      expect(result.warnings.some(w =>
+        w.nodeName === 'HTTP Request' &&
+        w.message.includes("has onError: 'continueErrorOutput'") &&
+        w.message.includes('silently dropped'),
       )).toBe(true);
+      expect(result.errors.some(e =>
+        e.message.includes("onError: 'continueErrorOutput'"),
+      )).toBe(false);
     });
 
     it('should warn about error connections without onError', async () => {

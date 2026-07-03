@@ -10,6 +10,7 @@ import { DocsMapper } from '../mappers/docs-mapper';
 import { NodeRepository } from '../database/node-repository';
 import { ToolVariantGenerator } from '../services/tool-variant-generator';
 import { TemplateSanitizer } from '../utils/template-sanitizer';
+import { assertCoreNodesPresent } from './core-node-check';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -136,6 +137,19 @@ async function rebuild() {
   console.log('\n🔍 Rebuilding FTS5 search index...');
   db.prepare("INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')").run();
   console.log('✅ FTS5 index rebuilt successfully');
+
+  // Hard completeness gate: every canonical core node must exist after a
+  // rebuild. A silently dropped core node (e.g. extractFromFile) makes the
+  // validator hard-error on valid workflows, so fail the build loudly.
+  console.log('\n🧩 Checking core node completeness...');
+  try {
+    assertCoreNodesPresent(repository);
+    console.log('✅ All canonical core nodes present');
+  } catch (error) {
+    console.error(`❌ ${(error as Error).message}`);
+    db.close();
+    process.exit(1);
+  }
 
   // Validation check
   console.log('\n🔍 Running validation checks...');
@@ -294,5 +308,8 @@ function validateDatabase(repository: NodeRepository): { passed: boolean; issues
 
 // Run if called directly
 if (require.main === module) {
-  rebuild().catch(console.error);
+  rebuild().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
 }

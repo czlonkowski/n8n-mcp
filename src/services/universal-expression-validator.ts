@@ -6,7 +6,7 @@
  * expression format issues without needing node-specific knowledge.
  */
 
-import { extractBracketExpressions, hasBracketExpression } from '../utils/expression-utils';
+import { extractBracketExpressions, hasBracketExpression, hasDanglingOpenBracket } from '../utils/expression-utils';
 
 export interface UniversalValidationResult {
   isValid: boolean;
@@ -145,18 +145,19 @@ export class UniversalExpressionValidator {
       };
     }
 
-    // Check for unclosed brackets in the entire string
-    const openCount = (value.match(/\{\{/g) || []).length;
-    const closeCount = (value.match(/\}\}/g) || []).length;
-
-    if (openCount !== closeCount) {
+    // Bracket-balance errors only apply to values n8n actually evaluates
+    // (leading '='). n8n pairs each '{{' with the next '}}' and renders any
+    // leftover braces as literal text — JSON bodies, Graph-API field syntax,
+    // and stray '}}' all run fine — so a raw {{ vs }} count mismatch is not
+    // an error. Only a dangling '{{' with no closing '}}' after it is flagged.
+    if (value.startsWith(this.EXPRESSION_PREFIX) && hasDanglingOpenBracket(value)) {
       return {
         isValid: false,
         hasExpression: true,
         needsPrefix: false,
         isMixedContent: false,
         confidence: 1.0,
-        explanation: `Unmatched expression brackets: ${openCount} opening, ${closeCount} closing`
+        explanation: "Unmatched expression brackets: found '{{' without a closing '}}'"
       };
     }
 
@@ -211,11 +212,9 @@ export class UniversalExpressionValidator {
     for (const expr of expressions) {
       const content = expr.slice(2, -2).trim();
 
-      // Check for common mistakes
-      if (content.includes('${') && content.includes('}')) {
-        warnings.push(`Template literal syntax \${} found - use n8n syntax instead: ${expr}`);
-      }
-
+      // Check for common mistakes. Backtick template literals with ${}
+      // interpolation are fully supported by n8n's expression engine
+      // (live-verified, issue #338) and must not be flagged here.
       if (content.startsWith('=')) {
         warnings.push(`Double prefix detected in expression: ${expr}`);
       }
