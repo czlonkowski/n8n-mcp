@@ -2048,6 +2048,13 @@ export class NodeSpecificValidators {
     language: string,
     warnings: ValidationWarning[]
   ): void {
+    // Scan the string/comment/regex-stripped view so tokens inside string
+    // literals (e.g. a prompt mentioning "eval(") don't warn — security-type
+    // warnings survive every profile, so raw-string scanning is pure noise.
+    // Template-literal interpolation code is preserved in the view.
+    const securityView = language === 'javaScript'
+      ? this.stripStringsCommentsRegex(code)
+      : this.stripPythonStringsAndComments(code);
     // Security checks. The lookbehind excludes member access (regex.exec(),
     // obj.eval()) and identifiers that merely end in the keyword
     // (getUserFunction(), retrieval()).
@@ -2064,7 +2071,7 @@ export class NodeSpecificValidators {
     ];
     
     dangerousPatterns.forEach(({ pattern, message }) => {
-      if (pattern.test(code)) {
+      if (pattern.test(securityView)) {
         warnings.push({
           type: 'security',
           message,

@@ -3535,6 +3535,33 @@ Always be professional and concise.`;
         }));
       });
 
+      it('should not warn when eval/exec appear only inside string literals', () => {
+        context.config = {
+          language: 'javaScript',
+          jsCode: 'const prompt = "Never call eval( or exec( in generated code";\nreturn [{json: {prompt}}];'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        const securityWarnings = context.warnings.filter(w =>
+          w.message.includes('Avoid eval()') || w.message.includes('Avoid exec()'));
+        expect(securityWarnings).toHaveLength(0);
+      });
+
+      it('should warn about eval() inside template-literal interpolation code', () => {
+        context.config = {
+          language: 'javaScript',
+          // eslint-disable-next-line no-template-curly-in-string
+          jsCode: 'const out = `result: ${eval(items[0].json.expr)}`;\nreturn [{json: {out}}];'
+        };
+
+        NodeSpecificValidators.validateCode(context);
+
+        expect(context.warnings).toContainEqual(expect.objectContaining({
+          message: expect.stringContaining('Avoid eval()')
+        }));
+      });
+
       it('should warn about window.eval()', () => {
         context.config = {
           language: 'javaScript',
