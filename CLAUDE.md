@@ -203,7 +203,7 @@ ALWAYS prefer editing an existing file to creating a new one.
 NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
 - When you make changes to MCP server, you need to ask the user to reload it before you test
 - When the user asks to review issues, you should use GH CLI to get the issue and all the comments
-- When the task can be divided into separated subtasks, you should spawn separate sub-agents to handle them in paralel
+- When the task can be divided into separated subtasks, you should spawn separate sub-agents to handle them in parallel
 - Use the best sub-agent for the task as per their descriptions
 - Do not use hyperbolic or dramatic language in comments and documentation
-- Add to every commit and PR: Concieved by Romuald Członkowski - and then link to www.aiadvisors.pl/en. Don't add it in conversations
+- Add to every commit and PR: Conceived by Romuald Członkowski - and then link to www.aiadvisors.pl/en. Don't add it in conversations

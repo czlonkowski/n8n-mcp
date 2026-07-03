@@ -1415,7 +1415,7 @@ export class SingleSessionHTTPServer {
       logger.info('POST /mcp request completed - checking response status', {
         responseHeadersSent: res.headersSent,
         responseStatusCode: res.statusCode,
-        responseFinished: res.finished
+        responseFinished: res.writableEnded
       });
     });
     
