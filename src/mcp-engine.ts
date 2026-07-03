@@ -8,6 +8,7 @@
 import { Request, Response } from 'express';
 import { SingleSessionHTTPServer } from './http-server-single-session';
 import { logger } from './utils/logger';
+import { PROJECT_VERSION } from './utils/version';
 import { InstanceContext } from './types/instance-context';
 import { SessionState } from './types/session-state';
 import type { AdditionalTool } from './types/additional-tools';
@@ -105,7 +106,7 @@ export class N8NMCPEngine {
           total: Math.round(memoryUsage.heapTotal / 1024 / 1024),
           unit: 'MB'
         },
-        version: '2.24.1'
+        version: PROJECT_VERSION
       };
     } catch (error) {
       logger.error('Health check failed:', error);
@@ -114,7 +115,7 @@ export class N8NMCPEngine {
         uptime: 0,
         sessionActive: false,
         memoryUsage: { used: 0, total: 0, unit: 'MB' },
-        version: '2.24.1'
+        version: PROJECT_VERSION
       };
     }
   }

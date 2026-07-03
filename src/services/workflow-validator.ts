@@ -2589,7 +2589,7 @@ export class WorkflowValidator {
 
     // Access connections from the workflow structure, not the node
     // We need to access this.currentWorkflow.connections[startNode]
-    const connections = (this as any).currentWorkflow?.connections[startNode];
+    const connections = this.currentWorkflow?.connections[startNode];
     if (!connections) return false;
 
     for (const [outputType, outputs] of Object.entries(connections)) {
