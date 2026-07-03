@@ -42,11 +42,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15  # Increased from 10 to accommodate larger database with community nodes
     env:
-      # A boolean flag (not the secret itself) so the live-integration step's `if:`
-      # can detect whether an instance is configured without exposing the URL to
-      # every step. `secrets` is not usable in `if:`, but `env` is; evaluating the
-      # secret to a bool here keeps the actual value scoped to the step that needs it.
-      HAS_N8N_INSTANCE: ${{ secrets.N8N_API_URL != '' }}
+      # A boolean flag (not the secrets themselves) recording whether a live n8n
+      # instance is configured, so the live-integration step can gate on it without
+      # the N8N_API_* values being exposed to every step in the job. The live tests
+      # need BOTH the URL and the key (getN8nCredentials() throws if either is
+      # missing), and both are empty on Dependabot/fork PRs — so require both here,
+      # otherwise a partially-configured instance would run the step and then fail.
+      HAS_N8N_INSTANCE: ${{ secrets.N8N_API_URL != '' && secrets.N8N_API_KEY != '' }}
     steps:
       - uses: actions/checkout@v7
       
