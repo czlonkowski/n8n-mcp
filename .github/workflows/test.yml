@@ -41,6 +41,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15  # Increased from 10 to accommodate larger database with community nodes
+    env:
+      # Surfaced at job level so the integration step's `if:` can detect whether a
+      # live n8n instance is configured. The `secrets` context is not available in
+      # `if:` conditions, but `env` is — so we route the URL through env here.
+      N8N_API_URL: ${{ secrets.N8N_API_URL }}
     steps:
       - uses: actions/checkout@v7
       
@@ -82,12 +87,20 @@ jobs:
         timeout-minutes: 8
         continue-on-error: true
 
-      # Run integration tests separately (with MSW setup)
+      # Run integration tests separately (with MSW setup).
+      #
+      # Skipped when no live n8n instance is configured: much of this suite talks
+      # to a real instance via the N8N_API_* secrets, which are unavailable on
+      # Dependabot and fork PRs — there ~21/58 files fail outright, turning the
+      # required `test` check permanently red for dependency PRs. On in-repo PRs
+      # the secret is present, so the suite runs and remains a blocking gate.
+      # --retry=2 absorbs the occasional live-API flake ("expected false to be
+      # true") instead of failing the whole run.
       - name: Run integration tests
-        run: npm run test:integration -- --reporter=default --reporter=junit
+        if: ${{ env.N8N_API_URL != '' }}
+        run: npm run test:integration -- --retry=2 --reporter=default --reporter=junit
         env:
           CI: true
-          N8N_API_URL: ${{ secrets.N8N_API_URL }}
           N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
           N8N_TEST_WEBHOOK_GET_URL: ${{ secrets.N8N_TEST_WEBHOOK_GET_URL }}
           N8N_TEST_WEBHOOK_POST_URL: ${{ secrets.N8N_TEST_WEBHOOK_POST_URL }}
