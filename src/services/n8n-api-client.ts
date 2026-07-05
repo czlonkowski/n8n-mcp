@@ -209,18 +209,17 @@ export class N8nApiClient {
   private async fetchVersionOnce(): Promise<N8nVersionInfo | null> {
     const cached = getCachedVersion(this.baseUrl);
     if (cached) return cached;
-    // SECURITY (GHSA-cmrh-wvq6-wm9r): reuse the validated transport agents.
-    const agents = await this.getPinnedAgents();
-
     const cfHeaders: Record<string, string> = {};
     if (this.cfClientId) cfHeaders['CF-Access-Client-Id'] = this.cfClientId;
     if (this.cfClientSecret) cfHeaders['CF-Access-Client-Secret'] = this.cfClientSecret;
 
-    return await fetchN8nVersion(
-      this.baseUrl,
-      agents,
-      Object.keys(cfHeaders).length > 0 ? cfHeaders : undefined
-    );
+    // SECURITY (GHSA-cmrh-wvq6-wm9r): reuse the validated transport agents,
+    // and forward any Cloudflare Access headers so the probe clears the edge.
+    const agents = await this.getPinnedAgents();
+    return await fetchN8nVersion(this.baseUrl, {
+      headers: Object.keys(cfHeaders).length > 0 ? cfHeaders : undefined,
+      pinnedAgents: agents,
+    });
   }
 
   /**

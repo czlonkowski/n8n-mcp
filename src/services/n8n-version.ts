@@ -122,9 +122,9 @@ export function getSupportedSettingsProperties(version: N8nVersionInfo): Set<str
  */
 export async function fetchN8nVersion(
   baseUrl: string,
-  pinnedAgents?: PinnedAgents,
-  headers?: Record<string, string>
+  options?: { headers?: Record<string, string>; pinnedAgents?: PinnedAgents }
 ): Promise<N8nVersionInfo | null> {
+  const { headers, pinnedAgents } = options ?? {};
   // Check cache first (with TTL)
   const cached = versionCache.get(baseUrl);
   if (cached && Date.now() - cached.fetchedAt < VERSION_CACHE_TTL_MS) {

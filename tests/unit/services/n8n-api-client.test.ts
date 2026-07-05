@@ -11,6 +11,7 @@ import {
   N8nServerError,
 } from '../../../src/utils/n8n-errors';
 import * as n8nValidation from '../../../src/services/n8n-validation';
+import { clearVersionCache } from '../../../src/services/n8n-version';
 import { logger } from '../../../src/utils/logger';
 import * as dns from 'dns/promises';
 
@@ -184,9 +185,137 @@ describe('N8nApiClient', () => {
 
     it('should setup request and response interceptors', () => {
       client = new N8nApiClient(defaultConfig);
-      
+
       expect(mockAxiosInstance.interceptors.request.use).toHaveBeenCalled();
       expect(mockAxiosInstance.interceptors.response.use).toHaveBeenCalled();
+    });
+  });
+
+  describe('Cloudflare Access headers', () => {
+    const cfConfig: N8nApiClientConfig = {
+      ...defaultConfig,
+      cfClientId: 'cf-id',
+      cfClientSecret: 'cf-secret',
+    };
+
+    beforeEach(() => {
+      // fetchN8nVersion caches per baseUrl at module scope; clear between tests
+      // so each getVersion() actually issues a request we can assert on.
+      clearVersionCache();
+    });
+
+    it('injects CF headers into the authenticated API client when configured', () => {
+      client = new N8nApiClient(cfConfig);
+
+      expect(axios.create).toHaveBeenCalledWith(expect.objectContaining({
+        headers: {
+          'X-N8N-API-KEY': 'test-api-key',
+          'Content-Type': 'application/json',
+          'CF-Access-Client-Id': 'cf-id',
+          'CF-Access-Client-Secret': 'cf-secret',
+        },
+      }));
+    });
+
+    it('omits CF headers from the API client when not configured', () => {
+      client = new N8nApiClient(defaultConfig);
+
+      const createConfig = vi.mocked(axios.create).mock.calls[0][0] as any;
+      expect(createConfig.headers).not.toHaveProperty('CF-Access-Client-Id');
+      expect(createConfig.headers).not.toHaveProperty('CF-Access-Client-Secret');
+    });
+
+    it('injects only the CF client id when secret is absent', () => {
+      client = new N8nApiClient({ ...defaultConfig, cfClientId: 'cf-id' });
+
+      const createConfig = vi.mocked(axios.create).mock.calls[0][0] as any;
+      expect(createConfig.headers['CF-Access-Client-Id']).toBe('cf-id');
+      expect(createConfig.headers).not.toHaveProperty('CF-Access-Client-Secret');
+    });
+
+    it('forwards CF headers and pinned agents to the version probe', async () => {
+      client = new N8nApiClient(cfConfig);
+      vi.mocked(axios.get).mockResolvedValue({
+        status: 200,
+        data: { data: { n8nVersion: '1.119.0' } },
+      });
+
+      const version = await client.getVersion();
+
+      expect(version).toEqual({ version: '1.119.0', major: 1, minor: 119, patch: 0 });
+      expect(axios.get).toHaveBeenCalledWith(
+        'https://n8n.example.com/rest/settings',
+        expect.objectContaining({
+          headers: {
+            'CF-Access-Client-Id': 'cf-id',
+            'CF-Access-Client-Secret': 'cf-secret',
+          },
+          // SECURITY (GHSA-cmrh-wvq6-wm9r): version probe stays pinned.
+          httpAgent: expect.any(Object),
+          httpsAgent: expect.any(Object),
+          maxRedirects: 0,
+        })
+      );
+    });
+
+    it('sends no CF headers to the version probe when not configured', async () => {
+      client = new N8nApiClient(defaultConfig);
+      vi.mocked(axios.get).mockResolvedValue({
+        status: 200,
+        data: { data: { n8nVersion: '1.119.0' } },
+      });
+
+      await client.getVersion();
+
+      expect(axios.get).toHaveBeenCalledWith(
+        'https://n8n.example.com/rest/settings',
+        expect.objectContaining({ headers: undefined })
+      );
+    });
+
+    it('injects CF headers into webhook executions when configured', async () => {
+      client = new N8nApiClient(cfConfig);
+      const mockWebhookClient = {
+        request: vi.fn().mockResolvedValue({ status: 200, statusText: 'OK', data: {}, headers: {} }),
+      };
+      vi.mocked(axios.create).mockReturnValue(mockWebhookClient as any);
+
+      await client.triggerWebhook({
+        webhookUrl: 'https://n8n.example.com/webhook/abc-123',
+        httpMethod: 'POST',
+        data: { key: 'value' },
+        waitForResponse: false,
+      });
+
+      expect(mockWebhookClient.request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'CF-Access-Client-Id': 'cf-id',
+            'CF-Access-Client-Secret': 'cf-secret',
+            // API key is never forwarded to webhook endpoints.
+            'X-N8N-API-KEY': undefined,
+          }),
+        })
+      );
+    });
+
+    it('omits CF headers from webhook executions when not configured', async () => {
+      client = new N8nApiClient(defaultConfig);
+      const mockWebhookClient = {
+        request: vi.fn().mockResolvedValue({ status: 200, statusText: 'OK', data: {}, headers: {} }),
+      };
+      vi.mocked(axios.create).mockReturnValue(mockWebhookClient as any);
+
+      await client.triggerWebhook({
+        webhookUrl: 'https://n8n.example.com/webhook/abc-123',
+        httpMethod: 'POST',
+        data: { key: 'value' },
+        waitForResponse: false,
+      });
+
+      const requestConfig = mockWebhookClient.request.mock.calls[0][0] as any;
+      expect(requestConfig.headers).not.toHaveProperty('CF-Access-Client-Id');
+      expect(requestConfig.headers).not.toHaveProperty('CF-Access-Client-Secret');
     });
   });
 

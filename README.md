@@ -67,6 +67,15 @@ Want to use n8n-MCP with your n8n instance? Check out our comprehensive [n8n Dep
 - Cloud deployment on Hetzner, AWS, and other providers
 - Troubleshooting and security best practices
 
+### Cloudflare Access Authentication
+
+If your n8n instance sits behind Cloudflare Access (Zero Trust), provide your service token so n8n-MCP can authenticate:
+
+- `N8N_CF_CLIENT_ID` - Cloudflare Access Client ID
+- `N8N_CF_CLIENT_SECRET` - Cloudflare Access Client Secret
+
+When set, these are sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers on all n8n API requests, webhook executions, and version checks.
+
 ## Connect your IDE
 
 n8n-MCP works with multiple AI-powered IDEs and tools:

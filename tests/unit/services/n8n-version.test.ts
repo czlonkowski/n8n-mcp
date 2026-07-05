@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import axios from 'axios';
 import {
   parseVersion,
   compareVersions,
@@ -8,13 +9,19 @@ import {
   clearVersionCache,
   setCachedVersion,
   getCachedVersion,
+  fetchN8nVersion,
   VERSION_THRESHOLDS,
 } from '@/services/n8n-version';
 import type { N8nVersionInfo } from '@/types/n8n-api';
+import type { PinnedAgents } from '@/utils/ssrf-protection';
+
+vi.mock('axios');
+vi.mock('@/utils/logger');
 
 describe('n8n-version', () => {
   beforeEach(() => {
     clearVersionCache();
+    vi.clearAllMocks();
   });
 
   describe('parseVersion', () => {
@@ -271,6 +278,95 @@ describe('n8n-version', () => {
 
       expect(getCachedVersion(url1)).toEqual(v1);
       expect(getCachedVersion(url2)).toEqual(v2);
+    });
+  });
+
+  describe('fetchN8nVersion', () => {
+    const baseUrl = 'https://n8n.example.com';
+    const settingsUrl = 'https://n8n.example.com/rest/settings';
+
+    const settingsResponse = {
+      status: 200,
+      data: { data: { n8nVersion: '1.119.0' } },
+    };
+
+    it('forwards Cloudflare Access headers when supplied', async () => {
+      vi.mocked(axios.get).mockResolvedValue(settingsResponse);
+
+      const headers = {
+        'CF-Access-Client-Id': 'cf-id',
+        'CF-Access-Client-Secret': 'cf-secret',
+      };
+
+      const version = await fetchN8nVersion(baseUrl, { headers });
+
+      expect(version).toEqual({ version: '1.119.0', major: 1, minor: 119, patch: 0 });
+      expect(axios.get).toHaveBeenCalledWith(
+        settingsUrl,
+        expect.objectContaining({ headers })
+      );
+    });
+
+    it('omits headers when none are supplied', async () => {
+      vi.mocked(axios.get).mockResolvedValue(settingsResponse);
+
+      await fetchN8nVersion(baseUrl);
+
+      expect(axios.get).toHaveBeenCalledWith(
+        settingsUrl,
+        expect.objectContaining({ headers: undefined })
+      );
+    });
+
+    it('pins transport agents so SSRF protection stays intact', async () => {
+      vi.mocked(axios.get).mockResolvedValue(settingsResponse);
+
+      const pinnedAgents = {
+        httpAgent: { pinned: 'http' },
+        httpsAgent: { pinned: 'https' },
+      } as unknown as PinnedAgents;
+
+      await fetchN8nVersion(baseUrl, { pinnedAgents });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        settingsUrl,
+        expect.objectContaining({
+          httpAgent: pinnedAgents.httpAgent,
+          httpsAgent: pinnedAgents.httpsAgent,
+          maxRedirects: 0,
+        })
+      );
+    });
+
+    it('forwards both CF headers and pinned agents together', async () => {
+      vi.mocked(axios.get).mockResolvedValue(settingsResponse);
+
+      const headers = { 'CF-Access-Client-Id': 'cf-id' };
+      const pinnedAgents = {
+        httpAgent: { pinned: 'http' },
+        httpsAgent: { pinned: 'https' },
+      } as unknown as PinnedAgents;
+
+      await fetchN8nVersion(baseUrl, { headers, pinnedAgents });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        settingsUrl,
+        expect.objectContaining({
+          headers,
+          httpAgent: pinnedAgents.httpAgent,
+          httpsAgent: pinnedAgents.httpsAgent,
+        })
+      );
+    });
+
+    it('returns cached version without issuing a second request', async () => {
+      vi.mocked(axios.get).mockResolvedValue(settingsResponse);
+
+      await fetchN8nVersion(baseUrl, { headers: { 'CF-Access-Client-Id': 'cf-id' } });
+      const cached = await fetchN8nVersion(baseUrl);
+
+      expect(cached).toEqual({ version: '1.119.0', major: 1, minor: 119, patch: 0 });
+      expect(axios.get).toHaveBeenCalledTimes(1);
     });
   });
 
