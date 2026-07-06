@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.63.1] - 2026-07-06
+
+### Changed
+
+- **Updated n8n to 2.28.x.** Bumped `n8n-nodes-base` 2.27.4 → 2.28.4, `n8n-core` 2.27.3 → 2.28.5, `n8n-workflow` 2.27.2 → 2.28.4, and `@n8n/n8n-nodes-langchain` 2.27.4 → 2.28.6. Rebuilt the node database (826 core nodes: 676 from `n8n-nodes-base` + 150 from `@n8n/n8n-nodes-langchain`).
+- **Refreshed community nodes.** Registry sync added 58 newly-published community nodes (1,247 → 1,305 total; 1,161 verified + 144 unverified). READMEs fetched and AI documentation summaries generated for the new nodes — 1,295/1,305 community nodes now carry an AI summary (the remaining 10 have no npm README to summarize).
+- Updated README n8n version badge and node counts (2,131 total nodes: 826 core + 1,305 community).
+
 ## [2.63.0] - 2026-07-03
 
 ### Fixed
