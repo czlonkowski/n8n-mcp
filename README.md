@@ -436,3 +436,9 @@ See [Acknowledgments](./docs/ACKNOWLEDGMENTS.md) for credits and template attrib
 <div align="center">
   <strong>Built with care for the n8n community</strong>
 </div>
+
+---
+
+> 💼 **Need it built for you?**
+>
+> Work with [AiAdvisors](https://www.aiadvisors.pl/en) — automation audits, builds, and operations by the team behind n8n-mcp and n8n-skills.
