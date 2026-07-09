@@ -74,7 +74,7 @@ If your n8n instance sits behind Cloudflare Access (Zero Trust), provide your se
 - `N8N_CF_CLIENT_ID` - Cloudflare Access Client ID
 - `N8N_CF_CLIENT_SECRET` - Cloudflare Access Client Secret
 
-When set, these are sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers on all n8n API requests, webhook executions, and version checks.
+When set, these are sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers on n8n API requests, version/health probes, and webhook executions. The token is confined to the `N8N_API_URL` origin — webhook calls to a different host (e.g. a split `WEBHOOK_URL` origin) do not receive it, to avoid leaking the token.
 
 ## Connect your IDE
 

@@ -8,8 +8,10 @@ const n8nApiConfigSchema = z.object({
   N8N_API_KEY: z.string().min(1).optional(),
   N8N_API_TIMEOUT: z.coerce.number().positive().default(30000),
   N8N_API_MAX_RETRIES: z.coerce.number().positive().default(3),
-  N8N_CF_CLIENT_ID: z.string().optional(),
-  N8N_CF_CLIENT_SECRET: z.string().optional(),
+  // trim() so a whitespace-only value (e.g. "   ") normalizes to "" and is treated
+  // as unset, rather than being forwarded as an invalid CF-Access header value.
+  N8N_CF_CLIENT_ID: z.string().trim().optional(),
+  N8N_CF_CLIENT_SECRET: z.string().trim().optional(),
 });
 
 // Track if we've loaded env vars
