@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.64.0] - 2026-07-09
+
+### Added
+
+- **Cloudflare Access (Zero Trust) authentication.** When `N8N_CF_CLIENT_ID` / `N8N_CF_CLIENT_SECRET` are set, n8n-MCP sends `CF-Access-Client-Id` / `CF-Access-Client-Secret` service-token headers on n8n API requests, the version/health probes, and webhook executions, so it can reach n8n instances that sit behind a Cloudflare Access edge. Configured via environment variables. The service token is confined to the `N8N_API_URL` origin — webhook calls to a different host (e.g. a split `WEBHOOK_URL` origin) do not receive it, to avoid leaking the token; a debug log records when it is withheld. The SSRF-hardened version probe (pinned transport agents, `maxRedirects: 0`) is preserved. Original implementation by @diemol55 (#718), rebased and extended in #919.
+
 ## [2.63.0] - 2026-07-03
 
 ### Fixed
