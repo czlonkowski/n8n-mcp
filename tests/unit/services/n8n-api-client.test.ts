@@ -317,6 +317,73 @@ describe('N8nApiClient', () => {
       expect(requestConfig.headers).not.toHaveProperty('CF-Access-Client-Id');
       expect(requestConfig.headers).not.toHaveProperty('CF-Access-Client-Secret');
     });
+
+    it('never forwards CF headers to a webhook on a different origin', async () => {
+      // SECURITY: the CF service token must not leak to a host supplied via
+      // webhookUrl that differs from the configured n8n instance origin.
+      client = new N8nApiClient(cfConfig);
+      const mockWebhookClient = {
+        request: vi.fn().mockResolvedValue({ status: 200, statusText: 'OK', data: {}, headers: {} }),
+      };
+      vi.mocked(axios.create).mockReturnValue(mockWebhookClient as any);
+
+      await client.triggerWebhook({
+        webhookUrl: 'https://evil.example.com/webhook/abc-123',
+        httpMethod: 'POST',
+        data: { key: 'value' },
+        waitForResponse: false,
+      });
+
+      const requestConfig = mockWebhookClient.request.mock.calls[0][0] as any;
+      expect(requestConfig.headers).not.toHaveProperty('CF-Access-Client-Id');
+      expect(requestConfig.headers).not.toHaveProperty('CF-Access-Client-Secret');
+    });
+
+    it('forwards CF headers to the healthz probe when configured', async () => {
+      client = new N8nApiClient(cfConfig);
+      vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { status: 'ok' } });
+
+      await client.healthCheck();
+
+      expect(axios.get).toHaveBeenCalledWith(
+        'https://n8n.example.com/healthz',
+        expect.objectContaining({
+          headers: {
+            'CF-Access-Client-Id': 'cf-id',
+            'CF-Access-Client-Secret': 'cf-secret',
+          },
+        })
+      );
+    });
+
+    // Instance origin is https://n8n.example.com. The gate must fail closed on a
+    // divergent port/scheme and normalize host case.
+    it.each([
+      ['https://n8n.example.com:8443/webhook/abc', false], // different port -> withheld
+      ['https://N8N.EXAMPLE.COM/webhook/abc', true],       // uppercase host -> origin-normalized, forwarded
+    ])('origin gate for %s forwards CF headers = %s', async (webhookUrl, shouldForward) => {
+      client = new N8nApiClient(cfConfig);
+      const mockWebhookClient = {
+        request: vi.fn().mockResolvedValue({ status: 200, statusText: 'OK', data: {}, headers: {} }),
+      };
+      vi.mocked(axios.create).mockReturnValue(mockWebhookClient as any);
+
+      await client.triggerWebhook({
+        webhookUrl,
+        httpMethod: 'POST',
+        data: { key: 'value' },
+        waitForResponse: false,
+      });
+
+      const requestConfig = mockWebhookClient.request.mock.calls[0][0] as any;
+      if (shouldForward) {
+        expect(requestConfig.headers['CF-Access-Client-Id']).toBe('cf-id');
+        expect(requestConfig.headers['CF-Access-Client-Secret']).toBe('cf-secret');
+      } else {
+        expect(requestConfig.headers).not.toHaveProperty('CF-Access-Client-Id');
+        expect(requestConfig.headers).not.toHaveProperty('CF-Access-Client-Secret');
+      }
+    });
   });
 
   describe('healthCheck', () => {

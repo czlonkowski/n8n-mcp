@@ -8,8 +8,8 @@ const n8nApiConfigSchema = z.object({
   N8N_API_KEY: z.string().min(1).optional(),
   N8N_API_TIMEOUT: z.coerce.number().positive().default(30000),
   N8N_API_MAX_RETRIES: z.coerce.number().positive().default(3),
+  N8N_CF_CLIENT_ID: z.string().optional(),
   N8N_CF_CLIENT_SECRET: z.string().optional(),
-  N8N_CF_CLIENT_ID: z.string().optional()
 });
 
 // Track if we've loaded env vars
@@ -61,8 +61,6 @@ export function getN8nApiConfigFromContext(context: {
   n8nApiKey?: string;
   n8nApiTimeout?: number;
   n8nApiMaxRetries?: number;
-  n8nCfClientId?: string;
-  n8nCfClientSecret?: string;
 }): N8nApiConfig | null {
   if (!context.n8nApiUrl || !context.n8nApiKey) {
     return null;
@@ -73,8 +71,11 @@ export function getN8nApiConfigFromContext(context: {
     apiKey: context.n8nApiKey,
     timeout: context.n8nApiTimeout ?? 30000,
     maxRetries: context.n8nApiMaxRetries ?? 3,
-    cfClientId: context.n8nCfClientId,
-    cfClientSecret: context.n8nCfClientSecret,
+    // Cloudflare Access is configured via the N8N_CF_CLIENT_ID / N8N_CF_CLIENT_SECRET
+    // env vars only; it is intentionally not threaded through the multi-tenant instance
+    // context (would add a service-token credential to the per-request surface).
+    cfClientId: undefined,
+    cfClientSecret: undefined,
   };
 }
 

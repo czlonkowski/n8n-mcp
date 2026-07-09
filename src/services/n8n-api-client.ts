@@ -94,15 +94,8 @@ export class N8nApiClient {
     const headers: Record<string, string> = {
       'X-N8N-API-KEY': apiKey,
       'Content-Type': 'application/json',
+      ...this.cfAccessHeaders(),
     };
-
-    if (cfClientId) {
-      headers['CF-Access-Client-Id'] = cfClientId;
-    }
-    
-    if (cfClientSecret) {
-      headers['CF-Access-Client-Secret'] = cfClientSecret;
-    }
 
     this.client = axios.create({
       baseURL: apiUrl,
@@ -204,20 +197,48 @@ export class N8nApiClient {
   }
 
   /**
+   * Cloudflare Access service-token headers when configured, empty object otherwise.
+   */
+  private cfAccessHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (this.cfClientId) headers['CF-Access-Client-Id'] = this.cfClientId;
+    if (this.cfClientSecret) headers['CF-Access-Client-Secret'] = this.cfClientSecret;
+    return headers;
+  }
+
+  /**
+   * Cloudflare Access headers for axios `headers` slots that should be omitted
+   * entirely when unset: the configured headers, or undefined when none apply.
+   */
+  private cfAccessHeadersOrUndefined(): Record<string, string> | undefined {
+    const headers = this.cfAccessHeaders();
+    return Object.keys(headers).length > 0 ? headers : undefined;
+  }
+
+  /**
+   * Whether targetUrl shares the configured n8n instance origin. Used to confine
+   * instance credentials (e.g. Cloudflare Access headers) to the instance host.
+   */
+  private isSameOrigin(targetUrl: string): boolean {
+    try {
+      return new URL(targetUrl).origin === new URL(this.baseUrl).origin;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Internal method to fetch version once
    */
   private async fetchVersionOnce(): Promise<N8nVersionInfo | null> {
     const cached = getCachedVersion(this.baseUrl);
     if (cached) return cached;
-    const cfHeaders: Record<string, string> = {};
-    if (this.cfClientId) cfHeaders['CF-Access-Client-Id'] = this.cfClientId;
-    if (this.cfClientSecret) cfHeaders['CF-Access-Client-Secret'] = this.cfClientSecret;
 
     // SECURITY (GHSA-cmrh-wvq6-wm9r): reuse the validated transport agents,
     // and forward any Cloudflare Access headers so the probe clears the edge.
     const agents = await this.getPinnedAgents();
     return await fetchN8nVersion(this.baseUrl, {
-      headers: Object.keys(cfHeaders).length > 0 ? cfHeaders : undefined,
+      headers: this.cfAccessHeadersOrUndefined(),
       pinnedAgents: agents,
     });
   }
@@ -240,6 +261,9 @@ export class N8nApiClient {
       const agents = await this.getPinnedAgents();
       const response = await axios.get(healthzUrl, {
         timeout: 5000,
+        // Forward Cloudflare Access headers so the probe clears the edge when the
+        // instance sits behind Cloudflare Access (healthzUrl is always the instance origin).
+        headers: this.cfAccessHeadersOrUndefined(),
         validateStatus: (status) => status < 500,
         maxRedirects: 0,
         httpAgent: agents.httpAgent,
@@ -489,14 +513,23 @@ export class N8nApiClient {
       const url = new URL(webhookUrl);
       const webhookPath = url.pathname;
 
+      // SECURITY: only forward Cloudflare Access service-token headers when the
+      // webhook targets the configured n8n instance origin, so the token is never
+      // leaked to an unrelated host supplied via webhookUrl.
+      const forwardCfHeaders = this.isSameOrigin(webhookUrl);
+      if (!forwardCfHeaders && Object.keys(this.cfAccessHeaders()).length > 0) {
+        // Withheld by design; log so a resulting Cloudflare Access 403 on a
+        // split webhook host (WEBHOOK_URL origin != N8N_API_URL origin) is diagnosable.
+        logger.debug('Withholding Cloudflare Access headers: webhook host differs from the configured n8n instance origin');
+      }
+
       // Make request directly to webhook endpoint
       const config: AxiosRequestConfig = {
         method: httpMethod,
         url: webhookPath,
         headers: {
           ...headers,
-          ...(this.cfClientId ? { 'CF-Access-Client-Id': this.cfClientId } : {}),
-          ...(this.cfClientSecret ? { 'CF-Access-Client-Secret': this.cfClientSecret } : {}),
+          ...(forwardCfHeaders ? this.cfAccessHeaders() : {}),
           // Don't override API key header for webhook endpoints
           'X-N8N-API-KEY': undefined,
         },
