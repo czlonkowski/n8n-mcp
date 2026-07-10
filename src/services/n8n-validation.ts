@@ -129,29 +129,18 @@ export function cleanWorkflowForCreate(workflow: Partial<Workflow>): Partial<Wor
  * @returns A cleaned partial workflow suitable for API updates
  */
 export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
-  const {
-    // Remove read-only/computed fields
-    id,
-    createdAt,
-    updatedAt,
-    versionId,
-    versionCounter, // Added: n8n 1.118.1+ returns this but rejects it in updates
-    meta,
-    staticData,
-    // Remove fields that cause API errors
-    pinData,
-    tags,
-    description, // Issue #431: n8n returns this field but rejects it in updates
-    // Remove additional fields that n8n API doesn't accept
-    isArchived,
-    usedCredentials,
-    sharedWithProjects,
-    triggerCount,
-    shared,
-    active,
-    // Keep everything else
-    ...cleanedWorkflow
-  } = workflow as any;
+  // Use whitelist approach: only include properties that n8n API accepts
+  // This prevents "additional properties" errors from cloud-specific fields
+  // like ownedBy, homeProject, sharedWith, display, usageCount, parentFolderId, etc.
+  const cleanedWorkflow: Partial<Workflow> = {};
+
+  // Only include properties that n8n API accepts in PUT /workflows/{id}
+  const whitelistedProperties = ['name', 'nodes', 'connections', 'settings', 'active', 'tags'] as const;
+  for (const key of whitelistedProperties) {
+    if (key in workflow) {
+      (cleanedWorkflow as any)[key] = (workflow as any)[key];
+    }
+  }
 
   // CRITICAL FIX for Issue #248:
   // The n8n API has version-specific behavior for settings in workflow updates:

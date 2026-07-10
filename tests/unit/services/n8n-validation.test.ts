@@ -329,24 +329,23 @@ describe('n8n-validation', () => {
 
         const cleaned = cleanWorkflowForUpdate(workflow);
         
-        // Should remove all these fields
+        // With whitelist approach, only name, nodes, connections, settings, active, tags are kept
         expect(cleaned).not.toHaveProperty('id');
         expect(cleaned).not.toHaveProperty('createdAt');
         expect(cleaned).not.toHaveProperty('updatedAt');
         expect(cleaned).not.toHaveProperty('versionId');
-        expect(cleaned).not.toHaveProperty('versionCounter'); // n8n 1.118.1+ compatibility
+        expect(cleaned).not.toHaveProperty('versionCounter');
         expect(cleaned).not.toHaveProperty('meta');
         expect(cleaned).not.toHaveProperty('staticData');
         expect(cleaned).not.toHaveProperty('pinData');
-        expect(cleaned).not.toHaveProperty('tags');
         expect(cleaned).not.toHaveProperty('isArchived');
         expect(cleaned).not.toHaveProperty('usedCredentials');
         expect(cleaned).not.toHaveProperty('sharedWithProjects');
         expect(cleaned).not.toHaveProperty('triggerCount');
         expect(cleaned).not.toHaveProperty('shared');
-        expect(cleaned).not.toHaveProperty('active');
-        
-        // Should keep name and filter settings to safe properties
+        // active and tags ARE whitelisted, so they should be present
+        expect(cleaned).toHaveProperty('active');
+        expect(cleaned).toHaveProperty('tags');        // Should keep name and filter settings to safe properties
         expect(cleaned.name).toBe('Updated Workflow');
         expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
       });
@@ -1405,8 +1404,9 @@ describe('n8n-validation', () => {
       expect(forUpdate).not.toHaveProperty('createdAt');
       expect(forUpdate).not.toHaveProperty('updatedAt');
       expect(forUpdate).not.toHaveProperty('versionId');
-      expect(forUpdate).not.toHaveProperty('active');
-      expect(forUpdate).not.toHaveProperty('tags');
+      // active and tags ARE whitelisted, so they should be present
+      expect(forUpdate).toHaveProperty('active');
+      expect(forUpdate).toHaveProperty('tags');
       expect(forUpdate).not.toHaveProperty('meta');
       // n8n API requires settings in updates, so minimal defaults (v1) are provided (Issue #431)
       expect(forUpdate.settings).toEqual({ executionOrder: 'v1' });
