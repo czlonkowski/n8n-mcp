@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Core TypeScript lives in `src/`: MCP tools in `src/mcp/`, business logic in `src/services/`, persistence in `src/database/`, and shared code in `src/types/` and `src/utils/`. Tests mirror these areas in `tests/unit/` and `tests/integration/`; supporting fixtures and mocks stay under `tests/`. React/Vite apps live in `ui-apps/src/`, utilities in `scripts/`, documentation in `docs/`, and generated skills/databases in `data/`. Treat `dist/`, coverage output, and `ui-apps/dist/` as generated.
+Core TypeScript lives in `src/`: MCP tools in `src/mcp/`, business logic in `src/services/`, persistence in `src/database/`, and shared code in `src/types/` and `src/utils/`. Tests mirror these areas in `tests/unit/` and `tests/integration/`; supporting fixtures and mocks stay under `tests/`. React/Vite apps live in `ui-apps/src/`, repo utilities in `scripts/`, TypeScript maintenance scripts in `src/scripts/` (compiled to `dist/scripts/` at build time), documentation in `docs/`, and generated skills/databases in `data/`. Treat `dist/`, coverage output, and `ui-apps/dist/` as generated.
 
 ## Build, Test, and Development Commands
 

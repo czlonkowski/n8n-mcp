@@ -46,7 +46,7 @@ npm run generate:docs:incremental  # Generate AI docs for community nodes missin
 
 ## Architecture
 
-Directory-level map of `src/`. This file intentionally stays at subsystem level — for file-level detail, explore the directories.
+Key subsystems of `src/` (non-exhaustive — smaller directories are omitted). This file intentionally stays at subsystem level; for file-level detail, explore the directories.
 
 - `mcp/` — MCP server, tool definitions (`tools.ts`, `tools-n8n-manager.ts`), request handlers, per-tool documentation (`tool-docs/`), bundled skills (`skills/`)
 - `database/` — SQLite storage: universal adapter over better-sqlite3/sql.js, `node-repository.ts` data access, FTS5 full-text search, `migrations/`
@@ -57,6 +57,7 @@ Directory-level map of `src/`. This file intentionally stays at subsystem level 
 - `telemetry/` — opt-in anonymous usage telemetry
 - `triggers/` — trigger detection and registry
 - `n8n/` — n8n community node wrapper (N8N_MODE)
+- `scripts/` — maintenance CLI scripts (rebuild, validate, template/community fetching), compiled to `dist/scripts/`
 - `types/`, `constants/`, `utils/` — shared types, type structures, helpers
 - `http-server.ts`, `http-server-single-session.ts` — HTTP mode with session persistence
 - `mcp-engine.ts`, `mcp-tools-engine.ts` — clean API for embedding the server in other services
@@ -82,7 +83,7 @@ Two groups:
 - After changing MCP server code: build, then ask the user to reload the MCP server before testing
 - Run `npm run typecheck` after every code change
 - Never commit directly to main — use feature branches and PRs
-- Add to every commit message and PR description: `Conceived by Romuald Członkowski - www.aiadvisors.pl/en`. Never put this attribution inside file contents
+- Add to every commit message and PR description: `Conceived by Romuald Członkowski - www.aiadvisors.pl/en`. The attribution belongs in commit messages and PR descriptions only — never in source, test, or documentation file contents
 - When reviewing issues, use the GH CLI (`gh`) to fetch the issue and all its comments
 - Do not use hyperbolic or dramatic language in comments and documentation
 
