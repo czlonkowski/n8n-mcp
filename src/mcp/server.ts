@@ -1337,6 +1337,12 @@ export class N8NDocumentationMCPServer {
           ? { valid: true, errors: [] }
           : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
         break;
+      case 'n8n_evaluations':
+        // Requires action parameter, runId validation done in dispatch based on action
+        validationResult = args.action
+          ? { valid: true, errors: [] }
+          : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
+        break;
       case 'n8n_manage_datatable':
         validationResult = args.action
           ? { valid: true, errors: [] }
@@ -1837,6 +1843,26 @@ export class N8NDocumentationMCPServer {
             return n8nHandlers.handleDeleteExecution(args, this.instanceContext);
           default:
             throw new Error(`Unknown action: ${execAction}. Valid actions: get, list, delete`);
+        }
+      }
+      case 'n8n_evaluations': {
+        this.validateToolParams(name, args, ['action', 'workflowId']);
+        const evalAction = args.action;
+        switch (evalAction) {
+          case 'list_runs':
+            return n8nHandlers.handleListTestRuns(args, this.instanceContext);
+          case 'get_run':
+            if (!args.runId) {
+              throw new Error('runId is required for action=get_run');
+            }
+            return n8nHandlers.handleGetTestRun(args, this.instanceContext);
+          case 'list_cases':
+            if (!args.runId) {
+              throw new Error('runId is required for action=list_cases');
+            }
+            return n8nHandlers.handleListTestCases(args, this.instanceContext);
+          default:
+            throw new Error(`Unknown action: ${evalAction}. Valid actions: list_runs, get_run, list_cases`);
         }
       }
       case 'n8n_health_check':

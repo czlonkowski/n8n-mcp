@@ -492,6 +492,48 @@ export const n8nManagementTools: ToolDefinition[] = [
       openWorldHint: true,
     },
   },
+  {
+    name: 'n8n_evaluations',
+    description: `Read evaluation test runs for a workflow (read-only). Requires n8n >= 2.30 and an API key created on 2.30+ (testRun scopes). Actions: list_runs=list runs for a workflow, get_run=single run with aggregated metrics, list_cases=per-case results (paginate - cases can be large). Triggering runs via API is not yet supported by n8n.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list_runs', 'get_run', 'list_cases'],
+          description: 'Operation: list_runs=list test runs, get_run=run details with metrics, list_cases=per-case results'
+        },
+        workflowId: {
+          type: 'string',
+          description: 'Workflow ID the test runs belong to (required)'
+        },
+        runId: {
+          type: 'string',
+          description: 'Test run ID (required for action=get_run or action=list_cases)'
+        },
+        status: {
+          type: 'string',
+          enum: ['new', 'running', 'completed', 'error', 'cancelled'],
+          description: 'For action=list_runs: filter by run status'
+        },
+        limit: {
+          type: 'number',
+          description: 'Results per page (1-250). Default: 100 for list_runs, 20 for list_cases (per-case inputs/outputs can be large)'
+        },
+        cursor: {
+          type: 'string',
+          description: 'Pagination cursor from previous response'
+        }
+      },
+      required: ['action', 'workflowId']
+    },
+    annotations: {
+      title: 'Read Evaluation Test Runs',
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: true,
+    },
+  },
 
   // System Tools
   {
@@ -736,6 +778,7 @@ Old backups are also pruned automatically (10 most recent per workflow, plus an 
  */
 export const TOOL_OPERATION_PARAM: Record<string, string> = {
   'n8n_executions': 'action',
+  'n8n_evaluations': 'action',
   'n8n_workflow_versions': 'mode',
 };
 

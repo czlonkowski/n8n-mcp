@@ -8,6 +8,7 @@ export { n8nValidateWorkflowDoc } from './n8n-validate-workflow';
 export { n8nAutofixWorkflowDoc } from './n8n-autofix-workflow';
 export { n8nTestWorkflowDoc } from './n8n-test-workflow';
 export { n8nExecutionsDoc } from './n8n-executions';
+export { n8nEvaluationsDoc } from './n8n-evaluations';
 export { n8nWorkflowVersionsDoc } from './n8n-workflow-versions';
 export { n8nDeployTemplateDoc } from './n8n-deploy-template';
 export { n8nManageDatatableDoc } from './n8n-manage-datatable';
