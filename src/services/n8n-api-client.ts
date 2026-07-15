@@ -7,6 +7,12 @@ import {
   Execution,
   ExecutionListParams,
   ExecutionListResponse,
+  TestRunSummary,
+  TestCaseExecution,
+  TestRunListParams,
+  TestCaseListParams,
+  TestRunListResponse,
+  TestCaseListResponse,
   Credential,
   CredentialListParams,
   CredentialListResponse,
@@ -490,6 +496,47 @@ export class N8nApiClient {
   async deleteExecution(id: string): Promise<void> {
     try {
       await this.client.delete(`/executions/${encodeApiPathSegment(id, 'executionId')}`);
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  // Evaluation test runs (n8n >= 2.30)
+
+  async listTestRuns(workflowId: string, params: TestRunListParams = {}): Promise<TestRunListResponse> {
+    try {
+      const response = await this.client.get(
+        `/workflows/${encodeApiPathSegment(workflowId, 'workflowId')}/test-runs`,
+        { params }
+      );
+      return this.validateListResponse<TestRunSummary>(response.data, 'test runs');
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async getTestRun(workflowId: string, runId: string): Promise<TestRunSummary> {
+    try {
+      const response = await this.client.get(
+        `/workflows/${encodeApiPathSegment(workflowId, 'workflowId')}/test-runs/${encodeApiPathSegment(runId, 'runId')}`
+      );
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async listTestCases(
+    workflowId: string,
+    runId: string,
+    params: TestCaseListParams = {}
+  ): Promise<TestCaseListResponse> {
+    try {
+      const response = await this.client.get(
+        `/workflows/${encodeApiPathSegment(workflowId, 'workflowId')}/test-runs/${encodeApiPathSegment(runId, 'runId')}/test-cases`,
+        { params }
+      );
+      return this.validateListResponse<TestCaseExecution>(response.data, 'test cases');
     } catch (error) {
       throw handleN8nApiError(error);
     }

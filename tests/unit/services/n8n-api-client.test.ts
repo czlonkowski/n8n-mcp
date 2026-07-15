@@ -1085,6 +1085,73 @@ describe('N8nApiClient', () => {
     });
   });
 
+  describe('evaluation test runs', () => {
+    beforeEach(() => {
+      client = new N8nApiClient(defaultConfig);
+    });
+
+    it('should list test runs with params', async () => {
+      const response = { data: [{ id: 'run1', status: 'completed' }], nextCursor: null };
+      mockAxiosInstance.get.mockResolvedValue({ data: response });
+
+      const result = await client.listTestRuns('wf1', { status: 'completed', limit: 50, cursor: 'abc' });
+
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/workflows/wf1/test-runs', {
+        params: { status: 'completed', limit: 50, cursor: 'abc' },
+      });
+      expect(result).toEqual(response);
+    });
+
+    it('should reject hostile workflow ids before making a request', async () => {
+      await expect(client.listTestRuns('a/../b')).rejects.toThrow();
+      expect(mockAxiosInstance.get).not.toHaveBeenCalled();
+    });
+
+    it('should get a single test run', async () => {
+      const run = { id: 'run1', status: 'completed', finalResult: 'success' };
+      mockAxiosInstance.get.mockResolvedValue({ data: run });
+
+      const result = await client.getTestRun('wf1', 'run1');
+
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/workflows/wf1/test-runs/run1');
+      expect(result).toEqual(run);
+    });
+
+    it('should reject hostile run ids before making a request', async () => {
+      await expect(client.getTestRun('wf1', '../../executions')).rejects.toThrow();
+      expect(mockAxiosInstance.get).not.toHaveBeenCalled();
+    });
+
+    it('should list test cases with pagination params', async () => {
+      const response = { data: [{ id: 'case1', executionId: 'exec1' }], nextCursor: 'next' };
+      mockAxiosInstance.get.mockResolvedValue({ data: response });
+
+      const result = await client.listTestCases('wf1', 'run1', { limit: 20 });
+
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/workflows/wf1/test-runs/run1/test-cases', {
+        params: { limit: 20 },
+      });
+      expect(result.nextCursor).toBe('next');
+    });
+
+    it('should wrap legacy array responses when listing test runs', async () => {
+      mockAxiosInstance.get.mockResolvedValue({ data: [{ id: 'run1' }] });
+
+      const result = await client.listTestRuns('wf1');
+
+      expect(result).toEqual({ data: [{ id: 'run1' }], nextCursor: null });
+    });
+
+    it('should throw N8nApiError on HTTP failure', async () => {
+      await mockAxiosInstance.simulateError('get', {
+        message: 'Forbidden',
+        response: { status: 403, data: { message: 'forbidden' } },
+      });
+
+      await expect(client.listTestRuns('wf1')).rejects.toThrow(N8nApiError);
+    });
+  });
+
   describe('triggerWebhook', () => {
     beforeEach(() => {
       client = new N8nApiClient(defaultConfig);

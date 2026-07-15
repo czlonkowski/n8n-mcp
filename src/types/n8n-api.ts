@@ -297,6 +297,66 @@ export interface ExecutionListResponse {
   nextCursor?: string | null;
 }
 
+// Evaluation test runs (n8n Public API >= 2.30)
+export type TestRunStatus = 'new' | 'running' | 'completed' | 'error' | 'cancelled';
+export type TestRunFinalResult = 'success' | 'error' | 'warning';
+export type TestCaseExecutionStatus =
+  | 'new'
+  | 'running'
+  | 'evaluation_running'
+  | 'success'
+  | 'error'
+  | 'warning'
+  | 'cancelled';
+
+export interface TestRunSummary {
+  id: string;
+  status: TestRunStatus;
+  runAt: string | null;
+  completedAt: string | null;
+  metrics: Record<string, number | boolean> | null;
+  errorCode: string | null;
+  errorDetails: Record<string, unknown> | null;
+  finalResult: TestRunFinalResult | null;
+  testCaseCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TestCaseExecution {
+  id: string;
+  status: TestCaseExecutionStatus;
+  runAt: string | null;
+  completedAt: string | null;
+  metrics: Record<string, number | boolean> | null;
+  errorCode: string | null;
+  errorDetails: Record<string, unknown> | null;
+  inputs: Record<string, unknown> | null;
+  outputs: Record<string, unknown> | null;
+  executionId: string | null;
+}
+
+export interface TestRunListParams {
+  status?: TestRunStatus;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface TestCaseListParams {
+  limit?: number;
+  cursor?: string;
+}
+
+export interface TestRunListResponse {
+  data: TestRunSummary[];
+  nextCursor?: string | null;
+}
+
+export interface TestCaseListResponse {
+  data: TestCaseExecution[];
+  nextCursor?: string | null;
+}
+
 export interface CredentialListParams {
   limit?: number;
   cursor?: string;
