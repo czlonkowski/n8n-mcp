@@ -13,6 +13,7 @@ import {
   ExecutionFilterOptions,
   ExecutionMode,
   Credential,
+  TestRunStatus,
 } from '../types/n8n-api';
 import type { TriggerType, TestWorkflowInput } from '../triggers/types';
 import {
@@ -523,6 +524,25 @@ const listExecutionsSchema = z.object({
   projectId: optionalEmptyAware(z.string()),
   status: optionalEmptyAware(z.enum(['success', 'error', 'waiting'])),
   includeData: z.boolean().optional(),
+});
+
+const listTestRunsSchema = z.object({
+  workflowId: z.string(),
+  status: optionalEmptyAware(z.enum(['new', 'running', 'completed', 'error', 'cancelled'])),
+  limit: z.number().min(1).max(250).optional(),
+  cursor: optionalEmptyAware(z.string()),
+});
+
+const getTestRunSchema = z.object({
+  workflowId: z.string(),
+  runId: z.string(),
+});
+
+const listTestCasesSchema = z.object({
+  workflowId: z.string(),
+  runId: z.string(),
+  limit: z.number().min(1).max(250).optional(),
+  cursor: optionalEmptyAware(z.string()),
 });
 
 const workflowVersionsSchema = z.object({
@@ -1908,6 +1928,157 @@ export async function handleDeleteExecution(args: unknown, context?: InstanceCon
       };
     }
     
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
+// Evaluation Test Run Handlers (n8n >= 2.30)
+
+const TEST_RUN_SCOPE_HINT =
+  'n8n rejected the request (403). The API key lacks testRun scopes - keys created before n8n 2.30 do not have them; re-create the API key on n8n 2.30+. On some plans evaluations are not licensed.';
+
+/**
+ * Maps evaluation-API errors to actionable guidance. The three failure modes
+ * (pre-2.30 instance, key without testRun scopes, wrong workflow/run id) are
+ * easy to confuse from raw HTTP statuses alone.
+ */
+function mapTestRunError(error: N8nApiError, context?: InstanceContext): McpToolResponse {
+  if (error.statusCode === 403) {
+    return { success: false, error: TEST_RUN_SCOPE_HINT, code: error.code };
+  }
+  if (error.statusCode === 404) {
+    const version = getN8nApiClient(context)?.getCachedVersionInfo() ?? null;
+    if (version && (version.major < 2 || (version.major === 2 && version.minor < 30))) {
+      return {
+        success: false,
+        error: `The evaluation API requires n8n 2.30 or later; this instance runs ${version.version}. Upgrade the instance to read test runs.`,
+        code: error.code,
+      };
+    }
+    return {
+      success: false,
+      error: 'Workflow or test run not found. A runId must belong to the given workflowId; check both ids.',
+      code: error.code,
+    };
+  }
+  return { success: false, error: getUserFriendlyErrorMessage(error), code: error.code };
+}
+
+export async function handleListTestRuns(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = listTestRunsSchema.parse(args || {});
+
+    const response = await client.listTestRuns(input.workflowId, {
+      status: input.status as TestRunStatus | undefined,
+      limit: input.limit || 100,
+      cursor: input.cursor,
+    });
+
+    return {
+      success: true,
+      data: {
+        testRuns: response.data,
+        returned: response.data.length,
+        nextCursor: response.nextCursor,
+        hasMore: !!response.nextCursor,
+        ...(response.data.length === 0 ? {
+          _note: 'No test runs. Runs exist only for workflows with an evaluation trigger that have been executed at least once.'
+        } : {}),
+        ...(response.nextCursor ? {
+          _note: 'More test runs available. Use cursor to get next page.'
+        } : {})
+      }
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: 'Invalid input',
+        details: { errors: error.errors }
+      };
+    }
+
+    if (error instanceof N8nApiError) {
+      return mapTestRunError(error, context);
+    }
+
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
+export async function handleGetTestRun(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = getTestRunSchema.parse(args || {});
+
+    const response = await client.getTestRun(input.workflowId, input.runId);
+
+    return {
+      success: true,
+      data: response
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: 'Invalid input',
+        details: { errors: error.errors }
+      };
+    }
+
+    if (error instanceof N8nApiError) {
+      return mapTestRunError(error, context);
+    }
+
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred'
+    };
+  }
+}
+
+export async function handleListTestCases(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = listTestCasesSchema.parse(args || {});
+
+    const response = await client.listTestCases(input.workflowId, input.runId, {
+      limit: input.limit || 20,
+      cursor: input.cursor,
+    });
+
+    return {
+      success: true,
+      data: {
+        testCases: response.data,
+        returned: response.data.length,
+        nextCursor: response.nextCursor,
+        hasMore: !!response.nextCursor,
+        ...(response.nextCursor ? {
+          _note: 'More test cases available. Paginate rather than raising limit - per-case inputs/outputs can be large.'
+        } : {})
+      }
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return {
+        success: false,
+        error: 'Invalid input',
+        details: { errors: error.errors }
+      };
+    }
+
+    if (error instanceof N8nApiError) {
+      return mapTestRunError(error, context);
+    }
+
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred'
