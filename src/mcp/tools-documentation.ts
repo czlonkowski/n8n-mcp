@@ -157,6 +157,7 @@ When working with Code nodes, always start by calling the relevant guide:
 - n8n_autofix_workflow - Auto-fix common issues
 - n8n_test_workflow - Test/trigger workflows (webhook, form, chat, execute)
 - n8n_executions - Unified execution management (action='get'/'list'/'delete')
+- n8n_evaluations - Read evaluation test runs (action='list_runs'/'get_run'/'list_cases', n8n 2.30+)
 - n8n_health_check - Check n8n API connectivity
 - n8n_workflow_versions - Version history and rollback
 - n8n_deploy_template - Deploy templates directly to n8n instance

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.65.0] - 2026-07-15
+
+### Added
+
+- **`n8n_evaluations` tool — read evaluation test runs.** n8n 2.30 shipped Public API read endpoints for evaluation test runs (n8n-io/n8n#33455); the new consolidated tool exposes them: `action='list_runs'` (paginated, status filter), `action='get_run'` (aggregated metrics and final result), and `action='list_cases'` (per-case inputs/outputs/metrics, default limit 20 — paginate, cases can be large). Requires n8n ≥ 2.30 **and an API key created on 2.30+**: older keys silently lack the `testRun` scopes and get a 403 — the tool's error messages spell this out, and a 404 on a pre-2.30 instance is disambiguated from a wrong workflow/run id via the cached instance version. Read-only; triggering or cancelling runs via API is not yet supported by n8n (upstream n8n-io/n8n#33979 is merged but unreleased) and will be added as new actions when it ships.
+
 ## [2.64.1] - 2026-07-14
 
 ### Changed
