@@ -843,6 +843,53 @@ n8n_executions({
 
 ---
 
+## n8n_evaluations (EVALUATION TEST RUNS)
+
+**Use when**: Reading evaluation test runs — polling a run started in the editor, comparing metrics across runs, pulling per-case results into a report or dashboard.
+
+Read-only. Requires n8n >= 2.30 **and an API key created on 2.30+** — keys created earlier silently lack the `testRun` scopes, so a 403 means "re-create the API key", not a bug. Runs exist only for workflows with an evaluation trigger that have been run from the n8n editor; triggering runs via the public API is not yet supported by n8n (planned upstream, will arrive as `run`/`cancel` actions).
+
+### List Test Runs
+```javascript
+n8n_evaluations({
+  action: "list_runs",
+  workflowId: "workflow-id",
+  status: "completed"  // new, running, completed, error, cancelled
+})
+```
+
+### Get a Run (aggregated metrics)
+```javascript
+n8n_evaluations({
+  action: "get_run",
+  workflowId: "workflow-id",
+  runId: "run-id"
+})
+// → status, finalResult (success/error/warning), metrics, testCaseCount
+// metrics is a flat name → number/boolean map: your custom metrics plus
+// n8n's automatic ones (promptTokens, completionTokens, totalTokens, executionTime)
+```
+
+### Per-Case Results
+```javascript
+n8n_evaluations({
+  action: "list_cases",
+  workflowId: "workflow-id",
+  runId: "run-id"
+})
+// Default limit 20 — per-case inputs/outputs can be large; paginate with
+// cursor rather than raising the limit.
+// Each case carries an executionId — drill into the underlying execution
+// with n8n_executions({action: "get", id: executionId, mode: "error"})
+```
+
+**Gotchas**:
+- A 404 can mean three things: the instance predates 2.30, the workflowId is wrong, or the runId belongs to a different workflow (the tool's error message disambiguates using the instance version)
+- Evaluations are license/quota-gated in n8n — an instance without the feature simply has no runs
+- Compare `metrics` across runs of the same workflow to catch prompt/model regressions
+
+---
+
 ## Workflow Lifecycle
 
 **Standard pattern**:
@@ -946,6 +993,7 @@ update → update → update → ... (56s avg between edits)
 - `n8n_workflow_versions` - Version control & rollback
 - `n8n_test_workflow` - Trigger execution
 - `n8n_executions` - Manage executions
+- `n8n_evaluations` - Read evaluation test runs (n8n 2.30+, read-only)
 - `n8n_manage_datatable` - Data table and row management
 - `n8n_manage_credentials` - Credential CRUD + schema discovery
 - `n8n_audit_instance` - Security audit (built-in + custom scan)
