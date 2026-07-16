@@ -126,6 +126,21 @@ export class N8nNodeLoader {
     }
   }
 
+  /**
+   * Resolve the node class from a module's exports: default export, then the
+   * export matching the node name, then the first function-typed export. The
+   * last step must skip non-function exports — EvaluationTrigger.node.ee.js
+   * exports the constant DEFAULT_STARTING_ROW before the class, and picking
+   * it silently dropped the node from the database (#937).
+   */
+  private resolveNodeClass(nodeModule: any, nodeName: string): any {
+    return (
+      nodeModule.default ||
+      nodeModule[nodeName] ||
+      Object.values(nodeModule).find(exported => typeof exported === 'function')
+    );
+  }
+
   private async loadPackageNodes(packageName: string, packagePath: string, packageJson: any): Promise<LoadedNode[]> {
     const n8nConfig = packageJson.n8n || {};
     const nodes: LoadedNode[] = [];
@@ -142,12 +157,14 @@ export class N8nNodeLoader {
           const fullPath = path.join(packageDir, nodePath);
           const nodeModule = this.loadNodeModule(fullPath);
 
-          // Extract node name from path (e.g., "dist/nodes/Slack/Slack.node.js" -> "Slack")
-          const nodeNameMatch = nodePath.match(/\/([^\/]+)\.node\.(js|ts)$/);
-          const nodeName = nodeNameMatch ? nodeNameMatch[1] : path.basename(nodePath, '.node.js');
+          // Extract node name from path, including enterprise ".node.ee.js"
+          // files (e.g. "dist/nodes/Evaluation/EvaluationTrigger/EvaluationTrigger.node.ee.js" -> "EvaluationTrigger")
+          const nodeNameMatch = nodePath.match(/\/([^\/]+)\.node(?:\.ee)?\.(js|ts)$/);
+          const nodeName = nodeNameMatch
+            ? nodeNameMatch[1]
+            : path.basename(nodePath).replace(/\.node(?:\.ee)?\.(js|ts)$/, '');
 
-          // Handle default export and various export patterns
-          const NodeClass = nodeModule.default || nodeModule[nodeName] || Object.values(nodeModule)[0];
+          const NodeClass = this.resolveNodeClass(nodeModule, nodeName);
           if (NodeClass) {
             nodes.push({ packageName, nodeName, NodeClass });
             console.log(`  ✓ Loaded ${nodeName} from ${packageName}`);
@@ -165,8 +182,7 @@ export class N8nNodeLoader {
           const fullPath = path.join(packageDir, nodePath as string);
           const nodeModule = this.loadNodeModule(fullPath);
 
-          // Handle default export and various export patterns
-          const NodeClass = nodeModule.default || nodeModule[nodeName] || Object.values(nodeModule)[0];
+          const NodeClass = this.resolveNodeClass(nodeModule, nodeName);
           if (NodeClass) {
             nodes.push({ packageName, nodeName, NodeClass });
             console.log(`  ✓ Loaded ${nodeName} from ${packageName}`);

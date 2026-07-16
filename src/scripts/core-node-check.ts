@@ -9,6 +9,8 @@
 export const CANONICAL_CORE_NODES: readonly string[] = [
   'nodes-base.code',
   'nodes-base.convertToFile',
+  'nodes-base.evaluation',
+  'nodes-base.evaluationTrigger',
   'nodes-base.executeWorkflow',
   'nodes-base.extractFromFile',
   'nodes-base.httpRequest',

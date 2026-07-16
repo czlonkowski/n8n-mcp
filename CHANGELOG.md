@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.65.1] - 2026-07-16
+
+### Fixed
+
+- **Evaluation Trigger restored to the node database (#937).** `nodes-base.evaluationTrigger` was silently dropped during every database rebuild: the loader's node-name regex did not match n8n's enterprise `.node.ee.js` file suffix, and the export-resolution fallback picked the module's first export — for EvaluationTrigger a numeric constant, not the node class — so parsing failed and the node never reached the database. Agents could not discover the node via `search_nodes`/`get_node`, and `validate_workflow` falsely rejected valid evaluation workflows with "Unknown node type: n8n-nodes-base.evaluationTrigger". The regex now accepts the `.ee` segment, the fallback only ever resolves function-typed exports, and both `nodes-base.evaluation` and `nodes-base.evaluationTrigger` joined the canonical core-node completeness gate so a future silent drop fails the rebuild loudly. Rebuilt database: 827 core nodes (677 from `n8n-nodes-base` + 150 from `@n8n/n8n-nodes-langchain`).
+
 ## [2.65.0] - 2026-07-15
 
 ### Added

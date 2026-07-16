@@ -88,10 +88,10 @@ describe('N8nNodeLoader', () => {
                   const fullPath = mockRequireResolve(`${packagePath}/${nodePath}`);
                   const nodeModule = mockRequire(fullPath);
                   
-                  const nodeNameMatch = nodePath.match(/\/([^\/]+)\.node\.(js|ts)$/);
-                  const nodeName = nodeNameMatch ? nodeNameMatch[1] : nodePath.replace(/.*\//, '').replace(/\.node\.(js|ts)$/, '');
-                  
-                  const NodeClass = nodeModule.default || nodeModule[nodeName] || Object.values(nodeModule)[0];
+                  const nodeNameMatch = nodePath.match(/\/([^\/]+)\.node(?:\.ee)?\.(js|ts)$/);
+                  const nodeName = nodeNameMatch ? nodeNameMatch[1] : nodePath.replace(/.*\//, '').replace(/\.node(?:\.ee)?\.(js|ts)$/, '');
+
+                  const NodeClass = nodeModule.default || nodeModule[nodeName] || Object.values(nodeModule).find((v: any) => typeof v === 'function');
                   if (NodeClass) {
                     nodes.push({ packageName, nodeName, NodeClass });
                     console.log(`  ✓ Loaded ${nodeName} from ${packageName}`);
@@ -107,8 +107,8 @@ describe('N8nNodeLoader', () => {
                 try {
                   const fullPath = mockRequireResolve(`${packagePath}/${nodePath as string}`);
                   const nodeModule = mockRequire(fullPath);
-                  
-                  const NodeClass = nodeModule.default || nodeModule[nodeName] || Object.values(nodeModule)[0];
+
+                  const NodeClass = nodeModule.default || nodeModule[nodeName] || Object.values(nodeModule).find((v: any) => typeof v === 'function');
                   if (NodeClass) {
                     nodes.push({ packageName, nodeName, NodeClass });
                     console.log(`  ✓ Loaded ${nodeName} from ${packageName}`);
