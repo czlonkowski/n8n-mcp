@@ -60,6 +60,7 @@ describe('Evaluation Handlers (n8n_evaluations)', () => {
       getTestRun: vi.fn(),
       listTestCases: vi.fn(),
       getCachedVersionInfo: vi.fn().mockReturnValue(null),
+      getVersion: vi.fn().mockResolvedValue(null),
     };
 
     getN8nApiConfig = (await import('@/config/n8n-api')).getN8nApiConfig;
@@ -147,6 +148,41 @@ describe('Evaluation Handlers (n8n_evaluations)', () => {
       expect(result.error).toContain('testRun scopes');
       expect(result.error).toContain('re-create');
     });
+
+    it('should use a filter-aware note when a status filter matches nothing', async () => {
+      mockApiClient.listTestRuns.mockResolvedValue({ data: [], nextCursor: null });
+
+      const result = await handlers.handleListTestRuns({ workflowId: 'wf1', status: 'error' });
+
+      expect(result.success).toBe(true);
+      expect(result.data._note).toContain("status 'error'");
+      expect(result.data._note).not.toContain('evaluation trigger');
+    });
+
+    it('should coerce empty-string status and cursor to undefined', async () => {
+      mockApiClient.listTestRuns.mockResolvedValue({ data: [], nextCursor: null });
+
+      const result = await handlers.handleListTestRuns({ workflowId: 'wf1', status: '', cursor: '' });
+
+      expect(result.success).toBe(true);
+      expect(mockApiClient.listTestRuns).toHaveBeenCalledWith('wf1', {
+        status: undefined,
+        limit: 100,
+        cursor: undefined,
+      });
+    });
+
+    it('should pass the cursor through', async () => {
+      mockApiClient.listTestRuns.mockResolvedValue({ data: [completedRun], nextCursor: null });
+
+      await handlers.handleListTestRuns({ workflowId: 'wf1', cursor: 'page2' });
+
+      expect(mockApiClient.listTestRuns).toHaveBeenCalledWith('wf1', {
+        status: undefined,
+        limit: 100,
+        cursor: 'page2',
+      });
+    });
   });
 
   describe('handleGetTestRun', () => {
@@ -207,6 +243,44 @@ describe('Evaluation Handlers (n8n_evaluations)', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('belong');
+    });
+
+    it('should fetch the version on 404 when the cache is cold', async () => {
+      mockApiClient.getCachedVersionInfo.mockReturnValue(null);
+      mockApiClient.getVersion.mockResolvedValue({
+        version: '2.29.1',
+        major: 2,
+        minor: 29,
+        patch: 1,
+      });
+      mockApiClient.getTestRun.mockRejectedValue(new N8nApiError('Not found', 404, 'NOT_FOUND'));
+
+      const result = await handlers.handleGetTestRun({ workflowId: 'wf1', runId: 'run1' });
+
+      expect(mockApiClient.getVersion).toHaveBeenCalled();
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('2.30');
+      expect(result.error).toContain('2.29.1');
+    });
+
+    it('should fall back to not-found guidance when the version fetch fails', async () => {
+      mockApiClient.getCachedVersionInfo.mockReturnValue(null);
+      mockApiClient.getVersion.mockRejectedValue(new Error('network down'));
+      mockApiClient.getTestRun.mockRejectedValue(new N8nApiError('Not found', 404, 'NOT_FOUND'));
+
+      const result = await handlers.handleGetTestRun({ workflowId: 'wf1', runId: 'run1' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('belong');
+    });
+
+    it('should map 403 to API key scope guidance', async () => {
+      mockApiClient.getTestRun.mockRejectedValue(new N8nApiError('Forbidden', 403, 'FORBIDDEN'));
+
+      const result = await handlers.handleGetTestRun({ workflowId: 'wf1', runId: 'run1' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('testRun scopes');
     });
   });
 

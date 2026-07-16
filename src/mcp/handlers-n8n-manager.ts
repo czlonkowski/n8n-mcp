@@ -1938,33 +1938,47 @@ export async function handleDeleteExecution(args: unknown, context?: InstanceCon
 // Evaluation Test Run Handlers (n8n >= 2.30)
 
 const TEST_RUN_SCOPE_HINT =
-  'n8n rejected the request (403). The API key lacks testRun scopes - keys created before n8n 2.30 do not have them; re-create the API key on n8n 2.30+. On some plans evaluations are not licensed.';
+  'n8n rejected the request (403). The API key lacks testRun scopes - keys created before n8n 2.30 do not have them; re-create the API key on n8n 2.30+. Other causes: evaluations not licensed on this plan, or the key\'s owner lacks access to this workflow.';
 
 /**
- * Maps evaluation-API errors to actionable guidance. The three failure modes
- * (pre-2.30 instance, key without testRun scopes, wrong workflow/run id) are
- * easy to confuse from raw HTTP statuses alone.
+ * Builds the error response for the evaluation handlers. Mirrors handleCrudError
+ * but adds evaluation-specific guidance for the three failure modes that are easy
+ * to confuse from raw HTTP statuses alone: a pre-2.30 instance, an API key without
+ * testRun scopes, and a runId that does not belong to the given workflow.
  */
-function mapTestRunError(error: N8nApiError, context?: InstanceContext): McpToolResponse {
-  if (error.statusCode === 403) {
-    return { success: false, error: TEST_RUN_SCOPE_HINT, code: error.code };
+async function handleTestRunError(error: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  if (error instanceof z.ZodError) {
+    return { success: false, error: 'Invalid input', details: { errors: error.errors } };
   }
-  if (error.statusCode === 404) {
-    const version = getN8nApiClient(context)?.getCachedVersionInfo() ?? null;
-    if (version && (version.major < 2 || (version.major === 2 && version.minor < 30))) {
+  if (error instanceof N8nApiError) {
+    if (error.statusCode === 403) {
+      return { success: false, error: TEST_RUN_SCOPE_HINT, code: error.code };
+    }
+    if (error.statusCode === 404) {
+      // A 404 from a pre-2.30 instance means the endpoint doesn't exist, not
+      // that the ids are wrong. The version cache is usually cold on a fresh
+      // session, so fetch it (one extra request, failure path only).
+      const client = getN8nApiClient(context);
+      let version = client?.getCachedVersionInfo() ?? null;
+      if (!version && client) {
+        version = await client.getVersion().catch(() => null);
+      }
+      if (version && (version.major < 2 || (version.major === 2 && version.minor < 30))) {
+        return {
+          success: false,
+          error: `The evaluation API requires n8n 2.30 or later; this instance runs ${version.version}. Upgrade the instance to read test runs.`,
+          code: error.code,
+        };
+      }
       return {
         success: false,
-        error: `The evaluation API requires n8n 2.30 or later; this instance runs ${version.version}. Upgrade the instance to read test runs.`,
+        error: 'Workflow or test run not found. A runId must belong to the given workflowId; check both ids.',
         code: error.code,
       };
     }
-    return {
-      success: false,
-      error: 'Workflow or test run not found. A runId must belong to the given workflowId; check both ids.',
-      code: error.code,
-    };
+    return { success: false, error: getUserFriendlyErrorMessage(error), code: error.code };
   }
-  return { success: false, error: getUserFriendlyErrorMessage(error), code: error.code };
+  return { success: false, error: error instanceof Error ? error.message : 'Unknown error occurred' };
 }
 
 export async function handleListTestRuns(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
@@ -1978,6 +1992,14 @@ export async function handleListTestRuns(args: unknown, context?: InstanceContex
       cursor: input.cursor,
     });
 
+    const note = response.data.length === 0
+      ? (input.status
+          ? `No test runs with status '${input.status}' for this workflow.`
+          : 'No test runs. Runs exist only for workflows with an evaluation trigger that have been executed at least once.')
+      : response.nextCursor
+        ? 'More test runs available. Use cursor to get next page.'
+        : undefined;
+
     return {
       success: true,
       data: {
@@ -1985,31 +2007,11 @@ export async function handleListTestRuns(args: unknown, context?: InstanceContex
         returned: response.data.length,
         nextCursor: response.nextCursor,
         hasMore: !!response.nextCursor,
-        ...(response.data.length === 0 ? {
-          _note: 'No test runs. Runs exist only for workflows with an evaluation trigger that have been executed at least once.'
-        } : {}),
-        ...(response.nextCursor ? {
-          _note: 'More test runs available. Use cursor to get next page.'
-        } : {})
+        ...(note ? { _note: note } : {})
       }
     };
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return {
-        success: false,
-        error: 'Invalid input',
-        details: { errors: error.errors }
-      };
-    }
-
-    if (error instanceof N8nApiError) {
-      return mapTestRunError(error, context);
-    }
-
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
-    };
+    return handleTestRunError(error, context);
   }
 }
 
@@ -2025,22 +2027,7 @@ export async function handleGetTestRun(args: unknown, context?: InstanceContext)
       data: response
     };
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return {
-        success: false,
-        error: 'Invalid input',
-        details: { errors: error.errors }
-      };
-    }
-
-    if (error instanceof N8nApiError) {
-      return mapTestRunError(error, context);
-    }
-
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
-    };
+    return handleTestRunError(error, context);
   }
 }
 
@@ -2067,22 +2054,7 @@ export async function handleListTestCases(args: unknown, context?: InstanceConte
       }
     };
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return {
-        success: false,
-        error: 'Invalid input',
-        details: { errors: error.errors }
-      };
-    }
-
-    if (error instanceof N8nApiError) {
-      return mapTestRunError(error, context);
-    }
-
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
-    };
+    return handleTestRunError(error, context);
   }
 }
 

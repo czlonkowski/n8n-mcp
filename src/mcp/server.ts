@@ -1337,12 +1337,17 @@ export class N8NDocumentationMCPServer {
           ? { valid: true, errors: [] }
           : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
         break;
-      case 'n8n_evaluations':
-        // Requires action parameter, runId validation done in dispatch based on action
-        validationResult = args.action
+      case 'n8n_evaluations': {
+        // Every action of this tool requires action and workflowId;
+        // runId validation is done in dispatch based on action.
+        const evalErrors: Array<{ field: string; message: string }> = [];
+        if (!args.action) evalErrors.push({ field: 'action', message: 'action is required' });
+        if (!args.workflowId) evalErrors.push({ field: 'workflowId', message: 'workflowId is required' });
+        validationResult = evalErrors.length === 0
           ? { valid: true, errors: [] }
-          : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
+          : { valid: false, errors: evalErrors };
         break;
+      }
       case 'n8n_manage_datatable':
         validationResult = args.action
           ? { valid: true, errors: [] }

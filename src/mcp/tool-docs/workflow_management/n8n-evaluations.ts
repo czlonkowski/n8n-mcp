@@ -55,7 +55,7 @@ export const n8nEvaluationsDoc: ToolDocumentation = {
       'Export evaluation results to an external dashboard'
     ],
     performance: 'Each call is a single n8n API request. list_cases responses carry raw per-case inputs/outputs - keep limit small and paginate.',
-    errorHandling: 'A 403 means the API key lacks testRun scopes (keys created before n8n 2.30 must be re-created) or evaluations are not licensed on the plan. A 404 can mean the instance predates 2.30, the workflow id is wrong, or the runId belongs to a different workflow - the error message disambiguates when the instance version is known.',
+    errorHandling: 'A 403 means the API key lacks testRun scopes (keys created before n8n 2.30 must be re-created), evaluations are not licensed on the plan, or the key\'s owner lacks access to the workflow. A 404 can mean the instance predates 2.30, the workflow id is wrong, or the runId belongs to a different workflow - the tool checks the instance version to disambiguate.',
     bestPractices: [
       'Filter list_runs by status="completed" when you only need finished results',
       'Keep list_cases limit at the default 20 and paginate; raise it only when cases are known to be small',
