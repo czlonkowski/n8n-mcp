@@ -99,7 +99,7 @@ describe('Evaluation Handlers (n8n_evaluations)', () => {
       expect(result.data.hasMore).toBe(false);
       expect(mockApiClient.listTestRuns).toHaveBeenCalledWith('wf1', {
         status: 'completed',
-        limit: 100,
+        limit: undefined,
         cursor: undefined,
       });
     });
@@ -167,7 +167,7 @@ describe('Evaluation Handlers (n8n_evaluations)', () => {
       expect(result.success).toBe(true);
       expect(mockApiClient.listTestRuns).toHaveBeenCalledWith('wf1', {
         status: undefined,
-        limit: 100,
+        limit: undefined,
         cursor: undefined,
       });
     });
@@ -179,7 +179,7 @@ describe('Evaluation Handlers (n8n_evaluations)', () => {
 
       expect(mockApiClient.listTestRuns).toHaveBeenCalledWith('wf1', {
         status: undefined,
-        limit: 100,
+        limit: undefined,
         cursor: 'page2',
       });
     });

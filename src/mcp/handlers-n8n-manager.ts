@@ -1986,9 +1986,12 @@ export async function handleListTestRuns(args: unknown, context?: InstanceContex
     const client = ensureApiConfigured(context);
     const input = listTestRunsSchema.parse(args || {});
 
+    // Send limit only when the caller sets one: n8n's server default is the
+    // same 100, and pre-2.30 instances (no test-runs routes) reject unknown
+    // query params before returning the 404 our error mapping explains.
     const response = await client.listTestRuns(input.workflowId, {
       status: input.status as TestRunStatus | undefined,
-      limit: input.limit || 100,
+      limit: input.limit,
       cursor: input.cursor,
     });
 

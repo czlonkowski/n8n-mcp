@@ -518,7 +518,7 @@ export const n8nManagementTools: ToolDefinition[] = [
         },
         limit: {
           type: 'number',
-          description: 'Results per page (1-250). Default: 100 for list_runs, 20 for list_cases (per-case inputs/outputs can be large)'
+          description: 'Results per page (1-250). Defaults: n8n server default (100) for list_runs, 20 for list_cases (per-case inputs/outputs can be large)'
         },
         cursor: {
           type: 'string',
