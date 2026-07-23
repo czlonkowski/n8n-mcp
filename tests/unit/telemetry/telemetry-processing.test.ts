@@ -63,15 +63,18 @@ describe('TelemetryBatchProcessor', () => {
   });
 
   describe('start()', () => {
-    it('should start periodic flushing when enabled', () => {
+    it('should start periodic flushing when enabled', async () => {
       const setIntervalSpy = vi.spyOn(global, 'setInterval');
+      const flushSpy = vi.spyOn(batchProcessor, 'flush');
 
       batchProcessor.start();
+      await vi.advanceTimersByTimeAsync(TELEMETRY_CONFIG.BATCH_FLUSH_INTERVAL);
 
       expect(setIntervalSpy).toHaveBeenCalledWith(
         expect.any(Function),
         TELEMETRY_CONFIG.BATCH_FLUSH_INTERVAL
       );
+      expect(flushSpy).toHaveBeenCalled();
     });
 
     it('should not start when disabled', () => {
@@ -831,6 +834,22 @@ describe('TelemetryBatchProcessor', () => {
   });
 
   describe('process lifecycle integration', () => {
+    it('should route lifecycle flushes through the queue-aware callback', async () => {
+      const onFlushRequested = vi.fn().mockRejectedValue(new Error('Scheduled flush failed'));
+      const processor = new TelemetryBatchProcessor(mockSupabase, mockIsEnabled, {
+        operationTimeout: TEST_OPERATION_TIMEOUT,
+        onFlushRequested,
+      });
+
+      processor.start();
+      process.emit('beforeExit', 0);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(onFlushRequested).toHaveBeenCalledOnce();
+      processor.stop();
+    });
+
     it('should flush on process beforeExit', async () => {
       const flushSpy = vi.spyOn(batchProcessor, 'flush');
 

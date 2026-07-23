@@ -142,6 +142,13 @@ describe('TelemetryManager', () => {
     });
 
     it('should initialize successfully when enabled', () => {
+      let enabledDuringStart = false;
+      mockBatchProcessor.start.mockImplementation(() => {
+        const calls = vi.mocked(TelemetryBatchProcessor).mock.calls;
+        const [, isEnabledCallback] = calls[calls.length - 1];
+        enabledDuringStart = isEnabledCallback();
+      });
+
       // Trigger initialization by calling a tracking method
       manager.trackEvent('test', {});
 
@@ -157,6 +164,7 @@ describe('TelemetryManager', () => {
         })
       );
       expect(mockBatchProcessor.start).toHaveBeenCalled();
+      expect(enabledDuringStart).toBe(true);
     });
 
     it('should use environment variables if provided', () => {
@@ -587,10 +595,34 @@ describe('TelemetryManager', () => {
       expect(TelemetryBatchProcessorMock).toHaveBeenCalledTimes(2); // Once with null, once with Supabase client
 
       const lastCall = TelemetryBatchProcessorMock.mock.calls[TelemetryBatchProcessorMock.mock.calls.length - 1];
-      const [supabaseClient, isEnabledCallback] = lastCall;
+      const [supabaseClient, isEnabledCallback, options] = lastCall;
 
       expect(supabaseClient).toBe(mockSupabaseClient);
       expect(isEnabledCallback()).toBe(true);
+      expect(options).toEqual(expect.objectContaining({
+        onFlushRequested: expect.any(Function)
+      }));
+    });
+
+    it('should route scheduled flush requests through the manager queues', async () => {
+      const events = [{ user_id: 'user1', event: 'scheduled', properties: {} }];
+      const workflows = [{ user_id: 'user1', workflow_hash: 'hash1' }];
+      const mutations = [{ workflowHashBefore: 'hash1' }];
+      mockEventTracker.getEventQueue.mockReturnValue(events);
+      mockEventTracker.getWorkflowQueue.mockReturnValue(workflows);
+      mockEventTracker.getMutationQueue.mockReturnValue(mutations);
+
+      const manager = TelemetryManager.getInstance();
+      manager.trackEvent('test', {});
+
+      const calls = vi.mocked(TelemetryBatchProcessor).mock.calls;
+      const options = calls[calls.length - 1][2];
+      await options?.onFlushRequested?.();
+
+      expect(mockBatchProcessor.flush).toHaveBeenCalledWith(events, workflows, mutations);
+      expect(mockEventTracker.clearEventQueue).toHaveBeenCalled();
+      expect(mockEventTracker.clearWorkflowQueue).toHaveBeenCalled();
+      expect(mockEventTracker.clearMutationQueue).toHaveBeenCalled();
     });
   });
 

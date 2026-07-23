@@ -98,11 +98,14 @@ export class TelemetryManager {
       // Update batch processor with Supabase client
       this.batchProcessor = new TelemetryBatchProcessor(
         this.supabase,
-        () => this.isEnabled()
+        () => this.isEnabled(),
+        {
+          onFlushRequested: () => this.flush(),
+        }
       );
 
-      this.batchProcessor.start();
       this.isInitialized = true;
+      this.batchProcessor.start();
 
       logger.debug('Telemetry initialized successfully');
     } catch (error) {

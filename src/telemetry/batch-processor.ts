@@ -64,16 +64,19 @@ export class TelemetryBatchProcessor {
   } = {};
   private started: boolean = false;
   private readonly operationTimeout: number;
+  private readonly onFlushRequested?: () => void | Promise<void>;
 
   constructor(
     private supabase: SupabaseClient | null,
     private isEnabled: () => boolean,
-    timing: {
+    options: {
       operationTimeout?: number;
+      onFlushRequested?: () => void | Promise<void>;
     } = {}
   ) {
     this.circuitBreaker = new TelemetryCircuitBreaker();
-    this.operationTimeout = timing.operationTimeout ?? TELEMETRY_CONFIG.OPERATION_TIMEOUT;
+    this.operationTimeout = options.operationTimeout ?? TELEMETRY_CONFIG.OPERATION_TIMEOUT;
+    this.onFlushRequested = options.onFlushRequested;
   }
 
   /**
@@ -90,7 +93,7 @@ export class TelemetryBatchProcessor {
 
     // Set up periodic flushing
     this.flushTimer = setInterval(() => {
-      this.flush();
+      this.requestFlush();
     }, TELEMETRY_CONFIG.BATCH_FLUSH_INTERVAL);
 
     // Prevent timer from keeping process alive
@@ -100,13 +103,13 @@ export class TelemetryBatchProcessor {
     }
 
     // Set up process exit handlers with stored references for cleanup
-    this.eventListeners.beforeExit = () => this.flush();
+    this.eventListeners.beforeExit = () => this.requestFlush();
     this.eventListeners.sigint = () => {
-      this.flush();
+      this.requestFlush();
       process.exit(0);
     };
     this.eventListeners.sigterm = () => {
-      this.flush();
+      this.requestFlush();
       process.exit(0);
     };
 
@@ -141,6 +144,20 @@ export class TelemetryBatchProcessor {
     this.started = false;
 
     logger.debug('Telemetry batch processor stopped');
+  }
+
+  /**
+   * Ask the queue owner to flush, falling back to an empty processor flush for
+   * standalone callers that do not provide a queue-aware callback.
+   */
+  private requestFlush(): void {
+    const requestedFlush = this.onFlushRequested
+      ? this.onFlushRequested()
+      : this.flush();
+
+    void Promise.resolve(requestedFlush).catch(error => {
+      logger.debug('Scheduled telemetry flush failed:', error);
+    });
   }
 
   /**
