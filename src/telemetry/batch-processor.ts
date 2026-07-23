@@ -239,7 +239,8 @@ export class TelemetryBatchProcessor {
       // Batch events
       const batches = this.createBatches(events, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
 
-      for (const batch of batches) {
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
         const result = await this.executeWithTimeout(async () => {
           const { error } = await this.supabase!
             .from('telemetry_events')
@@ -257,9 +258,9 @@ export class TelemetryBatchProcessor {
           this.metrics.eventsTracked += batch.length;
           this.metrics.batchesSent++;
         } else {
-          this.metrics.eventsFailed += batch.length;
-          this.metrics.batchesFailed++;
-          this.addToDeadLetterQueue(batch);
+          const unsent = this.addUnsentBatchesToDeadLetterQueue(batches, batchIndex);
+          this.metrics.eventsFailed += unsent.itemCount;
+          this.metrics.batchesFailed += unsent.batchCount;
           return false;
         }
       }
@@ -290,7 +291,8 @@ export class TelemetryBatchProcessor {
       // Batch workflows
       const batches = this.createBatches(uniqueWorkflows, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
 
-      for (const batch of batches) {
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
         const result = await this.executeWithTimeout(async () => {
           const { error } = await this.supabase!
             .from('telemetry_workflows')
@@ -308,9 +310,9 @@ export class TelemetryBatchProcessor {
           this.metrics.eventsTracked += batch.length;
           this.metrics.batchesSent++;
         } else {
-          this.metrics.eventsFailed += batch.length;
-          this.metrics.batchesFailed++;
-          this.addToDeadLetterQueue(batch);
+          const unsent = this.addUnsentBatchesToDeadLetterQueue(batches, batchIndex);
+          this.metrics.eventsFailed += unsent.itemCount;
+          this.metrics.batchesFailed += unsent.batchCount;
           return false;
         }
       }
@@ -337,7 +339,8 @@ export class TelemetryBatchProcessor {
       // Batch mutations
       const batches = this.createBatches(mutations, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
 
-      for (const batch of batches) {
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
         const result = await this.executeWithTimeout(async () => {
           // Convert camelCase to snake_case for Supabase
           const snakeCaseBatch = batch.map(mutation => mutationToSupabaseFormat(mutation));
@@ -366,9 +369,9 @@ export class TelemetryBatchProcessor {
           this.metrics.eventsTracked += batch.length;
           this.metrics.batchesSent++;
         } else {
-          this.metrics.eventsFailed += batch.length;
-          this.metrics.batchesFailed++;
-          this.addToDeadLetterQueue(batch);
+          const unsent = this.addUnsentBatchesToDeadLetterQueue(batches, batchIndex);
+          this.metrics.eventsFailed += unsent.itemCount;
+          this.metrics.batchesFailed += unsent.batchCount;
           return false;
         }
       }
@@ -446,6 +449,22 @@ export class TelemetryBatchProcessor {
     }
 
     return unique;
+  }
+
+  /**
+   * Preserve the failed batch and every later batch that was not attempted.
+   */
+  private addUnsentBatchesToDeadLetterQueue<
+    T extends TelemetryEvent | WorkflowTelemetry | WorkflowMutationRecord
+  >(batches: T[][], failedBatchIndex: number): { itemCount: number; batchCount: number } {
+    const unsentBatches = batches.slice(failedBatchIndex);
+    const unsentItems = unsentBatches.flat();
+    this.addToDeadLetterQueue(unsentItems);
+
+    return {
+      itemCount: unsentItems.length,
+      batchCount: unsentBatches.length,
+    };
   }
 
   /**

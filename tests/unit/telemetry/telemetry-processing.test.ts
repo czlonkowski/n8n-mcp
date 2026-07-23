@@ -32,6 +32,43 @@ describe('TelemetryBatchProcessor', () => {
     success: !error,
   });
 
+  const createWorkflowTelemetry = (index: number): WorkflowTelemetry => ({
+    user_id: `workflow-user-${index}`,
+    workflow_hash: `workflow-hash-${index}`,
+    node_count: 1,
+    node_types: ['n8n-nodes-base.set'],
+    has_trigger: false,
+    has_webhook: false,
+    complexity: 'simple',
+    sanitized_workflow: { nodes: [], connections: {} },
+  });
+
+  const createMutationRecord = (index: number): WorkflowMutationRecord => ({
+    userId: `mutation-user-${index}`,
+    sessionId: `mutation-session-${index}`,
+    workflowBefore: { nodes: [], connections: {} },
+    workflowAfter: { nodes: [], connections: {} },
+    workflowHashBefore: `before-${index}`,
+    workflowHashAfter: `after-${index}`,
+    userIntent: 'Test multi-batch retention',
+    intentClassification: IntentClassification.ADD_FUNCTIONALITY,
+    toolName: MutationToolName.UPDATE_PARTIAL,
+    operations: [],
+    operationCount: 0,
+    operationTypes: [],
+    validationImproved: null,
+    errorsResolved: 0,
+    errorsIntroduced: 0,
+    nodesAdded: 0,
+    nodesRemoved: 0,
+    nodesModified: 0,
+    connectionsAdded: 0,
+    connectionsRemoved: 0,
+    propertiesChanged: 0,
+    mutationSuccess: true,
+    durationMs: 1,
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
     mockIsEnabled = vi.fn().mockReturnValue(true);
@@ -94,6 +131,17 @@ describe('TelemetryBatchProcessor', () => {
 
       expect(setIntervalSpy).not.toHaveBeenCalled();
       processor.stop();
+    });
+
+    it('should not register timers or listeners more than once', () => {
+      const setIntervalSpy = vi.spyOn(global, 'setInterval');
+      const onSpy = vi.spyOn(process, 'on');
+
+      batchProcessor.start();
+      batchProcessor.start();
+
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+      expect(onSpy).toHaveBeenCalledTimes(3);
     });
 
     it('should set up process exit handlers', () => {
@@ -226,6 +274,45 @@ describe('TelemetryBatchProcessor', () => {
   });
 
   describe('batch creation', () => {
+    async function expectAllUnsentBatchesRetried(
+      table: string,
+      itemCount: number,
+      flush: () => Promise<void>
+    ): Promise<void> {
+      const insert = vi.fn()
+        .mockResolvedValueOnce(createMockSupabaseResponse(new Error('First batch failed')))
+        .mockResolvedValue(createMockSupabaseResponse());
+      vi.mocked(mockSupabase.from).mockImplementation((requestedTable) => ({
+        insert: requestedTable === table
+          ? insert
+          : vi.fn().mockResolvedValue(createMockSupabaseResponse()),
+        url: { href: '' },
+        headers: {},
+        select: vi.fn(),
+        upsert: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn()
+      } as any));
+
+      await flush();
+
+      expect(insert).toHaveBeenCalledTimes(1);
+      expect(batchProcessor.getMetrics()).toMatchObject({
+        eventsFailed: itemCount,
+        batchesFailed: 2,
+        deadLetterQueueSize: itemCount,
+      });
+
+      await batchProcessor.flush([]);
+
+      const retriedItems = insert.mock.calls
+        .slice(1)
+        .flatMap(([batch]) => batch);
+      expect(insert).toHaveBeenCalledTimes(3);
+      expect(retriedItems).toHaveLength(itemCount);
+      expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(0);
+    }
+
     it('should create single batch for small datasets', async () => {
       const events: TelemetryEvent[] = Array.from({ length: 10 }, (_, i) => ({
         user_id: `user${i}`,
@@ -256,6 +343,44 @@ describe('TelemetryBatchProcessor', () => {
 
       expect(firstCall).toHaveLength(TELEMETRY_CONFIG.MAX_BATCH_SIZE);
       expect(secondCall).toHaveLength(25);
+    });
+
+    it('should retain every unattempted event batch after a failure', async () => {
+      const events: TelemetryEvent[] = Array.from({ length: 60 }, (_, index) => ({
+        user_id: `event-user-${index}`,
+        event: 'multi_batch_event',
+        properties: { index },
+      }));
+
+      await expectAllUnsentBatchesRetried(
+        'telemetry_events',
+        events.length,
+        () => batchProcessor.flush(events)
+      );
+    });
+
+    it('should retain every unattempted workflow batch after a failure', async () => {
+      const workflows = Array.from({ length: 60 }, (_, index) =>
+        createWorkflowTelemetry(index)
+      );
+
+      await expectAllUnsentBatchesRetried(
+        'telemetry_workflows',
+        workflows.length,
+        () => batchProcessor.flush(undefined, workflows)
+      );
+    });
+
+    it('should retain every unattempted mutation batch after a failure', async () => {
+      const mutations = Array.from({ length: 60 }, (_, index) =>
+        createMutationRecord(index)
+      );
+
+      await expectAllUnsentBatchesRetried(
+        'workflow_mutations',
+        mutations.length,
+        () => batchProcessor.flush(undefined, undefined, mutations)
+      );
     });
   });
 
