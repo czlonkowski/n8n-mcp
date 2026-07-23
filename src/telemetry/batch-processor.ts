@@ -233,8 +233,6 @@ export class TelemetryBatchProcessor {
    * Flush events with batching
    */
   private async flushEvents(events: TelemetryEvent[]): Promise<boolean> {
-    if (events.length === 0) return true;
-
     try {
       // Batch events
       const batches = this.createBatches(events, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
@@ -281,8 +279,6 @@ export class TelemetryBatchProcessor {
    * Flush workflows with deduplication
    */
   private async flushWorkflows(workflows: WorkflowTelemetry[]): Promise<boolean> {
-    if (workflows.length === 0) return true;
-
     try {
       // Deduplicate workflows by hash
       const uniqueWorkflows = this.deduplicateWorkflows(workflows);
@@ -333,8 +329,6 @@ export class TelemetryBatchProcessor {
    * Flush workflow mutations with batching
    */
   private async flushMutations(mutations: WorkflowMutationRecord[]): Promise<boolean> {
-    if (mutations.length === 0) return true;
-
     try {
       // Batch mutations
       const batches = this.createBatches(mutations, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
@@ -399,6 +393,7 @@ export class TelemetryBatchProcessor {
     operationName: string
   ): Promise<T | null> {
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    let result: T | null;
 
     try {
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -410,15 +405,17 @@ export class TelemetryBatchProcessor {
         }
       });
 
-      return await Promise.race([operation(), timeoutPromise]) as T;
+      result = await Promise.race([operation(), timeoutPromise]) as T;
     } catch (error) {
       logger.debug(`${operationName} failed:`, error);
-      return null;
-    } finally {
-      if (timeout !== undefined) {
-        clearTimeout(timeout);
-      }
+      result = null;
     }
+
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+
+    return result;
   }
 
   /**
