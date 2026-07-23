@@ -993,6 +993,7 @@ describe('TelemetryBatchProcessor', () => {
 
       // Trigger SIGINT event
       process.emit('SIGINT', 'SIGINT');
+      for (let index = 0; index < 10; index++) await Promise.resolve();
 
       expect(flushSpy).toHaveBeenCalled();
       expect(mockProcessExit).toHaveBeenCalledWith(0);
@@ -1005,10 +1006,39 @@ describe('TelemetryBatchProcessor', () => {
 
       // Trigger SIGTERM event
       process.emit('SIGTERM', 'SIGTERM');
+      for (let index = 0; index < 10; index++) await Promise.resolve();
 
       expect(flushSpy).toHaveBeenCalled();
       expect(mockProcessExit).toHaveBeenCalledWith(0);
     });
+
+    it.each(['SIGINT', 'SIGTERM'] as const)(
+      'should wait for the scheduled flush before exiting on %s',
+      async signal => {
+        let resolveFlush!: () => void;
+        const onFlushRequested = vi.fn(() => new Promise<void>(resolve => {
+          resolveFlush = resolve;
+        }));
+        const processor = new TelemetryBatchProcessor(mockSupabase, mockIsEnabled, {
+          operationTimeout: TEST_OPERATION_TIMEOUT,
+          onFlushRequested,
+        });
+
+        processor.start();
+        process.emit(signal, signal);
+        await Promise.resolve();
+
+        expect(onFlushRequested).toHaveBeenCalledOnce();
+        expect(mockProcessExit).not.toHaveBeenCalled();
+
+        resolveFlush();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(mockProcessExit).toHaveBeenCalledWith(0);
+        processor.stop();
+      }
+    );
   });
 
   describe('Issue #517: workflow data preservation', () => {

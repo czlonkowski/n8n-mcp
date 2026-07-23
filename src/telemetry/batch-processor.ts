@@ -93,7 +93,7 @@ export class TelemetryBatchProcessor {
 
     // Set up periodic flushing
     this.flushTimer = setInterval(() => {
-      this.requestFlush();
+      void this.requestFlush();
     }, TELEMETRY_CONFIG.BATCH_FLUSH_INTERVAL);
 
     // Prevent timer from keeping process alive
@@ -103,14 +103,14 @@ export class TelemetryBatchProcessor {
     }
 
     // Set up process exit handlers with stored references for cleanup
-    this.eventListeners.beforeExit = () => this.requestFlush();
+    this.eventListeners.beforeExit = () => {
+      void this.requestFlush();
+    };
     this.eventListeners.sigint = () => {
-      this.requestFlush();
-      process.exit(0);
+      void this.flushAndExit();
     };
     this.eventListeners.sigterm = () => {
-      this.requestFlush();
-      process.exit(0);
+      void this.flushAndExit();
     };
 
     process.on('beforeExit', this.eventListeners.beforeExit);
@@ -150,14 +150,19 @@ export class TelemetryBatchProcessor {
    * Ask the queue owner to flush, falling back to an empty processor flush for
    * standalone callers that do not provide a queue-aware callback.
    */
-  private requestFlush(): void {
+  private requestFlush(): Promise<void> {
     const requestedFlush = this.onFlushRequested
       ? this.onFlushRequested()
       : this.flush();
 
-    void Promise.resolve(requestedFlush).catch(error => {
+    return Promise.resolve(requestedFlush).catch(error => {
       logger.debug('Scheduled telemetry flush failed:', error);
     });
+  }
+
+  private async flushAndExit(): Promise<void> {
+    await this.requestFlush();
+    process.exit(0);
   }
 
   /**
