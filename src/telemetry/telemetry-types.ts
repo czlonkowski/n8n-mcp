@@ -86,9 +86,7 @@ export const TELEMETRY_CONFIG = {
   EVENT_QUEUE_THRESHOLD: 10, // Batch events for efficiency
   WORKFLOW_QUEUE_THRESHOLD: 5, // Batch workflows
 
-  // Retry logic
-  MAX_RETRIES: 1,
-  RETRY_DELAY: 1000, // 1 second base delay
+  // Network timeouts
   OPERATION_TIMEOUT: 5000, // 5 seconds
   FETCH_TIMEOUT_MS: 2000, // Hard deadline for each telemetry request
 

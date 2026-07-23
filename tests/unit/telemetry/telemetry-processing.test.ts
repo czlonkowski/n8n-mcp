@@ -51,8 +51,6 @@ describe('TelemetryBatchProcessor', () => {
 
     batchProcessor = new TelemetryBatchProcessor(mockSupabase, mockIsEnabled, {
       operationTimeout: TEST_OPERATION_TIMEOUT,
-      retryDelay: 0,
-      random: () => 0,
     });
   });
 
@@ -303,18 +301,9 @@ describe('TelemetryBatchProcessor', () => {
     });
   });
 
-  describe('error handling and retries', () => {
-    it('should succeed within the configured retry limit', async () => {
-      const error = new Error('Network timeout');
-      const errorResponse = createMockSupabaseResponse(error);
+  describe('bounded operation execution', () => {
+    it('should succeed on a single attempt', async () => {
       const insert = vi.mocked(mockSupabase.from('telemetry_events').insert);
-
-      // Leave the final configured attempt available for success. This remains
-      // valid when deployments intentionally configure a single attempt.
-      for (let attempt = 1; attempt < TELEMETRY_CONFIG.MAX_RETRIES; attempt++) {
-        insert.mockResolvedValueOnce(errorResponse);
-      }
-      insert.mockResolvedValueOnce(createMockSupabaseResponse());
 
       const events: TelemetryEvent[] = [{
         user_id: 'user1',
@@ -324,17 +313,18 @@ describe('TelemetryBatchProcessor', () => {
 
       await batchProcessor.flush(events);
 
-      expect(insert).toHaveBeenCalledTimes(TELEMETRY_CONFIG.MAX_RETRIES);
+      expect(insert).toHaveBeenCalledTimes(1);
 
       const metrics = batchProcessor.getMetrics();
       expect(metrics.eventsTracked).toBe(1);
     });
 
-    it('should fail after max retries', async () => {
+    it('should fail after a single attempt', async () => {
       const error = new Error('Persistent network error');
       const errorResponse = createMockSupabaseResponse(error);
 
-      vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue(errorResponse);
+      const insert = vi.mocked(mockSupabase.from('telemetry_events').insert);
+      insert.mockResolvedValue(errorResponse);
 
       const events: TelemetryEvent[] = [{
         user_id: 'user1',
@@ -344,9 +334,7 @@ describe('TelemetryBatchProcessor', () => {
 
       await batchProcessor.flush(events);
 
-      // Should have been called MAX_RETRIES times
-      expect(mockSupabase.from('telemetry_events').insert)
-        .toHaveBeenCalledTimes(TELEMETRY_CONFIG.MAX_RETRIES);
+      expect(insert).toHaveBeenCalledTimes(1);
 
       const metrics = batchProcessor.getMetrics();
       expect(metrics.eventsFailed).toBe(1);
@@ -377,7 +365,7 @@ describe('TelemetryBatchProcessor', () => {
 
       const metrics = batchProcessor.getMetrics();
       expect(settled).toBe(true);
-      expect(insert).toHaveBeenCalledTimes(TELEMETRY_CONFIG.MAX_RETRIES);
+      expect(insert).toHaveBeenCalledTimes(1);
       expect(metrics.eventsFailed).toBe(1);
       expect(metrics.batchesFailed).toBe(1);
       expect(metrics.deadLetterQueueSize).toBe(1);
@@ -416,18 +404,15 @@ describe('TelemetryBatchProcessor', () => {
       const error = new Error('Temporary error');
       const errorResponse = createMockSupabaseResponse(error);
 
-      // Exhaust the configured attempts, then succeed when the queue is retried.
       const insert = vi.mocked(mockSupabase.from('telemetry_events').insert);
-      for (let attempt = 0; attempt < TELEMETRY_CONFIG.MAX_RETRIES; attempt++) {
-        insert.mockResolvedValueOnce(errorResponse);
-      }
+      insert.mockResolvedValueOnce(errorResponse);
       insert.mockResolvedValueOnce(createMockSupabaseResponse());
 
       const events: TelemetryEvent[] = [
         { user_id: 'user1', event: 'event1', properties: {} }
       ];
 
-      // First flush - should fail after all retries and add to dead letter queue
+      // First flush - should fail and add to dead letter queue
       await batchProcessor.flush(events);
       expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(1);
 
@@ -439,7 +424,7 @@ describe('TelemetryBatchProcessor', () => {
     it('should maintain dead letter queue size limit', async () => {
       const error = new Error('Persistent error');
       const errorResponse = createMockSupabaseResponse(error);
-      // Always fail - each flush will retry 3 times then add to dead letter queue
+      // Always fail - each flush adds its batch to the dead letter queue
       vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue(errorResponse);
 
       // Circuit breaker opens after 5 failures, so only first 5 flushes will be processed
@@ -775,9 +760,7 @@ describe('TelemetryBatchProcessor', () => {
       const attemptedUsers = insert.mock.calls.map(([batch]) =>
         (batch as TelemetryEvent[])[0].user_id
       );
-      expect(attemptedUsers).toEqual(events.flatMap(
-        ([event]) => Array(TELEMETRY_CONFIG.MAX_RETRIES).fill(event.user_id)
-      ));
+      expect(attemptedUsers).toEqual(events.map(([event]) => event.user_id));
       expect(batchProcessor.getMetrics()).toMatchObject({
         eventsFailed: 3,
         batchesFailed: 3,

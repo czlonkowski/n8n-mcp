@@ -64,22 +64,16 @@ export class TelemetryBatchProcessor {
   } = {};
   private started: boolean = false;
   private readonly operationTimeout: number;
-  private readonly retryDelay: number;
-  private readonly random: () => number;
 
   constructor(
     private supabase: SupabaseClient | null,
     private isEnabled: () => boolean,
     timing: {
       operationTimeout?: number;
-      retryDelay?: number;
-      random?: () => number;
     } = {}
   ) {
     this.circuitBreaker = new TelemetryCircuitBreaker();
     this.operationTimeout = timing.operationTimeout ?? TELEMETRY_CONFIG.OPERATION_TIMEOUT;
-    this.retryDelay = timing.retryDelay ?? TELEMETRY_CONFIG.RETRY_DELAY;
-    this.random = timing.random ?? Math.random;
   }
 
   /**
@@ -229,7 +223,7 @@ export class TelemetryBatchProcessor {
       const batches = this.createBatches(events, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
 
       for (const batch of batches) {
-        const result = await this.executeWithRetry(async () => {
+        const result = await this.executeWithTimeout(async () => {
           const { error } = await this.supabase!
             .from('telemetry_events')
             .insert(batch);
@@ -280,7 +274,7 @@ export class TelemetryBatchProcessor {
       const batches = this.createBatches(uniqueWorkflows, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
 
       for (const batch of batches) {
-        const result = await this.executeWithRetry(async () => {
+        const result = await this.executeWithTimeout(async () => {
           const { error } = await this.supabase!
             .from('telemetry_workflows')
             .insert(batch);
@@ -327,7 +321,7 @@ export class TelemetryBatchProcessor {
       const batches = this.createBatches(mutations, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
 
       for (const batch of batches) {
-        const result = await this.executeWithRetry(async () => {
+        const result = await this.executeWithTimeout(async () => {
           // Convert camelCase to snake_case for Supabase
           const snakeCaseBatch = batch.map(mutation => mutationToSupabaseFormat(mutation));
 
@@ -378,54 +372,33 @@ export class TelemetryBatchProcessor {
   }
 
   /**
-   * Execute operation with exponential backoff retry
+   * Execute one operation attempt bounded by the configured timeout
    */
-  private async executeWithRetry<T>(
+  private async executeWithTimeout<T>(
     operation: () => Promise<T>,
     operationName: string
   ): Promise<T | null> {
-    let lastError: Error | null = null;
-    let delay = this.retryDelay;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
 
-    for (let attempt = 1; attempt <= TELEMETRY_CONFIG.MAX_RETRIES; attempt++) {
-      let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Operation timed out')), this.operationTimeout);
 
-      try {
-        // Create a timeout promise
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => reject(new Error('Operation timed out')), this.operationTimeout);
-
-          // A best-effort telemetry request must not keep the process alive.
-          if (typeof timeout === 'object' && timeout !== null && 'unref' in timeout) {
-            timeout.unref();
-          }
-        });
-
-        // Race between operation and timeout
-        const result = await Promise.race([operation(), timeoutPromise]) as T;
-        return result;
-      } catch (error) {
-        lastError = error as Error;
-        logger.debug(`${operationName} attempt ${attempt} failed:`, error);
-
-        if (attempt < TELEMETRY_CONFIG.MAX_RETRIES) {
-          if (delay > 0) {
-            // Exponential backoff with jitter
-            const jitter = this.random() * 0.3 * delay; // 30% jitter
-            const waitTime = delay + jitter;
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-          }
-          delay *= 2; // Double the delay for next attempt
+        // A best-effort telemetry request must not keep the process alive.
+        if (typeof timeout === 'object' && timeout !== null && 'unref' in timeout) {
+          timeout.unref();
         }
-      } finally {
-        if (timeout !== undefined) {
-          clearTimeout(timeout);
-        }
+      });
+
+      return await Promise.race([operation(), timeoutPromise]) as T;
+    } catch (error) {
+      logger.debug(`${operationName} failed:`, error);
+      return null;
+    } finally {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
       }
     }
-
-    logger.debug(`${operationName} failed after ${TELEMETRY_CONFIG.MAX_RETRIES} attempts:`, lastError);
-    return null;
   }
 
   /**

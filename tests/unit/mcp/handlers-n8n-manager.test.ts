@@ -2211,6 +2211,66 @@ describe('handlers-n8n-manager', () => {
         vi.useRealTimers();
       }
     });
+
+    it('returns an API failure without waiting for stalled mutation telemetry (#944)', async () => {
+      vi.useFakeTimers();
+
+      try {
+        const workflow = createTestWorkflow({
+          id: 'wf-1',
+          name: 'Original Name',
+          active: false,
+        });
+        const apiError = new N8nServerError('Workflow update unavailable');
+        mockApiClient.getWorkflow.mockResolvedValue(workflow);
+        mockApiClient.updateWorkflow.mockRejectedValue(apiError);
+
+        let signalTelemetryStarted!: () => void;
+        const telemetryStarted = new Promise<void>((resolve) => {
+          signalTelemetryStarted = resolve;
+        });
+        telemetryMocks.trackWorkflowMutation.mockImplementation(() => {
+          signalTelemetryStarted();
+          return new Promise<void>(() => {});
+        });
+
+        const handlerPromise = handlers.handleUpdateWorkflow(
+          {
+            id: 'wf-1',
+            name: 'Renamed Workflow',
+          },
+          mockRepository,
+        );
+        const outcomePromise = Promise.race([
+          handlerPromise.then((result: any) => ({ state: 'resolved' as const, result })),
+          new Promise<{ state: 'timed-out' }>((resolve) => {
+            setTimeout(() => resolve({ state: 'timed-out' }), 1_000);
+          }),
+        ]);
+
+        await telemetryStarted;
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        await expect(outcomePromise).resolves.toEqual({
+          state: 'resolved',
+          result: {
+            success: false,
+            error: 'Workflow update unavailable',
+            code: 'SERVER_ERROR',
+            details: undefined,
+          },
+        });
+        expect(telemetryMocks.trackWorkflowMutation).toHaveBeenCalledWith(
+          expect.objectContaining({
+            toolName: 'n8n_update_full_workflow',
+            mutationSuccess: false,
+            mutationError: 'Workflow update unavailable',
+          }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe('handleAuditInstance — error message surfacing (#736)', () => {

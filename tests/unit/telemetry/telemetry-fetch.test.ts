@@ -70,6 +70,54 @@ describe('createTelemetryFetch', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('promptly propagates an already-aborted upstream signal', async () => {
+    const upstreamController = new AbortController();
+    const upstreamReason = new DOMException('Caller already cancelled', 'AbortError');
+    upstreamController.abort(upstreamReason);
+
+    const requestState: { signal: AbortSignal | null } = { signal: null };
+    const baseFetch = vi.fn<typeof fetch>((_input, init) => {
+      requestState.signal = init?.signal ?? null;
+      return new Promise<Response>(() => {});
+    });
+    const telemetryFetch = createTelemetryFetch({ baseFetch, timeoutMs: 2000 });
+
+    await expect(telemetryFetch('https://example.test/telemetry', {
+      signal: upstreamController.signal,
+    })).rejects.toBe(upstreamReason);
+
+    expect(baseFetch).toHaveBeenCalledOnce();
+    expect(requestState.signal?.aborted).toBe(true);
+    expect(requestState.signal?.reason).toBe(upstreamReason);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('derives and propagates the upstream signal from a Request input', async () => {
+    const upstreamController = new AbortController();
+    const upstreamReason = new DOMException('Request cancelled', 'AbortError');
+    const input = new Request('https://example.test/telemetry', {
+      signal: upstreamController.signal,
+    });
+    const requestState: { signal: AbortSignal | null } = { signal: null };
+    const baseFetch = vi.fn<typeof fetch>((_input, init) => {
+      requestState.signal = init?.signal ?? null;
+      return new Promise<Response>(() => {});
+    });
+    const telemetryFetch = createTelemetryFetch({ baseFetch, timeoutMs: 2000 });
+    const request = telemetryFetch(input);
+    const rejection = expect(request).rejects.toBe(upstreamReason);
+
+    upstreamController.abort(upstreamReason);
+
+    await rejection;
+    expect(baseFetch).toHaveBeenCalledWith(input, expect.objectContaining({
+      signal: expect.any(AbortSignal),
+    }));
+    expect(requestState.signal?.aborted).toBe(true);
+    expect(requestState.signal?.reason).toBe(upstreamReason);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('rejects on the deadline even when the base fetch ignores abort', async () => {
     const requestState: { signal: AbortSignal | null } = { signal: null };
     const baseFetch = vi.fn<typeof fetch>((_input, init) => {
