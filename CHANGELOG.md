@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.65.2] - 2026-07-23
+
+### Fixed
+
+- **Telemetry can no longer stall workflow mutation requests (#944).** Supabase telemetry requests now have a hard two-second deadline that aborts the underlying fetch, and best-effort delivery makes only one attempt so a failed request cannot leave retry work behind. Partial and full workflow-update handlers detach mutation telemetry explicitly, while a global flush queue serializes events, workflows, and mutations without silently dropping concurrent batches.
+
 ## [2.65.1] - 2026-07-16
 
 ### Fixed
