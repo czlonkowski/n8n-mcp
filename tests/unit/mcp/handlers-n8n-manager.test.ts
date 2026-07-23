@@ -12,6 +12,12 @@ import {
 } from '@/utils/n8n-errors';
 import { ExecutionStatus } from '@/types/n8n-api';
 
+const telemetryMocks = vi.hoisted(() => ({
+  trackEvent: vi.fn(),
+  trackWorkflowCreation: vi.fn(),
+  trackWorkflowMutation: vi.fn(),
+}));
+
 // Mock dependencies
 vi.mock('@/services/n8n-api-client');
 vi.mock('@/services/workflow-validator');
@@ -49,6 +55,13 @@ vi.mock('@/utils/logger', () => ({
     INFO: 2,
     DEBUG: 3,
   }
+}));
+vi.mock('@/telemetry/telemetry-manager', () => ({
+  telemetry: {
+    trackEvent: telemetryMocks.trackEvent,
+    trackWorkflowCreation: telemetryMocks.trackWorkflowCreation,
+    trackWorkflowMutation: telemetryMocks.trackWorkflowMutation,
+  },
 }));
 
 describe('handlers-n8n-manager', () => {
@@ -93,6 +106,7 @@ describe('handlers-n8n-manager', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    telemetryMocks.trackWorkflowMutation.mockResolvedValue(undefined);
     
     // Setup mock API client
     mockApiClient = {
@@ -2132,6 +2146,70 @@ describe('handlers-n8n-manager', () => {
       expect(sentWorkflow.name).toBe('Renamed');
       // Current settings are preserved intact, not nulled or reduced to defaults.
       expect(sentWorkflow.settings).toEqual({ executionOrder: 'v1', timezone: 'Europe/Warsaw' });
+    });
+
+    it('resolves without waiting for stalled mutation telemetry (#944)', async () => {
+      vi.useFakeTimers();
+
+      try {
+        const workflow = createTestWorkflow({
+          id: 'wf-1',
+          name: 'Original Name',
+          active: false,
+        });
+        const updatedWorkflow = {
+          ...workflow,
+          name: 'Renamed Workflow',
+          updatedAt: '2024-01-02T00:00:00Z',
+        };
+        mockApiClient.getWorkflow.mockResolvedValue(workflow);
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+
+        let signalTelemetryStarted!: () => void;
+        const telemetryStarted = new Promise<void>((resolve) => {
+          signalTelemetryStarted = resolve;
+        });
+        telemetryMocks.trackWorkflowMutation.mockImplementation(() => {
+          signalTelemetryStarted();
+          return new Promise<void>(() => {});
+        });
+
+        const handlerPromise = handlers.handleUpdateWorkflow(
+          {
+            id: 'wf-1',
+            name: 'Renamed Workflow',
+          },
+          mockRepository,
+        );
+        const outcomePromise = Promise.race([
+          handlerPromise.then((result: any) => ({ state: 'resolved' as const, result })),
+          new Promise<{ state: 'timed-out' }>((resolve) => {
+            setTimeout(() => resolve({ state: 'timed-out' }), 1_000);
+          }),
+        ]);
+
+        await telemetryStarted;
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        await expect(outcomePromise).resolves.toMatchObject({
+          state: 'resolved',
+          result: {
+            success: true,
+            data: {
+              id: 'wf-1',
+              name: 'Renamed Workflow',
+            },
+          },
+        });
+        expect(telemetryMocks.trackWorkflowMutation).toHaveBeenCalledWith(
+          expect.objectContaining({
+            toolName: 'n8n_update_full_workflow',
+            mutationSuccess: true,
+          }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

@@ -42,9 +42,7 @@ function mutationToSupabaseFormat(mutation: WorkflowMutationRecord): Record<stri
 
 export class TelemetryBatchProcessor {
   private flushTimer?: NodeJS.Timeout;
-  private isFlushingEvents: boolean = false;
-  private isFlushingWorkflows: boolean = false;
-  private isFlushingMutations: boolean = false;
+  private flushQueue: Promise<void> = Promise.resolve();
   private circuitBreaker: TelemetryCircuitBreaker;
   private metrics: TelemetryMetrics = {
     eventsTracked: 0,
@@ -65,12 +63,23 @@ export class TelemetryBatchProcessor {
     sigterm?: () => void;
   } = {};
   private started: boolean = false;
+  private readonly operationTimeout: number;
+  private readonly retryDelay: number;
+  private readonly random: () => number;
 
   constructor(
     private supabase: SupabaseClient | null,
-    private isEnabled: () => boolean
+    private isEnabled: () => boolean,
+    timing: {
+      operationTimeout?: number;
+      retryDelay?: number;
+      random?: () => number;
+    } = {}
   ) {
     this.circuitBreaker = new TelemetryCircuitBreaker();
+    this.operationTimeout = timing.operationTimeout ?? TELEMETRY_CONFIG.OPERATION_TIMEOUT;
+    this.retryDelay = timing.retryDelay ?? TELEMETRY_CONFIG.RETRY_DELAY;
+    this.random = timing.random ?? Math.random;
   }
 
   /**
@@ -143,7 +152,28 @@ export class TelemetryBatchProcessor {
   /**
    * Flush events, workflows, and mutations to Supabase
    */
-  async flush(events?: TelemetryEvent[], workflows?: WorkflowTelemetry[], mutations?: WorkflowMutationRecord[]): Promise<void> {
+  flush(events?: TelemetryEvent[], workflows?: WorkflowTelemetry[], mutations?: WorkflowMutationRecord[]): Promise<void> {
+    // Capture each caller's batches before queuing so later caller mutations cannot
+    // change or empty data that is waiting behind an in-progress flush.
+    const queuedEvents = events ? [...events] : undefined;
+    const queuedWorkflows = workflows ? [...workflows] : undefined;
+    const queuedMutations = mutations ? [...mutations] : undefined;
+
+    const queuedFlush = this.flushQueue.then(() =>
+      this.flushQueuedBatch(queuedEvents, queuedWorkflows, queuedMutations)
+    );
+
+    // Keep the queue usable after an unexpected rejection while preserving that
+    // rejection for the caller that owns this particular flush.
+    this.flushQueue = queuedFlush.catch(() => undefined);
+    return queuedFlush;
+  }
+
+  private async flushQueuedBatch(
+    events?: TelemetryEvent[],
+    workflows?: WorkflowTelemetry[],
+    mutations?: WorkflowMutationRecord[]
+  ): Promise<void> {
     if (!this.isEnabled() || !this.supabase) return;
 
     // Check circuit breaker
@@ -192,9 +222,7 @@ export class TelemetryBatchProcessor {
    * Flush events with batching
    */
   private async flushEvents(events: TelemetryEvent[]): Promise<boolean> {
-    if (this.isFlushingEvents || events.length === 0) return true;
-
-    this.isFlushingEvents = true;
+    if (events.length === 0) return true;
 
     try {
       // Batch events
@@ -234,8 +262,6 @@ export class TelemetryBatchProcessor {
         { error: error instanceof Error ? error.message : String(error) },
         true
       );
-    } finally {
-      this.isFlushingEvents = false;
     }
   }
 
@@ -243,9 +269,7 @@ export class TelemetryBatchProcessor {
    * Flush workflows with deduplication
    */
   private async flushWorkflows(workflows: WorkflowTelemetry[]): Promise<boolean> {
-    if (this.isFlushingWorkflows || workflows.length === 0) return true;
-
-    this.isFlushingWorkflows = true;
+    if (workflows.length === 0) return true;
 
     try {
       // Deduplicate workflows by hash
@@ -289,8 +313,6 @@ export class TelemetryBatchProcessor {
         { error: error instanceof Error ? error.message : String(error) },
         true
       );
-    } finally {
-      this.isFlushingWorkflows = false;
     }
   }
 
@@ -298,9 +320,7 @@ export class TelemetryBatchProcessor {
    * Flush workflow mutations with batching
    */
   private async flushMutations(mutations: WorkflowMutationRecord[]): Promise<boolean> {
-    if (this.isFlushingMutations || mutations.length === 0) return true;
-
-    this.isFlushingMutations = true;
+    if (mutations.length === 0) return true;
 
     try {
       // Batch mutations
@@ -354,8 +374,6 @@ export class TelemetryBatchProcessor {
         { error: error instanceof Error ? error.message : String(error) },
         true
       );
-    } finally {
-      this.isFlushingMutations = false;
     }
   }
 
@@ -367,19 +385,20 @@ export class TelemetryBatchProcessor {
     operationName: string
   ): Promise<T | null> {
     let lastError: Error | null = null;
-    let delay = TELEMETRY_CONFIG.RETRY_DELAY;
+    let delay = this.retryDelay;
 
     for (let attempt = 1; attempt <= TELEMETRY_CONFIG.MAX_RETRIES; attempt++) {
-      try {
-        // In test environment, execute without timeout but still handle errors
-        if (process.env.NODE_ENV === 'test' && process.env.VITEST) {
-          const result = await operation();
-          return result;
-        }
+      let timeout: ReturnType<typeof setTimeout> | undefined;
 
+      try {
         // Create a timeout promise
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('Operation timed out')), TELEMETRY_CONFIG.OPERATION_TIMEOUT);
+          timeout = setTimeout(() => reject(new Error('Operation timed out')), this.operationTimeout);
+
+          // A best-effort telemetry request must not keep the process alive.
+          if (typeof timeout === 'object' && timeout !== null && 'unref' in timeout) {
+            timeout.unref();
+          }
         });
 
         // Race between operation and timeout
@@ -390,15 +409,17 @@ export class TelemetryBatchProcessor {
         logger.debug(`${operationName} attempt ${attempt} failed:`, error);
 
         if (attempt < TELEMETRY_CONFIG.MAX_RETRIES) {
-          // Skip delay in test environment when using fake timers
-          if (!(process.env.NODE_ENV === 'test' && process.env.VITEST)) {
+          if (delay > 0) {
             // Exponential backoff with jitter
-            const jitter = Math.random() * 0.3 * delay; // 30% jitter
+            const jitter = this.random() * 0.3 * delay; // 30% jitter
             const waitTime = delay + jitter;
             await new Promise(resolve => setTimeout(resolve, waitTime));
-            delay *= 2; // Double the delay for next attempt
           }
-          // In test mode, continue to next retry attempt without delay
+          delay *= 2; // Double the delay for next attempt
+        }
+      } finally {
+        if (timeout !== undefined) {
+          clearTimeout(timeout);
         }
       }
     }

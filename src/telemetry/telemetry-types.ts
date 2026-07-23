@@ -87,9 +87,10 @@ export const TELEMETRY_CONFIG = {
   WORKFLOW_QUEUE_THRESHOLD: 5, // Batch workflows
 
   // Retry logic
-  MAX_RETRIES: 3,
+  MAX_RETRIES: 1,
   RETRY_DELAY: 1000, // 1 second base delay
   OPERATION_TIMEOUT: 5000, // 5 seconds
+  FETCH_TIMEOUT_MS: 2000, // Hard deadline for each telemetry request
 
   // Rate limiting
   RATE_LIMIT_WINDOW: 60000, // 1 minute

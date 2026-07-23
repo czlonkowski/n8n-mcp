@@ -1110,7 +1110,7 @@ export async function handleUpdateWorkflow(
 
     // Track successful mutation
     if (workflowBefore) {
-      trackWorkflowMutationForFullUpdate({
+      void trackWorkflowMutationForFullUpdate({
         sessionId,
         toolName: 'n8n_update_full_workflow',
         userIntent,
@@ -1137,7 +1137,7 @@ export async function handleUpdateWorkflow(
   } catch (error) {
     // Track failed mutation
     if (workflowBefore) {
-      trackWorkflowMutationForFullUpdate({
+      void trackWorkflowMutationForFullUpdate({
         sessionId,
         toolName: 'n8n_update_full_workflow',
         userIntent,

@@ -10,6 +10,7 @@ import { TelemetryBatchProcessor } from './batch-processor';
 import { TelemetryPerformanceMonitor } from './performance-monitor';
 import { TELEMETRY_BACKEND } from './telemetry-types';
 import { TelemetryError, TelemetryErrorType, TelemetryErrorAggregator } from './telemetry-error';
+import { telemetryFetch } from './telemetry-fetch';
 import { logger } from '../utils/logger';
 
 export class TelemetryManager {
@@ -88,6 +89,9 @@ export class TelemetryManager {
           params: {
             eventsPerSecond: 1,
           },
+        },
+        global: {
+          fetch: telemetryFetch,
         },
       });
 

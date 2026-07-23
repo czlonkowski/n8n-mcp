@@ -15,6 +15,7 @@ import { TelemetryConfigManager } from './config-manager';
 import { TELEMETRY_BACKEND } from './telemetry-types';
 import { StartupCheckpoint, isValidCheckpoint, getCheckpointDescription } from './startup-checkpoints';
 import { sanitizeErrorMessageCore } from './error-sanitization-utils';
+import { telemetryFetch } from './telemetry-fetch';
 import { logger } from '../utils/logger';
 
 /**
@@ -22,15 +23,25 @@ import { logger } from '../utils/logger';
  * Prevents hanging if Supabase is unreachable
  */
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
   try {
     const timeoutPromise = new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error(`${operation} timeout after ${timeoutMs}ms`)), timeoutMs);
+      timer = setTimeout(
+        () => reject(new Error(`${operation} timeout after ${timeoutMs}ms`)),
+        timeoutMs
+      );
+      timer.unref?.();
     });
 
     return await Promise.race([promise, timeoutPromise]);
   } catch (error) {
     logger.debug(`${operation} failed or timed out:`, error);
     return null;
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
   }
 }
 
@@ -98,6 +109,9 @@ export class EarlyErrorLogger {
           auth: {
             persistSession: false,
             autoRefreshToken: false,
+          },
+          global: {
+            fetch: telemetryFetch,
           },
         }
       );

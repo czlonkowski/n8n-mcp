@@ -614,6 +614,9 @@ describe('TelemetryManager', () => {
             params: {
               eventsPerSecond: 1
             }
+          },
+          global: {
+            fetch: expect.any(Function)
           }
         }
       );

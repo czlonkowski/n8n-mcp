@@ -582,7 +582,7 @@ export async function handleUpdatePartialWorkflow(
 
       // Track successful mutation
       if (workflowBefore && !input.validateOnly) {
-        trackWorkflowMutation({
+        void trackWorkflowMutation({
           sessionId,
           toolName: 'n8n_update_partial_workflow',
           userIntent: input.intent || 'Partial workflow update',
@@ -619,7 +619,7 @@ export async function handleUpdatePartialWorkflow(
     } catch (error) {
       // Track failed mutation
       if (workflowBefore && !input.validateOnly) {
-        trackWorkflowMutation({
+        void trackWorkflowMutation({
           sessionId,
           toolName: 'n8n_update_partial_workflow',
           userIntent: input.intent || 'Partial workflow update',
@@ -774,4 +774,3 @@ async function trackWorkflowMutation(data: any): Promise<void> {
     logger.debug('Telemetry tracking failed:', error);
   }
 }
-

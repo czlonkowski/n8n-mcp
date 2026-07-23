@@ -12,11 +12,20 @@ import {
 } from '@/utils/n8n-errors';
 import { z } from 'zod';
 
+const telemetryMocks = vi.hoisted(() => ({
+  trackWorkflowMutation: vi.fn(),
+}));
+
 // Mock dependencies
 vi.mock('@/services/workflow-diff-engine');
 vi.mock('@/services/n8n-api-client');
 vi.mock('@/config/n8n-api');
 vi.mock('@/utils/logger');
+vi.mock('@/telemetry/telemetry-manager', () => ({
+  telemetry: {
+    trackWorkflowMutation: telemetryMocks.trackWorkflowMutation,
+  },
+}));
 vi.mock('@/mcp/handlers-n8n-manager', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/mcp/handlers-n8n-manager')>();
   return {
@@ -72,6 +81,7 @@ describe('handlers-workflow-diff', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    telemetryMocks.trackWorkflowMutation.mockResolvedValue(undefined);
 
     // Setup mock API client
     mockApiClient = {
@@ -178,6 +188,172 @@ describe('handlers-workflow-diff', () => {
       expect(mockApiClient.getWorkflow).toHaveBeenCalledWith('test-workflow-id');
       expect(mockDiffEngine.applyDiff).toHaveBeenCalledWith(testWorkflow, diffRequest);
       expect(mockApiClient.updateWorkflow).toHaveBeenCalledWith('test-workflow-id', updatedWorkflow);
+    });
+
+    it('resolves without waiting for stalled telemetry after Set v3.4 addNode + addConnection (#944)', async () => {
+      vi.useFakeTimers();
+
+      try {
+        const testWorkflow = createTestWorkflow();
+        const setNode = {
+          id: 'set-node',
+          name: 'Set',
+          type: 'n8n-nodes-base.set',
+          typeVersion: 3.4,
+          position: [500, 100],
+          parameters: {
+            assignments: {
+              assignments: [
+                {
+                  id: 'assignment-1',
+                  name: 'status',
+                  value: 'ready',
+                  type: 'string',
+                },
+              ],
+            },
+            options: {},
+          },
+        };
+        const diffRequest = {
+          id: 'test-workflow-id',
+          operations: [
+            {
+              type: 'addNode',
+              node: setNode,
+            },
+            {
+              type: 'addConnection',
+              source: 'HTTP Request',
+              target: 'Set',
+            },
+          ],
+        };
+        const updatedWorkflow = {
+          ...testWorkflow,
+          nodes: [...testWorkflow.nodes, setNode],
+          connections: {
+            ...testWorkflow.connections,
+            'HTTP Request': {
+              main: [[{ node: 'Set', type: 'main', index: 0 }]],
+            },
+          },
+        };
+
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: updatedWorkflow,
+          operationsApplied: 2,
+          message: 'Successfully applied 2 operations',
+          errors: [],
+          applied: [0, 1],
+          failed: [],
+        });
+        mockApiClient.updateWorkflow.mockResolvedValue(updatedWorkflow);
+
+        let signalTelemetryStarted!: () => void;
+        const telemetryStarted = new Promise<void>((resolve) => {
+          signalTelemetryStarted = resolve;
+        });
+        telemetryMocks.trackWorkflowMutation.mockImplementation(() => {
+          signalTelemetryStarted();
+          return new Promise<void>(() => {});
+        });
+
+        const handlerPromise = handleUpdatePartialWorkflow(diffRequest, mockRepository);
+        const outcomePromise = Promise.race([
+          handlerPromise.then((result) => ({ state: 'resolved' as const, result })),
+          new Promise<{ state: 'timed-out' }>((resolve) => {
+            setTimeout(() => resolve({ state: 'timed-out' }), 1_000);
+          }),
+        ]);
+
+        await telemetryStarted;
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        await expect(outcomePromise).resolves.toMatchObject({
+          state: 'resolved',
+          result: {
+            success: true,
+            saved: true,
+            data: {
+              operationsApplied: 2,
+            },
+          },
+        });
+        expect(telemetryMocks.trackWorkflowMutation).toHaveBeenCalledWith(
+          expect.objectContaining({
+            toolName: 'n8n_update_partial_workflow',
+            operations: diffRequest.operations,
+            mutationSuccess: true,
+          }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('resolves API failures without waiting for stalled mutation telemetry', async () => {
+      vi.useFakeTimers();
+
+      try {
+        const testWorkflow = createTestWorkflow();
+        const diffRequest = {
+          id: 'test-workflow-id',
+          operations: [{ type: 'updateName', name: 'Renamed Workflow' }],
+        };
+        mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+        mockDiffEngine.applyDiff.mockResolvedValue({
+          success: true,
+          workflow: { ...testWorkflow, name: 'Renamed Workflow' },
+          operationsApplied: 1,
+          message: 'Successfully applied 1 operation',
+          errors: [],
+          applied: [0],
+          failed: [],
+        });
+        mockApiClient.updateWorkflow.mockRejectedValue(
+          new N8nValidationError('Update rejected'),
+        );
+
+        let signalTelemetryStarted!: () => void;
+        const telemetryStarted = new Promise<void>((resolve) => {
+          signalTelemetryStarted = resolve;
+        });
+        telemetryMocks.trackWorkflowMutation.mockImplementation(() => {
+          signalTelemetryStarted();
+          return new Promise<void>(() => {});
+        });
+
+        const handlerPromise = handleUpdatePartialWorkflow(diffRequest, mockRepository);
+        const outcomePromise = Promise.race([
+          handlerPromise.then((result) => ({ state: 'resolved' as const, result })),
+          new Promise<{ state: 'timed-out' }>((resolve) => {
+            setTimeout(() => resolve({ state: 'timed-out' }), 1_000);
+          }),
+        ]);
+
+        await telemetryStarted;
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        await expect(outcomePromise).resolves.toMatchObject({
+          state: 'resolved',
+          result: {
+            success: false,
+            code: 'VALIDATION_ERROR',
+          },
+        });
+        expect(telemetryMocks.trackWorkflowMutation).toHaveBeenCalledWith(
+          expect.objectContaining({
+            toolName: 'n8n_update_partial_workflow',
+            mutationSuccess: false,
+            mutationError: 'Update rejected',
+          }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('normalizes HTTP MCP serialized addNode payloads before applying the diff (#814)', async () => {
