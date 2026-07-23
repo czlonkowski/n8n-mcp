@@ -427,10 +427,8 @@ describe('TelemetryBatchProcessor', () => {
       // Always fail - each flush adds its batch to the dead letter queue
       vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue(errorResponse);
 
-      // Circuit breaker opens after 5 failures, so only first 5 flushes will be processed
-      // 5 batches of 5 items = 25 total items in dead letter queue
-      for (let i = 0; i < 10; i++) {
-        const events: TelemetryEvent[] = Array.from({ length: 5 }, (_, j) => ({
+      for (let i = 0; i < 3; i++) {
+        const events: TelemetryEvent[] = Array.from({ length: 50 }, (_, j) => ({
           user_id: `user${i}_${j}`,
           event: 'test_event',
           properties: { batch: i, index: j }
@@ -440,9 +438,70 @@ describe('TelemetryBatchProcessor', () => {
       }
 
       const metrics = batchProcessor.getMetrics();
-      // Circuit breaker opens after 5 failures, so only 25 items are added
-      expect(metrics.deadLetterQueueSize).toBe(25); // 5 flushes * 5 items each
-      expect(metrics.eventsDropped).toBe(25); // 5 additional flushes dropped due to circuit breaker
+      expect(metrics.deadLetterQueueSize).toBe(100);
+      expect(metrics.eventsDropped).toBe(50);
+    });
+
+    it('should retry failed workflow mutations through the mutation table', async () => {
+      const errorResponse = createMockSupabaseResponse(new Error('Temporary mutation error'));
+      const mutationInsert = vi.fn()
+        .mockResolvedValueOnce(errorResponse)
+        .mockResolvedValueOnce(createMockSupabaseResponse());
+      const eventInsert = vi.fn().mockResolvedValue(createMockSupabaseResponse());
+
+      vi.mocked(mockSupabase.from).mockImplementation((table) => ({
+        insert: table === 'workflow_mutations' ? mutationInsert : eventInsert,
+        url: { href: '' },
+        headers: {},
+        select: vi.fn(),
+        upsert: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn()
+      } as any));
+
+      const mutation: WorkflowMutationRecord = {
+        userId: 'user1',
+        sessionId: 'session1',
+        workflowBefore: { nodes: [], connections: {} },
+        workflowAfter: { nodes: [], connections: {} },
+        workflowHashBefore: 'hash1',
+        workflowHashAfter: 'hash2',
+        userIntent: 'Test mutation DLQ retry',
+        intentClassification: IntentClassification.ADD_FUNCTIONALITY,
+        toolName: MutationToolName.UPDATE_PARTIAL,
+        operations: [],
+        operationCount: 0,
+        operationTypes: [],
+        validationImproved: null,
+        errorsResolved: 0,
+        errorsIntroduced: 0,
+        nodesAdded: 0,
+        nodesRemoved: 0,
+        nodesModified: 0,
+        connectionsAdded: 0,
+        connectionsRemoved: 0,
+        propertiesChanged: 0,
+        mutationSuccess: false,
+        durationMs: 10
+      };
+
+      await batchProcessor.flush(undefined, undefined, [mutation]);
+      expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(1);
+
+      await batchProcessor.flush([]);
+
+      expect(mutationInsert).toHaveBeenCalledTimes(2);
+      expect(eventInsert).not.toHaveBeenCalled();
+      expect(mockSupabase.from).toHaveBeenNthCalledWith(1, 'workflow_mutations');
+      expect(mockSupabase.from).toHaveBeenNthCalledWith(2, 'workflow_mutations');
+      expect(mutationInsert).toHaveBeenLastCalledWith([
+        expect.objectContaining({
+          user_id: 'user1',
+          workflow_hash_before: 'hash1',
+          workflow_hash_after: 'hash2'
+        })
+      ]);
+      expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(0);
     });
 
     it('should handle mixed events and workflows in dead letter queue', async () => {

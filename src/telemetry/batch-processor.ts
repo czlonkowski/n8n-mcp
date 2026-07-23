@@ -460,10 +460,13 @@ export class TelemetryBatchProcessor {
 
     const events: TelemetryEvent[] = [];
     const workflows: WorkflowTelemetry[] = [];
+    const mutations: WorkflowMutationRecord[] = [];
 
-    // Separate events and workflows
+    // Separate events, workflows, and mutations
     for (const item of this.deadLetterQueue) {
-      if ('workflow_hash' in item) {
+      if ('workflowHashBefore' in item) {
+        mutations.push(item as WorkflowMutationRecord);
+      } else if ('workflow_hash' in item) {
         workflows.push(item as WorkflowTelemetry);
       } else {
         events.push(item as TelemetryEvent);
@@ -479,6 +482,9 @@ export class TelemetryBatchProcessor {
     }
     if (workflows.length > 0) {
       await this.flushWorkflows(workflows);
+    }
+    if (mutations.length > 0) {
+      await this.flushMutations(mutations);
     }
   }
 

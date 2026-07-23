@@ -92,6 +92,30 @@ describe('createTelemetryFetch', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('uses an AbortError fallback when an aborted upstream signal has no reason', async () => {
+    const upstreamController = new AbortController();
+    upstreamController.abort();
+    Object.defineProperty(upstreamController.signal, 'reason', { value: undefined });
+
+    const requestState: { signal: AbortSignal | null } = { signal: null };
+    const baseFetch = vi.fn<typeof fetch>((_input, init) => {
+      requestState.signal = init?.signal ?? null;
+      return new Promise<Response>(() => {});
+    });
+    const telemetryFetch = createTelemetryFetch({ baseFetch, timeoutMs: 2000 });
+    const rejectionReason = await telemetryFetch('https://example.test/telemetry', {
+      signal: upstreamController.signal,
+    }).catch((reason: unknown) => reason);
+
+    expect(rejectionReason).toMatchObject({
+      name: 'AbortError',
+      message: 'The operation was aborted',
+    });
+    expect(requestState.signal?.aborted).toBe(true);
+    expect(requestState.signal?.reason).toBe(rejectionReason);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('derives and propagates the upstream signal from a Request input', async () => {
     const upstreamController = new AbortController();
     const upstreamReason = new DOMException('Request cancelled', 'AbortError');
