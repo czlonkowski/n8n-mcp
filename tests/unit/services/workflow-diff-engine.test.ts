@@ -3215,6 +3215,49 @@ describe('WorkflowDiffEngine', () => {
       expect(neither.errors![0].message).toContain('needs members');
     });
 
+    it('should reject a non-string member with a message instead of crashing', async () => {
+      // This operation's payload is unvalidated at the tool boundary, so a non-string member used
+      // to reach normalizeNodeName() and throw a bare "trim is not a function".
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [{
+          type: 'setNodeGroups',
+          nodeGroups: [{ name: 'Deliver', nodeNames: ['Slack', 42] }]
+        } as any]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('not a node name');
+    });
+
+    it('should reject a non-string group id', async () => {
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [{
+          type: 'setNodeGroups',
+          nodeGroups: [{ id: 7, name: 'Deliver', nodeNames: ['Slack'] }]
+        } as any]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('non-string "id"');
+    });
+
+    it('should reject a description longer than n8n allows', async () => {
+      // The create/update tools cap this in their schema; this operation must agree rather than
+      // let n8n answer with a 400.
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [{
+          type: 'setNodeGroups',
+          nodeGroups: [{ name: 'Deliver', nodeNames: ['Slack'], description: 'x'.repeat(156) }]
+        } as any]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('at most 155');
+    });
+
     it('should reject a group without a usable name', async () => {
       const result = await diffEngine.applyDiff(baseWorkflow, {
         id: 'test-workflow',

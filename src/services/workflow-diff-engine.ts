@@ -36,7 +36,7 @@ import {
 import { Workflow, WorkflowNode, WorkflowConnection, WorkflowNodeGroup } from '../types/n8n-api';
 import { Logger } from '../utils/logger';
 import { validateWorkflowNode, validateWorkflowConnections } from './n8n-validation';
-import { repairNodeGroups, toWorkflowNodeGroup } from './node-groups';
+import { GROUP_DESCRIPTION_MAX_LENGTH, repairNodeGroups, toWorkflowNodeGroup } from './node-groups';
 import { sanitizeNode, sanitizeWorkflowNodes } from './node-sanitizer';
 import { isActivatableTrigger } from '../utils/node-type-utils';
 
@@ -1358,6 +1358,23 @@ export class WorkflowDiffEngine {
       }
       seenNames.add(name);
 
+      // This operation's payload is unvalidated (`z.any()` in the tool schema), so every field is
+      // checked here. Without it a non-string member reaches normalizeNodeName() and a non-string
+      // id reaches toWorkflowNodeGroup(), each throwing a bare "trim is not a function" instead of
+      // a message the caller can act on.
+      if (group.id !== undefined && (typeof group.id !== 'string' || !group.id.trim())) {
+        return `setNodeGroups: group "${name}" has a non-string "id". Omit it to have one generated.`;
+      }
+
+      if (group.description !== undefined) {
+        if (typeof group.description !== 'string') {
+          return `setNodeGroups: group "${name}" has a non-string "description"`;
+        }
+        if (group.description.trim().length > GROUP_DESCRIPTION_MAX_LENGTH) {
+          return `setNodeGroups: group "${name}" has a description of ${group.description.trim().length} characters; n8n allows at most ${GROUP_DESCRIPTION_MAX_LENGTH}.`;
+        }
+      }
+
       const hasNames = Array.isArray(group.nodeNames) && group.nodeNames.length > 0;
       const hasIds = Array.isArray(group.nodeIds) && group.nodeIds.length > 0;
       if (hasNames === hasIds) {
@@ -1366,10 +1383,16 @@ export class WorkflowDiffEngine {
           : `setNodeGroups: group "${name}" needs members in "nodeNames" (or "nodeIds")`;
       }
 
-      const members = this.resolveGroupMembers(workflow, group);
-      if (typeof members === 'string') return members;
+      const members = hasIds ? group.nodeIds! : group.nodeNames!;
+      const badMember = members.find(member => typeof member !== 'string' || !member.trim());
+      if (badMember !== undefined) {
+        return `setNodeGroups: group "${name}" has a member that is not a node ${hasIds ? 'ID' : 'name'} (${JSON.stringify(badMember)})`;
+      }
 
-      for (const node of members) {
+      const resolvedMembers = this.resolveGroupMembers(workflow, group);
+      if (typeof resolvedMembers === 'string') return resolvedMembers;
+
+      for (const node of resolvedMembers) {
         const owner = claimedNodes.get(node.id);
         // Listing a node twice inside one group is a harmless duplicate — the member set is the
         // same either way, and applySetNodeGroups dedupes it. Only a claim by a DIFFERENT group
