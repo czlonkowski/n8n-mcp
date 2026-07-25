@@ -37,6 +37,7 @@ import {
   DataTableUpdateRowsParams,
   DataTableUpsertRowParams,
   DataTableDeleteRowsParams,
+  WorkflowNodeGroup,
 } from '../types/n8n-api';
 import { handleN8nApiError, logN8nError } from '../utils/n8n-errors';
 import { encodeApiPathSegment } from '../utils/validation-schemas';
@@ -46,6 +47,7 @@ import {
   dropGroupByName,
   repairNodeGroups,
   sanitizeGroupsForApi,
+  type GroupErrorClassification,
 } from './node-groups';
 import {
   fetchN8nVersion,
@@ -61,6 +63,21 @@ export interface N8nApiClientConfig {
   maxRetries?: number;
   cfClientId?: string;
   cfClientSecret?: string;
+}
+
+/**
+ * Warnings for the two capability limits. Shared constants because they are emitted from two
+ * places each — the write that discovers the limit, and every later write that already knows it.
+ */
+const GROUPS_UNSUPPORTED_WARNING =
+  'This n8n version does not support canvas groups (added in 2.28); the workflow was saved without them.';
+const GROUP_DESCRIPTIONS_UNSUPPORTED_WARNING =
+  'This n8n version does not support canvas group descriptions (added in 2.32); the descriptions were not saved.';
+
+/** The same write payload without `nodeGroups`, for instances whose schema has no such field. */
+function withoutNodeGroups(payload: Record<string, unknown>): Record<string, unknown> {
+  const { nodeGroups, ...rest } = payload;
+  return rest;
 }
 
 /** Options for workflow writes that carry canvas groups. */
@@ -353,21 +370,28 @@ export class N8nApiClient {
     send: (body: Record<string, unknown>) => Promise<Workflow>,
     options: WorkflowWriteOptions
   ): Promise<Workflow> {
-    const warn = (message: string) => options.onWarning?.(message);
-    const authored = options.authoredGroups ?? new Set<string>();
-
     if (!Array.isArray(payload.nodeGroups)) {
       return await send(payload);
+    }
+
+    // Known-unsupported from an earlier write against this instance. Warn EVERY time, not just on
+    // the write that discovered it: this client outlives a single request, so a caller authoring a
+    // brand-new grouping later in the session would otherwise get plain success and no group.
+    if (!this.groupSupport.groups) {
+      options.onWarning?.(GROUPS_UNSUPPORTED_WARNING);
+      return await send(withoutNodeGroups(payload));
     }
 
     let groups = sanitizeGroupsForApi(payload.nodeGroups, {
       includeDescription: this.groupSupport.descriptions,
     });
 
-    // Known-unsupported from an earlier write against this instance.
-    if (!this.groupSupport.groups) {
-      const { nodeGroups, ...rest } = payload;
-      return await send(rest);
+    // Same reasoning for descriptions, but only worth saying when one was actually supplied.
+    if (
+      !this.groupSupport.descriptions &&
+      (payload.nodeGroups as WorkflowNodeGroup[]).some(group => group?.description !== undefined)
+    ) {
+      options.onWarning?.(GROUP_DESCRIPTIONS_UNSUPPORTED_WARNING);
     }
 
     // Bounded: each iteration must remove a group, strip descriptions, or drop the field.
@@ -376,61 +400,90 @@ export class N8nApiClient {
       try {
         return await send({ ...payload, nodeGroups: groups });
       } catch (error) {
-        const classification = classifyGroupError(handleN8nApiError(error), groups);
+        const apiError = handleN8nApiError(error);
+        const next = this.degradeGroupsAfterRejection(
+          classifyGroupError(apiError, groups),
+          groups,
+          options
+        );
 
-        if (classification.kind === 'schema-description' && this.groupSupport.descriptions) {
-          this.groupSupport.descriptions = false;
-          groups = sanitizeGroupsForApi(groups, { includeDescription: false });
-          warn(
-            'This n8n version does not support canvas group descriptions (added in 2.32); the descriptions were not saved.'
-          );
-          continue;
-        }
-
-        if (classification.kind === 'schema-field') {
-          this.groupSupport.groups = false;
-          warn(
-            'This n8n version does not support canvas groups (added in 2.28); the workflow was saved without them.'
-          );
-          const { nodeGroups, ...rest } = payload;
-          return await send(rest);
-        }
-
-        if (classification.kind === 'semantic') {
-          const name = classification.groupName;
-
-          if (name && authored.has(name)) {
-            throw handleN8nApiError(error);
-          }
-
-          if (name) {
-            const { groups: remaining, dropped } = dropGroupByName(groups, name);
-            if (dropped) {
-              groups = remaining;
-              warn(
-                `n8n rejected node group "${name}", so it was ungrouped to save the workflow (nodes and connections are unchanged). n8n said: ${classification.message}`
-              );
-              continue;
-            }
-          }
-
-          // n8n complained about groups without naming one we hold. Ungrouping everything is the
-          // last resort — refuse it when the caller authored what we would throw away.
-          if (groups.length > 0 && !groups.some(group => authored.has(group.name))) {
-            groups = [];
-            warn(
-              `n8n rejected the canvas groups on this workflow, so all of them were removed to save it (nodes and connections are unchanged). n8n said: ${classification.message}`
-            );
-            continue;
-          }
-        }
-
-        throw handleN8nApiError(error);
+        if (next === 'give-up') throw apiError;
+        if (next === 'omit-field') return await send(withoutNodeGroups(payload));
+        groups = next;
       }
     }
 
     // Unreachable in practice: every branch above either returns, throws, or shrinks the payload.
     throw new Error('Could not save workflow: n8n kept rejecting its canvas groups');
+  }
+
+  /**
+   * Decide how to retry after n8n rejected a write, per the ladder in sendWorkflowWrite: the groups
+   * to send next, `omit-field` to send no groups at all, or `give-up` to surface n8n's error.
+   */
+  private degradeGroupsAfterRejection(
+    classification: GroupErrorClassification,
+    groups: WorkflowNodeGroup[],
+    options: WorkflowWriteOptions
+  ): WorkflowNodeGroup[] | 'omit-field' | 'give-up' {
+    const warn = (message: string) => options.onWarning?.(message);
+    const authored = options.authoredGroups ?? new Set<string>();
+
+    if (classification.kind === 'schema-description' && this.groupSupport.descriptions) {
+      this.groupSupport.descriptions = false;
+      warn(GROUP_DESCRIPTIONS_UNSUPPORTED_WARNING);
+      return sanitizeGroupsForApi(groups, { includeDescription: false });
+    }
+
+    if (classification.kind === 'schema-field') {
+      this.groupSupport.groups = false;
+      warn(GROUPS_UNSUPPORTED_WARNING);
+      return 'omit-field';
+    }
+
+    if (classification.kind !== 'semantic') return 'give-up';
+
+    const name = classification.groupName;
+
+    // Never silently discard a group the caller asked for in this request.
+    if (name && authored.has(name)) return 'give-up';
+
+    if (name) {
+      const { groups: remaining, dropped } = dropGroupByName(groups, name);
+      if (dropped) {
+        warn(
+          `n8n rejected node group "${name}", so it was ungrouped to save the workflow (nodes and connections are unchanged). n8n said: ${classification.message}`
+        );
+        return remaining;
+      }
+    }
+
+    // n8n complained about groups without naming one we hold. Ungrouping everything is the
+    // last resort — refuse it when the caller authored what we would throw away.
+    if (groups.length > 0 && !groups.some(group => authored.has(group.name))) {
+      warn(
+        `n8n rejected the canvas groups on this workflow, so all of them were removed to save it (nodes and connections are unchanged). n8n said: ${classification.message}`
+      );
+      return [];
+    }
+
+    return 'give-up';
+  }
+
+  /** Save a workflow with PUT, falling back to PATCH on n8n versions that answer PUT with 405. */
+  private async putOrPatchWorkflow(
+    safeId: string,
+    body: Record<string, unknown>
+  ): Promise<Workflow> {
+    try {
+      const response = await this.client.put(`/workflows/${safeId}`, body);
+      return response.data;
+    } catch (putError: any) {
+      if (putError.response?.status !== 405) throw putError;
+      logger.debug('PUT method not supported, falling back to PATCH');
+      const response = await this.client.patch(`/workflows/${safeId}`, body);
+      return response.data;
+    }
   }
 
   /**
@@ -512,25 +565,11 @@ export class N8nApiClient {
         options
       );
 
-      // Canvas-group degradation is independent of the method fallback below: it inspects only
+      // Canvas-group degradation is independent of the method fallback: it inspects only
       // 400 responses, while the fallback reacts to 405.
       return await this.sendWorkflowWrite(
         payload,
-        async body => {
-          // First, try PUT method (newer n8n versions)
-          try {
-            const response = await this.client.put(`/workflows/${safeId}`, body);
-            return response.data;
-          } catch (putError: any) {
-            // If PUT fails with 405 (Method Not Allowed), try PATCH
-            if (putError.response?.status === 405) {
-              logger.debug('PUT method not supported, falling back to PATCH');
-              const response = await this.client.patch(`/workflows/${safeId}`, body);
-              return response.data;
-            }
-            throw putError;
-          }
-        },
+        body => this.putOrPatchWorkflow(safeId, body),
         options
       );
     } catch (error) {

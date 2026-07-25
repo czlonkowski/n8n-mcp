@@ -3142,6 +3142,21 @@ describe('WorkflowDiffEngine', () => {
       expect(result.errors![0].message).toContain('can only belong to one group');
     });
 
+    it('should accept a node listed twice inside one group, and dedupe it', async () => {
+      // A duplicate within one group describes the same member set, so it is a typo rather than a
+      // conflict — unlike the same node appearing in two different groups.
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [{
+          type: 'setNodeGroups',
+          nodeGroups: [{ name: 'Deliver', nodeNames: ['HTTP Request', 'Slack', 'HTTP Request'] }]
+        } as any]
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.workflow!.nodeGroups[0].nodeIds).toEqual(['http-1', 'slack-1']);
+    });
+
     it('should reject duplicate group names', async () => {
       const result = await diffEngine.applyDiff(baseWorkflow, {
         id: 'test-workflow',
@@ -3274,6 +3289,42 @@ describe('WorkflowDiffEngine', () => {
 
       expect(result.success).toBe(true);
       expect(result.workflow!.nodeGroups[0].nodeIds).toEqual(['http-1', 'slack-1']);
+    });
+
+    it('should refuse to patch a node id through patchNodeField', async () => {
+      // patchNodeField reaches arbitrary string fields by dot path, so it is a second door to the
+      // rewrite updateNode already refuses.
+      const result = await diffEngine.applyDiff(withGroup(['slack-1']), {
+        id: 'test-workflow',
+        operations: [{
+          type: 'patchNodeField',
+          nodeId: 'slack-1',
+          fieldPath: 'id',
+          patches: [{ find: 'slack-1', replace: 'new-id' }]
+        }] as any
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('node IDs are immutable');
+    });
+
+    it('should still allow patching a nested id inside node parameters', async () => {
+      // Only the node's own id is protected; ids inside parameters (e.g. Set assignments) are data.
+      const workflow = withGroup(['slack-1']);
+      const target = workflow.nodes.find((n: any) => n.id === 'http-1');
+      target.parameters = { assignments: { assignments: [{ id: 'old-assignment' }] } };
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test-workflow',
+        operations: [{
+          type: 'patchNodeField',
+          nodeId: 'http-1',
+          fieldPath: 'parameters.assignments.assignments.0.id',
+          patches: [{ find: 'old-assignment', replace: 'new-assignment' }]
+        }] as any
+      });
+
+      expect(result.success).toBe(true);
     });
 
     it('should refuse to change a node id, which would orphan group membership', async () => {

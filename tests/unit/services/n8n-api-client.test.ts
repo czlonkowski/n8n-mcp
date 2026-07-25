@@ -630,6 +630,52 @@ describe('N8nApiClient', () => {
       expect(mockAxiosInstance.put.mock.calls[2][1]).not.toHaveProperty('nodeGroups');
     });
 
+    it('keeps warning on later writes once the instance is known not to support groups', async () => {
+      // The client outlives a request. Warning only on the write that discovered the limit would
+      // let a caller author a brand-new grouping later in the session, get plain success, and no
+      // group — silently losing what they explicitly asked for.
+      const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
+      mockAxiosInstance.put
+        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
+        .mockResolvedValue({ data: { id: '123' } });
+
+      await client.updateWorkflow('123', workflow);
+
+      const laterWarnings: string[] = [];
+      await client.updateWorkflow('123', groupedWorkflow([{ id: 'g2', name: 'Authored now', nodeIds: ['b'] }]), {
+        authoredGroups: new Set(['Authored now']),
+        onWarning: w => laterWarnings.push(w),
+      });
+
+      expect(laterWarnings.join(' ')).toContain('does not support canvas groups');
+    });
+
+    it('keeps warning about dropped descriptions on later writes, but only when one was sent', async () => {
+      const withDescription = groupedWorkflow([
+        { id: 'g1', name: 'Transform', nodeIds: ['a'], description: 'cleans records' },
+      ]);
+      mockAxiosInstance.put
+        .mockRejectedValueOnce(
+          badRequest('Invalid request', {
+            message: 'Invalid request',
+            errors: [{ path: '/body/nodeGroups/0', message: 'must NOT have additional properties' }],
+          })
+        )
+        .mockResolvedValue({ data: { id: '123' } });
+
+      await client.updateWorkflow('123', withDescription);
+
+      const second: string[] = [];
+      await client.updateWorkflow('123', withDescription, { onWarning: w => second.push(w) });
+      expect(second.join(' ')).toContain('descriptions');
+
+      const third: string[] = [];
+      await client.updateWorkflow('123', groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]), {
+        onWarning: w => third.push(w),
+      });
+      expect(third).toEqual([]);
+    });
+
     it('strips descriptions but keeps the groups when the instance predates them (n8n < 2.32)', async () => {
       const workflow = groupedWorkflow([
         { id: 'g1', name: 'Transform', nodeIds: ['a'], description: 'cleans records' },
@@ -741,6 +787,25 @@ describe('N8nApiClient', () => {
 
       expect(mockAxiosInstance.put).toHaveBeenCalledTimes(1);
       expect(mockAxiosInstance.put.mock.calls[0][1]).not.toHaveProperty('nodeGroups');
+    });
+
+    it('degrades an explicit ungroup-all on an instance that has no such field', async () => {
+      // `nodeGroups: []` is a sent field, so a pre-2.28 rejection of it must omit the field and
+      // warn — not fail the write.
+      mockAxiosInstance.put
+        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
+        .mockResolvedValue({ data: { id: '123' } });
+      const warnings: string[] = [];
+
+      await client.updateWorkflow(
+        '123',
+        { ...groupedWorkflow([]), nodeGroups: [] },
+        { onWarning: w => warnings.push(w) }
+      );
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledTimes(2);
+      expect(mockAxiosInstance.put.mock.calls[1][1]).not.toHaveProperty('nodeGroups');
+      expect(warnings.join(' ')).toContain('does not support canvas groups');
     });
   });
 

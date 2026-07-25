@@ -947,6 +947,40 @@ describe('handlers-workflow-diff', () => {
       });
     });
 
+    it('should report a canvas group the rollback had to drop', async () => {
+      // A rollback can only succeed by ungrouping a group the server no longer accepts. That is a
+      // real change to the restored workflow, so it must survive the error path.
+      const before = createTestWorkflow({ versionId: 'v1' });
+      const afterPersist = createTestWorkflow({ versionId: 'v2' });
+      const validationError = new N8nValidationError('Invalid workflow structure', {});
+
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(afterPersist);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: before,
+        operationsApplied: 1,
+        errors: [],
+      });
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockImplementationOnce(async (_id: string, _wf: unknown, options: any) => {
+          options?.onWarning?.('n8n rejected node group "Stale", so it was ungrouped to save the workflow');
+          return before;
+        });
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'removeNode', nodeId: 'node1' }],
+      }, mockRepository);
+
+      expect(result.success).toBe(false);
+      expect(result.details?.warnings).toEqual([
+        'n8n rejected node group "Stale", so it was ungrouped to save the workflow',
+      ]);
+    });
+
     it('should NOT roll back when n8n rejected the PUT before persisting', async () => {
       // If versionId is unchanged after the failed PUT, the body never
       // persisted. Rolling back would be a wasted PUT and the

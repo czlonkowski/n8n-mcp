@@ -21,7 +21,7 @@ import {
   hasWebhookTrigger,
   getWebhookUrl
 } from '../services/n8n-validation';
-import { parseNodeGroupsInput } from '../services/node-groups';
+import { nodeGroupsField, parseNodeGroupsInput } from '../services/node-groups';
 import {
   N8nApiError,
   N8nNotFoundError,
@@ -606,10 +606,13 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
       };
     }
 
-    // Create workflow (n8n API expects node types in FULL form)
-    const groupWarnings: string[] = [];
+    // Canvas groups are kept out of the spread so an ungrouped create sends no `nodeGroups` key
+    // at all: Zod emits an own `nodeGroups: undefined` for a caller that sent null.
     const { nodeGroups: rawNodeGroups, ...createPayload } = input;
     const nodeGroups = parseNodeGroupsInput(rawNodeGroups);
+    const groupWarnings: string[] = [];
+
+    // Create workflow (n8n API expects node types in FULL form)
     const workflow = await client.createWorkflow(
       nodeGroups !== undefined ? { ...createPayload, nodeGroups } : createPayload,
       {
@@ -783,9 +786,7 @@ export async function handleGetWorkflowStructure(args: unknown, context?: Instan
         nodes: simplifiedNodes,
         connections: workflow.connections,
         // Canvas groups are part of the topology an editor sees, so structure mode reports them.
-        ...(Array.isArray(workflow.nodeGroups) && workflow.nodeGroups.length > 0
-          ? { nodeGroups: workflow.nodeGroups }
-          : {}),
+        ...nodeGroupsField(workflow.nodeGroups),
         nodeCount: workflow.nodes.length,
         connectionCount: Object.keys(workflow.connections).length
       }
@@ -885,6 +886,13 @@ export async function handleGetWorkflowFiltered(args: unknown, context?: Instanc
     const matchedKeys = new Set(matchedNodes.flatMap(node => [node.name, node.id]));
     const notFound = nodeNames.filter(key => !matchedKeys.has(key));
 
+    // Only groups touching the requested nodes. Their nodeIds may reference nodes outside this
+    // response — filtered mode returns a slice of the workflow, not a valid whole.
+    const matchedIds = new Set(matchedNodes.map(node => node.id));
+    const touchedGroups = (workflow.nodeGroups ?? []).filter(group =>
+      group.nodeIds.some(nodeId => matchedIds.has(nodeId))
+    );
+
     return {
       success: true,
       data: {
@@ -893,15 +901,7 @@ export async function handleGetWorkflowFiltered(args: unknown, context?: Instanc
         active: workflow.active,
         isArchived: workflow.isArchived,
         nodes: matchedNodes,
-        // Only groups touching the requested nodes. Their nodeIds may reference nodes outside
-        // this response — filtered mode returns a slice of the workflow, not a valid whole.
-        ...(() => {
-          const requestedIds = new Set(matchedNodes.map(node => node.id));
-          const intersecting = (workflow.nodeGroups ?? []).filter(group =>
-            group.nodeIds.some(nodeId => requestedIds.has(nodeId))
-          );
-          return intersecting.length > 0 ? { nodeGroups: intersecting } : {};
-        })(),
+        ...nodeGroupsField(touchedGroups),
         nodeCount: workflow.nodes.length,
         returnedCount: matchedNodes.length,
         ...(notFound.length > 0 ? { notFound } : {})
@@ -974,9 +974,7 @@ export async function handleGetWorkflowActive(args: unknown, context?: InstanceC
           connections: activeVersion.connections,
           // The published version's own groups — NOT workflow.nodeGroups, which is the draft's
           // and would describe frames around nodes that may not exist in this graph.
-          ...(Array.isArray(activeVersion.nodeGroups) && activeVersion.nodeGroups.length > 0
-            ? { nodeGroups: activeVersion.nodeGroups }
-            : {}),
+          ...nodeGroupsField(activeVersion.nodeGroups),
         }
       };
     }
@@ -997,9 +995,7 @@ export async function handleGetWorkflowActive(args: unknown, context?: InstanceC
           nodes: workflow.nodes,
           connections: workflow.connections,
           // No draft/publish split here: the workflow body IS the running graph, so its groups apply.
-          ...(Array.isArray(workflow.nodeGroups) && workflow.nodeGroups.length > 0
-            ? { nodeGroups: workflow.nodeGroups }
-            : {}),
+          ...nodeGroupsField(workflow.nodeGroups),
         }
       };
     }
@@ -2984,9 +2980,7 @@ export async function handleDeployTemplate(
       connections: workflow.connections,
       // Templates keep their node IDs through deployment (only typeVersion and credentials are
       // touched), so any canvas groups they carry still address the right nodes.
-      ...(Array.isArray(workflow.nodeGroups) && workflow.nodeGroups.length > 0
-        ? { nodeGroups: workflow.nodeGroups }
-        : {}),
+      ...nodeGroupsField(workflow.nodeGroups),
       settings: workflow.settings || { executionOrder: 'v1' }
     });
 

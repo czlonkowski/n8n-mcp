@@ -263,10 +263,7 @@ export class WorkflowValidator {
    * the server refuses rather than blocking the write. Trigger membership uses node-type metadata
    * from the database, because a type's name does not reliably say whether it is a trigger.
    */
-  private validateNodeGroups(
-    workflow: WorkflowJson,
-    result: WorkflowValidationResult
-  ): void {
+  private validateNodeGroups(workflow: WorkflowJson, result: WorkflowValidationResult): void {
     if (!Array.isArray(workflow.nodeGroups) || workflow.nodeGroups.length === 0) return;
 
     const issues = checkNodeGroups(

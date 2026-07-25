@@ -260,9 +260,16 @@ describe('node-groups', () => {
       expect(classifyGroupError(error, groups).kind).toBe('unrelated');
     });
 
-    it('ignores non-400 responses and requests that carried no groups', () => {
+    it('ignores non-400 responses', () => {
       expect(classifyGroupError(new N8nApiError('Group "X" is invalid', 500), groups).kind).toBe('unrelated');
-      expect(classifyGroupError(new N8nApiError('Group "X" is invalid', 400), []).kind).toBe('unrelated');
+    });
+
+    it('still classifies a rejection when the sent payload was an empty array', () => {
+      // `nodeGroups: []` means "ungroup everything" — a field a pre-2.28 instance rejects as an
+      // unknown property, which must degrade to omitting it rather than failing the write.
+      const error = new N8nApiError('request/body must NOT have additional properties', 400);
+
+      expect(classifyGroupError(error, []).kind).toBe('schema-field');
     });
   });
 

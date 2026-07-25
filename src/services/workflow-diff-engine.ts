@@ -36,7 +36,7 @@ import {
 import { Workflow, WorkflowNode, WorkflowConnection, WorkflowNodeGroup } from '../types/n8n-api';
 import { Logger } from '../utils/logger';
 import { validateWorkflowNode, validateWorkflowConnections } from './n8n-validation';
-import { repairNodeGroups } from './node-groups';
+import { repairNodeGroups, toWorkflowNodeGroup } from './node-groups';
 import { sanitizeNode, sanitizeWorkflowNodes } from './node-sanitizer';
 import { isActivatableTrigger } from '../utils/node-type-utils';
 
@@ -606,6 +606,13 @@ export class WorkflowDiffEngine {
     const pathSegments = operation.fieldPath.split('.');
     if (pathSegments.some(k => DANGEROUS_PATH_KEYS.has(k))) {
       return `patchNodeField: fieldPath "${operation.fieldPath}" contains a forbidden key (__proto__, constructor, or prototype)`;
+    }
+
+    // Same reason updateNode refuses it: canvas groups and pinned data reference the node id, so
+    // rewriting it here would orphan them. Only the node's OWN id is protected — a nested id such
+    // as `parameters.assignments.assignments[0].id` is ordinary node data.
+    if (pathSegments[0] === 'id') {
+      return `Cannot patch the id of a node: node IDs are immutable because canvas groups and pinned data reference them. Remove and re-add the node instead.`;
     }
 
     if (!Array.isArray(operation.patches) || operation.patches.length === 0) {
@@ -1364,7 +1371,10 @@ export class WorkflowDiffEngine {
 
       for (const node of members) {
         const owner = claimedNodes.get(node.id);
-        if (owner) {
+        // Listing a node twice inside one group is a harmless duplicate — the member set is the
+        // same either way, and applySetNodeGroups dedupes it. Only a claim by a DIFFERENT group
+        // is a conflict n8n would reject.
+        if (owner && owner !== name) {
           return `setNodeGroups: node "${node.name}" is in both "${owner}" and "${name}" — a node can only belong to one group`;
         }
         claimedNodes.set(node.id, name);
@@ -1415,19 +1425,22 @@ export class WorkflowDiffEngine {
       const members = this.resolveGroupMembers(workflow, group);
       if (typeof members === 'string') continue; // validation already rejected this batch
 
-      const resolved: WorkflowNodeGroup = {
-        id: group.id?.trim() || uuidv4(),
-        name: group.name.trim(),
-        nodeIds: members.map(node => node.id)
-      };
-      if (typeof group.description === 'string' && group.description.trim()) {
-        resolved.description = group.description.trim();
-      }
+      const resolved = toWorkflowNodeGroup({
+        id: group.id,
+        name: group.name,
+        // Deduped: a node listed twice in one group is a typo, not a different member set.
+        nodeIds: [...new Set(members.map(node => node.id))],
+        description: group.description
+      });
       groups.push(resolved);
       this.authoredGroupNames.add(resolved.name);
     }
 
     workflow.nodeGroups = groups;
+  }
+
+  private authoredGroupNamesOrUndefined(): string[] | undefined {
+    return this.authoredGroupNames.size > 0 ? [...this.authoredGroupNames] : undefined;
   }
 
   /**
@@ -1437,10 +1450,6 @@ export class WorkflowDiffEngine {
    * batch keeps its membership, and so a group is judged against the final graph instead of an
    * intermediate one.
    */
-  private authoredGroupNamesOrUndefined(): string[] | undefined {
-    return this.authoredGroupNames.size > 0 ? [...this.authoredGroupNames] : undefined;
-  }
-
   private finalizeNodeGroups(workflow: Workflow): void {
     if (!Array.isArray(workflow.nodeGroups) || workflow.nodeGroups.length === 0) return;
 

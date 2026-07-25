@@ -367,6 +367,7 @@ export async function handleUpdatePartialWorkflow(
       // versionCounter / updatedAt — whichever the running n8n exposes). If
       // unchanged, the body never persisted and rolling back would be both
       // a wasted PUT and a misleading "(restored to prior state)" message.
+
       // Canvas-group adjustments made while saving (a pruned member, a group n8n rejected).
       // Groups this diff authored are passed through so n8n's rejection of one surfaces as an
       // error instead of being quietly ungrouped.
@@ -446,6 +447,10 @@ export async function handleUpdatePartialWorkflow(
               rollbackPerformed,
               ...(rollbackErrorMessage ? { rollbackError: rollbackErrorMessage } : {}),
               ...(workflowBefore.versionId ? { priorVersionId: workflowBefore.versionId } : {}),
+              // A rollback can have to drop a canvas group the server no longer accepts. That is a
+              // real change to the restored workflow, so it must not be lost just because this path
+              // ends in an error rather than the success response.
+              ...(groupWarnings.length > 0 ? { warnings: groupWarnings } : {}),
             };
             const suffix = rollbackPerformed
               ? ' (workflow restored to prior state)'

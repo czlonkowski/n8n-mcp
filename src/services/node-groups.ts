@@ -27,9 +27,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { WorkflowNodeGroup, Workflow, WorkflowNode } from '../types/n8n-api';
 import { normalizeMcpJsonValue } from '../utils/mcp-input-normalizer';
 
-/** Keys the n8n API accepts inside a group object (its schema is `additionalProperties: false`). */
-const GROUP_KEYS = ['id', 'name', 'nodeIds', 'description'] as const;
-
 /** n8n's cap on a group description (n8n 2.32+). */
 export const GROUP_DESCRIPTION_MAX_LENGTH = 155;
 
@@ -65,20 +62,24 @@ export type NodeGroupInput = z.infer<typeof nodeGroupInputSchema>;
 export function parseNodeGroupsInput(value: unknown): WorkflowNodeGroup[] | undefined {
   if (value === undefined || value === null) return undefined;
   const groups = z.array(nodeGroupInputSchema).parse(normalizeMcpJsonValue(value));
-  return normalizeGroupInput(groups);
+  return groups.map(toWorkflowNodeGroup);
 }
 
-/** Fill in the ids n8n requires. Kept out of the schema so tool input types stay simple. */
-export function normalizeGroupInput(groups: NodeGroupInput[]): WorkflowNodeGroup[] {
-  return groups.map(group => {
-    const normalized: WorkflowNodeGroup = {
-      id: group.id ?? uuidv4(),
-      name: group.name,
-      nodeIds: group.nodeIds
-    };
-    if (group.description) normalized.description = group.description;
-    return normalized;
-  });
+/**
+ * Shape one group the way n8n stores it: trimmed, with the id n8n requires filled in (kept out of
+ * the schema so tool input types stay simple) and a blank description dropped rather than sent.
+ * Shared with the `setNodeGroups` diff operation so both entry points produce identical groups.
+ */
+export function toWorkflowNodeGroup(group: NodeGroupInput): WorkflowNodeGroup {
+  const normalized: WorkflowNodeGroup = {
+    id: group.id?.trim() || uuidv4(),
+    name: group.name.trim(),
+    nodeIds: group.nodeIds
+  };
+  // typeof, not `?.trim()`: the diff operation's description arrives unvalidated (z.any()).
+  const description = typeof group.description === 'string' ? group.description.trim() : '';
+  if (description) normalized.description = description;
+  return normalized;
 }
 
 export interface NodeGroupIssue {
@@ -118,13 +119,20 @@ function groupLabel(group: WorkflowNodeGroup): string {
   return group.name?.trim() ? group.name : group.id;
 }
 
-export function hasNodeGroups(workflow: Pick<Workflow, 'nodeGroups'>): boolean {
-  return Array.isArray(workflow.nodeGroups) && workflow.nodeGroups.length > 0;
+/**
+ * Spreadable `nodeGroups` field for read responses: omitted entirely when the workflow has no
+ * groups, so ungrouped workflows read exactly as they did before groups existed.
+ */
+export function nodeGroupsField(
+  groups: WorkflowNodeGroup[] | undefined
+): { nodeGroups?: WorkflowNodeGroup[] } {
+  return Array.isArray(groups) && groups.length > 0 ? { nodeGroups: groups } : {};
 }
 
 /**
- * Reduce each group to the keys the API accepts. `description` only exists on n8n 2.32+; older
- * instances reject the whole write when it is present, so it is opt-in.
+ * Reduce each group to the keys the n8n API accepts: its group schema is
+ * `additionalProperties: false`, so one stray key (a collapsed flag, a colour, ...) fails the whole
+ * write. `description` only exists on n8n 2.32+, which is why it is opt-in.
  */
 export function sanitizeGroupsForApi(
   groups: unknown,
@@ -132,17 +140,16 @@ export function sanitizeGroupsForApi(
 ): WorkflowNodeGroup[] {
   if (!Array.isArray(groups)) return [];
 
-  const allowed = options.includeDescription
-    ? GROUP_KEYS
-    : GROUP_KEYS.filter(key => key !== 'description');
-
   return groups.filter(isGroupLike).map(group => {
-    const sanitized: Record<string, unknown> = {};
-    for (const key of allowed) {
-      if (group[key] !== undefined) sanitized[key] = group[key];
+    const sanitized: WorkflowNodeGroup = {
+      id: group.id,
+      name: group.name,
+      nodeIds: group.nodeIds.filter(id => typeof id === 'string')
+    };
+    if (options.includeDescription && group.description !== undefined) {
+      sanitized.description = group.description;
     }
-    sanitized.nodeIds = group.nodeIds.filter(id => typeof id === 'string');
-    return sanitized as unknown as WorkflowNodeGroup;
+    return sanitized;
   });
 }
 
@@ -323,7 +330,10 @@ export function classifyGroupError(
   const apiError = error as { statusCode?: number; message?: string; details?: unknown } | null;
   const message = typeof apiError?.message === 'string' ? apiError.message : '';
 
-  if (!apiError || apiError.statusCode !== 400 || sentGroups.length === 0) {
+  // Callers only consult this after sending a payload that carried a `nodeGroups` key, so an
+  // empty array still counts as "sent": `nodeGroups: []` (ungroup everything) is exactly what a
+  // pre-2.28 instance rejects as an unknown property, and that must still degrade to omitting it.
+  if (!apiError || apiError.statusCode !== 400) {
     return { kind: 'unrelated', message };
   }
 
