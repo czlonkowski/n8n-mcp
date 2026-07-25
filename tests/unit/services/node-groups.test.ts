@@ -271,7 +271,7 @@ describe('node-groups', () => {
     it('treats a pathless unsupported-property rejection as a candidate schema-field problem', () => {
       const error = new N8nApiError('request/body must NOT have additional properties', 400);
 
-      expect(classifyGroupError(error, groups).kind).toBe('schema-field');
+      expect(classifyGroupError(error).kind).toBe('schema-field');
     });
 
     it('ignores an unsupported-property rejection whose path names another field', () => {
@@ -280,7 +280,7 @@ describe('node-groups', () => {
       // the failure this module exists to prevent, on an instance that supports groups fine.
       const error = new N8nApiError('request/body/settings must NOT have additional properties', 400);
 
-      expect(classifyGroupError(error, groups).kind).toBe('unrelated');
+      expect(classifyGroupError(error).kind).toBe('unrelated');
     });
 
     it('extracts the group id when n8n reports one, so a quoted name cannot mislead it', () => {
@@ -288,7 +288,7 @@ describe('node-groups', () => {
         'Node group "Say "hi"" (9b1c8e2a-4d3f-4a6b-8c7d-1e2f3a4b5c6d) must form a single connected subgraph with a single entry and exit.',
         400
       );
-      const classification = classifyGroupError(error, groups);
+      const classification = classifyGroupError(error);
 
       expect(classification.kind).toBe('semantic');
       expect(classification.groupId).toBe('9b1c8e2a-4d3f-4a6b-8c7d-1e2f3a4b5c6d');
@@ -301,7 +301,7 @@ describe('node-groups', () => {
         400
       );
 
-      expect(classifyGroupError(error, groups).kind).toBe('schema-description');
+      expect(classifyGroupError(error).kind).toBe('schema-description');
     });
 
     it('prefers stripping descriptions when the rejection names nodeGroups without a path', () => {
@@ -311,7 +311,7 @@ describe('node-groups', () => {
       );
       const withDescription = [{ ...groups[0], description: 'cleans records' }];
 
-      expect(classifyGroupError(error, withDescription).kind).toBe('schema-description');
+      expect(classifyGroupError(error).kind).toBe('schema-description');
     });
 
     it('extracts the group name from a dangling-member rejection', () => {
@@ -319,7 +319,7 @@ describe('node-groups', () => {
         'Group "Transform records" references node ID "ccc" that does not exist in the workflow.',
         400
       );
-      const classification = classifyGroupError(error, groups);
+      const classification = classifyGroupError(error);
 
       expect(classification.kind).toBe('semantic');
       expect(classification.groupName).toBe('Transform records');
@@ -330,7 +330,7 @@ describe('node-groups', () => {
         'Node group "Transform records" (9b1c8e2a-4d3f-4a6b-8c7d-1e2f3a4b5c6d) must form a single connected subgraph with a single entry and exit.',
         400
       );
-      const classification = classifyGroupError(error, groups);
+      const classification = classifyGroupError(error);
 
       expect(classification.kind).toBe('semantic');
       expect(classification.groupName).toBe('Transform records');
@@ -339,11 +339,11 @@ describe('node-groups', () => {
     it('ignores errors unrelated to groups', () => {
       const error = new N8nApiError('request/body must have required property \'name\'', 400);
 
-      expect(classifyGroupError(error, groups).kind).toBe('unrelated');
+      expect(classifyGroupError(error).kind).toBe('unrelated');
     });
 
     it('ignores non-400 responses', () => {
-      expect(classifyGroupError(new N8nApiError('Group "X" is invalid', 500), groups).kind).toBe('unrelated');
+      expect(classifyGroupError(new N8nApiError('Group "X" is invalid', 500)).kind).toBe('unrelated');
     });
 
     it('still classifies a rejection when the sent payload was an empty array', () => {
@@ -351,7 +351,7 @@ describe('node-groups', () => {
       // unknown property, which must degrade to omitting it rather than failing the write.
       const error = new N8nApiError('request/body must NOT have additional properties', 400);
 
-      expect(classifyGroupError(error, []).kind).toBe('schema-field');
+      expect(classifyGroupError(error).kind).toBe('schema-field');
     });
   });
 

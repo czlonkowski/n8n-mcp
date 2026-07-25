@@ -382,10 +382,7 @@ export interface GroupErrorClassification {
  * (a semantic error, never worth remembering) is what keeps the capability memo from being
  * poisoned by a normal validation failure.
  */
-export function classifyGroupError(
-  error: unknown,
-  sentGroups: WorkflowNodeGroup[]
-): GroupErrorClassification {
+export function classifyGroupError(error: unknown): GroupErrorClassification {
   const apiError = error as { statusCode?: number; message?: string; details?: unknown } | null;
   const message = typeof apiError?.message === 'string' ? apiError.message : '';
 

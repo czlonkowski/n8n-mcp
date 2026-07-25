@@ -402,7 +402,7 @@ export class N8nApiClient {
       } catch (error) {
         const apiError = handleN8nApiError(error);
         const next = this.degradeGroupsAfterRejection(
-          classifyGroupError(apiError, groups),
+          classifyGroupError(apiError),
           groups,
           options
         );
