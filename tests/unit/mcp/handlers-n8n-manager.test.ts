@@ -1923,6 +1923,74 @@ describe('handlers-n8n-manager', () => {
     });
   });
 
+  describe('handleWorkflowVersions - rollback', () => {
+    // Regression: the handler resolved its API client only when an InstanceContext was supplied,
+    // which skipped getN8nApiClient's environment-variable fallback. On a plain N8N_API_URL setup
+    // `rollback` therefore always answered "n8n API not configured" while `list`/`get` worked,
+    // because those read the local version store instead of the API.
+    async function mockRestore(result: Record<string, unknown>) {
+      const { WorkflowVersioningService } = await import('@/services/workflow-versioning-service');
+      const restoreVersion = vi.fn().mockResolvedValue(result);
+      vi.mocked(WorkflowVersioningService).mockImplementation(() => ({ restoreVersion }) as any);
+      return { WorkflowVersioningService, restoreVersion };
+    }
+
+    it('rolls back without an instance context, using the environment configuration', async () => {
+      const { WorkflowVersioningService, restoreVersion } = await mockRestore({
+        success: true,
+        message: 'Successfully restored workflow to version 3',
+        workflowId: 'wf-1',
+        toVersionId: 12,
+        backupCreated: true,
+      });
+
+      const result = await handlers.handleWorkflowVersions(
+        { mode: 'rollback', workflowId: 'wf-1' },
+        mockRepository
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.error).toBeUndefined();
+      expect(restoreVersion).toHaveBeenCalledWith('wf-1', undefined, undefined);
+      // The versioning service must receive a real client, not undefined.
+      expect(vi.mocked(WorkflowVersioningService).mock.calls[0][1]).toBeDefined();
+    });
+
+    it('reports the restore failure rather than a configuration error', async () => {
+      await mockRestore({
+        success: false,
+        message: 'Version 99 not found',
+        workflowId: 'wf-1',
+        toVersionId: 99,
+        backupCreated: false,
+      });
+
+      const result = await handlers.handleWorkflowVersions(
+        { mode: 'rollback', workflowId: 'wf-1', versionId: 99 },
+        mockRepository
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Version 99 not found');
+      expect(result.error).not.toContain('not configured');
+    });
+
+    it('still refuses when no n8n API is configured at all', async () => {
+      await mockRestore({ success: true, message: 'ok', workflowId: 'wf-1', toVersionId: 1, backupCreated: true });
+      vi.mocked(getN8nApiConfig).mockReturnValue(null);
+      handlers = await import('@/mcp/handlers-n8n-manager');
+      (handlers.getN8nApiClient as any)(undefined); // force the singleton to re-resolve
+
+      const result = await handlers.handleWorkflowVersions(
+        { mode: 'rollback', workflowId: 'wf-1' },
+        mockRepository
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not configured');
+    });
+  });
+
   describe('handleUpdateWorkflow - canvas groups', () => {
     const storedGroups = [{ id: 'g1', name: 'Transform', nodeIds: ['node-1'] }];
 

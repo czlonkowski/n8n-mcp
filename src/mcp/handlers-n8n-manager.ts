@@ -2675,7 +2675,12 @@ export async function handleWorkflowVersions(
       };
     }
 
-    const client = context ? getN8nApiClient(context) : null;
+    // Resolve the client the same way every other tool does. Gating on `context` skipped
+    // getN8nApiClient's environment-variable fallback, so on a plain N8N_API_URL setup — no
+    // instance context — `rollback` always answered "n8n API not configured" while `list`/`get`
+    // worked, because they read the local version store instead. Multi-tenant isolation is
+    // enforced inside getN8nApiClient and by the scope check above, not by this ternary.
+    const client = getN8nApiClient(context);
     const versioningService = new WorkflowVersioningService(repository, client || undefined, getInstanceScopeId(context));
 
     switch (input.mode) {
