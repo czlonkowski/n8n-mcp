@@ -117,6 +117,25 @@ export interface UpdateNameOperation extends DiffOperation {
   name: string;
 }
 
+/**
+ * Replace the workflow's canvas groups (n8n 2.28+). Full replacement, like replaceConnections:
+ * pass every group you want to keep, or an empty array to ungroup everything.
+ *
+ * Members are addressed by name or by ID — exactly one of nodeNames/nodeIds per group. n8n itself
+ * decides whether the resulting shape is groupable (a connected run, no trigger inside); its
+ * rejection is returned verbatim rather than second-guessed here.
+ */
+export interface SetNodeGroupsOperation extends DiffOperation {
+  type: 'setNodeGroups';
+  nodeGroups: Array<{
+    id?: string;          // Generated when omitted
+    name: string;
+    nodeNames?: string[]; // Member node names
+    nodeIds?: string[];   // Member node IDs
+    description?: string; // n8n 2.32+ only; silently dropped on older instances
+  }>;
+}
+
 export interface AddTagOperation extends DiffOperation {
   type: 'addTag';
   tag: string;
@@ -175,6 +194,7 @@ export type WorkflowDiffOperation =
   | RewireConnectionOperation
   | UpdateSettingsOperation
   | UpdateNameOperation
+  | SetNodeGroupsOperation
   | AddTagOperation
   | RemoveTagOperation
   | ActivateWorkflowOperation
@@ -213,6 +233,12 @@ export interface WorkflowDiffResult {
   tagsToAdd?: string[];
   tagsToRemove?: string[];
   transferToProjectId?: string; // For transferWorkflow operation - uses dedicated API call
+  /**
+   * Names of canvas groups this diff authored (via setNodeGroups). The caller passes these to the
+   * API client so an n8n rejection of a group the user just asked for surfaces as an error instead
+   * of being silently ungrouped.
+   */
+  authoredGroupNames?: string[];
 }
 
 // Helper type for node reference (supports both ID and name)
@@ -233,7 +259,7 @@ export function isConnectionOperation(op: WorkflowDiffOperation): op is
   return ['addConnection', 'removeConnection', 'rewireConnection', 'cleanStaleConnections', 'replaceConnections'].includes(op.type);
 }
 
-export function isMetadataOperation(op: WorkflowDiffOperation): op is 
-  UpdateSettingsOperation | UpdateNameOperation | AddTagOperation | RemoveTagOperation {
-  return ['updateSettings', 'updateName', 'addTag', 'removeTag'].includes(op.type);
+export function isMetadataOperation(op: WorkflowDiffOperation): op is
+  UpdateSettingsOperation | UpdateNameOperation | SetNodeGroupsOperation | AddTagOperation | RemoveTagOperation {
+  return ['updateSettings', 'updateName', 'setNodeGroups', 'addTag', 'removeTag'].includes(op.type);
 }

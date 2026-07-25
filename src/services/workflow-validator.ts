@@ -18,6 +18,7 @@ import { isAIToolSubNode } from './ai-tool-validators';
 import { isTriggerNode } from '../utils/node-type-utils';
 import { isNonExecutableNode } from '../utils/node-classification';
 import { validateConditionNodeStructure } from './n8n-validation';
+import { checkNodeGroups } from './node-groups';
 import { ToolVariantGenerator } from './tool-variant-generator';
 const logger = new Logger({ prefix: '[WorkflowValidator]' });
 
@@ -73,6 +74,7 @@ interface WorkflowJson {
   name?: string;
   nodes: WorkflowNode[];
   connections: WorkflowConnection;
+  nodeGroups?: Array<{ id: string; name: string; nodeIds: string[]; description?: string }>;
   settings?: any;
   staticData?: any;
   pinData?: any;
@@ -201,6 +203,10 @@ export class WorkflowValidator {
           this.checkWorkflowPatterns(workflow, result, profile);
         }
 
+        // Canvas groups (n8n 2.28+). Reference-level checks only — whether the members form a
+        // groupable shape is decided by n8n on write, and it names the group it rejects.
+        this.validateNodeGroups(workflow, result);
+
         // Validate AI-specific nodes (AI Agent, Chat Trigger, AI tools)
         if (workflow.nodes.length > 0 && hasAINodes(workflow)) {
           const aiIssues = validateAISpecificNodes(workflow);
@@ -248,6 +254,41 @@ export class WorkflowValidator {
 
     result.valid = result.errors.length === 0;
     return result;
+  }
+
+  /**
+   * Report canvas-group problems n8n would reject on write.
+   *
+   * Always warnings, never errors: a frame is presentation, and n8n-mcp repairs or ungroups what
+   * the server refuses rather than blocking the write. Trigger membership uses node-type metadata
+   * from the database, because a type's name does not reliably say whether it is a trigger.
+   */
+  private validateNodeGroups(
+    workflow: WorkflowJson,
+    result: WorkflowValidationResult
+  ): void {
+    if (!Array.isArray(workflow.nodeGroups) || workflow.nodeGroups.length === 0) return;
+
+    const issues = checkNodeGroups(
+      { nodes: workflow.nodes as any, nodeGroups: workflow.nodeGroups },
+      {
+        isTrigger: node => {
+          const nodeInfo = this.nodeRepository.getNode(
+            NodeTypeNormalizer.normalizeToFullForm(node.type)
+          );
+          return nodeInfo ? Boolean(nodeInfo.isTrigger) : isTriggerNode(node.type);
+        }
+      }
+    );
+
+    for (const issue of issues) {
+      result.warnings.push({
+        type: 'warning',
+        code: issue.code,
+        message: issue.message,
+        details: { group: issue.group }
+      });
+    }
   }
 
   /**

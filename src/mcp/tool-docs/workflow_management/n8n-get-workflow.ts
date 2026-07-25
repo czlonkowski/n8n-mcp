@@ -36,9 +36,11 @@ export const n8nGetWorkflowDoc: ToolDocumentation = {
 - full: Draft workflow object (id, name, active, nodes[], connections{}, settings, createdAt, updatedAt, activeVersionId)
 - details: Full draft + executionStats (successCount, errorCount, lastExecution, etc.)
 - active: Published graph as { id, name, active, activeVersionId, versionCreatedAt, versionName, nodes[], connections{}, settings, tags, createdAt, updatedAt }. \`versionCreatedAt\` is the version row's creation time (within ~1s of the publish event in current n8n). Returns { success: false, code: 'NO_ACTIVE_VERSION' } if the workflow has no published version.
-- structure: { nodes: [...], connections: {...} } - topology only
-- filtered: { id, name, active, isArchived, nodes[] (full config of matched nodes only), nodeCount (total in workflow), returnedCount, notFound? (lookup keys that matched nothing) }
-- minimal: { id, name, active, tags, createdAt, updatedAt }`,
+- structure: { nodes: [...], connections: {...}, nodeGroups? } - topology only
+- filtered: { id, name, active, isArchived, nodes[] (full config of matched nodes only), nodeGroups? (only groups touching the requested nodes; their nodeIds can point outside this response), nodeCount (total in workflow), returnedCount, notFound? (lookup keys that matched nothing) }
+- minimal: { id, name, active, tags, createdAt, updatedAt }
+
+Canvas groups (n8n 2.28+) appear as \`nodeGroups: [{id, name, nodeIds, description?}]\` when the workflow has any. \`full\`/\`details\` return the draft's groups; \`active\` returns the published version's own groups, not the draft's.`,
     examples: [
       '// Get draft workflow (default)\nn8n_get_workflow({id: "abc123"})',
       '// Get draft + execution stats\nn8n_get_workflow({id: "abc123", mode: "details"})',

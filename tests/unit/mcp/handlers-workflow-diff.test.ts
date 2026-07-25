@@ -187,7 +187,98 @@ describe('handlers-workflow-diff', () => {
 
       expect(mockApiClient.getWorkflow).toHaveBeenCalledWith('test-workflow-id');
       expect(mockDiffEngine.applyDiff).toHaveBeenCalledWith(testWorkflow, diffRequest);
-      expect(mockApiClient.updateWorkflow).toHaveBeenCalledWith('test-workflow-id', updatedWorkflow);
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledWith('test-workflow-id', updatedWorkflow, expect.objectContaining({ onWarning: expect.any(Function) }));
+    });
+
+    it('passes a setNodeGroups payload through to the engine', async () => {
+      // The operations schema is a closed z.object: a field it does not declare is stripped
+      // silently, and a setNodeGroups op arriving empty would read as "ungroup everything".
+      const testWorkflow = createTestWorkflow();
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: testWorkflow,
+        operationsApplied: 1,
+        authoredGroupNames: ['Deliver'],
+      });
+      mockApiClient.updateWorkflow.mockResolvedValue(testWorkflow);
+
+      await handleUpdatePartialWorkflow(
+        {
+          id: 'test-workflow-id',
+          operations: [{ type: 'setNodeGroups', nodeGroups: [{ name: 'Deliver', nodeNames: ['Slack'] }] }],
+        },
+        mockRepository
+      );
+
+      const [, request] = mockDiffEngine.applyDiff.mock.calls[0];
+      expect(request.operations[0].nodeGroups).toEqual([{ name: 'Deliver', nodeNames: ['Slack'] }]);
+    });
+
+    it('passes a setNodeGroups payload through when the transport stringified it', async () => {
+      const testWorkflow = createTestWorkflow();
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockDiffEngine.applyDiff.mockResolvedValue({ success: true, workflow: testWorkflow, operationsApplied: 1 });
+      mockApiClient.updateWorkflow.mockResolvedValue(testWorkflow);
+
+      await handleUpdatePartialWorkflow(
+        {
+          id: 'test-workflow-id',
+          operations: [{ type: 'setNodeGroups', nodeGroups: '[{"name":"Deliver","nodeNames":["Slack"]}]' }],
+        },
+        mockRepository
+      );
+
+      const [, request] = mockDiffEngine.applyDiff.mock.calls[0];
+      expect(request.operations[0].nodeGroups).toEqual([{ name: 'Deliver', nodeNames: ['Slack'] }]);
+    });
+
+    it('tells the client which groups were authored, so a rejection is not swallowed', async () => {
+      const testWorkflow = createTestWorkflow();
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: testWorkflow,
+        operationsApplied: 1,
+        authoredGroupNames: ['Deliver'],
+      });
+      mockApiClient.updateWorkflow.mockResolvedValue(testWorkflow);
+
+      await handleUpdatePartialWorkflow(
+        {
+          id: 'test-workflow-id',
+          operations: [{ type: 'setNodeGroups', nodeGroups: [{ name: 'Deliver', nodeNames: ['Slack'] }] }],
+        },
+        mockRepository
+      );
+
+      const [, , options] = mockApiClient.updateWorkflow.mock.calls[0];
+      expect(options.authoredGroups).toEqual(new Set(['Deliver']));
+    });
+
+    it('reports canvas-group adjustments made while saving', async () => {
+      const testWorkflow = createTestWorkflow();
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: testWorkflow,
+        operationsApplied: 1,
+        applied: [0],
+        failed: [],
+      });
+      mockApiClient.updateWorkflow.mockImplementation(async (_id: string, _wf: unknown, options: any) => {
+        options?.onWarning?.('n8n rejected node group "Broken", so it was ungrouped to save the workflow');
+        return testWorkflow;
+      });
+
+      const result = await handleUpdatePartialWorkflow(
+        { id: 'test-workflow-id', operations: [{ type: 'removeNode', nodeId: 'slack-node' }] },
+        mockRepository
+      );
+
+      expect(result.details?.warnings).toEqual([
+        { operation: -1, message: 'n8n rejected node group "Broken", so it was ungrouped to save the workflow' },
+      ]);
     });
 
     it('resolves without waiting for stalled telemetry after Set v3.4 addNode + addConnection (#944)', async () => {
@@ -841,7 +932,7 @@ describe('handlers-workflow-diff', () => {
 
       // updateWorkflow called twice: once with mutated body, once with snapshot.
       expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
-      expect(mockApiClient.updateWorkflow).toHaveBeenNthCalledWith(2, 'test-id', before);
+      expect(mockApiClient.updateWorkflow).toHaveBeenNthCalledWith(2, 'test-id', before, expect.objectContaining({ onWarning: expect.any(Function) }));
 
       expect(result).toEqual({
         success: false,

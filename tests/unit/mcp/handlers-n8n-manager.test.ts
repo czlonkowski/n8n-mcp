@@ -304,7 +304,7 @@ describe('handlers-n8n-manager', () => {
       });
 
       // Should send input as-is to API (n8n expects FULL form: n8n-nodes-base.*)
-      expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input);
+      expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input, expect.objectContaining({ onWarning: expect.any(Function) }));
       expect(n8nValidation.validateWorkflowStructure).toHaveBeenCalledWith(input);
     });
 
@@ -359,7 +359,7 @@ describe('handlers-n8n-manager', () => {
 
       expect(result.success).toBe(true);
       expect(n8nValidation.validateWorkflowStructure).toHaveBeenCalledWith(normalizedInput);
-      expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(normalizedInput);
+      expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(normalizedInput, expect.objectContaining({ onWarning: expect.any(Function) }));
     });
 
     it('should handle validation errors', async () => {
@@ -561,7 +561,7 @@ describe('handlers-n8n-manager', () => {
         const result = await handlers.handleCreateWorkflow(input);
 
         expect(result.success).toBe(true);
-        expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input);
+        expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input, expect.objectContaining({ onWarning: expect.any(Function) }));
       });
 
       it('should allow FULL form @n8n/n8n-nodes-langchain.* without error', async () => {
@@ -587,7 +587,7 @@ describe('handlers-n8n-manager', () => {
         const result = await handlers.handleCreateWorkflow(input);
 
         expect(result.success).toBe(true);
-        expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input);
+        expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input, expect.objectContaining({ onWarning: expect.any(Function) }));
       });
 
       it('should detect SHORT form in mixed FULL/SHORT workflow', async () => {
@@ -770,7 +770,8 @@ describe('handlers-n8n-manager', () => {
       expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(
         expect.objectContaining({
           projectId: 'project-abc-123',
-        })
+        }),
+        expect.objectContaining({ onWarning: expect.any(Function) })
       );
     });
   });
@@ -1919,6 +1920,99 @@ describe('handlers-n8n-manager', () => {
       });
 
       expect(result.error).toMatch(/mode:\s*'preview'/);
+    });
+  });
+
+  describe('handleUpdateWorkflow - canvas groups', () => {
+    const storedGroups = [{ id: 'g1', name: 'Transform', nodeIds: ['node-1'] }];
+
+    function mockCurrentGroupedWorkflow(): void {
+      const workflow = createTestWorkflow({
+        id: 'wf-1',
+        nodes: [{ id: 'node-1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [0, 0], parameters: {} }],
+      });
+      (workflow as any).nodeGroups = storedGroups;
+      mockApiClient.getWorkflow.mockResolvedValue(workflow);
+      mockApiClient.updateWorkflow.mockResolvedValue(workflow);
+    }
+
+    function sentPayload(): any {
+      return mockApiClient.updateWorkflow.mock.calls[0][1];
+    }
+
+    it('keeps the stored groups when the caller does not mention them', async () => {
+      // The common case, and the one that used to fail with 400: an edit unrelated to grouping.
+      mockCurrentGroupedWorkflow();
+
+      await handlers.handleUpdateWorkflow({ id: 'wf-1', name: 'Renamed' });
+
+      expect(sentPayload().nodeGroups).toEqual(storedGroups);
+    });
+
+    it('treats an explicit empty array as "ungroup everything"', async () => {
+      mockCurrentGroupedWorkflow();
+
+      await handlers.handleUpdateWorkflow({ id: 'wf-1', nodeGroups: [] });
+
+      expect(sentPayload().nodeGroups).toEqual([]);
+    });
+
+    it('treats null as not provided, keeping the stored groups (#774 clients)', async () => {
+      mockCurrentGroupedWorkflow();
+
+      const result = await handlers.handleUpdateWorkflow({ id: 'wf-1', name: 'Renamed', nodeGroups: null });
+
+      expect(result.success).toBe(true);
+      expect(sentPayload().nodeGroups).toEqual(storedGroups);
+    });
+
+    it('replaces the groups and generates missing ids', async () => {
+      mockCurrentGroupedWorkflow();
+
+      await handlers.handleUpdateWorkflow({
+        id: 'wf-1',
+        nodeGroups: [{ name: 'Fresh', nodeIds: ['node-1'] }],
+      });
+
+      const sent = sentPayload().nodeGroups;
+      expect(sent).toHaveLength(1);
+      expect(sent[0].name).toBe('Fresh');
+      expect(sent[0].id).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    it('marks caller-supplied groups as authored so a rejection is not swallowed', async () => {
+      mockCurrentGroupedWorkflow();
+
+      await handlers.handleUpdateWorkflow({
+        id: 'wf-1',
+        nodeGroups: [{ name: 'Fresh', nodeIds: ['node-1'] }],
+      });
+
+      expect(mockApiClient.updateWorkflow.mock.calls[0][2].authoredGroups).toEqual(new Set(['Fresh']));
+    });
+
+    it('reports group adjustments made while saving', async () => {
+      mockCurrentGroupedWorkflow();
+      mockApiClient.updateWorkflow.mockImplementation(async (_id: string, _wf: unknown, options: any) => {
+        options?.onWarning?.('Node group "Transform" lost 1 member');
+        return createTestWorkflow({ id: 'wf-1' });
+      });
+
+      const result = await handlers.handleUpdateWorkflow({ id: 'wf-1', name: 'Renamed' });
+
+      expect(result.details?.warnings).toEqual(['Node group "Transform" lost 1 member']);
+    });
+
+    it('rejects a malformed group payload', async () => {
+      mockCurrentGroupedWorkflow();
+
+      const result = await handlers.handleUpdateWorkflow({
+        id: 'wf-1',
+        nodeGroups: [{ name: 'Fresh' }],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid input');
     });
   });
 

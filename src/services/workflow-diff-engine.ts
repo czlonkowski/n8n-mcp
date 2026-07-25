@@ -23,6 +23,7 @@ import {
   RewireConnectionOperation,
   UpdateSettingsOperation,
   UpdateNameOperation,
+  SetNodeGroupsOperation,
   AddTagOperation,
   RemoveTagOperation,
   ActivateWorkflowOperation,
@@ -32,9 +33,10 @@ import {
   TransferWorkflowOperation,
   PatchNodeFieldOperation
 } from '../types/workflow-diff';
-import { Workflow, WorkflowNode, WorkflowConnection } from '../types/n8n-api';
+import { Workflow, WorkflowNode, WorkflowConnection, WorkflowNodeGroup } from '../types/n8n-api';
 import { Logger } from '../utils/logger';
 import { validateWorkflowNode, validateWorkflowConnections } from './n8n-validation';
+import { repairNodeGroups } from './node-groups';
 import { sanitizeNode, sanitizeWorkflowNodes } from './node-sanitizer';
 import { isActivatableTrigger } from '../utils/node-type-utils';
 
@@ -165,6 +167,8 @@ export class WorkflowDiffEngine {
   private tagsToRemove: string[] = [];
   // Track transfer operation for dedicated API call
   private transferToProjectId: string | undefined;
+  // Canvas groups authored by this diff — the caller must not let n8n silently reject them
+  private authoredGroupNames = new Set<string>();
 
   /**
    * Apply diff operations to a workflow
@@ -182,6 +186,7 @@ export class WorkflowDiffEngine {
       this.tagsToAdd = [];
       this.tagsToRemove = [];
       this.transferToProjectId = undefined;
+      this.authoredGroupNames.clear();
 
       // Clone workflow to avoid modifying original
       const workflowCopy = JSON.parse(JSON.stringify(workflow));
@@ -223,6 +228,8 @@ export class WorkflowDiffEngine {
           }
         }
 
+        this.finalizeNodeGroups(workflowCopy);
+
         // If validateOnly flag is set, return success without applying.
         // Include workflowCopy so the caller can run structural validation against
         // the simulated post-diff result (#744).
@@ -236,7 +243,8 @@ export class WorkflowDiffEngine {
             errors: errors.length > 0 ? errors : undefined,
             warnings: this.warnings.length > 0 ? this.warnings : undefined,
             applied: appliedIndices,
-            failed: failedIndices
+            failed: failedIndices,
+            authoredGroupNames: this.authoredGroupNamesOrUndefined()
           };
         }
 
@@ -260,7 +268,8 @@ export class WorkflowDiffEngine {
           shouldDeactivate: shouldDeactivate || undefined,
           tagsToAdd: this.tagsToAdd.length > 0 ? this.tagsToAdd : undefined,
           tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined,
-          transferToProjectId: this.transferToProjectId || undefined
+          transferToProjectId: this.transferToProjectId || undefined,
+          authoredGroupNames: this.authoredGroupNamesOrUndefined()
         };
       } else {
         // Atomic mode: all operations must succeed
@@ -303,6 +312,8 @@ export class WorkflowDiffEngine {
           logger.debug(`Sanitized ${this.modifiedNodeIds.size} modified nodes`);
         }
 
+        this.finalizeNodeGroups(workflowCopy);
+
         // If validateOnly flag is set, return success without applying.
         // Include the post-diff workflowCopy so the caller (handlers-workflow-diff)
         // can run structural validation against the simulated result — without it
@@ -311,7 +322,9 @@ export class WorkflowDiffEngine {
           return {
             success: true,
             workflow: workflowCopy,
-            message: 'Validation successful. Operations are valid but not applied.'
+            message: 'Validation successful. Operations are valid but not applied.',
+            warnings: this.warnings.length > 0 ? this.warnings : undefined,
+            authoredGroupNames: this.authoredGroupNamesOrUndefined()
           };
         }
 
@@ -335,7 +348,8 @@ export class WorkflowDiffEngine {
           shouldDeactivate: shouldDeactivate || undefined,
           tagsToAdd: this.tagsToAdd.length > 0 ? this.tagsToAdd : undefined,
           tagsToRemove: this.tagsToRemove.length > 0 ? this.tagsToRemove : undefined,
-          transferToProjectId: this.transferToProjectId || undefined
+          transferToProjectId: this.transferToProjectId || undefined,
+          authoredGroupNames: this.authoredGroupNamesOrUndefined()
         };
       }
     } catch (error) {
@@ -379,6 +393,8 @@ export class WorkflowDiffEngine {
       case 'addTag':
       case 'removeTag':
         return null; // These are always valid
+      case 'setNodeGroups':
+        return this.validateSetNodeGroups(workflow, operation as SetNodeGroupsOperation);
       case 'transferWorkflow':
         return this.validateTransferWorkflow(workflow, operation as TransferWorkflowOperation);
       case 'activateWorkflow':
@@ -434,6 +450,9 @@ export class WorkflowDiffEngine {
         break;
       case 'updateName':
         this.applyUpdateName(workflow, operation);
+        break;
+      case 'setNodeGroups':
+        this.applySetNodeGroups(workflow, operation as SetNodeGroupsOperation);
         break;
       case 'addTag':
         this.applyAddTag(workflow, operation);
@@ -522,6 +541,12 @@ export class WorkflowDiffEngine {
     const node = this.findNode(workflow, operation.nodeId, operation.nodeName);
     if (!node) {
       return this.formatNodeNotFoundError(workflow, operation.nodeId || operation.nodeName || '', 'updateNode');
+    }
+
+    // Node IDs are referenced by canvas groups (and n8n's own pinned data), so a rewrite here
+    // would silently orphan them. Renaming is fine; re-identifying is not.
+    if ('id' in operation.updates && operation.updates.id !== node.id) {
+      return `Cannot change the id of node "${node.name}": node IDs are immutable because canvas groups and pinned data reference them. Remove and re-add the node instead.`;
     }
 
     // Check for name collision if renaming
@@ -1290,6 +1315,142 @@ export class WorkflowDiffEngine {
 
   private applyUpdateName(workflow: Workflow, operation: UpdateNameOperation): void {
     workflow.name = operation.name;
+  }
+
+  /**
+   * Validate a canvas-group replacement.
+   *
+   * Only checks that cannot be wrong on any n8n version: references resolve, names are usable and
+   * unique, no node is claimed twice, no group is empty. Whether the members form a groupable shape
+   * (connected run, no trigger) is n8n's call — it validates on write and names the offending group,
+   * and a local reimplementation of those rules would drift from the running instance.
+   *
+   * References resolve against the workflow as it stands at this point in the batch, so a group
+   * covering a node added by a later operation must come after it.
+   */
+  private validateSetNodeGroups(workflow: Workflow, operation: SetNodeGroupsOperation): string | null {
+    const groups = operation.nodeGroups;
+    if (!Array.isArray(groups)) {
+      return `setNodeGroups requires a "nodeGroups" array. Pass every group you want to keep, or [] to ungroup everything. Example: {type: "setNodeGroups", nodeGroups: [{name: "Enrich lead", nodeNames: ["Fetch company", "Score lead"]}]}`;
+    }
+
+    const seenNames = new Set<string>();
+    const claimedNodes = new Map<string, string>();
+
+    for (const group of groups) {
+      if (!group || typeof group !== 'object') {
+        return `setNodeGroups: every entry must be an object like {name: "Enrich lead", nodeNames: ["Fetch company", "Score lead"]}`;
+      }
+
+      const name = typeof group.name === 'string' ? group.name.trim() : '';
+      if (!name) {
+        return `setNodeGroups: every group needs a non-empty "name"`;
+      }
+      if (seenNames.has(name)) {
+        return `setNodeGroups: duplicate group name "${name}". n8n requires group names to be unique.`;
+      }
+      seenNames.add(name);
+
+      const hasNames = Array.isArray(group.nodeNames) && group.nodeNames.length > 0;
+      const hasIds = Array.isArray(group.nodeIds) && group.nodeIds.length > 0;
+      if (hasNames === hasIds) {
+        return hasNames
+          ? `setNodeGroups: group "${name}" sets both "nodeNames" and "nodeIds" — use one or the other`
+          : `setNodeGroups: group "${name}" needs members in "nodeNames" (or "nodeIds")`;
+      }
+
+      const members = this.resolveGroupMembers(workflow, group);
+      if (typeof members === 'string') return members;
+
+      for (const node of members) {
+        const owner = claimedNodes.get(node.id);
+        if (owner) {
+          return `setNodeGroups: node "${node.name}" is in both "${owner}" and "${name}" — a node can only belong to one group`;
+        }
+        claimedNodes.set(node.id, name);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Resolve a group's members to nodes, or return an error message.
+   * IDs match exactly and names match normalized — unlike findNode(), an unresolved ID is never
+   * retried as a name, because these fields say which one they are.
+   */
+  private resolveGroupMembers(
+    workflow: Workflow,
+    group: SetNodeGroupsOperation['nodeGroups'][number]
+  ): WorkflowNode[] | string {
+    const label = group.name?.trim() || group.id || 'unnamed group';
+    const resolved: WorkflowNode[] = [];
+
+    if (Array.isArray(group.nodeIds)) {
+      for (const nodeId of group.nodeIds) {
+        const node = workflow.nodes.find(n => n.id === nodeId);
+        if (!node) {
+          return `setNodeGroups: group "${label}" references node ID "${nodeId}", which is not in the workflow. ${this.formatNodeNotFoundError(workflow, nodeId, 'setNodeGroups')}`;
+        }
+        resolved.push(node);
+      }
+      return resolved;
+    }
+
+    for (const nodeName of group.nodeNames ?? []) {
+      const normalized = this.normalizeNodeName(nodeName);
+      const node = workflow.nodes.find(n => this.normalizeNodeName(n.name) === normalized);
+      if (!node) {
+        return `setNodeGroups: group "${label}" references node "${nodeName}", which is not in the workflow. ${this.formatNodeNotFoundError(workflow, nodeName, 'setNodeGroups')}`;
+      }
+      resolved.push(node);
+    }
+    return resolved;
+  }
+
+  private applySetNodeGroups(workflow: Workflow, operation: SetNodeGroupsOperation): void {
+    const groups: WorkflowNodeGroup[] = [];
+
+    for (const group of operation.nodeGroups) {
+      const members = this.resolveGroupMembers(workflow, group);
+      if (typeof members === 'string') continue; // validation already rejected this batch
+
+      const resolved: WorkflowNodeGroup = {
+        id: group.id?.trim() || uuidv4(),
+        name: group.name.trim(),
+        nodeIds: members.map(node => node.id)
+      };
+      if (typeof group.description === 'string' && group.description.trim()) {
+        resolved.description = group.description.trim();
+      }
+      groups.push(resolved);
+      this.authoredGroupNames.add(resolved.name);
+    }
+
+    workflow.nodeGroups = groups;
+  }
+
+  /**
+   * Reconcile canvas groups with the finished graph, once, before returning.
+   *
+   * Runs at the end rather than inside removeNode so a node removed and re-added within the same
+   * batch keeps its membership, and so a group is judged against the final graph instead of an
+   * intermediate one.
+   */
+  private authoredGroupNamesOrUndefined(): string[] | undefined {
+    return this.authoredGroupNames.size > 0 ? [...this.authoredGroupNames] : undefined;
+  }
+
+  private finalizeNodeGroups(workflow: Workflow): void {
+    if (!Array.isArray(workflow.nodeGroups) || workflow.nodeGroups.length === 0) return;
+
+    const { nodeGroups, issues } = repairNodeGroups(workflow);
+    workflow.nodeGroups = nodeGroups;
+
+    for (const issue of issues) {
+      // -1: the adjustment belongs to the batch as a whole, not one operation.
+      this.warnings.push({ operation: -1, message: issue.message });
+    }
   }
 
   private applyAddTag(workflow: Workflow, operation: AddTagOperation): void {

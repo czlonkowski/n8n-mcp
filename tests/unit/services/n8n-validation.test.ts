@@ -463,9 +463,9 @@ describe('n8n-validation', () => {
         // Regression: n8n's GET response returns server-managed fields that are not in the
         // PUT write schema (which declares additionalProperties: false). Newer n8n versions
         // add fields not even covered by any denylist (e.g. a top-level availableInMCP column,
-        // activeVersionId, nodeGroups, or future fields). Echoing them back triggers
+        // activeVersionId, or future fields). Echoing them back triggers
         // "request/body must NOT have additional properties". The allowlist must drop them all.
-        // Covers issues #831/#838 (nodeGroups) and the availableInMCP top-level echo.
+        // Covers issues #831/#838 and the availableInMCP top-level echo.
         const workflow = {
           name: 'Test Workflow',
           nodes: [],
@@ -475,7 +475,6 @@ describe('n8n-validation', () => {
           availableInMCP: true,        // top-level MCP column (n8n 2.x), not in write schema
           activeVersionId: 'av-123',   // not in OpenAPI spec, returned by GET
           versionCounter: 7,
-          nodeGroups: [],              // n8n 2.x top-level field (#831, #838)
           someFutureField: 'whatever',  // any field a future n8n version might start echoing
         } as any;
 
@@ -485,10 +484,39 @@ describe('n8n-validation', () => {
         expect(Object.keys(cleaned).sort()).toEqual(['connections', 'name', 'nodes', 'settings']);
         expect(cleaned).not.toHaveProperty('availableInMCP');
         expect(cleaned).not.toHaveProperty('activeVersionId');
-        expect(cleaned).not.toHaveProperty('nodeGroups');
         expect(cleaned).not.toHaveProperty('someFutureField');
         expect(cleaned.name).toBe('Test Workflow');
         // (availableInMCP *inside* settings is covered by the next test.)
+      });
+
+      it('should forward nodeGroups (canvas groups are writable since n8n 2.28)', () => {
+        // Omitting nodeGroups does NOT leave canvas groups alone: n8n backfills the stored
+        // groups and validates them against the nodes we submit, so a diff that removed a
+        // grouped node fails with 400 unless the corrected groups are sent.
+        // Version incompatibility is handled by N8nApiClient (degrade + retry), not here.
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: { executionOrder: 'v1' },
+          nodeGroups: [{ id: 'g1', name: 'Enrich lead', nodeIds: ['n1', 'n2'] }],
+        } as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+
+        expect(Object.keys(cleaned).sort()).toEqual(['connections', 'name', 'nodeGroups', 'nodes', 'settings']);
+        expect(cleaned.nodeGroups).toEqual([{ id: 'g1', name: 'Enrich lead', nodeIds: ['n1', 'n2'] }]);
+      });
+
+      it('should omit nodeGroups entirely when the workflow has none (pre-2.28 instances)', () => {
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: { executionOrder: 'v1' },
+        } as any;
+
+        expect(cleanWorkflowForUpdate(workflow)).not.toHaveProperty('nodeGroups');
       });
 
       it('should keep availableInMCP inside settings while stripping it at top level', () => {

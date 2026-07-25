@@ -21,6 +21,7 @@ import {
   hasWebhookTrigger,
   getWebhookUrl
 } from '../services/n8n-validation';
+import { parseNodeGroupsInput } from '../services/node-groups';
 import {
   N8nApiError,
   N8nNotFoundError,
@@ -449,6 +450,8 @@ const createWorkflowSchema = z.object({
     executionTimeout: z.number().optional(),
     errorWorkflow: z.string().optional(),
   })).optional(),
+  // Validated by parseNodeGroupsInput() — see services/node-groups.ts
+  nodeGroups: z.any().optional(),
   projectId: z.string().optional(),
 });
 
@@ -458,6 +461,8 @@ const updateWorkflowSchema = z.object({
   nodes: z.preprocess(normalizeMcpWorkflowNodes, z.array(z.any())).optional(),
   connections: z.preprocess(normalizeMcpWorkflowConnections, z.record(z.string(), z.any())).optional(),
   settings: z.preprocess(normalizeMcpJsonValue, z.any()).optional(),
+  // Validated by parseNodeGroupsInput() — see services/node-groups.ts
+  nodeGroups: z.any().optional(),
   createBackup: z.boolean().optional(),
   intent: z.string().optional(),
 });
@@ -602,7 +607,16 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
     }
 
     // Create workflow (n8n API expects node types in FULL form)
-    const workflow = await client.createWorkflow(input);
+    const groupWarnings: string[] = [];
+    const { nodeGroups: rawNodeGroups, ...createPayload } = input;
+    const nodeGroups = parseNodeGroupsInput(rawNodeGroups);
+    const workflow = await client.createWorkflow(
+      nodeGroups !== undefined ? { ...createPayload, nodeGroups } : createPayload,
+      {
+        authoredGroups: new Set((nodeGroups ?? []).map(group => group.name)),
+        onWarning: message => groupWarnings.push(message),
+      }
+    );
 
     // Defensive check: ensure the API returned a valid workflow with an ID
     if (!workflow || !workflow.id) {
@@ -626,7 +640,8 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
         active: workflow.active,
         nodeCount: workflow.nodes?.length || 0
       },
-      message: `Workflow "${workflow.name}" created successfully with ID: ${workflow.id}. Use n8n_get_workflow with mode 'structure' to verify current state.`
+      message: `Workflow "${workflow.name}" created successfully with ID: ${workflow.id}. Use n8n_get_workflow with mode 'structure' to verify current state.`,
+      ...(groupWarnings.length > 0 ? { details: { warnings: groupWarnings } } : {})
     };
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -767,6 +782,10 @@ export async function handleGetWorkflowStructure(args: unknown, context?: Instan
         isArchived: workflow.isArchived,
         nodes: simplifiedNodes,
         connections: workflow.connections,
+        // Canvas groups are part of the topology an editor sees, so structure mode reports them.
+        ...(Array.isArray(workflow.nodeGroups) && workflow.nodeGroups.length > 0
+          ? { nodeGroups: workflow.nodeGroups }
+          : {}),
         nodeCount: workflow.nodes.length,
         connectionCount: Object.keys(workflow.connections).length
       }
@@ -874,6 +893,15 @@ export async function handleGetWorkflowFiltered(args: unknown, context?: Instanc
         active: workflow.active,
         isArchived: workflow.isArchived,
         nodes: matchedNodes,
+        // Only groups touching the requested nodes. Their nodeIds may reference nodes outside
+        // this response — filtered mode returns a slice of the workflow, not a valid whole.
+        ...(() => {
+          const requestedIds = new Set(matchedNodes.map(node => node.id));
+          const intersecting = (workflow.nodeGroups ?? []).filter(group =>
+            group.nodeIds.some(nodeId => requestedIds.has(nodeId))
+          );
+          return intersecting.length > 0 ? { nodeGroups: intersecting } : {};
+        })(),
         nodeCount: workflow.nodes.length,
         returnedCount: matchedNodes.length,
         ...(notFound.length > 0 ? { notFound } : {})
@@ -944,6 +972,11 @@ export async function handleGetWorkflowActive(args: unknown, context?: InstanceC
           versionName: activeVersion.name ?? null,
           nodes: activeVersion.nodes,
           connections: activeVersion.connections,
+          // The published version's own groups — NOT workflow.nodeGroups, which is the draft's
+          // and would describe frames around nodes that may not exist in this graph.
+          ...(Array.isArray(activeVersion.nodeGroups) && activeVersion.nodeGroups.length > 0
+            ? { nodeGroups: activeVersion.nodeGroups }
+            : {}),
         }
       };
     }
@@ -963,6 +996,10 @@ export async function handleGetWorkflowActive(args: unknown, context?: InstanceC
           versionName: null,
           nodes: workflow.nodes,
           connections: workflow.connections,
+          // No draft/publish split here: the workflow body IS the running graph, so its groups apply.
+          ...(Array.isArray(workflow.nodeGroups) && workflow.nodeGroups.length > 0
+            ? { nodeGroups: workflow.nodeGroups }
+            : {}),
         }
       };
     }
@@ -1056,7 +1093,12 @@ export async function handleUpdateWorkflow(
     // so a partial payload (e.g. { executionOrder: 'v0' }) doesn't drop untouched keys like
     // timezone/errorWorkflow. A missing/null/non-object settings value leaves current settings
     // untouched.
-    const { settings: settingsUpdate, ...nonSettingsUpdate } = updateData;
+    // Canvas groups are kept out of the spread for the same reason: Zod emits an own
+    // `nodeGroups: undefined` key when the caller sends null, and spreading that would wipe the
+    // stored groups. The contract is: key absent (or null) => keep the stored groups,
+    // `nodeGroups: []` => ungroup everything, a non-empty array => replace.
+    const { settings: settingsUpdate, nodeGroups: rawNodeGroups, ...nonSettingsUpdate } = updateData;
+    const nodeGroupsUpdate = parseNodeGroupsInput(rawNodeGroups);
     const fullWorkflow = {
       ...current,
       ...nonSettingsUpdate
@@ -1069,8 +1111,12 @@ export async function handleUpdateWorkflow(
       };
     }
 
-    // Backup + structure validation only when the graph changed (nodes/connections).
-    if (updateData.nodes || updateData.connections) {
+    if (nodeGroupsUpdate !== undefined) {
+      fullWorkflow.nodeGroups = nodeGroupsUpdate;
+    }
+
+    // Backup + structure validation when the graph or its grouping changed.
+    if (updateData.nodes || updateData.connections || nodeGroupsUpdate !== undefined) {
       // Create backup before modifying workflow (default: true)
       if (createBackup !== false) {
         try {
@@ -1105,8 +1151,14 @@ export async function handleUpdateWorkflow(
       }
     }
 
-    // Update workflow with the merged full payload
-    const workflow = await client.updateWorkflow(id, fullWorkflow as Partial<Workflow>);
+    // Update workflow with the merged full payload. Groups the caller supplied here are
+    // "authored": if n8n rejects one, that surfaces as an error rather than being ungrouped
+    // silently. Groups carried in from the GET degrade with a warning instead.
+    const groupWarnings: string[] = [];
+    const workflow = await client.updateWorkflow(id, fullWorkflow as Partial<Workflow>, {
+      authoredGroups: new Set((nodeGroupsUpdate ?? []).map(group => group.name)),
+      onWarning: message => groupWarnings.push(message),
+    });
 
     // Track successful mutation
     if (workflowBefore) {
@@ -1132,7 +1184,8 @@ export async function handleUpdateWorkflow(
         active: workflow.active,
         nodeCount: workflow.nodes?.length || 0
       },
-      message: `Workflow "${workflow.name}" updated successfully. Use n8n_get_workflow with mode 'structure' to verify current state.`
+      message: `Workflow "${workflow.name}" updated successfully. Use n8n_get_workflow with mode 'structure' to verify current state.`,
+      ...(groupWarnings.length > 0 ? { details: { warnings: groupWarnings } } : {})
     };
   } catch (error) {
     // Track failed mutation
@@ -2929,6 +2982,11 @@ export async function handleDeployTemplate(
       name: workflowName,
       nodes: workflow.nodes,
       connections: workflow.connections,
+      // Templates keep their node IDs through deployment (only typeVersion and credentials are
+      // touched), so any canvas groups they carry still address the right nodes.
+      ...(Array.isArray(workflow.nodeGroups) && workflow.nodeGroups.length > 0
+        ? { nodeGroups: workflow.nodeGroups }
+        : {}),
       settings: workflow.settings || { executionOrder: 'v1' }
     });
 

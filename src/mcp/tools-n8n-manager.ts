@@ -64,6 +64,20 @@ export const n8nManagementTools: ToolDefinition[] = [
             errorWorkflow: { type: 'string' }
           }
         },
+        nodeGroups: {
+          type: 'array',
+          description: 'Optional canvas groups (n8n 2.28+): named frames around a connected run of non-trigger nodes. Members are node IDs from nodes[]. Dropped automatically on older n8n.',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Optional; generated when omitted' },
+              name: { type: 'string' },
+              nodeIds: { type: 'array', items: { type: 'string' } },
+              description: { type: 'string', description: 'Optional, max 155 chars (n8n 2.32+)' }
+            },
+            required: ['name', 'nodeIds']
+          }
+        },
         projectId: {
           type: 'string',
           description: 'Optional project ID to create the workflow in (enterprise feature)'
@@ -143,9 +157,23 @@ export const n8nManagementTools: ToolDefinition[] = [
           type: 'object', 
           description: 'Complete connections object (required if modifying workflow structure)' 
         },
-        settings: { 
-          type: 'object', 
-          description: 'Workflow settings to update' 
+        settings: {
+          type: 'object',
+          description: 'Workflow settings to update'
+        },
+        nodeGroups: {
+          type: 'array',
+          description: 'Canvas groups (n8n 2.28+). Omit to keep the existing groups; pass [] to ungroup everything. Members are node IDs.',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Optional; generated when omitted' },
+              name: { type: 'string' },
+              nodeIds: { type: 'array', items: { type: 'string' } },
+              description: { type: 'string', description: 'Optional, max 155 chars (n8n 2.32+)' }
+            },
+            required: ['name', 'nodeIds']
+          }
         }
       },
       required: ['id']
@@ -160,7 +188,7 @@ export const n8nManagementTools: ToolDefinition[] = [
   },
   {
     name: 'n8n_update_partial_workflow',
-    description: `Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, patchNodeField, moveNode, enable/disableNode, addConnection, removeConnection, updateSettings, updateName, add/removeTag, activate/deactivateWorkflow, transferWorkflow. patchNodeField requires fieldPath (dot path, e.g. "parameters.jsCode") and patches: [{find, replace}]. See tools_documentation("n8n_update_partial_workflow", "full") for details.`,
+    description: `Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, patchNodeField, moveNode, enable/disableNode, addConnection, removeConnection, rewireConnection, cleanStaleConnections, replaceConnections, updateSettings, updateName, setNodeGroups, add/removeTag, activate/deactivateWorkflow, transferWorkflow. patchNodeField requires fieldPath (dot path, e.g. "parameters.jsCode") and patches: [{find, replace}]. setNodeGroups replaces all canvas groups: [{name, nodeNames|nodeIds}] (or [] to ungroup). See tools_documentation("n8n_update_partial_workflow", "full") for details.`,
     inputSchema: {
       type: 'object',
       additionalProperties: true,  // Allow any extra properties Claude Desktop might add

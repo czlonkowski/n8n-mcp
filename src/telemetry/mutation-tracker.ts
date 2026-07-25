@@ -202,6 +202,12 @@ export class MutationTracker {
             metrics.propertiesChanged += Object.keys(op.settings as any).length;
           }
           break;
+        case 'setNodeGroups':
+          // One property change per group, so an ungroup-all still registers as a change
+          metrics.propertiesChanged += Array.isArray((op as any).nodeGroups)
+            ? Math.max((op as any).nodeGroups.length, 1)
+            : 1;
+          break;
         case 'moveNode':
         case 'enableNode':
         case 'disableNode':

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.66.0] - 2026-07-25
+
+### Fixed
+
+- **Canvas groups no longer break workflow updates (n8n 2.28+).** n8n stores canvas groups on the workflow as `nodeGroups`, and validates them on every write — including writes that have nothing to do with grouping. Because the update payload dropped the field, n8n backfilled the stored groups and validated them against the submitted graph, so `n8n_update_partial_workflow`, `n8n_update_full_workflow`, autofix, rollback and version restore all failed with HTTP 400 on any grouped workflow as soon as a diff removed a grouped node or changed a group's connectivity (`Group "X" references node ID "..." that does not exist in the workflow.`). Groups are now carried through writes and reconciled with the finished graph: members a diff deleted are pruned, a group left empty is removed, and a group n8n refuses is ungrouped so the edit still lands. Nodes and connections are never altered to save a frame, and every adjustment is reported as a warning.
+- **Node IDs are now immutable in `updateNode`.** An `updates: { id: ... }` payload silently orphaned canvas-group membership and pinned data. It is rejected with a message pointing at remove-and-re-add.
+- **Version comparison notices grouping changes.** `compareVersions` ignored `nodeGroups`, so a group-only version looked identical to its predecessor.
+
+### Added
+
+- **`setNodeGroups` diff operation** for `n8n_update_partial_workflow`: replaces the workflow's canvas groups, addressing members by name or by ID (`[]` ungroups everything). Whether a grouping is valid stays n8n's decision — its rejection is returned verbatim rather than second-guessed, and a group the caller just authored is never silently discarded.
+- **`nodeGroups` on `n8n_create_workflow` and `n8n_update_full_workflow`.** Omitting the field on an update keeps the stored groups; passing `[]` ungroups everything.
+- **Canvas groups in reads and validation.** `n8n_get_workflow` reports `nodeGroups` in `structure`, `filtered` (groups touching the requested nodes) and `active` (the published version's own groups, not the draft's); `n8n_deploy_template` forwards groups a template carries; `validate_workflow` warns about dangling members, empty groups, a node in two groups, and a trigger inside a group — always as warnings, never blocking a workflow.
+- **Graceful degradation for older n8n.** Group support is discovered from the write itself rather than a version probe: an instance that rejects the field gets the workflow without it, and one that rejects group descriptions (added in n8n 2.32) gets the groups without them. Both cases warn instead of failing.
+
 ## [2.65.2] - 2026-07-23
 
 ### Fixed

@@ -79,6 +79,8 @@ export interface VersionDiff {
   modifiedNodes: string[];
   connectionChanges: number;
   settingChanges: any;
+  /** 1 when the canvas grouping differs, 0 otherwise. Without this a group-only change looks identical. */
+  nodeGroupChanges: number;
 }
 
 /**
@@ -397,6 +399,11 @@ export class WorkflowVersioningService {
     const settings2 = v2.workflowSnapshot.settings || {};
     const settingChanges = this.diffObjects(settings1, settings2);
 
+    // Compare canvas groups
+    const groups1Str = JSON.stringify(v1.workflowSnapshot.nodeGroups || []);
+    const groups2Str = JSON.stringify(v2.workflowSnapshot.nodeGroups || []);
+    const nodeGroupChanges = groups1Str !== groups2Str ? 1 : 0;
+
     return {
       versionId1,
       versionId2,
@@ -406,7 +413,8 @@ export class WorkflowVersioningService {
       removedNodes,
       modifiedNodes,
       connectionChanges,
-      settingChanges
+      settingChanges,
+      nodeGroupChanges
     };
   }
 

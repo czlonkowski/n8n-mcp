@@ -137,6 +137,7 @@ export class IntentClassifier {
     if (
       opTypeSet.has('updateSettings') ||
       opTypeSet.has('updateName') ||
+      opTypeSet.has('setNodeGroups') ||
       opTypeSet.has('addTag') ||
       opTypeSet.has('removeTag')
     ) {

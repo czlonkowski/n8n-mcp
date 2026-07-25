@@ -23,6 +23,7 @@ export const n8nUpdateFullWorkflowDoc: ToolDocumentation = {
       nodes: { type: 'array', description: 'Complete array of workflow nodes (required if modifying structure)' },
       connections: { type: 'object', description: 'Complete connections object (required if modifying structure)' },
       settings: { type: 'object', description: 'Workflow settings to update (timezone, error handling, etc.)' },
+      nodeGroups: { type: 'array', description: 'Canvas groups (n8n 2.28+): [{name, nodeIds, description?}]. Omit to keep the existing groups; pass [] to ungroup everything. Groups whose members a nodes[] update deleted are pruned automatically.' },
       intent: { type: 'string', description: 'Intent of the change - helps to return better response. Include in every tool call. Example: "Migrate workflow to new node versions".' }
     },
     returns: 'Minimal summary (id, name, active, nodeCount) for token efficiency. Use n8n_get_workflow with mode "structure" to verify current state if needed.',

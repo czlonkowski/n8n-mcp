@@ -113,7 +113,13 @@ function ensureWebhookIds(nodes?: WorkflowNode[]): void {
   }
 }
 
-// Clean workflow data for API operations
+/**
+ * Clean workflow data for create operations.
+ *
+ * This is a DENYLIST (unlike cleanWorkflowForUpdate): anything not named here is forwarded, so
+ * fields such as `nodeGroups` reach POST /workflows unchanged. Keep it that way — the create
+ * schema accepts the same writable fields as update.
+ */
 export function cleanWorkflowForCreate(workflow: Partial<Workflow>): Partial<Workflow> {
   const {
     // Remove read-only fields
@@ -145,10 +151,10 @@ export function cleanWorkflowForCreate(workflow: Partial<Workflow>): Partial<Wor
  *
  * n8n's Public API write schema (workflow.yml, used for PUT /workflows/{id}) declares
  * `additionalProperties: false` and accepts only a small set of writable top-level fields:
- * name, nodes, connections and settings. The GET response, however, echoes back many
- * server-managed / read-only fields (id, versionId, triggerCount, activeVersion, ...) and —
- * on newer n8n versions — fields that aren't even in the OpenAPI spec (e.g. activeVersionId,
- * versionCounter, nodeGroups, and a top-level `availableInMCP` column added for the MCP feature).
+ * name, nodes, connections, settings and — since n8n 2.28 — nodeGroups. The GET response,
+ * however, echoes back many server-managed / read-only fields (id, versionId, triggerCount,
+ * activeVersion, ...) and fields that aren't in the OpenAPI spec at all (e.g. activeVersionId,
+ * versionCounter, and a top-level `availableInMCP` column added for the MCP feature).
  *
  * When n8n_update_partial_workflow reads a workflow, applies a diff and writes it back, any
  * such echoed field that a denylist doesn't explicitly drop leaks into the payload and
@@ -170,14 +176,19 @@ export function cleanWorkflowForCreate(workflow: Partial<Workflow>): Partial<Wor
 export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
   const source = workflow as any;
 
-  // Allowlist of top-level fields we send on update. These are exactly the fields the
-  // previous denylist effectively forwarded, so behavior is unchanged — only the mechanism
-  // (keep-known vs drop-known) differs. `description` is omitted because some n8n versions
-  // reject it on update (Issue #431), and `staticData`/`pinData` are server-managed.
+  // Allowlist of top-level fields we send on update. `description` is omitted because some n8n
+  // versions reject it on update (Issue #431), and `staticData`/`pinData` are server-managed.
+  //
+  // `nodeGroups` is forwarded when present: omitting it does NOT leave canvas groups alone —
+  // n8n backfills the stored groups and validates them against the nodes we submit, so a diff
+  // that removes a grouped node fails with 400 unless we send the corrected groups.
+  // Per-group keys are filtered and version incompatibilities handled by
+  // N8nApiClient.updateWorkflow(), which can degrade and retry; see services/node-groups.ts.
   const cleanedWorkflow: Record<string, unknown> = {};
   if (source.name !== undefined) cleanedWorkflow.name = source.name;
   if (source.nodes !== undefined) cleanedWorkflow.nodes = source.nodes;
   if (source.connections !== undefined) cleanedWorkflow.connections = source.connections;
+  if (source.nodeGroups !== undefined) cleanedWorkflow.nodeGroups = source.nodeGroups;
   if (source.settings !== undefined) cleanedWorkflow.settings = source.settings;
 
   // ALL known settings properties accepted by n8n Public API (as of n8n 1.119.0+)

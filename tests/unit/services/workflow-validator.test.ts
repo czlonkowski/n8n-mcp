@@ -837,6 +837,71 @@ describe('WorkflowValidator', () => {
     });
   });
 
+  describe('Canvas groups (nodeGroups)', () => {
+    // Group problems are reported as warnings, never errors: a frame is presentation, and the
+    // write path repairs or ungroups whatever n8n refuses rather than blocking the workflow.
+    const twoNodes = [
+      { id: 'a', name: 'Set A', type: 'n8n-nodes-base.set', position: [0, 0], parameters: {}, typeVersion: 3 },
+      { id: 'b', name: 'Set B', type: 'n8n-nodes-base.set', position: [100, 0], parameters: {}, typeVersion: 3 },
+    ];
+    const chain = { 'Set A': { main: [[{ node: 'Set B', type: 'main', index: 0 }]] } };
+
+    it('warns about a member that is not in the workflow, without invalidating it', async () => {
+      const result = await validator.validateWorkflow({
+        nodes: twoNodes,
+        connections: chain,
+        nodeGroups: [{ id: 'g1', name: 'Transform', nodeIds: ['a', 'b', 'ghost'] }],
+      } as any);
+
+      const groupWarnings = result.warnings.filter(w => w.code === 'group-member-removed');
+      expect(groupWarnings).toHaveLength(1);
+      expect(groupWarnings[0].message).toContain('ghost');
+      expect(result.errors.filter(e => e.code?.startsWith('group-'))).toEqual([]);
+    });
+
+    it('warns when a node is claimed by two groups', async () => {
+      const result = await validator.validateWorkflow({
+        nodes: twoNodes,
+        connections: chain,
+        nodeGroups: [
+          { id: 'g1', name: 'First', nodeIds: ['a'] },
+          { id: 'g2', name: 'Second', nodeIds: ['a', 'b'] },
+        ],
+      } as any);
+
+      expect(result.warnings.some(w => w.code === 'group-node-in-multiple-groups')).toBe(true);
+    });
+
+    it('warns about a trigger inside a group using node-type metadata', async () => {
+      const result = await validator.validateWorkflow({
+        nodes: [
+          { id: 't', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [0, 0], parameters: {}, typeVersion: 2 },
+          twoNodes[0],
+        ],
+        connections: { Webhook: { main: [[{ node: 'Set A', type: 'main', index: 0 }]] } },
+        nodeGroups: [{ id: 'g1', name: 'Everything', nodeIds: ['t', 'a'] }],
+      } as any);
+
+      expect(result.warnings.some(w => w.code === 'group-contains-trigger')).toBe(true);
+    });
+
+    it('says nothing about a healthy grouping', async () => {
+      const result = await validator.validateWorkflow({
+        nodes: twoNodes,
+        connections: chain,
+        nodeGroups: [{ id: 'g1', name: 'Transform', nodeIds: ['a', 'b'] }],
+      } as any);
+
+      expect(result.warnings.filter(w => w.code?.startsWith('group-'))).toEqual([]);
+    });
+
+    it('says nothing when the workflow has no groups', async () => {
+      const result = await validator.validateWorkflow({ nodes: twoNodes, connections: chain } as any);
+
+      expect(result.warnings.filter(w => w.code?.startsWith('group-'))).toEqual([]);
+    });
+  });
+
   // ─── Integration Tests ─────────────────────────────────────────────
 
   describe('Integration Tests', () => {
