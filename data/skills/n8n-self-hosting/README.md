@@ -66,7 +66,7 @@ flow, verification, and "what not to do."
 
 ### Reference files
 - **SINGLE_MODE.md** — single-instance specifics, SQLite vs Postgres, when/how to graduate to queue.
-- **QUEUE_MODE.md** — queue architecture, worker scaling/concurrency, the shared encryption key, binary data (filesystem vs S3), webhook processors.
+- **QUEUE_MODE.md** — queue architecture, worker scaling/concurrency, the shared encryption key, binary data (`database` mode; Enterprise S3/Azure), webhook processors, multi-main licensing.
 - **SECURITY.md** — secret generation, the encryption-key rules, and the full hardening checklist.
 - **DAY2.md** — updating the image, backing up (key + volume + Postgres), and restoring.
 
@@ -90,7 +90,11 @@ when inspecting, and keep internal services off the public interface.
 
 ## Version
 
-**Version**: 1.0.0
+**Version**: 1.1.0 — realigned with the restructured official hosting docs
+([docs.n8n.io/deploy/host-n8n](https://docs.n8n.io/deploy/host-n8n)): queue-mode binary data
+moved to `database` mode (filesystem is unsupported in queue mode), SSRF protection, encryption-key
+rotation, task-runner isolation modes, owner pre-provisioning, CLI backup/export, and monitoring
+endpoints, with deep links to the docs for the uncommon paths.
 **Compatibility**: Docker Engine + Compose v2 on a Debian/Ubuntu host; n8n official image
 (`docker.n8n.io/n8nio/n8n`); Caddy 2 for automatic TLS.
 

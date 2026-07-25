@@ -20,6 +20,10 @@ need to scale across CPU cores or machines. That's **queue mode** (`QUEUE_MODE.m
 
 ## SQLite vs Postgres in single mode
 
+These are the only two supported databases — MySQL/MariaDB support no longer exists, and
+Postgres is supported on "actively maintained versions" only:
+<https://docs.n8n.io/deploy/host-n8n/configure-n8n/choose-n8ns-database>.
+
 - **SQLite (default, template):** zero extra moving parts; back up by snapshotting the
   `n8n_data` volume. Great for most single-instance installs.
 - **Postgres (optional upgrade):** more robust under write pressure and the standard if you
@@ -31,11 +35,23 @@ need to scale across CPU cores or machines. That's **queue mode** (`QUEUE_MODE.m
 
 ## Migrating SQLite → Postgres later
 
-There's no in-place switch. The supported path is: export your workflows & credentials from the
-running instance (or use the CLI `n8n export:workflow --all` / `export:credentials --all`),
-stand up Postgres, point n8n at it (fresh DB), and re-import. Plan a short maintenance window.
-Because credentials are re-imported under the **same `N8N_ENCRYPTION_KEY`**, keep that key
-unchanged across the migration.
+There's no in-place switch. The supported path is: export workflows & credentials, stand up
+Postgres, point n8n at it (fresh DB), and re-import. The CLI runs **inside the container as the
+`node` user**:
+
+```bash
+docker compose exec -u node n8n n8n export:workflow --backup --output=/home/node/.n8n/backup/
+docker compose exec -u node n8n n8n export:credentials --all --output=/home/node/.n8n/creds.json
+# after pointing n8n at Postgres:
+docker compose exec -u node n8n n8n import:workflow --separate --input=/home/node/.n8n/backup/
+docker compose exec -u node n8n n8n import:credentials --input=/home/node/.n8n/creds.json
+```
+
+Credentials export **encrypted by default** — they only re-import under the **same
+`N8N_ENCRYPTION_KEY`**, so keep the key unchanged across the migration. (`--decrypted` exists
+but writes plaintext secrets to disk — avoid it unless that's explicitly wanted, and shred the
+file after.) Plan a short maintenance window. CLI reference:
+<https://docs.n8n.io/deploy/host-n8n/configure-n8n/use-the-command-line>.
 
 ## Resource notes
 

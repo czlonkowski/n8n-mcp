@@ -113,7 +113,8 @@ closes the gap where a tool's full description isn't loaded until first use.
 
 **Build & edit**
 - `n8n_create_workflow` — create from full workflow JSON.
-- `n8n_update_partial_workflow` — incremental diff ops (`{id, operations:[…]}`): addNode, updateNode, patchNodeField, addConnection, activateWorkflow, etc. Preferred for edits.
+- `n8n_update_partial_workflow` — incremental diff ops (`{id, operations:[…]}`): addNode, updateNode, patchNodeField, addConnection, setNodeGroups, activateWorkflow, etc. Preferred for edits.
+- **Canvas groups** (n8n 2.28+) survive your edits without being managed: a grouped node you remove is pruned from its group, and a group n8n can no longer accept is ungrouped so the edit still lands — nodes and connections untouched, every adjustment reported in `details.warnings`. To create or change groups, use the `setNodeGroups` op (full replacement; `[]` ungroups everything). See `n8n-mcp-tools-expert`.
 - `n8n_update_full_workflow` — full replacement.
 - `n8n_autofix_workflow` — auto-fix common issues.
 - `n8n_deploy_template` — deploy a template to the instance.

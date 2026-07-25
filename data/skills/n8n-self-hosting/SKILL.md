@@ -121,9 +121,12 @@ detail; `SECURITY.md` covers secret generation and hardening; `DAY2.md` covers u
   can take a minute or two; until it finishes, a public `https://` request fails TLS — that means
   the cert is still pending, **not** that n8n is down.
 - **Public reachability (with retry):** `curl -fsS --retry 5 --retry-delay 10 https://<fqdn>/healthz`
-  → `{"status":"ok"}`.
-- Open `https://<fqdn>` → the **owner setup** screen. **The first visitor to an un-owned instance
-  becomes the owner** — create the owner account immediately, before sharing the URL. Enable 2FA.
+  → `{"status":"ok"}`. (`/healthz` only proves the process is reachable; `/healthz/readiness`
+  additionally confirms the DB is connected and migrated — use it when debugging a boot loop.)
+- Open `https://<fqdn>` → the **owner setup** screen. **Whoever completes that signup form first
+  claims the instance** — an exposed un-owned instance is a race, so create the owner account
+  immediately, before sharing the URL. Enable 2FA. (Automated deploys can pre-provision the
+  owner via env vars instead — see the owner row in `SECURITY.md`.)
 
 ### 8. Hand off
 - Give the user: the URL, where the project lives, the encryption key to store safely, and the
@@ -142,7 +145,13 @@ detail; `SECURITY.md` covers secret generation and hardening; `DAY2.md` covers u
 ## Reference files
 
 - **`SINGLE_MODE.md`** — single-instance specifics, SQLite vs Postgres, when to graduate to queue.
-- **`QUEUE_MODE.md`** — queue architecture, workers/concurrency/scaling, shared encryption key, binary data (filesystem vs S3), webhook processors.
+- **`QUEUE_MODE.md`** — queue architecture, workers/concurrency/scaling, shared encryption key, binary data (`database` mode — filesystem is unsupported in queue mode; S3/Azure = Enterprise), webhook processors, multi-main licensing.
 - **`SECURITY.md`** — generating secrets, the encryption-key rules, the full hardening checklist (telemetry off, env-access block, public API, firewall, secure cookies).
 - **`DAY2.md`** — updating the image, backing up (encryption key + volume + Postgres), and restoring.
 - **`assets/`** — the templates: `docker-compose.single.yml`, `docker-compose.queue.yml`, `Caddyfile`, `.env.single.example`, `.env.queue.example`, `init-data.sh`.
+
+Authoritative upstream reference: the official hosting docs live at
+<https://docs.n8n.io/deploy/host-n8n> (restructured mid-2026 from the old `/hosting/` paths —
+prefer these URLs). The env-var reference index is at
+<https://docs.n8n.io/deploy/host-n8n/configure-n8n/basic-configuration/use-environment-variables>.
+When this skill and the live docs disagree, trust the docs and tell the user.

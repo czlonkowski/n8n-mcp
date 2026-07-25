@@ -83,7 +83,7 @@ n8n_create_workflow({
 
 **Common pattern**: 56s average between edits (iterative building!)
 
-### 19 Operation Types
+### 20 Operation Types
 
 **Node Operations** (7 types):
 1. `addNode` - Add new node
@@ -101,18 +101,19 @@ n8n_create_workflow({
 11. `cleanStaleConnections` - Auto-remove broken connections
 12. `replaceConnections` - Replace entire connections object
 
-**Metadata Operations** (4 types):
+**Metadata Operations** (5 types):
 13. `updateSettings` - Workflow settings
 14. `updateName` - Rename workflow
-15. `addTag` - Add tag
-16. `removeTag` - Remove tag
+15. `setNodeGroups` - Replace the canvas groups (n8n 2.28+; see below)
+16. `addTag` - Add tag
+17. `removeTag` - Remove tag
 
 **Activation Operations** (2 types):
-17. `activateWorkflow` - Activate workflow for automatic execution
-18. `deactivateWorkflow` - Deactivate workflow
+18. `activateWorkflow` - Activate workflow for automatic execution
+19. `deactivateWorkflow` - Deactivate workflow
 
 **Project Management Operations** (1 type):
-19. `transferWorkflow` - Transfer workflow to a different project (enterprise/cloud)
+20. `transferWorkflow` - Transfer workflow to a different project (enterprise/cloud)
 
 ### Intent Parameter (IMPORTANT!)
 
@@ -361,6 +362,84 @@ n8n_update_partial_workflow({
   ]
 })
 ```
+
+### Canvas Groups (n8n 2.28+)
+
+A canvas group is a named frame drawn around a connected run of non-trigger nodes. Purely
+presentational — it changes nothing about execution — but **n8n validates groups on every write,
+including writes that have nothing to do with grouping.** That is the part worth understanding,
+because it used to make unrelated edits fail.
+
+**You do not have to manage groups to edit a grouped workflow.** n8n-mcp reconciles them with the
+graph you produce, once, at the end of a diff:
+
+- A grouped node you remove is pruned from its group; the group survives on its remaining members.
+- A group left with no members is dropped.
+- A group n8n refuses (its members are no longer a single connected run) is ungrouped so your edit
+  still lands. **Nodes and connections are never altered to save a group.**
+
+Every adjustment comes back in `details.warnings`. Read them — they are the only signal that a
+user's grouping changed as a side effect of your edit.
+
+**Authoring groups** with `setNodeGroups`. It replaces the whole list, like `replaceConnections`:
+
+```javascript
+n8n_update_partial_workflow({
+  id: "workflow-id",
+  intent: "Group the enrichment steps",
+  operations: [{
+    type: "setNodeGroups",
+    nodeGroups: [
+      { name: "Enrich lead", nodeNames: ["Fetch company", "Score lead"] },
+      { name: "Notify", nodeIds: ["a1b2c3d4"] }          // ids work too
+    ]
+  }]
+})
+```
+
+- Pass **every group you want to keep** — anything you omit is gone.
+- `nodeGroups: []` ungroups everything.
+- Give each group `nodeNames` **or** `nodeIds`, not both populated. The group `id` is generated
+  unless you supply one.
+- `description` is optional, max 155 characters, and only exists on n8n 2.32+. On older instances
+  it is dropped with a warning rather than failing the write.
+
+**Creating a workflow with groups.** `n8n_create_workflow` and `n8n_update_full_workflow` take the
+same field, in n8n's own shape — members are node **IDs**, because you are sending those nodes in
+the same payload:
+
+```javascript
+n8n_create_workflow({
+  name: "Lead pipeline",
+  nodes: [...],
+  connections: {...},
+  nodeGroups: [{ name: "Enrich lead", nodeIds: ["fetch-company", "score-lead"] }]
+})
+```
+
+On a full update the field follows the same rule as `settings`: **omit it to keep the stored groups**,
+pass `[]` to ungroup everything. An id that is not in `nodes[]` is an error, not something to repair
+quietly — you supplied both halves, so a mismatch is a bug in the request.
+
+**What n8n will reject.** Members must form a single connected run with one way in and one way out,
+and a trigger can never be inside a group. n8n decides this, not n8n-mcp — so its message is
+returned to you verbatim. A group *you* asked for in this request is never silently discarded: if
+n8n refuses it you get an error, not a quiet success.
+
+```
+Node group "Enrich lead" (…) must form a single connected subgraph with a single entry and exit.
+Node group "Enrich lead" (…) cannot contain trigger nodes: Manual Trigger.
+```
+
+When that happens, fix the selection — usually by including the node that sits between two members,
+or excluding the trigger — rather than retrying the same shape.
+
+**Older instances.** Canvas groups do not exist before n8n 2.28. Authoring them there saves the
+workflow without groups and warns; it does not fail.
+
+**Reading groups.** `n8n_get_workflow` returns `nodeGroups` in `full`, `details` and `structure`
+modes when the workflow has any. `mode: "active"` returns the *published* version's groups, which
+can differ from the draft's.
 
 ### Cleanup & Recovery
 
