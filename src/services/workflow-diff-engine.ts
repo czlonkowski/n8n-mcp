@@ -1482,6 +1482,11 @@ export class WorkflowDiffEngine {
   private finalizeNodeGroups(workflow: Workflow): void {
     if (!Array.isArray(workflow.nodeGroups) || workflow.nodeGroups.length === 0) return;
 
+    // Deliberately WITHOUT authoredGroups, unlike the client's pre-write repair. There, a group
+    // referencing a node that does not exist is a mistake in the request. Here the only way an
+    // authored group can lose a member is that the same batch removed it — an explicit instruction,
+    // not a typo — so pruning with a warning is the honest outcome. A group naming a node that was
+    // never in the workflow is already rejected by validateSetNodeGroups, before this runs.
     const { nodeGroups, issues } = repairNodeGroups(workflow);
     workflow.nodeGroups = nodeGroups;
 

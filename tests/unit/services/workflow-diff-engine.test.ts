@@ -3338,6 +3338,26 @@ describe('WorkflowDiffEngine', () => {
       expect(result.workflow!.nodeGroups[0].nodeIds).toEqual(['http-1', 'slack-1']);
     });
 
+    it('should prune, not reject, when the same batch removes a node it just grouped', async () => {
+      // The client errors when a group the caller authored references a missing node, because that
+      // is a bad request. Inside one batch it is not: the caller asked for the removal. Pinning the
+      // difference so the two enforcement points stay deliberately, not accidentally, distinct.
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [
+          { type: 'setNodeGroups', nodeGroups: [{ name: 'Enrich', nodeNames: ['HTTP Request', 'Slack'] }] },
+          { type: 'removeNode', nodeId: 'slack-1' }
+        ] as any
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.workflow!.nodeGroups).toEqual([
+        { id: expect.any(String), name: 'Enrich', nodeIds: ['http-1'] }
+      ]);
+      expect(result.warnings!.some(w => w.message.includes('Enrich'))).toBe(true);
+      expect(result.errors ?? []).toEqual([]);
+    });
+
     it('should leave groups untouched when a node is renamed (groups key on ids)', async () => {
       const result = await diffEngine.applyDiff(withGroup(['http-1', 'slack-1']), {
         id: 'test-workflow',

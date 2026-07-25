@@ -605,7 +605,7 @@ describe('N8nApiClient', () => {
     it('omits the field and warns when the instance predates canvas groups (n8n < 2.28)', async () => {
       const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
       mockAxiosInstance.put
-        .mockRejectedValueOnce(badRequest('request/body/nodeGroups must NOT have additional properties'))
+        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
         .mockResolvedValue({ data: { id: '123' } });
       const warnings: string[] = [];
 
@@ -619,7 +619,7 @@ describe('N8nApiClient', () => {
     it('remembers that an instance rejects the field, so the next write skips it', async () => {
       const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
       mockAxiosInstance.put
-        .mockRejectedValueOnce(badRequest('request/body/nodeGroups must NOT have additional properties'))
+        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
         .mockResolvedValue({ data: { id: '123' } });
 
       await client.updateWorkflow('123', workflow);
@@ -636,7 +636,7 @@ describe('N8nApiClient', () => {
       // group — silently losing what they explicitly asked for.
       const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
       mockAxiosInstance.put
-        .mockRejectedValueOnce(badRequest('request/body/nodeGroups must NOT have additional properties'))
+        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
         .mockResolvedValue({ data: { id: '123' } });
 
       await client.updateWorkflow('123', workflow);
@@ -656,10 +656,7 @@ describe('N8nApiClient', () => {
       ]);
       mockAxiosInstance.put
         .mockRejectedValueOnce(
-          badRequest('Invalid request', {
-            message: 'Invalid request',
-            errors: [{ path: '/body/nodeGroups/0', message: 'must NOT have additional properties' }],
-          })
+badRequest('request/body/nodeGroups/0 must NOT have additional properties')
         )
         .mockResolvedValue({ data: { id: '123' } });
 
@@ -682,10 +679,7 @@ describe('N8nApiClient', () => {
       ]);
       mockAxiosInstance.put
         .mockRejectedValueOnce(
-          badRequest('Invalid request', {
-            message: 'Invalid request',
-            errors: [{ path: '/body/nodeGroups/0', message: 'must NOT have additional properties' }],
-          })
+badRequest('request/body/nodeGroups/0 must NOT have additional properties')
         )
         .mockResolvedValue({ data: { id: '123' } });
       const warnings: string[] = [];
@@ -806,6 +800,43 @@ describe('N8nApiClient', () => {
       expect(mockAxiosInstance.put).not.toHaveBeenCalled();
     });
 
+    it('does not record the field as unsupported when dropping it does not help', async () => {
+      // n8n cannot say WHICH unknown property it rejected, so the retry is the experiment: if the
+      // write still fails without nodeGroups, something else in the body was wrong and groups must
+      // not be blamed — otherwise one unrelated 400 would disable them for the whole instance.
+      const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
+      mockAxiosInstance.put.mockRejectedValue(badRequest('request/body must NOT have additional properties'));
+      const warnings: string[] = [];
+
+      await expect(
+        client.updateWorkflow('123', workflow, { onWarning: w => warnings.push(w) })
+      ).rejects.toThrow(/additional properties/);
+
+      expect(warnings).toEqual([]);
+
+      // The next write must still send groups: nothing was learned.
+      mockAxiosInstance.put.mockReset();
+      mockAxiosInstance.put.mockResolvedValue({ data: { id: '123' } });
+      await client.updateWorkflow('123', workflow);
+      expect(mockAxiosInstance.put.mock.calls[0][1]).toHaveProperty('nodeGroups');
+    });
+
+    it('records the field as unsupported only once dropping it succeeds', async () => {
+      const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
+      mockAxiosInstance.put
+        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
+        .mockResolvedValue({ data: { id: '123' } });
+      const warnings: string[] = [];
+
+      await client.updateWorkflow('123', workflow, { onWarning: w => warnings.push(w) });
+
+      expect(warnings.join(' ')).toContain('does not support canvas groups');
+      // Learned: the following write skips the field without probing again.
+      await client.updateWorkflow('123', workflow);
+      expect(mockAxiosInstance.put).toHaveBeenCalledTimes(3);
+      expect(mockAxiosInstance.put.mock.calls[2][1]).not.toHaveProperty('nodeGroups');
+    });
+
     it('leaves errors that have nothing to do with groups alone', async () => {
       const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
       mockAxiosInstance.put.mockRejectedValue(badRequest("request/body must have required property 'name'"));
@@ -817,7 +848,7 @@ describe('N8nApiClient', () => {
     it('degrades the same way on create', async () => {
       const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
       mockAxiosInstance.post
-        .mockRejectedValueOnce(badRequest('request/body/nodeGroups must NOT have additional properties'))
+        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
         .mockResolvedValue({ data: { id: '123' } });
       const warnings: string[] = [];
 
@@ -841,7 +872,7 @@ describe('N8nApiClient', () => {
       // `nodeGroups: []` is a sent field, so a pre-2.28 rejection of it must omit the field and
       // warn — not fail the write.
       mockAxiosInstance.put
-        .mockRejectedValueOnce(badRequest('request/body/nodeGroups must NOT have additional properties'))
+        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
         .mockResolvedValue({ data: { id: '123' } });
       const warnings: string[] = [];
 

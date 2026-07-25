@@ -408,7 +408,23 @@ export class N8nApiClient {
         );
 
         if (next === 'give-up') throw apiError;
-        if (next === 'omit-field') return await send(withoutNodeGroups(payload));
+
+        if (next === 'omit-field') {
+          // n8n could not say WHICH unknown property it rejected, so find out: send the same body
+          // without nodeGroups. Success means the field was the culprit and this instance predates
+          // it — worth remembering. Failure means something else in the body was wrong, so the
+          // original complaint is the honest answer and the capability memo stays untouched.
+          let result: Workflow;
+          try {
+            result = await send(withoutNodeGroups(payload));
+          } catch {
+            throw apiError;
+          }
+          this.groupSupport.groups = false;
+          options.onWarning?.(GROUPS_UNSUPPORTED_WARNING);
+          return result;
+        }
+
         groups = next;
       }
     }
@@ -435,11 +451,9 @@ export class N8nApiClient {
       return sanitizeGroupsForApi(groups, { includeDescription: false });
     }
 
-    if (classification.kind === 'schema-field') {
-      this.groupSupport.groups = false;
-      warn(GROUPS_UNSUPPORTED_WARNING);
-      return 'omit-field';
-    }
+    // Deliberately does not latch groupSupport or warn: whether the field really is the problem is
+    // only known once the retry without it succeeds. sendWorkflowWrite records it there.
+    if (classification.kind === 'schema-field') return 'omit-field';
 
     if (classification.kind !== 'semantic') return 'give-up';
 

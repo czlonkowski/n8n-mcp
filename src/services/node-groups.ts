@@ -404,31 +404,25 @@ export function classifyGroupError(
   }
   const haystack = `${message} ${detailsText}`;
 
-  // Schema rejection. n8n (express-openapi-validator) reports unknown properties as
-  // "request/body must NOT have additional properties" and names the offending property in
-  // `errors[].path` / `params.additionalProperty`.
+  // Schema rejection. n8n serializes these as message-only — its public-API error serializer keeps
+  // just `{ message }`, and the text comes from AJV's errorsText, which names the offending
+  // property only for a NESTED path. Verified against a live instance:
   //
-  // The complaint MUST implicate nodeGroups. Any other unknown property — a stray `settings` key,
-  // a field a future n8n stops accepting — is unrelated, and treating it as ours would latch
-  // `groupSupport.groups = false` on a client that lives for the process. Every later write would
-  // then omit the field, n8n would backfill the stored groups and revalidate them, and the exact
-  // 400 this module exists to prevent would come back on an instance that supports groups fine.
+  //   unknown top-level property  -> "request/body must NOT have additional properties"
+  //   unknown key inside a group  -> "request/body/nodeGroups/0 must NOT have additional properties"
   //
-  // The cost of being strict is bounded: on a genuinely pre-2.28 instance the only way to reach
-  // this branch is an explicitly authored grouping (such an instance never returns the field to
-  // begin with), and surfacing n8n's error for an explicit request is the documented contract.
+  // So a nested path identifies the culprit and a pathless message cannot. Rather than guess at a
+  // pathless one, this returns `schema-field` as a CANDIDATE: the caller retries without the field
+  // and only records the instance as lacking it if that retry actually succeeds. That keeps an
+  // unrelated unknown property from disabling groups for an instance that supports them.
   if (/must NOT have additional propert/i.test(haystack)) {
-    if (!/nodeGroups/i.test(haystack)) {
-      return { kind: 'unrelated', message };
-    }
-    // A nested path (`/nodeGroups/0`) means the group object carries an unsupported key — in
-    // practice `description`, which only exists on n8n 2.32+.
-    if (/nodeGroups\/\d+/.test(haystack) || /description/i.test(haystack)) {
-      return { kind: 'schema-description', message };
-    }
-    // Named without a path: try the narrower fix first when it could apply.
-    if (sentGroups.some(group => group.description !== undefined)) {
-      return { kind: 'schema-description', message };
+    const nested = /request\/body\/([A-Za-z0-9_]+)/.exec(haystack);
+    if (nested) {
+      // A path INTO nodeGroups means a group object carries a key this n8n has no schema for —
+      // in practice `description`, which only exists on n8n 2.32+.
+      return nested[1] === 'nodeGroups'
+        ? { kind: 'schema-description', message }
+        : { kind: 'unrelated', message };
     }
     return { kind: 'schema-field', message };
   }

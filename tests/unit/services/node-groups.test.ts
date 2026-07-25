@@ -265,24 +265,20 @@ describe('node-groups', () => {
   describe('classifyGroupError', () => {
     const groups = [{ id: 'g1', name: 'Transform records', nodeIds: ['a'] }];
 
-    it('classifies a top-level unsupported-property rejection as a schema-field problem', () => {
-      const error = new N8nApiError(
-        'Invalid request: request/body must NOT have additional properties',
-        400,
-        'VALIDATION_ERROR',
-        { errors: [{ path: '/body/nodeGroups', message: 'must NOT have additional properties' }] }
-      );
+    // The fixtures below are the bodies n8n actually sends, captured from a live instance. Its
+    // public-API serializer keeps only `{ message }`, and AJV's text names the offending property
+    // only when the path is nested — so a top-level rejection identifies nothing.
+    it('treats a pathless unsupported-property rejection as a candidate schema-field problem', () => {
+      const error = new N8nApiError('request/body must NOT have additional properties', 400);
 
       expect(classifyGroupError(error, groups).kind).toBe('schema-field');
     });
 
-    it('ignores an unsupported-property rejection about some other field', () => {
+    it('ignores an unsupported-property rejection whose path names another field', () => {
       // Latching "this instance has no nodeGroups" off an unrelated 400 would make every later
       // write omit the field, so n8n would backfill the stored groups and revalidate them — exactly
       // the failure this module exists to prevent, on an instance that supports groups fine.
-      const error = new N8nApiError('request/body must NOT have additional properties', 400, 'VALIDATION_ERROR', {
-        errors: [{ path: '/body/settings', params: { additionalProperty: 'somethingElse' } }],
-      });
+      const error = new N8nApiError('request/body/settings must NOT have additional properties', 400);
 
       expect(classifyGroupError(error, groups).kind).toBe('unrelated');
     });
@@ -298,10 +294,12 @@ describe('node-groups', () => {
       expect(classification.groupId).toBe('9b1c8e2a-4d3f-4a6b-8c7d-1e2f3a4b5c6d');
     });
 
-    it('classifies a nested unsupported-property rejection as a description problem', () => {
-      const error = new N8nApiError('Invalid request', 400, 'VALIDATION_ERROR', {
-        errors: [{ path: '/body/nodeGroups/0', message: 'must NOT have additional properties' }],
-      });
+    it('classifies a nested nodeGroups path as a description problem', () => {
+      // Exact text from a live pre-2.32 instance rejecting a group that carried a description.
+      const error = new N8nApiError(
+        'request/body/nodeGroups/0 must NOT have additional properties',
+        400
+      );
 
       expect(classifyGroupError(error, groups).kind).toBe('schema-description');
     });
@@ -314,16 +312,6 @@ describe('node-groups', () => {
       const withDescription = [{ ...groups[0], description: 'cleans records' }];
 
       expect(classifyGroupError(error, withDescription).kind).toBe('schema-description');
-    });
-
-    it('does not attribute a rejection that names no property at all', () => {
-      // Deliberate trade-off: without nodeGroups named anywhere, guessing would let an unrelated
-      // 400 permanently disable groups for the instance. The only way to reach this on a genuinely
-      // pre-2.28 instance is an explicitly authored grouping, and failing that loudly with n8n's
-      // own message is the documented contract for authored groups.
-      const error = new N8nApiError('request/body must NOT have additional properties', 400);
-
-      expect(classifyGroupError(error, groups).kind).toBe('unrelated');
     });
 
     it('extracts the group name from a dangling-member rejection', () => {
@@ -361,7 +349,7 @@ describe('node-groups', () => {
     it('still classifies a rejection when the sent payload was an empty array', () => {
       // `nodeGroups: []` means "ungroup everything" — a field a pre-2.28 instance rejects as an
       // unknown property, which must degrade to omitting it rather than failing the write.
-      const error = new N8nApiError('request/body/nodeGroups must NOT have additional properties', 400);
+      const error = new N8nApiError('request/body must NOT have additional properties', 400);
 
       expect(classifyGroupError(error, []).kind).toBe('schema-field');
     });
