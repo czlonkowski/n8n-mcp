@@ -88,6 +88,7 @@ export interface NodeGroupIssue {
     | 'group-member-removed'
     | 'group-empty'
     | 'group-unknown-keys'
+    | 'group-malformed'
     | 'group-duplicate-name'
     | 'group-node-in-multiple-groups'
     | 'group-contains-trigger'
@@ -105,6 +106,11 @@ export interface RepairResult {
    */
   nodeGroups?: WorkflowNodeGroup[];
   issues: NodeGroupIssue[];
+  /**
+   * Problems with a group the caller authored in this request. These are not repairable — the
+   * request itself is wrong — so the caller must fail rather than warn.
+   */
+  errors?: string[];
 }
 
 /** True when the value looks like a usable group object. */
@@ -159,7 +165,17 @@ export function sanitizeGroupsForApi(
  * Deliberately limited to changes no n8n version can disagree with. Topology violations are left
  * for the server: see the module docblock.
  */
-export function repairNodeGroups(workflow: Pick<Workflow, 'nodes' | 'nodeGroups'>): RepairResult {
+export function repairNodeGroups(
+  workflow: Pick<Workflow, 'nodes' | 'nodeGroups'>,
+  options: {
+    /**
+     * Groups the caller authored in this request. A member that does not exist is a mistake in the
+     * request, so it is reported as an error rather than quietly pruned — the same contract the
+     * write ladder applies to n8n's own rejections.
+     */
+    authoredGroups?: Set<string>;
+  } = {}
+): RepairResult {
   const groups = workflow.nodeGroups;
   if (!Array.isArray(groups) || groups.length === 0) {
     return { nodeGroups: groups, issues: [] };
@@ -168,19 +184,38 @@ export function repairNodeGroups(workflow: Pick<Workflow, 'nodes' | 'nodeGroups'
   const knownIds = new Set(
     (workflow.nodes ?? []).map(node => node?.id).filter((id): id is string => typeof id === 'string')
   );
+  const authored = options.authoredGroups ?? new Set<string>();
   const issues: NodeGroupIssue[] = [];
   const repaired: WorkflowNodeGroup[] = [];
+  const errors: string[] = [];
   let changed = false;
 
   for (const group of groups) {
     if (!isGroupLike(group)) {
-      changed = true; // malformed entries can only break the write
+      changed = true; // a malformed entry can only fail the write
+      issues.push({
+        code: 'group-malformed',
+        group: 'unknown',
+        message:
+          'A canvas group was dropped because it is missing an id, a name, or its member list.'
+      });
       continue;
     }
 
     const label = groupLabel(group);
     const keptIds = group.nodeIds.filter(id => typeof id === 'string' && knownIds.has(id));
     const removedCount = group.nodeIds.length - keptIds.length;
+
+    if (removedCount > 0 && authored.has(group.name)) {
+      const missing = group.nodeIds.filter(id => !keptIds.includes(id));
+      errors.push(
+        `Node group "${label}" references ${missing.length === 1 ? 'node' : 'nodes'} ${missing
+          .map(id => `"${id}"`)
+          .join(', ')} that ${missing.length === 1 ? 'is' : 'are'} not in the workflow.`
+      );
+      repaired.push(group);
+      continue;
+    }
 
     if (keptIds.length === 0) {
       changed = true;
@@ -206,7 +241,11 @@ export function repairNodeGroups(workflow: Pick<Workflow, 'nodes' | 'nodeGroups'
     repaired.push(group);
   }
 
-  return { nodeGroups: changed ? repaired : groups, issues };
+  return {
+    nodeGroups: changed ? repaired : groups,
+    issues,
+    errors: errors.length > 0 ? errors : undefined
+  };
 }
 
 /**
@@ -286,15 +325,19 @@ export function checkNodeGroups(
   return issues;
 }
 
-/** Remove one group by name, matched exactly as n8n reported it. */
-export function dropGroupByName(
+/**
+ * Remove the one group n8n rejected, matched by the id it reported when it gave one and by exact
+ * name otherwise.
+ */
+export function dropRejectedGroup(
   groups: WorkflowNodeGroup[],
-  name: string
+  target: { groupId?: string; groupName?: string }
 ): { groups: WorkflowNodeGroup[]; dropped: WorkflowNodeGroup | null } {
-  const index = groups.findIndex(group => group.name === name);
+  const index = groups.findIndex(group =>
+    target.groupId ? group.id === target.groupId : group.name === target.groupName
+  );
   if (index === -1) return { groups, dropped: null };
-  const dropped = groups[index];
-  return { groups: groups.filter((_, i) => i !== index), dropped };
+  return { groups: groups.filter((_, i) => i !== index), dropped: groups[index] };
 }
 
 export type GroupErrorKind =
@@ -311,6 +354,11 @@ export interface GroupErrorClassification {
   kind: GroupErrorKind;
   /** Group name n8n named in the message, when it named one. */
   groupName?: string;
+  /**
+   * Group id n8n named, when its message carries one. Preferred over the name for matching: names
+   * are free-form user text and one containing a quote defeats any name capture.
+   */
+  groupId?: string;
   /** n8n's own message, for surfacing to the caller. */
   message: string;
 }
@@ -346,14 +394,28 @@ export function classifyGroupError(
   const haystack = `${message} ${detailsText}`;
 
   // Schema rejection. n8n (express-openapi-validator) reports unknown properties as
-  // "request/body must NOT have additional properties", sometimes with the offending path in
-  // details. A nested path (`/nodeGroups/0`) means the group object has an unsupported key —
-  // in practice `description`, which only exists on n8n 2.32+.
+  // "request/body must NOT have additional properties" and names the offending property in
+  // `errors[].path` / `params.additionalProperty`.
+  //
+  // The complaint MUST implicate nodeGroups. Any other unknown property — a stray `settings` key,
+  // a field a future n8n stops accepting — is unrelated, and treating it as ours would latch
+  // `groupSupport.groups = false` on a client that lives for the process. Every later write would
+  // then omit the field, n8n would backfill the stored groups and revalidate them, and the exact
+  // 400 this module exists to prevent would come back on an instance that supports groups fine.
+  //
+  // The cost of being strict is bounded: on a genuinely pre-2.28 instance the only way to reach
+  // this branch is an explicitly authored grouping (such an instance never returns the field to
+  // begin with), and surfacing n8n's error for an explicit request is the documented contract.
   if (/must NOT have additional propert/i.test(haystack)) {
+    if (!/nodeGroups/i.test(haystack)) {
+      return { kind: 'unrelated', message };
+    }
+    // A nested path (`/nodeGroups/0`) means the group object carries an unsupported key — in
+    // practice `description`, which only exists on n8n 2.32+.
     if (/nodeGroups\/\d+/.test(haystack) || /description/i.test(haystack)) {
       return { kind: 'schema-description', message };
     }
-    // A generic complaint with no path: try the narrower fix first when it could apply.
+    // Named without a path: try the narrower fix first when it could apply.
     if (sentGroups.some(group => group.description !== undefined)) {
       return { kind: 'schema-description', message };
     }
@@ -364,6 +426,14 @@ export function classifyGroupError(
   // e.g. `Group "Transform records" references node ID "..." that does not exist in the
   // workflow.` or `Node group "Transform records" (<id>) must form a single connected subgraph
   // with a single entry and exit.`
+  //
+  // The id is preferred when present: group names are free-form user text, and one containing a
+  // quote (`Say "hi"`) truncates the name capture, which would leave the offending group
+  // unidentified.
+  const identified = /(?:node group|group)\s+"(.+?)"\s*\(([^)]+)\)/i.exec(haystack);
+  if (identified) {
+    return { kind: 'semantic', groupName: identified[1], groupId: identified[2], message };
+  }
   const named = /(?:node group|group)\s+"([^"]+)"/i.exec(haystack);
   if (named) {
     return { kind: 'semantic', groupName: named[1], message };

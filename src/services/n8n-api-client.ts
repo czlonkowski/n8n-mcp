@@ -39,12 +39,12 @@ import {
   DataTableDeleteRowsParams,
   WorkflowNodeGroup,
 } from '../types/n8n-api';
-import { handleN8nApiError, logN8nError } from '../utils/n8n-errors';
+import { handleN8nApiError, logN8nError, N8nValidationError } from '../utils/n8n-errors';
 import { encodeApiPathSegment } from '../utils/validation-schemas';
 import { cleanWorkflowForCreate, cleanWorkflowForUpdate } from './n8n-validation';
 import {
   classifyGroupError,
-  dropGroupByName,
+  dropRejectedGroup,
   repairNodeGroups,
   sanitizeGroupsForApi,
   type GroupErrorClassification,
@@ -443,28 +443,35 @@ export class N8nApiClient {
 
     if (classification.kind !== 'semantic') return 'give-up';
 
-    const name = classification.groupName;
+    const { groupName, groupId } = classification;
 
-    // Never silently discard a group the caller asked for in this request.
-    if (name && authored.has(name)) return 'give-up';
+    if (groupName || groupId) {
+      const { groups: remaining, dropped } = dropRejectedGroup(groups, { groupId, groupName });
 
-    if (name) {
-      const { groups: remaining, dropped } = dropGroupByName(groups, name);
+      // Never silently discard a group the caller asked for in this request.
+      if (dropped && authored.has(dropped.name)) return 'give-up';
+
       if (dropped) {
         warn(
-          `n8n rejected node group "${name}", so it was ungrouped to save the workflow (nodes and connections are unchanged). n8n said: ${classification.message}`
+          `n8n rejected node group "${dropped.name}", so it was ungrouped to save the workflow (nodes and connections are unchanged). n8n said: ${classification.message}`
         );
         return remaining;
       }
+
+      // n8n identified a group we do not hold — most likely its message did not survive matching
+      // (a quote in the name). Surface its error rather than guess which group to destroy.
+      return 'give-up';
     }
 
-    // n8n complained about groups without naming one we hold. Ungrouping everything is the
-    // last resort — refuse it when the caller authored what we would throw away.
-    if (groups.length > 0 && !groups.some(group => authored.has(group.name))) {
+    // n8n complained about groups without naming any. Drop the inherited ones and keep whatever the
+    // caller authored: if that is still rejected, the next pass surfaces the error instead of
+    // destroying content the caller explicitly asked for.
+    const keepAuthored = groups.filter(group => authored.has(group.name));
+    if (keepAuthored.length < groups.length) {
       warn(
-        `n8n rejected the canvas groups on this workflow, so all of them were removed to save it (nodes and connections are unchanged). n8n said: ${classification.message}`
+        `n8n rejected the canvas groups on this workflow, so ${keepAuthored.length > 0 ? 'the ones it did not ask about were' : 'all of them were'} removed to save it (nodes and connections are unchanged). n8n said: ${classification.message}`
       );
-      return [];
+      return keepAuthored;
     }
 
     return 'give-up';
@@ -494,12 +501,23 @@ export class N8nApiClient {
     payload: Record<string, unknown>,
     options: WorkflowWriteOptions
   ): Record<string, unknown> {
-    if (!Array.isArray(payload.nodeGroups)) return payload;
+    // A payload without `nodes` says nothing about which nodes exist — treating that as "none" would
+    // prune every group. Callers always merge over a GET today; this keeps that assumption explicit.
+    if (!Array.isArray(payload.nodeGroups) || !Array.isArray(payload.nodes)) return payload;
 
-    const { nodeGroups, issues } = repairNodeGroups({
-      nodes: (payload.nodes as Workflow['nodes']) ?? [],
-      nodeGroups: payload.nodeGroups as Workflow['nodeGroups'],
-    });
+    const { nodeGroups, issues, errors } = repairNodeGroups(
+      {
+        nodes: payload.nodes as Workflow['nodes'],
+        nodeGroups: payload.nodeGroups as Workflow['nodeGroups'],
+      },
+      { authoredGroups: options.authoredGroups }
+    );
+
+    // A group the caller authored in this request referencing a node that does not exist is a
+    // mistake in the request, not something to repair silently — n8n would have said the same.
+    if (errors && errors.length > 0) {
+      throw new N8nValidationError(errors.join(' '), { nodeGroups: errors });
+    }
 
     for (const issue of issues) {
       options.onWarning?.(issue.message);

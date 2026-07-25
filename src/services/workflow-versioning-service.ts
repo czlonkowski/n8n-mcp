@@ -44,6 +44,11 @@ export interface RestoreResult {
   backupCreated: boolean;
   backupVersionId?: number;
   validationErrors?: string[];
+  /**
+   * Canvas groups adjusted to make the restore land — a snapshot can predate a node deletion, and
+   * n8n validates groups on write. The graph is restored either way; this says what else changed.
+   */
+  warnings?: string[];
 }
 
 export interface BackupResult {
@@ -260,7 +265,10 @@ export class WorkflowVersioningService {
 
     // Restore the workflow
     try {
-      await this.apiClient.updateWorkflow(workflowId, versionToRestore.workflowSnapshot);
+      const warnings: string[] = [];
+      await this.apiClient.updateWorkflow(workflowId, versionToRestore.workflowSnapshot, {
+        onWarning: message => warnings.push(message)
+      });
 
       return {
         success: true,
@@ -269,7 +277,8 @@ export class WorkflowVersioningService {
         fromVersion: backupResult.versionNumber,
         toVersionId: versionToRestore.id,
         backupCreated: true,
-        backupVersionId: backupResult.versionId
+        backupVersionId: backupResult.versionId,
+        ...(warnings.length > 0 ? { warnings } : {})
       };
     } catch (error: any) {
       return {

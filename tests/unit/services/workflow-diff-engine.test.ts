@@ -3173,6 +3173,31 @@ describe('WorkflowDiffEngine', () => {
       expect(result.errors![0].message).toContain('duplicate group name');
     });
 
+    it('should resolve by name when nodeIds is present but empty', async () => {
+      // Regression: the validator chose the member list by non-emptiness and the resolver by mere
+      // presence, so `nodeIds: []` alongside a populated `nodeNames` validated, resolved to zero
+      // members, and — because setNodeGroups replaces the whole list — silently ungrouped the
+      // entire workflow while reporting success. Both keys with one empty is a common LLM shape.
+      const workflow = {
+        ...baseWorkflow,
+        nodeGroups: [{ id: 'existing', name: 'Existing', nodeIds: ['webhook-1'] }]
+      } as any;
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test-workflow',
+        operations: [{
+          type: 'setNodeGroups',
+          nodeGroups: [{ name: 'Deliver', nodeIds: [], nodeNames: ['HTTP Request', 'Slack'] }]
+        } as any]
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.workflow!.nodeGroups).toHaveLength(1);
+      expect(result.workflow!.nodeGroups[0].name).toBe('Deliver');
+      expect(result.workflow!.nodeGroups[0].nodeIds).toEqual(['http-1', 'slack-1']);
+      expect(result.warnings ?? []).toEqual([]);
+    });
+
     it('should require exactly one of nodeNames or nodeIds', async () => {
       const both = await diffEngine.applyDiff(baseWorkflow, {
         id: 'test-workflow',

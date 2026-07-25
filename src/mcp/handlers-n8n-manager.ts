@@ -2974,6 +2974,7 @@ export async function handleDeployTemplate(
 
     // Create workflow via API (always creates inactive)
     // Deploy first, then fix - this ensures the workflow exists before we modify it
+    const templateGroupWarnings: string[] = [];
     const createdWorkflow = await client.createWorkflow({
       name: workflowName,
       nodes: workflow.nodes,
@@ -2982,6 +2983,8 @@ export async function handleDeployTemplate(
       // touched), so any canvas groups they carry still address the right nodes.
       ...nodeGroupsField(workflow.nodeGroups),
       settings: workflow.settings || { executionOrder: 'v1' }
+    }, {
+      onWarning: message => templateGroupWarnings.push(message)
     });
 
     // Get base URL for workflow link

@@ -326,7 +326,13 @@ describe('WorkflowVersioningService', () => {
 
       const result = await service.restoreVersion('workflow-1', 1, false);
 
-      expect(mockApiClient.updateWorkflow).toHaveBeenCalledWith('workflow-1', versionToRestore.workflowSnapshot);
+      // The write options carry a warning channel: a snapshot can predate a node deletion, and any
+      // canvas group adjusted to make the restore land has to reach the caller.
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledWith(
+        'workflow-1',
+        versionToRestore.workflowSnapshot,
+        expect.objectContaining({ onWarning: expect.any(Function) })
+      );
       expect(result.success).toBe(true);
       expect(result.message).toContain('Successfully restored workflow to version 1');
       expect(result.fromVersion).toBe(3);

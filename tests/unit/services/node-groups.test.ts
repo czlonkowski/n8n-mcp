@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   classifyGroupError,
   checkNodeGroups,
-  dropGroupByName,
+  dropRejectedGroup,
   parseNodeGroupsInput,
   repairNodeGroups,
   sanitizeGroupsForApi,
@@ -87,12 +87,35 @@ describe('node-groups', () => {
       expect(repairNodeGroups(workflow([node('a', 'Set A')], [])).nodeGroups).toEqual([]);
     });
 
-    it('drops malformed entries instead of forwarding them', () => {
+    it('drops malformed entries and says so', () => {
       const result = repairNodeGroups(
         workflow([node('a', 'Set A')], [null, { name: 'no id' }, { id: 'g1', name: 'Ok', nodeIds: ['a'] }])
       );
 
       expect(result.nodeGroups).toEqual([{ id: 'g1', name: 'Ok', nodeIds: ['a'] }]);
+      expect(result.issues.filter(i => i.code === 'group-malformed')).toHaveLength(2);
+    });
+
+    it('errors instead of pruning when the caller authored the group in this request', () => {
+      // A member that does not exist is a mistake in the request, not something to repair silently:
+      // n8n would have answered with the same complaint.
+      const result = repairNodeGroups(
+        workflow([node('a', 'Set A')], [{ id: 'g1', name: 'Mine', nodeIds: ['a', 'typo'] }]),
+        { authoredGroups: new Set(['Mine']) }
+      );
+
+      expect(result.errors?.join(' ')).toContain('"typo"');
+      expect(result.issues).toEqual([]);
+    });
+
+    it('still prunes an inherited group with the same problem', () => {
+      const result = repairNodeGroups(
+        workflow([node('a', 'Set A')], [{ id: 'g1', name: 'Inherited', nodeIds: ['a', 'typo'] }]),
+        { authoredGroups: new Set(['Something else']) }
+      );
+
+      expect(result.errors).toBeUndefined();
+      expect(result.nodeGroups).toEqual([{ id: 'g1', name: 'Inherited', nodeIds: ['a'] }]);
     });
   });
 
@@ -182,26 +205,35 @@ describe('node-groups', () => {
     });
   });
 
-  describe('dropGroupByName', () => {
-    it('removes only the named group', () => {
-      const groups = [
-        { id: 'g1', name: 'Keep', nodeIds: ['a'] },
-        { id: 'g2', name: 'Drop', nodeIds: ['b'] },
-      ];
+  describe('dropRejectedGroup', () => {
+    const groups = () => [
+      { id: 'g1', name: 'Keep', nodeIds: ['a'] },
+      { id: 'g2', name: 'Drop', nodeIds: ['b'] },
+    ];
 
-      const { groups: remaining, dropped } = dropGroupByName(groups, 'Drop');
+    it('removes only the named group', () => {
+      const input = groups();
+      const { groups: remaining, dropped } = dropRejectedGroup(input, { groupName: 'Drop' });
 
       expect(dropped?.id).toBe('g2');
       expect(remaining).toEqual([{ id: 'g1', name: 'Keep', nodeIds: ['a'] }]);
-      expect(groups).toHaveLength(2);
+      expect(input).toHaveLength(2);
+    });
+
+    it('prefers the id when n8n reported one', () => {
+      // Group names are free-form user text; a quote in one truncates any name capture, so the id
+      // is the reliable identifier when the message carries it.
+      const { dropped } = dropRejectedGroup(groups(), { groupId: 'g2', groupName: 'mangled' });
+
+      expect(dropped?.id).toBe('g2');
     });
 
     it('reports nothing dropped for an unknown name', () => {
-      const groups = [{ id: 'g1', name: 'Keep', nodeIds: ['a'] }];
-      const { groups: remaining, dropped } = dropGroupByName(groups, 'Missing');
+      const input = groups();
+      const { groups: remaining, dropped } = dropRejectedGroup(input, { groupName: 'Missing' });
 
       expect(dropped).toBeNull();
-      expect(remaining).toBe(groups);
+      expect(remaining).toBe(input);
     });
   });
 
@@ -211,10 +243,34 @@ describe('node-groups', () => {
     it('classifies a top-level unsupported-property rejection as a schema-field problem', () => {
       const error = new N8nApiError(
         'Invalid request: request/body must NOT have additional properties',
-        400
+        400,
+        'VALIDATION_ERROR',
+        { errors: [{ path: '/body/nodeGroups', message: 'must NOT have additional properties' }] }
       );
 
       expect(classifyGroupError(error, groups).kind).toBe('schema-field');
+    });
+
+    it('ignores an unsupported-property rejection about some other field', () => {
+      // Latching "this instance has no nodeGroups" off an unrelated 400 would make every later
+      // write omit the field, so n8n would backfill the stored groups and revalidate them — exactly
+      // the failure this module exists to prevent, on an instance that supports groups fine.
+      const error = new N8nApiError('request/body must NOT have additional properties', 400, 'VALIDATION_ERROR', {
+        errors: [{ path: '/body/settings', params: { additionalProperty: 'somethingElse' } }],
+      });
+
+      expect(classifyGroupError(error, groups).kind).toBe('unrelated');
+    });
+
+    it('extracts the group id when n8n reports one, so a quoted name cannot mislead it', () => {
+      const error = new N8nApiError(
+        'Node group "Say "hi"" (9b1c8e2a-4d3f-4a6b-8c7d-1e2f3a4b5c6d) must form a single connected subgraph with a single entry and exit.',
+        400
+      );
+      const classification = classifyGroupError(error, groups);
+
+      expect(classification.kind).toBe('semantic');
+      expect(classification.groupId).toBe('9b1c8e2a-4d3f-4a6b-8c7d-1e2f3a4b5c6d');
     });
 
     it('classifies a nested unsupported-property rejection as a description problem', () => {
@@ -225,11 +281,24 @@ describe('node-groups', () => {
       expect(classifyGroupError(error, groups).kind).toBe('schema-description');
     });
 
-    it('prefers stripping descriptions when a generic rejection could be caused by them', () => {
-      const error = new N8nApiError('request/body must NOT have additional properties', 400);
+    it('prefers stripping descriptions when the rejection names nodeGroups without a path', () => {
+      const error = new N8nApiError(
+        'request/body/nodeGroups must NOT have additional properties',
+        400
+      );
       const withDescription = [{ ...groups[0], description: 'cleans records' }];
 
       expect(classifyGroupError(error, withDescription).kind).toBe('schema-description');
+    });
+
+    it('does not attribute a rejection that names no property at all', () => {
+      // Deliberate trade-off: without nodeGroups named anywhere, guessing would let an unrelated
+      // 400 permanently disable groups for the instance. The only way to reach this on a genuinely
+      // pre-2.28 instance is an explicitly authored grouping, and failing that loudly with n8n's
+      // own message is the documented contract for authored groups.
+      const error = new N8nApiError('request/body must NOT have additional properties', 400);
+
+      expect(classifyGroupError(error, groups).kind).toBe('unrelated');
     });
 
     it('extracts the group name from a dangling-member rejection', () => {
@@ -267,7 +336,7 @@ describe('node-groups', () => {
     it('still classifies a rejection when the sent payload was an empty array', () => {
       // `nodeGroups: []` means "ungroup everything" — a field a pre-2.28 instance rejects as an
       // unknown property, which must degrade to omitting it rather than failing the write.
-      const error = new N8nApiError('request/body must NOT have additional properties', 400);
+      const error = new N8nApiError('request/body/nodeGroups must NOT have additional properties', 400);
 
       expect(classifyGroupError(error, []).kind).toBe('schema-field');
     });

@@ -188,7 +188,7 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
   if (source.name !== undefined) cleanedWorkflow.name = source.name;
   if (source.nodes !== undefined) cleanedWorkflow.nodes = source.nodes;
   if (source.connections !== undefined) cleanedWorkflow.connections = source.connections;
-  if (source.nodeGroups !== undefined) cleanedWorkflow.nodeGroups = source.nodeGroups;
+  if (Array.isArray(source.nodeGroups)) cleanedWorkflow.nodeGroups = source.nodeGroups;
   if (source.settings !== undefined) cleanedWorkflow.settings = source.settings;
 
   // ALL known settings properties accepted by n8n Public API (as of n8n 1.119.0+)

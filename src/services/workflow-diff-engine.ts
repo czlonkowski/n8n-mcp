@@ -1396,7 +1396,9 @@ export class WorkflowDiffEngine {
     const label = group.name?.trim() || group.id || 'unnamed group';
     const resolved: WorkflowNode[] = [];
 
-    if (Array.isArray(group.nodeIds)) {
+    // Non-emptiness, matching validateSetNodeGroups exactly: an empty `nodeIds` next to a populated
+    // `nodeNames` must resolve by name, not silently produce a memberless group.
+    if (Array.isArray(group.nodeIds) && group.nodeIds.length > 0) {
       for (const nodeId of group.nodeIds) {
         const node = workflow.nodes.find(n => n.id === nodeId);
         if (!node) {
@@ -1423,7 +1425,9 @@ export class WorkflowDiffEngine {
 
     for (const group of operation.nodeGroups) {
       const members = this.resolveGroupMembers(workflow, group);
-      if (typeof members === 'string') continue; // validation already rejected this batch
+      // Unreachable: validateSetNodeGroups resolved the same members first. If the two ever
+      // disagree, fail loudly rather than write a group validation never approved.
+      if (typeof members === 'string') throw new Error(members);
 
       const resolved = toWorkflowNodeGroup({
         id: group.id,

@@ -605,7 +605,7 @@ describe('N8nApiClient', () => {
     it('omits the field and warns when the instance predates canvas groups (n8n < 2.28)', async () => {
       const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
       mockAxiosInstance.put
-        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
+        .mockRejectedValueOnce(badRequest('request/body/nodeGroups must NOT have additional properties'))
         .mockResolvedValue({ data: { id: '123' } });
       const warnings: string[] = [];
 
@@ -619,7 +619,7 @@ describe('N8nApiClient', () => {
     it('remembers that an instance rejects the field, so the next write skips it', async () => {
       const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
       mockAxiosInstance.put
-        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
+        .mockRejectedValueOnce(badRequest('request/body/nodeGroups must NOT have additional properties'))
         .mockResolvedValue({ data: { id: '123' } });
 
       await client.updateWorkflow('123', workflow);
@@ -636,7 +636,7 @@ describe('N8nApiClient', () => {
       // group — silently losing what they explicitly asked for.
       const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
       mockAxiosInstance.put
-        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
+        .mockRejectedValueOnce(badRequest('request/body/nodeGroups must NOT have additional properties'))
         .mockResolvedValue({ data: { id: '123' } });
 
       await client.updateWorkflow('123', workflow);
@@ -758,6 +758,54 @@ describe('N8nApiClient', () => {
       expect(warnings.join(' ')).toContain('all of them were removed');
     });
 
+    it('keeps an authored group when n8n rejects the set without naming one', async () => {
+      // Last resort used to be all-or-nothing. Dropping only the inherited groups saves the write
+      // without destroying what the caller explicitly asked for.
+      const workflow = groupedWorkflow([
+        { id: 'g1', name: 'Inherited', nodeIds: ['a'] },
+        { id: 'g2', name: 'Mine', nodeIds: ['b'] },
+      ]);
+      mockAxiosInstance.put
+        .mockRejectedValueOnce(badRequest('Invalid nodeGroups payload'))
+        .mockResolvedValue({ data: { id: '123' } });
+      const warnings: string[] = [];
+
+      await client.updateWorkflow('123', workflow, {
+        authoredGroups: new Set(['Mine']),
+        onWarning: w => warnings.push(w),
+      });
+
+      expect(mockAxiosInstance.put.mock.calls[1][1].nodeGroups).toEqual([
+        { id: 'g2', name: 'Mine', nodeIds: ['b'] },
+      ]);
+      expect(warnings.join(' ')).toContain('the ones it did not ask about were');
+    });
+
+    it('surfaces the error rather than guessing when n8n names a group it does not hold', async () => {
+      // A group name containing a quote truncates n8n's name capture. Destroying every other group
+      // to recover from an unmatched name would be worse than failing.
+      const workflow = groupedWorkflow([{ id: 'g1', name: 'Keep me', nodeIds: ['a'] }]);
+      mockAxiosInstance.put.mockRejectedValue(
+        badRequest('Group "Say "hi"" references node ID "x" that does not exist in the workflow.')
+      );
+
+      await expect(client.updateWorkflow('123', workflow)).rejects.toThrow(/does not exist/);
+      expect(mockAxiosInstance.put).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects an authored group whose member is not in the workflow', async () => {
+      // Repair prunes stale members for inherited groups, but for one the caller just authored the
+      // missing node is a mistake in the request — n8n would have said the same.
+      const workflow = groupedWorkflow([{ id: 'g1', name: 'Mine', nodeIds: ['a', 'typo'] }]);
+      mockAxiosInstance.put.mockResolvedValue({ data: { id: '123' } });
+
+      await expect(
+        client.updateWorkflow('123', workflow, { authoredGroups: new Set(['Mine']) })
+      ).rejects.toThrow(/"typo"/);
+
+      expect(mockAxiosInstance.put).not.toHaveBeenCalled();
+    });
+
     it('leaves errors that have nothing to do with groups alone', async () => {
       const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
       mockAxiosInstance.put.mockRejectedValue(badRequest("request/body must have required property 'name'"));
@@ -769,7 +817,7 @@ describe('N8nApiClient', () => {
     it('degrades the same way on create', async () => {
       const workflow = groupedWorkflow([{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]);
       mockAxiosInstance.post
-        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
+        .mockRejectedValueOnce(badRequest('request/body/nodeGroups must NOT have additional properties'))
         .mockResolvedValue({ data: { id: '123' } });
       const warnings: string[] = [];
 
@@ -793,7 +841,7 @@ describe('N8nApiClient', () => {
       // `nodeGroups: []` is a sent field, so a pre-2.28 rejection of it must omit the field and
       // warn — not fail the write.
       mockAxiosInstance.put
-        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
+        .mockRejectedValueOnce(badRequest('request/body/nodeGroups must NOT have additional properties'))
         .mockResolvedValue({ data: { id: '123' } });
       const warnings: string[] = [];
 
