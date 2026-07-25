@@ -3230,6 +3230,22 @@ describe('WorkflowDiffEngine', () => {
       expect(result.errors![0].message).toContain('not a node name');
     });
 
+    it('should reject a member that is literally undefined', async () => {
+      // find() returns the element, so an `undefined` member would satisfy `badMember === undefined`
+      // and skip the guard written to catch it. Reachable in-process (mcp-engine), not over JSON.
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [{
+          type: 'setNodeGroups',
+          nodeGroups: [{ name: 'Deliver', nodeNames: ['Slack', undefined] }]
+        } as any]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('not a node name');
+      expect(result.errors![0].message).not.toContain('trim is not a function');
+    });
+
     it('should reject a non-string group id', async () => {
       const result = await diffEngine.applyDiff(baseWorkflow, {
         id: 'test-workflow',

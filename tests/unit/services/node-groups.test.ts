@@ -245,6 +245,14 @@ describe('node-groups', () => {
       expect(dropped?.id).toBe('g2');
     });
 
+    it('falls back to the name when the reported id matches nothing', () => {
+      // The id is scraped from a parenthetical in n8n's message. If that parenthetical is not an
+      // id at all (`Node group "X" (2 nodes) ...`), an id-only match would strand the write.
+      const { dropped } = dropRejectedGroup(groups(), { groupId: '2 nodes', groupName: 'Drop' });
+
+      expect(dropped?.id).toBe('g2');
+    });
+
     it('reports nothing dropped for an unknown name', () => {
       const input = groups();
       const { groups: remaining, dropped } = dropRejectedGroup(input, { groupName: 'Missing' });

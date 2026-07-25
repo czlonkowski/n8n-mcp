@@ -890,7 +890,7 @@ export async function handleGetWorkflowFiltered(args: unknown, context?: Instanc
     // response — filtered mode returns a slice of the workflow, not a valid whole.
     const matchedIds = new Set(matchedNodes.map(node => node.id));
     const touchedGroups = (workflow.nodeGroups ?? []).filter(group =>
-      group.nodeIds.some(nodeId => matchedIds.has(nodeId))
+      Array.isArray(group?.nodeIds) && group.nodeIds.some(nodeId => matchedIds.has(nodeId))
     );
 
     return {
@@ -3047,7 +3047,10 @@ export async function handleDeployTemplate(
         templateId: input.templateId,
         templateUrl: template.url || `https://n8n.io/workflows/${input.templateId}`,
         autoFixStatus,
-        fixesApplied: fixesApplied.length > 0 ? fixesApplied : undefined
+        fixesApplied: fixesApplied.length > 0 ? fixesApplied : undefined,
+        // Canvas groups a template carried that this n8n could not store. Without this the tool
+        // would report an unqualified success while the template's frames were dropped.
+        warnings: templateGroupWarnings.length > 0 ? templateGroupWarnings : undefined
       },
       message: `Workflow "${createdWorkflow.name}" deployed successfully from template ${input.templateId}.${fixSummary} ${
         requiredCredentials.length > 0

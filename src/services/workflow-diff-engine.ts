@@ -1384,9 +1384,11 @@ export class WorkflowDiffEngine {
       }
 
       const members = hasIds ? group.nodeIds! : group.nodeNames!;
-      const badMember = members.find(member => typeof member !== 'string' || !member.trim());
-      if (badMember !== undefined) {
-        return `setNodeGroups: group "${name}" has a member that is not a node ${hasIds ? 'ID' : 'name'} (${JSON.stringify(badMember)})`;
+      // findIndex, not find: a member that IS `undefined` would make find() return undefined and
+      // skip the very guard meant to catch it.
+      const badIndex = members.findIndex(member => typeof member !== 'string' || !member.trim());
+      if (badIndex !== -1) {
+        return `setNodeGroups: group "${name}" has a member that is not a node ${hasIds ? 'ID' : 'name'} (${JSON.stringify(members[badIndex])})`;
       }
 
       const resolvedMembers = this.resolveGroupMembers(workflow, group);

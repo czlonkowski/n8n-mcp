@@ -336,9 +336,17 @@ export function dropRejectedGroup(
   groups: WorkflowNodeGroup[],
   target: { groupId?: string; groupName?: string }
 ): { groups: WorkflowNodeGroup[]; dropped: WorkflowNodeGroup | null } {
-  const index = groups.findIndex(group =>
-    target.groupId ? group.id === target.groupId : group.name === target.groupName
-  );
+  // Id first, name second — not id-only. The id is scraped from a parenthetical in n8n's message,
+  // so a message shaped `Node group "X" (2 nodes) ...` would otherwise suppress a perfectly good
+  // name match and strand the write. Group names are unique (validateSetNodeGroups and
+  // checkNodeGroups both enforce it), so the name cannot select the wrong group.
+  const byId = target.groupId ? groups.findIndex(group => group.id === target.groupId) : -1;
+  const index =
+    byId !== -1
+      ? byId
+      : target.groupName
+        ? groups.findIndex(group => group.name === target.groupName)
+        : -1;
   if (index === -1) return { groups, dropped: null };
   return { groups: groups.filter((_, i) => i !== index), dropped: groups[index] };
 }
