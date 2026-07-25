@@ -449,8 +449,11 @@ export async function handleUpdatePartialWorkflow(
               ...(workflowBefore.versionId ? { priorVersionId: workflowBefore.versionId } : {}),
               // A rollback can have to drop a canvas group the server no longer accepts. That is a
               // real change to the restored workflow, so it must not be lost just because this path
-              // ends in an error rather than the success response.
-              ...(groupWarnings.length > 0 ? { warnings: groupWarnings } : {}),
+              // ends in an error rather than the success response. Same shape as the success path's
+              // warnings, so a client can read details.warnings without branching on the outcome.
+              ...(groupWarnings.length > 0
+                ? { warnings: groupWarnings.map(message => ({ operation: -1, message })) }
+                : {}),
             };
             const suffix = rollbackPerformed
               ? ' (workflow restored to prior state)'

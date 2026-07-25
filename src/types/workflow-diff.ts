@@ -121,9 +121,11 @@ export interface UpdateNameOperation extends DiffOperation {
  * Replace the workflow's canvas groups (n8n 2.28+). Full replacement, like replaceConnections:
  * pass every group you want to keep, or an empty array to ungroup everything.
  *
- * Members are addressed by name or by ID — exactly one of nodeNames/nodeIds per group. n8n itself
- * decides whether the resulting shape is groupable (a connected run, no trigger inside); its
- * rejection is returned verbatim rather than second-guessed here.
+ * Members are addressed by name or by ID: supply exactly one populated list per group. Sending both
+ * with one of them empty is accepted (the populated one wins) because that shape is common in
+ * generated payloads; sending both populated is rejected as ambiguous. n8n itself decides whether
+ * the resulting shape is groupable (a connected run, no trigger inside); its rejection is returned
+ * verbatim rather than second-guessed here.
  */
 export interface SetNodeGroupsOperation extends DiffOperation {
   type: 'setNodeGroups';

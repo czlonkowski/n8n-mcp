@@ -976,8 +976,9 @@ describe('handlers-workflow-diff', () => {
       }, mockRepository);
 
       expect(result.success).toBe(false);
+      // Same shape as the success path, so a client reads details.warnings without branching.
       expect(result.details?.warnings).toEqual([
-        'n8n rejected node group "Stale", so it was ungrouped to save the workflow',
+        { operation: -1, message: 'n8n rejected node group "Stale", so it was ungrouped to save the workflow' },
       ]);
     });
 
