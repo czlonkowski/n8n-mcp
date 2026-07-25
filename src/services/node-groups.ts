@@ -152,8 +152,11 @@ export function sanitizeGroupsForApi(
       name: group.name,
       nodeIds: group.nodeIds.filter(id => typeof id === 'string')
     };
-    if (options.includeDescription && group.description !== undefined) {
-      sanitized.description = group.description;
+    // Only a non-blank string: a group read back from n8n is untyped at runtime, and forwarding a
+    // number or object here would earn a 400 the ladder cannot attribute to descriptions.
+    if (options.includeDescription && typeof group.description === 'string') {
+      const description = group.description.trim();
+      if (description) sanitized.description = description;
     }
     return sanitized;
   });

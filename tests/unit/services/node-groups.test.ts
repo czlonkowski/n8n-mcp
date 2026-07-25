@@ -138,6 +138,23 @@ describe('node-groups', () => {
       expect(sanitized[0].description).toBe('cleans records');
     });
 
+    it('drops a description that is not a usable string', () => {
+      // Groups read back from n8n are untyped at runtime; forwarding a non-string would earn a 400
+      // the degradation ladder cannot attribute to descriptions.
+      const sanitized = sanitizeGroupsForApi(
+        [
+          { id: 'g1', name: 'A', nodeIds: ['a'], description: 42 },
+          { id: 'g2', name: 'B', nodeIds: ['b'], description: '   ' },
+          { id: 'g3', name: 'C', nodeIds: ['c'], description: '  real  ' },
+        ] as any,
+        { includeDescription: true }
+      );
+
+      expect(sanitized[0]).not.toHaveProperty('description');
+      expect(sanitized[1]).not.toHaveProperty('description');
+      expect(sanitized[2].description).toBe('real');
+    });
+
     it('drops keys outside the API group schema', () => {
       const sanitized = sanitizeGroupsForApi(
         [{ id: 'g1', name: 'Transform', nodeIds: ['a'], collapsed: true, color: 3 } as any],
