@@ -1092,6 +1092,8 @@ export class EnhancedConfigValidator extends ConfigValidator {
         structureType = 'assignmentCollection';
       } else if (propDef.type === 'resourceLocator') {
         structureType = 'resourceLocator';
+      } else if (propDef.type === 'agentSelector') {
+        structureType = 'agentSelector';
       }
 
       if (!structureType) continue;
@@ -1210,6 +1212,9 @@ export class EnhancedConfigValidator extends ConfigValidator {
         break;
       }
 
+      // agentSelector (n8n 2.31) carries the resource-locator shape and n8n
+      // validates it through the same path in node-helpers.
+      case 'agentSelector':
       case 'resourceLocator':
         // Validate resourceLocator structure: must have mode and value.
         // An empty-string mode is a UI-persisted artifact that n8n tolerates
@@ -1219,8 +1224,8 @@ export class EnhancedConfigValidator extends ConfigValidator {
           result.errors.push({
             type: 'invalid_configuration',
             property: `${propertyName}.mode`,
-            message: 'ResourceLocator must have a mode field',
-            fix: 'Add mode: "id", mode: "url", or mode: "list" to the resourceLocator configuration'
+            message: `${type} must have a mode field`,
+            fix: 'Add mode: "id", mode: "url", or mode: "list" to the configuration'
           });
         } else if (value.mode !== '' && !['id', 'url', 'list', 'name'].includes(value.mode)) {
           result.errors.push({
@@ -1235,8 +1240,8 @@ export class EnhancedConfigValidator extends ConfigValidator {
           result.errors.push({
             type: 'invalid_configuration',
             property: `${propertyName}.value`,
-            message: 'ResourceLocator must have a value field',
-            fix: 'Add value field to the resourceLocator configuration'
+            message: `${type} must have a value field`,
+            fix: 'Add value field to the configuration'
           });
         }
         break;

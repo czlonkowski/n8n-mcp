@@ -515,3 +515,67 @@ describe('property-visibility warning skips inert values (audit B10)', () => {
     expect(warning!.message).toContain('Generic Auth Type');
   });
 });
+
+describe('agentSelector (n8n 2.31)', () => {
+  // n8n validates agentSelector through the same node-helpers path as
+  // resourceLocator, so n8n-mcp has to apply the same structure checks.
+  it('base validator: rejects a bare string where the locator object is required', () => {
+    const result = ConfigValidator.validate(
+      'nodes-base.messageAnAgent',
+      { agentId: 'agent-123' },
+      [{ name: 'agentId', type: 'agentSelector', modes: [{ name: 'list' }, { name: 'id' }] }]
+    );
+    const error = result.errors.find(e => e.property === 'agentId');
+    expect(error).toBeDefined();
+    expect(error!.message).toContain('agentSelector');
+  });
+
+  it('base validator: reports a missing value', () => {
+    const result = ConfigValidator.validate(
+      'nodes-base.messageAnAgent',
+      { agentId: { mode: 'id' } },
+      [{ name: 'agentId', type: 'agentSelector' }]
+    );
+    expect(result.errors.some(e => e.property === 'agentId.value')).toBe(true);
+  });
+
+  it('base validator: accepts the locator shape n8n writes', () => {
+    const result = ConfigValidator.validate(
+      'nodes-base.messageAnAgent',
+      { agentId: { __rl: true, mode: 'list', value: 'agent-123' } },
+      [{ name: 'agentId', type: 'agentSelector', modes: [{ name: 'list' }, { name: 'id' }] }]
+    );
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('base validator: accepts the locator shape without the editor __rl marker', () => {
+    const result = ConfigValidator.validate(
+      'nodes-base.messageAnAgent',
+      { agentId: { mode: 'id', value: 'agent-123' } },
+      [{ name: 'agentId', type: 'agentSelector', modes: [{ name: 'list' }, { name: 'id' }] }]
+    );
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('enhanced structure check: reports a missing mode', () => {
+    const result = EnhancedConfigValidator.validateWithMode(
+      'nodes-base.messageAnAgent',
+      { agentId: { value: 'agent-123' } },
+      [{ name: 'agentId', type: 'agentSelector' }],
+      'operation',
+      'ai-friendly'
+    );
+    expect(result.errors.some(e => e.property === 'agentId.mode')).toBe(true);
+  });
+
+  it('enhanced structure check: a valid agentSelector validates clean', () => {
+    const result = EnhancedConfigValidator.validateWithMode(
+      'nodes-base.messageAnAgent',
+      { agentId: { __rl: true, mode: 'id', value: 'agent-123' } },
+      [{ name: 'agentId', type: 'agentSelector' }],
+      'operation',
+      'ai-friendly'
+    );
+    expect(result.errors).toHaveLength(0);
+  });
+});

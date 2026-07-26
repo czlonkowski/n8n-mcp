@@ -12,6 +12,9 @@ const path = require('path');
 class N8nDependencyUpdater {
   constructor() {
     this.packageJsonPath = path.join(__dirname, '..', 'package.json');
+    // The Docker builder installs its own minimal dependency set rather than the
+    // repo's, so its n8n-workflow pin has to be updated alongside package.json.
+    this.dockerfilePath = path.join(__dirname, '..', 'Dockerfile');
     // Track n8n-nodes-base directly (the package our loader actually requires).
     // The full `n8n` meta package was dropped in favor of this leaner dep tree.
     this.mainPackage = 'n8n-nodes-base';
@@ -140,8 +143,38 @@ class N8nDependencyUpdater {
       JSON.stringify(packageJson, null, 2) + '\n',
       'utf8'
     );
-    
+
+    this.updateDockerfilePin(updates);
+
     return true;
+  }
+
+  /**
+   * Keep the Dockerfile's n8n-workflow pin aligned with package.json.
+   *
+   * The builder stage compiles src/ against its own installed types. If that pin
+   * falls behind, a property type introduced by a newer n8n (e.g. agentSelector
+   * in 2.31) compiles locally and fails the Docker build.
+   */
+  updateDockerfilePin(updates) {
+    const update = updates.find((u) => u.package === 'n8n-workflow');
+    if (!update) return;
+
+    if (!fs.existsSync(this.dockerfilePath)) {
+      console.log('   ⚠️  Dockerfile not found - skipping n8n-workflow pin update');
+      return;
+    }
+
+    const dockerfile = fs.readFileSync(this.dockerfilePath, 'utf8');
+    const updated = dockerfile.replace(/n8n-workflow@[^\s\\]+/g, `n8n-workflow@${update.latest}`);
+
+    if (updated === dockerfile) {
+      console.log('   ⚠️  Dockerfile n8n-workflow pin already current or not found');
+      return;
+    }
+
+    fs.writeFileSync(this.dockerfilePath, updated, 'utf8');
+    console.log(`   Updated Dockerfile n8n-workflow pin to ${update.latest}`);
   }
 
   /**

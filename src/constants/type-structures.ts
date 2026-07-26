@@ -626,13 +626,12 @@ export const TYPE_STRUCTURES: Record<NodePropertyTypes, TypeStructure> = {
 			required: ['mode', 'value'],
 		},
 		example: {
-			__rl: true,
 			mode: 'list',
 			value: 'agent-123',
 		},
 		examples: [
-			{ __rl: true, mode: 'id', value: 'agent-123' },
-			{ __rl: true, mode: 'id', value: '{{ $json.agentId }}' },
+			{ mode: 'id', value: 'agent-123' },
+			{ mode: 'id', value: '{{ $json.agentId }}' },
 		],
 		validation: {
 			allowEmpty: false,
@@ -641,6 +640,7 @@ export const TYPE_STRUCTURES: Record<NodePropertyTypes, TypeStructure> = {
 		notes: [
 			'Resource locator shape, validated like resourceLocator',
 			'Used in the Message an Agent node',
+			"n8n's editor also writes an __rl: true marker, which is not required",
 			'Added in n8n 2.31',
 		],
 	},

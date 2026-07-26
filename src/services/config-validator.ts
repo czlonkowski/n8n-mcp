@@ -326,8 +326,10 @@ export class ConfigValidator {
           message: `Property '${key}' must be a boolean, got ${typeof value}`,
           fix: `Change ${key} to true or false`
         });
-      } else if (prop.type === 'resourceLocator') {
+      } else if (prop.type === 'resourceLocator' || prop.type === 'agentSelector') {
         // resourceLocator validation: Used by AI model nodes (OpenAI, Anthropic, etc.)
+        // agentSelector (n8n 2.31) carries the same shape and n8n validates it
+        // through the same path in node-helpers.
         // Must be an object with required properties:
         //   - mode: string ('list' | 'id' | 'url')
         //   - value: any (the actual model/resource identifier)
@@ -337,7 +339,7 @@ export class ConfigValidator {
           errors.push({
             type: 'invalid_type',
             property: key,
-            message: `Property '${key}' is a resourceLocator and must be an object with 'mode' and 'value' properties, got ${typeof value}`,
+            message: `Property '${key}' has type ${prop.type} and must be an object with 'mode' and 'value' properties, got ${typeof value}`,
             fix: `Change ${key} to { mode: "list", value: ${JSON.stringify(fixValue)} } or { mode: "id", value: ${JSON.stringify(fixValue)} }`
           });
         } else {
@@ -348,14 +350,14 @@ export class ConfigValidator {
             errors.push({
               type: 'missing_required',
               property: `${key}.mode`,
-              message: `resourceLocator '${key}' is missing required property 'mode'`,
+              message: `${prop.type} '${key}' is missing required property 'mode'`,
               fix: `Add mode property: { mode: "list", value: ${JSON.stringify(value.value || '')} }`
             });
           } else if (typeof value.mode !== 'string') {
             errors.push({
               type: 'invalid_type',
               property: `${key}.mode`,
-              message: `resourceLocator '${key}.mode' must be a string, got ${typeof value.mode}`,
+              message: `${prop.type} '${key}.mode' must be a string, got ${typeof value.mode}`,
               fix: `Set mode to a valid string value`
             });
           } else if (value.mode !== '' && prop.modes) {
@@ -389,7 +391,7 @@ export class ConfigValidator {
               errors.push({
                 type: 'invalid_value',
                 property: `${key}.mode`,
-                message: `resourceLocator '${key}.mode' must be one of [${allowedModes.join(', ')}], got '${value.mode}'`,
+                message: `${prop.type} '${key}.mode' must be one of [${allowedModes.join(', ')}], got '${value.mode}'`,
                 fix: `Change mode to one of: ${allowedModes.join(', ')}`
               });
             }
@@ -401,7 +403,7 @@ export class ConfigValidator {
             errors.push({
               type: 'missing_required',
               property: `${key}.value`,
-              message: `resourceLocator '${key}' is missing required property 'value'`,
+              message: `${prop.type} '${key}' is missing required property 'value'`,
               fix: `Add value property to specify the ${prop.displayName || key}`
             });
           }

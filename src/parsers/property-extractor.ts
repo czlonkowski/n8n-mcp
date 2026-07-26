@@ -1,4 +1,5 @@
 import type { NodeClass } from '../types/node-types';
+import { instantiateNode } from '../types/node-types';
 
 export class PropertyExtractor {
   /**
@@ -6,15 +7,10 @@ export class PropertyExtractor {
    */
   extractProperties(nodeClass: NodeClass): any[] {
     const properties: any[] = [];
-    
+
     // First try to get instance-level properties
-    let instance: any;
-    try {
-      instance = typeof nodeClass === 'function' ? new nodeClass() : nodeClass;
-    } catch (e) {
-      // Failed to instantiate
-    }
-    
+    const instance: any = instantiateNode(nodeClass);
+
     // Handle versioned nodes - check instance for nodeVersions
     if (instance?.nodeVersions) {
       const versions = Object.keys(instance.nodeVersions).map(Number);
@@ -41,48 +37,18 @@ export class PropertyExtractor {
     return properties;
   }
   
-  /**
-   * Get the version map of a VersionedNodeType, from the class or an instance
-   */
-  private getNodeVersions(nodeClass: NodeClass): Record<string, any> | undefined {
-    const nodeClassAny = nodeClass as any;
-    if (nodeClassAny.nodeVersions) return nodeClassAny.nodeVersions;
-
-    if (typeof nodeClass === 'function') {
-      try {
-        return (new nodeClass() as any).nodeVersions;
-      } catch {
-        return undefined;
-      }
-    }
-
-    return undefined;
-  }
-
   private getNodeDescription(nodeClass: NodeClass): any {
-    // Try to get description from the class first
-    let description: any;
-
-    if (typeof nodeClass === 'function') {
-      // Try to instantiate to get description
-      try {
-        const instance = new nodeClass();
-        // Strategic any assertion for instance properties
-        const inst = instance as any;
-        description = inst.description || inst.baseDescription || {};
-      } catch (e) {
-        // Some nodes might require parameters to instantiate
-        // Strategic any assertion for class-level properties
-        const nodeClassAny = nodeClass as any;
-        description = nodeClassAny.description || {};
-      }
-    } else {
-      // Strategic any assertion for instance properties
-      const inst = nodeClass as any;
-      description = inst.description || {};
+    // Already an instance - read the description off it directly
+    if (typeof nodeClass !== 'function') {
+      return (nodeClass as any).description || {};
     }
 
-    return description;
+    // Some nodes need parameters to instantiate; fall back to class-level properties
+    const instance: any = instantiateNode(nodeClass);
+
+    return instance
+      ? instance.description || instance.baseDescription || {}
+      : (nodeClass as any).description || {};
   }
   
   /**
@@ -90,15 +56,10 @@ export class PropertyExtractor {
    */
   extractOperations(nodeClass: NodeClass): any[] {
     const operations: any[] = [];
-    
+
     // First try to get instance-level data
-    let instance: any;
-    try {
-      instance = typeof nodeClass === 'function' ? new nodeClass() : nodeClass;
-    } catch (e) {
-      // Failed to instantiate
-    }
-    
+    const instance: any = instantiateNode(nodeClass);
+
     // Handle versioned nodes
     if (instance?.nodeVersions) {
       const versions = Object.keys(instance.nodeVersions).map(Number);
@@ -175,33 +136,51 @@ export class PropertyExtractor {
   }
   
   /**
-   * Deep search for AI tool capability.
+   * Whether a description declares that n8n may expose the node as a tool.
    *
-   * `usableAsTool` is the only signal, matching n8n's own node-helpers: a node
-   * whose name merely mentions an AI vendor is not exposed as a tool by n8n,
-   * and treating it as one fabricates node types that do not exist.
+   * n8n's type is `usableAsTool?: true | UsableAsToolDescription`. The object
+   * form carries codex replacements for the generated variant and is what HTTP
+   * Request uses on every version from 3 onwards, so comparing against `true`
+   * alone misses the most widely used tool node there is.
+   */
+  private declaresToolUse(description: any): boolean {
+    const usableAsTool = description?.usableAsTool;
+
+    return usableAsTool !== undefined && usableAsTool !== null && usableAsTool !== false;
+  }
+
+  /**
+   * Detect whether n8n exposes this node as an AI Agent tool.
+   *
+   * `usableAsTool` is the only signal, matching n8n's own node-helpers. A node
+   * whose name merely mentions an AI vendor is not exposed as a tool, so
+   * inferring capability from the name invents node types that do not exist.
    */
   detectAIToolCapability(nodeClass: NodeClass): boolean {
-    const description = this.getNodeDescription(nodeClass);
+    const instance: any = instantiateNode(nodeClass);
 
-    // Direct property check
-    if (description?.usableAsTool === true) return true;
+    // VersionedNodeType assigns nodeVersions in its constructor, so for a class
+    // the map only exists on an instance (e.g. messageAnAgent, microsoftSharePoint).
+    const nodeVersions = (nodeClass as any).nodeVersions ?? instance?.nodeVersions;
 
-    // Check in actions for declarative nodes
-    if (description?.actions?.some((a: any) => a.usableAsTool === true)) return true;
-
-    // Check versioned nodes. VersionedNodeType assigns nodeVersions in its
-    // constructor, so it only exists on an instance - reading it off the class
-    // misses nodes that declare usableAsTool per version instead of on the
-    // base description (e.g. messageAnAgent, microsoftSharePoint).
-    const nodeVersions = this.getNodeVersions(nodeClass);
     if (nodeVersions) {
-      for (const version of Object.values(nodeVersions)) {
-        if ((version as any).description?.usableAsTool === true) return true;
-      }
+      // n8n resolves a versioned node to nodeVersions[currentVersion] before it
+      // reads usableAsTool, so only the default version decides. Accepting any
+      // version would claim a tool variant n8n does not create once a node drops
+      // tool support while keeping the older version around.
+      const currentVersion =
+        instance?.currentVersion ?? Math.max(...Object.keys(nodeVersions).map(Number));
+      const versionDescription = nodeVersions[currentVersion]?.description;
+
+      if (versionDescription) return this.declaresToolUse(versionDescription);
     }
 
-    return false;
+    const description = this.getNodeDescription(nodeClass);
+
+    if (this.declaresToolUse(description)) return true;
+
+    // Per-action flags, for declarative nodes that carry them
+    return description?.actions?.some((a: any) => this.declaresToolUse(a)) === true;
   }
   
   /**
@@ -209,15 +188,10 @@ export class PropertyExtractor {
    */
   extractCredentials(nodeClass: NodeClass): any[] {
     const credentials: any[] = [];
-    
+
     // First try to get instance-level data
-    let instance: any;
-    try {
-      instance = typeof nodeClass === 'function' ? new nodeClass() : nodeClass;
-    } catch (e) {
-      // Failed to instantiate
-    }
-    
+    const instance: any = instantiateNode(nodeClass);
+
     // Handle versioned nodes
     if (instance?.nodeVersions) {
       const versions = Object.keys(instance.nodeVersions).map(Number);

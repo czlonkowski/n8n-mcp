@@ -328,8 +328,9 @@ export class PropertyFilter {
       });
     }
 
-    // Add expectedFormat for resourceLocator types - critical for correct configuration
-    if (prop.type === 'resourceLocator') {
+    // Add expectedFormat for resource-locator shaped types - critical for correct
+    // configuration. agentSelector (n8n 2.31) carries the same shape.
+    if (prop.type === 'resourceLocator' || prop.type === 'agentSelector') {
       const modes = prop.modes?.map((m: any) => m.name || m) || ['list', 'id'];
       const defaultValue = prop.default?.value || 'your-resource-id';
       simplified.expectedFormat = {
