@@ -144,37 +144,54 @@ class N8nDependencyUpdater {
       'utf8'
     );
 
-    this.updateDockerfilePin(updates);
+    this.syncDockerfilePins(packageJson);
 
     return true;
   }
 
   /**
-   * Keep the Dockerfile's n8n-workflow pin aligned with package.json.
+   * Align the Dockerfile's build-dependency pins with package.json.
    *
-   * The builder stage compiles src/ against its own installed types. If that pin
-   * falls behind, a property type introduced by a newer n8n (e.g. agentSelector
-   * in 2.31) compiles locally and fails the Docker build.
+   * The builder stage installs its own minimal dependency set instead of the
+   * repo's, so every version in it is a hand-maintained copy that drifts. Two
+   * ways that has broken the image: a stale n8n-workflow compiles src/ against
+   * older type definitions (a type added in a newer n8n then fails only in
+   * Docker), and a stale zod fails `npm install` outright, because n8n-workflow
+   * declares an exact zod peer dependency.
+   *
+   * Every pin naming a direct dependency is rewritten; anything the repo does
+   * not depend on directly (e.g. @types/uuid) is left alone.
    */
-  updateDockerfilePin(updates) {
-    const update = updates.find((u) => u.package === 'n8n-workflow');
-    if (!update) return;
-
+  syncDockerfilePins(packageJson) {
     if (!fs.existsSync(this.dockerfilePath)) {
-      console.log('   ⚠️  Dockerfile not found - skipping n8n-workflow pin update');
+      console.log('   ⚠️  Dockerfile not found - skipping build-dependency pin sync');
       return;
     }
 
+    const declared = { ...packageJson.dependencies, ...packageJson.devDependencies };
     const dockerfile = fs.readFileSync(this.dockerfilePath, 'utf8');
-    const updated = dockerfile.replace(/n8n-workflow@[^\s\\]+/g, `n8n-workflow@${update.latest}`);
+    const synced = [];
 
-    if (updated === dockerfile) {
-      console.log('   ⚠️  Dockerfile n8n-workflow pin already current or not found');
+    // Matches `name@version` install arguments, including scoped package names
+    const updated = dockerfile.replace(
+      /(^|\s)((?:@[^\s@/]+\/)?[^\s@/]+)@([^\s\\]+)/g,
+      (match, lead, name, version) => {
+        const declaredVersion = declared[name];
+        if (!declaredVersion || declaredVersion === version) return match;
+
+        synced.push(`${name} ${version} -> ${declaredVersion}`);
+        return `${lead}${name}@${declaredVersion}`;
+      }
+    );
+
+    if (!synced.length) {
+      console.log('   Dockerfile build-dependency pins already match package.json');
       return;
     }
 
     fs.writeFileSync(this.dockerfilePath, updated, 'utf8');
-    console.log(`   Updated Dockerfile n8n-workflow pin to ${update.latest}`);
+    console.log(`   Synced ${synced.length} Dockerfile pin(s) with package.json:`);
+    for (const entry of synced) console.log(`     ${entry}`);
   }
 
   /**
