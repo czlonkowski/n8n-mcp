@@ -436,17 +436,35 @@ describe('PropertyExtractor', () => {
       expect(isAITool).toBe(true);
     });
 
-    it('should detect AI capability when node name contains AI-related terms', () => {
-      const aiNodeNames = ['openai', 'anthropic', 'huggingface', 'cohere', 'myai'];
-      
-      aiNodeNames.forEach(name => {
+    it('should detect AI capability when a versioned node instance carries usableAsTool', () => {
+      // VersionedNodeType assigns nodeVersions in its constructor, so the map
+      // only exists on an instance - the class itself exposes nothing.
+      const NodeClass = class {
+        nodeVersions = {
+          1: { description: { usableAsTool: false } },
+          2: { description: { name: 'test', usableAsTool: true } }
+        };
+        description = { name: 'test' };
+      };
+
+      const isAITool = extractor.detectAIToolCapability(NodeClass as any);
+
+      expect(isAITool).toBe(true);
+    });
+
+    it('should not infer AI capability from an AI-sounding node name', () => {
+      // n8n exposes a node as a tool only via usableAsTool. Inferring it from
+      // the name invents node types n8n does not have (e.g. waitTool).
+      const aiSoundingNames = ['openai', 'anthropic', 'huggingface', 'cohere', 'myai', 'wait'];
+
+      aiSoundingNames.forEach(name => {
         const NodeClass = nodeClassFactory.build({
           description: { name }
         });
-        
+
         const isAITool = extractor.detectAIToolCapability(NodeClass as any);
-        
-        expect(isAITool).toBe(true);
+
+        expect(isAITool).toBe(false);
       });
     });
 

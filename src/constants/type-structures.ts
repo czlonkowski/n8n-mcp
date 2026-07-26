@@ -5,7 +5,7 @@
  * These structures define the expected data format, JavaScript type,
  * validation rules, and examples for each property type.
  *
- * Based on n8n-workflow v2.4.2 NodePropertyTypes
+ * Based on n8n-workflow v2.31.3 NodePropertyTypes
  *
  * @module constants/type-structures
  * @since 2.23.0
@@ -15,7 +15,7 @@ import type { NodePropertyTypes } from 'n8n-workflow';
 import type { TypeStructure } from '../types/type-structures';
 
 /**
- * Complete type structure definitions for all 23 NodePropertyTypes
+ * Complete type structure definitions for all 24 NodePropertyTypes
  *
  * Each entry defines:
  * - type: Category (primitive/object/collection/special)
@@ -602,6 +602,46 @@ export const TYPE_STRUCTURES: Record<NodePropertyTypes, TypeStructure> = {
 			'Selects from available workflows',
 			'Returns workflow ID',
 			'Used in Execute Workflow node',
+		],
+	},
+
+	agentSelector: {
+		type: 'special',
+		jsType: 'object',
+		description: 'Resource locator for selecting an agent to send a message to',
+		structure: {
+			properties: {
+				mode: {
+					type: 'string',
+					description: 'How the agent is specified',
+					enum: ['list', 'id'],
+					required: true,
+				},
+				value: {
+					type: 'string',
+					description: 'The agent identifier',
+					required: true,
+				},
+			},
+			required: ['mode', 'value'],
+		},
+		example: {
+			__rl: true,
+			mode: 'list',
+			value: 'agent-123',
+		},
+		examples: [
+			{ __rl: true, mode: 'id', value: 'agent-123' },
+			{ __rl: true, mode: 'id', value: '{{ $json.agentId }}' },
+		],
+		validation: {
+			allowEmpty: false,
+			allowExpressions: true,
+		},
+		notes: [
+			'Resource locator shape, validated like resourceLocator',
+			'Used in the Message an Agent node',
+			'Added in n8n 2.31',
 		],
 	},
 

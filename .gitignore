@@ -141,6 +141,9 @@ n8n-mcp-wrapper.sh
 # MCP configuration files (all variants: .mcp.json, .mcp.json.bk, .mcp.json.bak, etc.)
 .mcp.json*
 
+# Local Codex MCP configuration can contain credentials
+.codex/config.toml
+
 # UI Apps build output
 ui-apps/dist/
 ui-apps/node_modules/

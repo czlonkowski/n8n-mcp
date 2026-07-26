@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.66.1] - 2026-07-26
+
+### Changed
+
+- **Updated n8n to 2.31.x.** Bumped `n8n-nodes-base` 2.30.3 → 2.31.3, `n8n-core` 2.30.2 → 2.31.3, `n8n-workflow` 2.30.1 → 2.31.3, and `@n8n/n8n-nodes-langchain` 2.30.3 → 2.31.3. Rebuilt the node database (827 core nodes: 698 from `n8n-nodes-base` + 129 from `@n8n/n8n-nodes-langchain`).
+- **Refreshed community nodes.** Registry sync added 107 community nodes (1,348 → 1,455 total; 1,295 verified + 160 unverified). README metadata and AI summaries now cover 1,444/1,455 community nodes; the remaining 11 packages have no retrievable npm README to summarize.
+- Updated README n8n version badge and node counts (2,282 total nodes: 827 core + 1,455 community).
+
+### Added
+
+- **`agentSelector` property type.** n8n 2.31 introduced it for the Message an n8n Agent node (typeVersion 2), where it replaces the resource locator that picks the target agent. It is validated exactly like `resourceLocator`, and `get_node`/`validate_node` now describe its shape instead of treating it as an unknown type.
+
+### Fixed
+
+- **AI tool detection missed versioned nodes, so 26 tool variants were absent from the database.** `usableAsTool` is read from a node's description, but `VersionedNodeType` assigns its version map in the constructor — reading `nodeVersions` off the class finds nothing, and a node that declares `usableAsTool` per version rather than on its base description was therefore never recognised. Commonly used tool variants — `slackTool`, `postgresTool`, `googleSheetsTool`, `googleDriveTool`, `notionTool`, `microsoftTeamsTool`, `mySqlTool`, `awsS3Tool` and 18 more — could not be found via `search_nodes`/`get_node`, and `validate_workflow` rejected workflows that used them as unknown node types. Detection now instantiates the node to read its versions. The same gap would have dropped `messageAnAgentTool` and `microsoftSharePointTool` in this release, as both became versioned nodes in n8n 2.31.
+- **Node types that n8n does not have are no longer invented.** Tool-variant generation fell back to a name check — a node whose name contained `ai`, `openai`, `anthropic`, `cohere` or `huggingface` was treated as tool-capable regardless of `usableAsTool`. That produced 26 node types n8n rejects, including `nodes-base.waitTool` (from "w-ai-t"), `nodes-base.openAiTool`, `nodes-langchain.lmChatAnthropicTool` and `nodes-langchain.embeddingsOpenAiTool`. An agent could wire one into a workflow, have it validate cleanly, and only find out at deploy time. `usableAsTool` is now the sole signal, matching n8n's own `node-helpers`.
+
 ## [2.66.0] - 2026-07-25
 
 ### Fixed

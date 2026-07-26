@@ -41,6 +41,24 @@ export class PropertyExtractor {
     return properties;
   }
   
+  /**
+   * Get the version map of a VersionedNodeType, from the class or an instance
+   */
+  private getNodeVersions(nodeClass: NodeClass): Record<string, any> | undefined {
+    const nodeClassAny = nodeClass as any;
+    if (nodeClassAny.nodeVersions) return nodeClassAny.nodeVersions;
+
+    if (typeof nodeClass === 'function') {
+      try {
+        return (new nodeClass() as any).nodeVersions;
+      } catch {
+        return undefined;
+      }
+    }
+
+    return undefined;
+  }
+
   private getNodeDescription(nodeClass: NodeClass): any {
     // Try to get description from the class first
     let description: any;
@@ -157,7 +175,11 @@ export class PropertyExtractor {
   }
   
   /**
-   * Deep search for AI tool capability
+   * Deep search for AI tool capability.
+   *
+   * `usableAsTool` is the only signal, matching n8n's own node-helpers: a node
+   * whose name merely mentions an AI vendor is not exposed as a tool by n8n,
+   * and treating it as one fabricates node types that do not exist.
    */
   detectAIToolCapability(nodeClass: NodeClass): boolean {
     const description = this.getNodeDescription(nodeClass);
@@ -168,20 +190,18 @@ export class PropertyExtractor {
     // Check in actions for declarative nodes
     if (description?.actions?.some((a: any) => a.usableAsTool === true)) return true;
 
-    // Check versioned nodes
-    // Strategic any assertion for nodeVersions property
-    const nodeClassAny = nodeClass as any;
-    if (nodeClassAny.nodeVersions) {
-      for (const version of Object.values(nodeClassAny.nodeVersions)) {
+    // Check versioned nodes. VersionedNodeType assigns nodeVersions in its
+    // constructor, so it only exists on an instance - reading it off the class
+    // misses nodes that declare usableAsTool per version instead of on the
+    // base description (e.g. messageAnAgent, microsoftSharePoint).
+    const nodeVersions = this.getNodeVersions(nodeClass);
+    if (nodeVersions) {
+      for (const version of Object.values(nodeVersions)) {
         if ((version as any).description?.usableAsTool === true) return true;
       }
     }
 
-    // Check for specific AI-related properties
-    const aiIndicators = ['openai', 'anthropic', 'huggingface', 'cohere', 'ai'];
-    const nodeName = description?.name?.toLowerCase() || '';
-
-    return aiIndicators.some(indicator => nodeName.includes(indicator));
+    return false;
   }
   
   /**

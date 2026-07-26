@@ -90,7 +90,7 @@ export class TypeStructureService {
 	/**
 	 * Get all type structure definitions
 	 *
-	 * Returns a record of all 23 NodePropertyTypes with their structures.
+	 * Returns a record of all 24 NodePropertyTypes with their structures.
 	 * Useful for documentation, validation setup, or UI generation.
 	 *
 	 * @returns Record mapping all types to their structures
