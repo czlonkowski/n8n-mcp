@@ -1215,7 +1215,14 @@ export class EnhancedConfigValidator extends ConfigValidator {
       // agentSelector (n8n 2.31) carries the resource-locator shape and n8n
       // validates it through the same path in node-helpers.
       case 'agentSelector':
-      case 'resourceLocator':
+      case 'resourceLocator': {
+        // The Message an Agent picker offers only list and id, and n8n declares
+        // no modes array for agentSelector, so the mode set is narrower here.
+        // Which modes exist stays n8n's call - the accepted set below is not
+        // tightened, only the guidance.
+        const suggestedModes = type === 'agentSelector' ? ['list', 'id'] : ['id', 'url', 'list'];
+        const quoted = suggestedModes.map((mode) => `"${mode}"`).join(', ');
+
         // Validate resourceLocator structure: must have mode and value.
         // An empty-string mode is a UI-persisted artifact that n8n tolerates
         // (the value/expression still resolves), so only undefined/null count
@@ -1225,14 +1232,14 @@ export class EnhancedConfigValidator extends ConfigValidator {
             type: 'invalid_configuration',
             property: `${propertyName}.mode`,
             message: `${type} must have a mode field`,
-            fix: 'Add mode: "id", mode: "url", or mode: "list" to the configuration'
+            fix: `Add a mode field set to one of: ${quoted}`
           });
         } else if (value.mode !== '' && !['id', 'url', 'list', 'name'].includes(value.mode)) {
           result.errors.push({
             type: 'invalid_configuration',
             property: `${propertyName}.mode`,
             message: `Invalid mode value: ${value.mode}. Must be "id", "url", "list", or "name"`,
-            fix: 'Set mode to one of: "id", "url", "list", "name"'
+            fix: `Set mode to one of: ${quoted}`
           });
         }
 
@@ -1245,6 +1252,7 @@ export class EnhancedConfigValidator extends ConfigValidator {
           });
         }
         break;
+      }
 
       case 'assignmentCollection':
         // Validate assignmentCollection structure: must have assignments array

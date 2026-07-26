@@ -158,6 +158,9 @@ export class PropertyExtractor {
    */
   detectAIToolCapability(nodeClass: NodeClass): boolean {
     const instance: any = instantiateNode(nodeClass);
+    // Reuse the instance rather than letting getNodeDescription construct a second one
+    const description =
+      instance?.description || instance?.baseDescription || this.getNodeDescription(nodeClass);
 
     // VersionedNodeType assigns nodeVersions in its constructor, so for a class
     // the map only exists on an instance (e.g. messageAnAgent, microsoftSharePoint).
@@ -168,14 +171,18 @@ export class PropertyExtractor {
       // reads usableAsTool, so only the default version decides. Accepting any
       // version would claim a tool variant n8n does not create once a node drops
       // tool support while keeping the older version around.
+      //
+      // VersionedNodeType computes currentVersion as `defaultVersion ?? latest`;
+      // both fallbacks below reproduce that for shapes that never ran the
+      // constructor, so the highest key is only used when no default is declared.
       const currentVersion =
-        instance?.currentVersion ?? Math.max(...Object.keys(nodeVersions).map(Number));
+        instance?.currentVersion ??
+        description?.defaultVersion ??
+        Math.max(...Object.keys(nodeVersions).map(Number));
       const versionDescription = nodeVersions[currentVersion]?.description;
 
       if (versionDescription) return this.declaresToolUse(versionDescription);
     }
-
-    const description = this.getNodeDescription(nodeClass);
 
     if (this.declaresToolUse(description)) return true;
 

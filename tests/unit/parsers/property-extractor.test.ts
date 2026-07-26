@@ -490,6 +490,22 @@ describe('PropertyExtractor', () => {
       expect(isAITool).toBe(false);
     });
 
+    it('should prefer a declared defaultVersion over the highest version key', () => {
+      // n8n resolves defaultVersion, which is not always the newest version -
+      // a node can ship a later version while defaulting to an earlier one.
+      const NodeClass = class {
+        description = { name: 'defaultsToOlder', defaultVersion: 1 };
+        nodeVersions = {
+          1: { description: { name: 'defaultsToOlder', usableAsTool: true } },
+          2: { description: { name: 'defaultsToOlder' } }
+        };
+      };
+
+      const isAITool = extractor.detectAIToolCapability(NodeClass as any);
+
+      expect(isAITool).toBe(true);
+    });
+
     it('should return false when the node cannot be instantiated', () => {
       const NodeClass = class {
         constructor() {
