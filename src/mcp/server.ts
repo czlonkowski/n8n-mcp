@@ -2883,7 +2883,7 @@ export class N8NDocumentationMCPServer {
       tools,
       totalCount: tools.length,
       requirements: {
-        environmentVariable: 'N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true',
+        environmentVariable: 'N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true (community nodes only; built-in tools need no environment variable)',
         nodeProperty: 'usableAsTool (declared; community nodes may instead carry the codex AI category)',
       },
       usage: {
