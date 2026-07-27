@@ -522,7 +522,7 @@ export const n8nManagementTools: ToolDefinition[] = [
   },
   {
     name: 'n8n_evaluations',
-    description: `Run and read evaluation test runs for a workflow. Reading requires n8n >= 2.30, run/cancel require n8n >= 2.32, and the API key must be created on the matching release to carry the testRun scopes. Actions: list_runs=list runs for a workflow, get_run=single run with aggregated metrics, list_cases=per-case results (paginate - cases can be large), run=trigger a run on a workflow with an evaluation trigger, cancel=stop a running run.`,
+    description: `Run and read evaluation test runs for a workflow. Reading requires n8n >= 2.30, run/cancel require n8n >= 2.32, and the API key must be created on the matching release to carry the testRun scopes; run/cancel also need the key owner to hold workflow:execute on the workflow. Actions: list_runs=list runs for a workflow, get_run=single run with aggregated metrics, list_cases=per-case results (paginate - cases can be large), run=trigger a run on a workflow with an evaluation trigger, cancel=stop a running run.`,
     inputSchema: {
       type: 'object',
       properties: {
