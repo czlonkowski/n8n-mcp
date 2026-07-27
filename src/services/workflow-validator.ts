@@ -1017,9 +1017,13 @@ export class WorkflowValidator {
    * Valid ai_tool sources are:
    * 1. Langchain tool nodes (in AI_TOOL_VALIDATORS)
    * 2. Tool variant nodes (e.g., nodes-base.supabaseTool)
+   * 3. Nodes whose dynamic outputs expression can emit ai_tool
+   *    (vector stores with mode 'retrieve-as-tool')
+   * 4. Nodes the database marks isAITool
    *
    * If a base node (e.g., nodes-base.supabase) is used with ai_tool connection
-   * but it has a Tool variant available, this is an error.
+   * but it has a Tool variant available, this is an error. Community sources
+   * additionally get the N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE notice.
    */
   private validateAIToolSource(
     sourceNode: WorkflowNode,
