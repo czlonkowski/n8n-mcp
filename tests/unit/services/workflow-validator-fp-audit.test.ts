@@ -40,7 +40,7 @@ describe('WorkflowValidator - false-positive audit fixes (Stage 1)', () => {
     'n8n-nodes-pinecone.pineconeAssistant': { nodeType: 'n8n-nodes-pinecone.pineconeAssistant', displayName: 'Pinecone Assistant', package: 'n8n-nodes-pinecone', version: 1, isVersioned: true, outputs: ['main'], properties: [] },
     'nodes-base.telegramTrigger': { nodeType: 'nodes-base.telegramTrigger', displayName: 'Telegram Trigger', package: 'n8n-nodes-base', isTrigger: true, isVersioned: false, outputs: ['main'], properties: [] },
     'nodes-base.googleDrive': { nodeType: 'nodes-base.googleDrive', displayName: 'Google Drive', package: 'n8n-nodes-base', isVersioned: false, outputs: ['main'], properties: [] },
-    'n8n-nodes-firecrawl.scrape': { nodeType: 'n8n-nodes-firecrawl.scrape', displayName: 'Firecrawl', package: 'n8n-nodes-firecrawl', isVersioned: false, isAITool: false, outputs: ['main'], properties: [] },
+    'n8n-nodes-firecrawl.scrape': { nodeType: 'n8n-nodes-firecrawl.scrape', displayName: 'Firecrawl', package: 'n8n-nodes-firecrawl', isVersioned: false, isAITool: false, isCommunity: true, outputs: ['main'], properties: [] },
   };
 
   beforeEach(() => {
@@ -595,7 +595,7 @@ describe('WorkflowValidator - false-positive audit fixes (Stage 2)', () => {
     'nodes-base.googleDrive': { nodeType: 'nodes-base.googleDrive', displayName: 'Google Drive', package: 'n8n-nodes-base', isVersioned: false, outputs: ['main'], properties: [] },
     'nodes-langchain.agent': { nodeType: 'nodes-langchain.agent', displayName: 'AI Agent', package: '@n8n/n8n-nodes-langchain', isVersioned: false, outputs: ['main'], properties: [] },
     'nodes-langchain.lmChatOpenAi': { nodeType: 'nodes-langchain.lmChatOpenAi', displayName: 'OpenAI Chat Model', package: '@n8n/n8n-nodes-langchain', isVersioned: false, outputs: ['ai_languageModel'], properties: [] },
-    'n8n-nodes-firecrawl.scrape': { nodeType: 'n8n-nodes-firecrawl.scrape', displayName: 'Firecrawl', package: 'n8n-nodes-firecrawl', isVersioned: false, isAITool: false, outputs: ['main'], properties: [] },
+    'n8n-nodes-firecrawl.scrape': { nodeType: 'n8n-nodes-firecrawl.scrape', displayName: 'Firecrawl', package: 'n8n-nodes-firecrawl', isVersioned: false, isAITool: false, isCommunity: true, outputs: ['main'], properties: [] },
   };
 
   beforeEach(() => {

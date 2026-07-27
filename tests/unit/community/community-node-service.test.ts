@@ -415,6 +415,48 @@ describe('CommunityNodeService', () => {
       );
     });
 
+    it('should accept the object form of usableAsTool (#954)', async () => {
+      const aiNode = {
+        ...mockStrapiNode,
+        attributes: {
+          ...mockStrapiNode.attributes,
+          nodeDescription: {
+            ...mockStrapiNode.attributes.nodeDescription,
+            usableAsTool: { replacements: { displayName: 'Test Tool' } },
+          },
+        },
+      };
+      mockFetcher.fetchVerifiedNodes.mockResolvedValue([aiNode]);
+
+      await service.syncVerifiedNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          isAITool: true,
+        })
+      );
+    });
+
+    it('should not infer AI tool capability from the node name (#954)', async () => {
+      const aiNamedNode = {
+        ...mockStrapiNode,
+        attributes: {
+          ...mockStrapiNode.attributes,
+          name: 'firefliesAi',
+          displayName: 'Fireflies AI',
+        },
+      };
+      mockFetcher.fetchVerifiedNodes.mockResolvedValue([aiNamedNode]);
+
+      await service.syncVerifiedNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          isAITool: false,
+        })
+      );
+    });
+
     it('should detect triggers', async () => {
       const triggerNode = {
         ...mockStrapiNode,

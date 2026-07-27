@@ -2020,14 +2020,25 @@ export class N8NDocumentationMCPServer {
       throw new Error(`Node ${nodeType} not found`);
     }
     
-    // Add AI tool capabilities information with null safety
+    // Add AI tool capabilities information with null safety.
+    // N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE gates community packages being
+    // used as tools at all, so the requirement follows the community flag -
+    // not the AI-tool flag (which can be inferred, #954) and not a package-name
+    // test (which would sweep in first-party @n8n/* packages, #955).
+    const isCommunityNode = node.isCommunity ?? false;
     const aiToolCapabilities = {
       canBeUsedAsTool: true, // Any node can be used as a tool in n8n
       hasUsableAsToolProperty: node.isAITool ?? false,
-      requiresEnvironmentVariable: !(node.isAITool ?? false) && node.package !== 'n8n-nodes-base',
+      // Built-in flags come from the declared usableAsTool property; community
+      // flags can be inferred from the package's AI codex category, so the
+      // strong claim above is qualified for them.
+      aiToolFlagSource: (node.isAITool ?? false)
+        ? (isCommunityNode ? 'community-metadata' : 'declared-property')
+        : null,
+      requiresEnvironmentVariable: isCommunityNode,
       toolConnectionType: 'ai_tool',
       commonToolUseCases: this.getCommonAIToolUseCases(node.nodeType),
-      environmentRequirement: node.package && node.package !== 'n8n-nodes-base' ?
+      environmentRequirement: isCommunityNode ?
         'N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true' :
         null
     };
@@ -2871,7 +2882,7 @@ export class N8NDocumentationMCPServer {
         nodeProperty: 'usableAsTool: true',
       },
       usage: {
-        description: 'These nodes have the usableAsTool property set to true, making them optimized for AI agent usage.',
+        description: 'These nodes are marked as AI tools. For built-in nodes this reflects a declared usableAsTool property; for community nodes it can also be inferred from the package\'s AI category, since community metadata often omits the property.',
         note: 'ANY node in n8n can be used as an AI tool by connecting it to the ai_tool port of an AI Agent node.',
         examples: [
           'Regular nodes like Slack, Google Sheets, or HTTP Request can be used as tools',
@@ -3925,75 +3936,6 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     };
   }
   
-  private async getNodeAsToolInfo(nodeType: string): Promise<any> {
-    await this.ensureInitialized();
-    if (!this.repository) throw new Error('Repository not initialized');
-
-    // Get node info
-    // First try with normalized type
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-    let node = this.repository.getNode(normalizedType);
-    
-    if (!node && normalizedType !== nodeType) {
-      // Try original if normalization changed it
-      node = this.repository.getNode(nodeType);
-    }
-    
-    if (!node) {
-      // Fallback to other alternatives for edge cases
-      const alternatives = getNodeTypeAlternatives(normalizedType);
-      
-      for (const alt of alternatives) {
-        const found = this.repository!.getNode(alt);
-        if (found) {
-          node = found;
-          break;
-        }
-      }
-    }
-    
-    if (!node) {
-      throw new Error(`Node ${nodeType} not found`);
-    }
-    
-    // Determine common AI tool use cases based on node type
-    const commonUseCases = this.getCommonAIToolUseCases(node.nodeType);
-    
-    // Build AI tool capabilities info
-    const aiToolCapabilities = {
-      canBeUsedAsTool: true, // In n8n, ANY node can be used as a tool when connected to AI Agent
-      hasUsableAsToolProperty: node.isAITool,
-      requiresEnvironmentVariable: !node.isAITool && node.package !== 'n8n-nodes-base',
-      connectionType: 'ai_tool',
-      commonUseCases,
-      requirements: {
-        connection: 'Connect to the "ai_tool" port of an AI Agent node',
-        environment: node.package !== 'n8n-nodes-base' ? 
-          'Set N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true for community nodes' : 
-          'No special environment variables needed for built-in nodes'
-      },
-      examples: this.getAIToolExamples(node.nodeType),
-      tips: [
-        'Give the tool a clear, descriptive name in the AI Agent settings',
-        'Write a detailed tool description to help the AI understand when to use it',
-        'Test the node independently before connecting it as a tool',
-        node.isAITool ? 
-          'This node is optimized for AI tool usage' : 
-          'This is a regular node that can be used as an AI tool'
-      ]
-    };
-    
-    return {
-      nodeType: node.nodeType,
-      workflowNodeType: getWorkflowNodeType(node.package, node.nodeType),
-      displayName: node.displayName,
-      description: node.description,
-      package: node.package,
-      isMarkedAsAITool: node.isAITool,
-      aiToolCapabilities
-    };
-  }
-  
   private getOutputDescriptions(nodeType: string, outputName: string, index: number): { description: string, connectionGuidance: string } {
     // Special handling for loop nodes
     if (nodeType === 'nodes-base.splitInBatches') {
@@ -4134,58 +4076,6 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     return undefined;
   }
 
-  private getAIToolExamples(nodeType: string): any {
-    const exampleMap: Record<string, any> = {
-      'nodes-base.slack': {
-        toolName: 'Send Slack Message',
-        toolDescription: 'Sends a message to a specified Slack channel or user. Use this to notify team members about important events or results.',
-        nodeConfig: {
-          resource: 'message',
-          operation: 'post',
-          channel: '={{ $fromAI("channel", "The Slack channel to send to, e.g. #general") }}',
-          text: '={{ $fromAI("message", "The message content to send") }}'
-        }
-      },
-      'nodes-base.googleSheets': {
-        toolName: 'Update Google Sheet',
-        toolDescription: 'Reads or updates data in a Google Sheets spreadsheet. Use this to log information, retrieve data, or update records.',
-        nodeConfig: {
-          operation: 'append',
-          sheetId: 'your-sheet-id',
-          range: 'A:Z',
-          dataMode: 'autoMap'
-        }
-      },
-      'nodes-base.httpRequest': {
-        toolName: 'Call API',
-        toolDescription: 'Makes HTTP requests to external APIs. Use this to fetch data, trigger webhooks, or integrate with any web service.',
-        nodeConfig: {
-          method: '={{ $fromAI("method", "HTTP method: GET, POST, PUT, DELETE") }}',
-          url: '={{ $fromAI("url", "The complete API endpoint URL") }}',
-          sendBody: true,
-          bodyContentType: 'json',
-          jsonBody: '={{ $fromAI("body", "Request body as JSON object") }}'
-        }
-      }
-    };
-    
-    // Check for exact match or partial match
-    for (const [key, example] of Object.entries(exampleMap)) {
-      if (nodeType.includes(key)) {
-        return example;
-      }
-    }
-    
-    // Generic example
-    return {
-      toolName: 'Custom Tool',
-      toolDescription: 'Performs specific operations. Describe what this tool does and when to use it.',
-      nodeConfig: {
-        note: 'Configure the node based on its specific requirements'
-      }
-    };
-  }
-  
   private async validateNodeMinimal(nodeType: string, config: Record<string, any>): Promise<any> {
     await this.ensureInitialized();
     if (!this.repository) throw new Error('Repository not initialized');

@@ -148,7 +148,6 @@ describe('Parameter Validation', () => {
       vi.spyOn(server as any, 'validateNodeConfig').mockResolvedValue({ valid: true });
       vi.spyOn(server as any, 'validateNodeMinimal').mockResolvedValue({ missing: [] });
       vi.spyOn(server as any, 'getPropertyDependencies').mockResolvedValue({ dependencies: {} });
-      vi.spyOn(server as any, 'getNodeAsToolInfo').mockResolvedValue({ toolInfo: true });
       vi.spyOn(server as any, 'listNodeTemplates').mockResolvedValue({ templates: [] });
       vi.spyOn(server as any, 'getTemplate').mockResolvedValue({ template: {} });
       vi.spyOn(server as any, 'searchTemplates').mockResolvedValue({ templates: [] });

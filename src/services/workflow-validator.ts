@@ -906,11 +906,6 @@ export class WorkflowValidator {
         } else {
           result.statistics.validConnections++;
 
-          // Additional validation for AI tool connections
-          if (outputType === 'ai_tool') {
-            this.validateAIToolConnection(sourceName, targetNode, result);
-          }
-
           // Input index bounds checking
           if (outputType === 'main') {
             this.validateInputIndexBounds(sourceName, targetNode, connection, result);
@@ -1017,37 +1012,6 @@ export class WorkflowValidator {
   }
 
   /**
-   * Validate AI tool connections
-   */
-  private validateAIToolConnection(
-    sourceName: string,
-    targetNode: WorkflowNode,
-    result: WorkflowValidationResult
-  ): void {
-    // For AI tool connections, we just need to check if this is being used as a tool
-    // The source should be an AI Agent connecting to this target node as a tool
-    
-    // Get target node info to check if it can be used as a tool
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(targetNode.type);
-    let targetNodeInfo = this.nodeRepository.getNode(normalizedType);
-
-    // Try original type if normalization didn't help (fallback for edge cases)
-    if (!targetNodeInfo && normalizedType !== targetNode.type) {
-      targetNodeInfo = this.nodeRepository.getNode(targetNode.type);
-    }
-    
-    if (targetNodeInfo && !targetNodeInfo.isAITool && targetNodeInfo.package !== 'n8n-nodes-base') {
-      // It's a community node being used as a tool
-      result.warnings.push({
-        type: 'warning',
-        nodeId: targetNode.id,
-        nodeName: targetNode.name,
-        message: `Community node "${targetNode.name}" is being used as an AI tool. Ensure N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true is set.`
-      });
-    }
-  }
-
-  /**
    * Validate that a node can actually output ai_tool connections.
    *
    * Valid ai_tool sources are:
@@ -1071,6 +1035,22 @@ export class WorkflowValidator {
     // Get node info from repository (single lookup, reused below)
     const nodeInfo = this.nodeRepository.getNode(normalizedType);
 
+    // A community node used as a tool needs N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE
+    // on the n8n instance — the variable gates community packages as tools at all,
+    // so it applies even when the node declares usableAsTool. This tests the
+    // database's community flag rather than inferring community status from the
+    // package name, which would sweep in first-party @n8n/* packages (#955), and
+    // it fires on the tool (the ai_tool source), not on the agent receiving the
+    // connection.
+    if (nodeInfo?.isCommunity) {
+      result.warnings.push({
+        type: 'warning',
+        nodeId: sourceNode.id,
+        nodeName: sourceNode.name,
+        message: `Community node "${sourceNode.name}" is being used as an AI tool. Ensure N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true is set on the n8n instance.`
+      });
+    }
+
     // Check if it's a Tool variant (ends with Tool and is in database as isToolVariant)
     if (ToolVariantGenerator.isToolVariantNodeType(normalizedType)) {
       // It looks like a Tool variant, verify it exists in database
@@ -1083,6 +1063,34 @@ export class WorkflowValidator {
       // Node not found in database - might be a community node or unknown
       // Don't error here, let other validation handle unknown nodes
       return;
+    }
+
+    // Nodes may declare outputs as an expression evaluated against the node's
+    // parameters, so a connection type can exist only for particular values —
+    // vector stores expose ai_tool only when mode is 'retrieve-as-tool'. The
+    // database stores the raw expression; scan it for ai_tool instead of
+    // maintaining a list of the nodes that do this.
+    const aiToolOutputExpression = this.getConditionalAIToolExpression(nodeInfo);
+    if (aiToolOutputExpression) {
+      if (aiToolOutputExpression.includes('retrieve-as-tool')) {
+        const mode = sourceNode.parameters?.mode;
+        // Skip the check when mode is itself an expression - it can't be
+        // evaluated statically.
+        const isStaticMode =
+          mode === undefined || (typeof mode === 'string' && !mode.startsWith('='));
+        if (isStaticMode && mode !== 'retrieve-as-tool') {
+          result.warnings.push({
+            type: 'warning',
+            nodeId: sourceNode.id,
+            nodeName: sourceNode.name,
+            message: `Node "${sourceNode.name}" connects to an AI Agent as a tool, but its ai_tool output only exists when mode is "retrieve-as-tool"` +
+              (mode ? ` (current mode: "${mode}")` : ' (mode is not set, so the default applies)') +
+              `. Set mode to "retrieve-as-tool".`,
+            code: 'AI_TOOL_MODE_MISMATCH'
+          });
+        }
+      }
+      return; // Valid - the node emits ai_tool for the right parameter values
     }
 
     // Check if this is a base node that has a Tool variant available
@@ -1122,6 +1130,22 @@ export class WorkflowValidator {
         `Only AI tool nodes (e.g., Calculator, HTTP Request Tool) or Tool variants (e.g., *Tool suffix nodes) can be connected to AI Agents as tools.`,
       code: 'INVALID_AI_TOOL_SOURCE'
     });
+  }
+
+  /**
+   * Find a dynamic output expression that can produce an ai_tool output.
+   * Returns the expression string so the caller can inspect the gating
+   * parameter, or null when the node's outputs are static or never
+   * include ai_tool.
+   */
+  private getConditionalAIToolExpression(nodeInfo: { outputs?: unknown }): string | null {
+    const outputs = nodeInfo.outputs;
+    if (!Array.isArray(outputs)) return null;
+    const expression = outputs.find(
+      (output): output is string =>
+        typeof output === 'string' && output.startsWith('={{') && output.includes('ai_tool')
+    );
+    return expression ?? null;
   }
 
   /**
@@ -1852,7 +1876,7 @@ export class WorkflowValidator {
 
     // AI Agent advisories (no tools connected, community tools) are covered
     // by validateAISpecificNodes (exact agent type match, node name in the
-    // message) and by validateAIToolConnection (per-node community-package
+    // message) and by validateAIToolSource (per-node community-package
     // notice) — no duplicate workflow-level checks here.
   }
 

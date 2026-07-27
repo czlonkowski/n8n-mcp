@@ -415,6 +415,68 @@ describe('AI Node Validator', () => {
       );
     });
 
+    it('should not advise about systemMessage when set under options (#956)', () => {
+      const agent: WorkflowNode = {
+        id: 'agent1',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        position: [0, 0],
+        parameters: {
+          promptType: 'auto',
+          options: {
+            systemMessage: 'You are a support agent for ACME Corp. Answer using the knowledge base tools.'
+          }
+        }
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [agent],
+        connections: {
+          'OpenAI': {
+            'ai_languageModel': [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]]
+          }
+        }
+      };
+
+      const reverseMap = buildReverseConnectionMap(workflow);
+      const issues = validateAIAgent(agent, reverseMap, workflow);
+
+      expect(issues.filter(i => i.message.includes('systemMessage'))).toHaveLength(0);
+    });
+
+    it('should info on short systemMessage under options (#956)', () => {
+      const agent: WorkflowNode = {
+        id: 'agent1',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        position: [0, 0],
+        parameters: {
+          promptType: 'auto',
+          options: { systemMessage: 'Help user' }
+        }
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [agent],
+        connections: {
+          'OpenAI': {
+            'ai_languageModel': [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]]
+          }
+        }
+      };
+
+      const reverseMap = buildReverseConnectionMap(workflow);
+      const issues = validateAIAgent(agent, reverseMap, workflow);
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          severity: 'info',
+          message: expect.stringContaining('systemMessage is very short')
+        })
+      );
+      expect(issues.filter(i => i.message.includes('has no systemMessage'))).toHaveLength(0);
+    });
+
     it('should error on multiple memory connections', () => {
       const agent: WorkflowNode = {
         id: 'agent1',
