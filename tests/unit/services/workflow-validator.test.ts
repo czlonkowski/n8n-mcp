@@ -435,9 +435,12 @@ describe('WorkflowValidator', () => {
     });
 
     it('should validate AI tool connections', async () => {
-      // Tools are the ai_tool SOURCE; the agent receives the connection
-      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent', position: [100, 100], parameters: {} }, { id: '2', name: 'Tool', type: 'n8n-nodes-base.httpRequest', position: [300, 100], parameters: {} }], connections: { 'Tool': { ai_tool: [[{ node: 'Agent', type: 'ai_tool', index: 0 }]] } } } as any);
+      // Tools are the ai_tool SOURCE; the agent receives the connection. A
+      // langchain tool node keeps this a pure statistics test - the invalid
+      // source case is pinned in the Tool Variant Validation suite.
+      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent', position: [100, 100], parameters: {} }, { id: '2', name: 'Tool', type: '@n8n/n8n-nodes-langchain.toolCalculator', position: [300, 100], parameters: {} }], connections: { 'Tool': { ai_tool: [[{ node: 'Agent', type: 'ai_tool', index: 0 }]] } } } as any);
       expect(result.statistics.validConnections).toBe(1);
+      expect(result.errors.filter(e => (e as any).code === 'INVALID_AI_TOOL_SOURCE')).toHaveLength(0);
     });
 
     it('should warn for orphaned nodes', async () => {

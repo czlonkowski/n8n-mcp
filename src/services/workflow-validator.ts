@@ -1121,12 +1121,6 @@ export class WorkflowValidator {
     });
   }
 
-  /**
-   * Find a dynamic output expression that can produce an ai_tool output.
-   * Returns the expression string so the caller can inspect the gating
-   * parameter, or null when the node's outputs are static or never
-   * include ai_tool.
-   */
   private pushCommunityToolUsageWarning(
     sourceNode: WorkflowNode,
     result: WorkflowValidationResult
@@ -1139,6 +1133,12 @@ export class WorkflowValidator {
     });
   }
 
+  /**
+   * Find a dynamic output expression that can produce an ai_tool output.
+   * Returns the expression string so the caller can inspect the gating
+   * parameter, or null when the node's outputs are static or never
+   * include ai_tool.
+   */
   private findConditionalAIToolExpression(outputs: unknown): string | null {
     // Community ingestion stores nodeDesc.outputs verbatim, so a conditional
     // expression can arrive as a bare string rather than a one-element array.
