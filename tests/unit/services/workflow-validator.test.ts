@@ -785,6 +785,7 @@ describe('WorkflowValidator', () => {
       const conditionalRepo = { getNode: vi.fn((t: string) => {
         const m: Record<string, any> = {
           'nodes-langchain.vectorStorePinecone': { nodeType: 'nodes-langchain.vectorStorePinecone', displayName: 'Pinecone Vector Store', package: '@n8n/n8n-nodes-langchain', isAITool: false, isCommunity: false, outputs: [VECTOR_STORE_OUTPUTS_EXPRESSION], properties: [] },
+          'nodes-langchain.vectorStoreToolFirst': { nodeType: 'nodes-langchain.vectorStoreToolFirst', displayName: 'Tool-First Vector Store', package: '@n8n/n8n-nodes-langchain', isAITool: false, isCommunity: false, outputs: [VECTOR_STORE_OUTPUTS_EXPRESSION.replace("?? 'retrieve'", "?? 'retrieve-as-tool'")], properties: [] },
           'nodes-langchain.agent': { nodeType: 'nodes-langchain.agent', displayName: 'AI Agent', package: '@n8n/n8n-nodes-langchain', isAITool: false, isCommunity: false, properties: [] },
           'n8n-nodes-scraper.scrape': { nodeType: 'n8n-nodes-scraper.scrape', displayName: 'Scraper', package: 'n8n-nodes-scraper', isAITool: true, isCommunity: true, outputs: ['main'], properties: [] },
         };
@@ -834,6 +835,25 @@ describe('WorkflowValidator', () => {
       expect(result.warnings.filter(w => (w as any).code === 'AI_TOOL_MODE_MISMATCH')).toHaveLength(0);
     });
 
+    it('treats mode: null as unset and warns', async () => {
+      const result = await validator.validateWorkflow(vectorStoreWorkflow({ mode: null as any }) as any);
+      const mismatches = result.warnings.filter(w => (w as any).code === 'AI_TOOL_MODE_MISMATCH');
+      expect(mismatches).toHaveLength(1);
+      expect(mismatches[0].message).toContain('mode is not set');
+    });
+
+    it('does not warn on unset mode when the expression defaults to retrieve-as-tool', async () => {
+      const result = await validator.validateWorkflow({
+        nodes: [
+          { id: '1', name: 'ToolFirst', type: '@n8n/n8n-nodes-langchain.vectorStoreToolFirst', typeVersion: 1, position: [0, 0], parameters: {} },
+          { id: '2', name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 2, position: [200, 0], parameters: {} },
+        ],
+        connections: { ToolFirst: { ai_tool: [[{ node: 'Agent', type: 'ai_tool', index: 0 }]] } },
+      } as any);
+      expect(result.errors.filter(e => e.code === 'INVALID_AI_TOOL_SOURCE')).toHaveLength(0);
+      expect(result.warnings.filter(w => (w as any).code === 'AI_TOOL_MODE_MISMATCH')).toHaveLength(0);
+    });
+
     it('warns about the community tool node itself, not the agent receiving it (#955)', async () => {
       const result = await validator.validateWorkflow({
         nodes: [
@@ -845,6 +865,9 @@ describe('WorkflowValidator', () => {
       const notices = result.warnings.filter(w => w.message.includes('N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE'));
       expect(notices).toHaveLength(1);
       expect(notices[0].nodeName).toBe('Scraper');
+      // A community node that declares usableAsTool is a valid source - the
+      // notice must not come with a validity error.
+      expect(result.errors.filter(e => e.code === 'INVALID_AI_TOOL_SOURCE')).toHaveLength(0);
     });
   });
 

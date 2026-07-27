@@ -1143,9 +1143,19 @@ export class WorkflowValidator {
     if (!outputExpression.includes('retrieve-as-tool')) return;
 
     const mode = sourceNode.parameters?.mode;
-    const isStaticMode =
-      mode === undefined || (typeof mode === 'string' && !mode.startsWith('='));
+    // null and undefined both mean "unset - the node's default mode applies"
+    const isUnset = mode === undefined || mode === null;
+    const isStaticMode = isUnset || (typeof mode === 'string' && !mode.startsWith('='));
     if (!isStaticMode || mode === 'retrieve-as-tool') return;
+
+    // When mode is unset, the expression's own `?? '<default>'` fallback decides
+    // which output exists. Warn only when that default is identifiable and
+    // demonstrably not retrieve-as-tool - staying silent otherwise keeps this
+    // false-positive-safe if a future node defaults differently.
+    if (isUnset) {
+      const defaultMode = outputExpression.match(/\?\?\s*'([^']+)'/)?.[1];
+      if (defaultMode === undefined || defaultMode === 'retrieve-as-tool') return;
+    }
 
     result.warnings.push({
       type: 'warning',
