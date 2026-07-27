@@ -435,7 +435,8 @@ describe('WorkflowValidator', () => {
     });
 
     it('should validate AI tool connections', async () => {
-      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent', position: [100, 100], parameters: {} }, { id: '2', name: 'Tool', type: 'n8n-nodes-base.httpRequest', position: [300, 100], parameters: {} }], connections: { 'Agent': { ai_tool: [[{ node: 'Tool', type: 'main', index: 0 }]] } } } as any);
+      // Tools are the ai_tool SOURCE; the agent receives the connection
+      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent', position: [100, 100], parameters: {} }, { id: '2', name: 'Tool', type: 'n8n-nodes-base.httpRequest', position: [300, 100], parameters: {} }], connections: { 'Tool': { ai_tool: [[{ node: 'Agent', type: 'ai_tool', index: 0 }]] } } } as any);
       expect(result.statistics.validConnections).toBe(1);
     });
 
@@ -875,6 +876,21 @@ describe('WorkflowValidator', () => {
       expect(notices[0].nodeName).toBe('Scraper');
       // A community node that declares usableAsTool is a valid source - the
       // notice must not come with a validity error.
+      expect(result.errors.filter(e => e.code === 'INVALID_AI_TOOL_SOURCE')).toHaveLength(0);
+    });
+
+    it('keeps the env-var notice for a community tool the database does not know', async () => {
+      const result = await validator.validateWorkflow({
+        nodes: [
+          { id: '1', name: 'Acme Tool', type: 'n8n-nodes-acme.acmeTool', typeVersion: 1, position: [0, 0], parameters: {} },
+          { id: '2', name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 2, position: [200, 0], parameters: {} },
+        ],
+        connections: { 'Acme Tool': { ai_tool: [[{ node: 'Agent', type: 'ai_tool', index: 0 }]] } },
+      } as any);
+      const notices = result.warnings.filter(w => w.message.includes('N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE'));
+      expect(notices).toHaveLength(1);
+      expect(notices[0].nodeName).toBe('Acme Tool');
+      // Unknown nodes are reported by other validation, not as invalid sources
       expect(result.errors.filter(e => e.code === 'INVALID_AI_TOOL_SOURCE')).toHaveLength(0);
     });
   });

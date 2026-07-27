@@ -2027,12 +2027,13 @@ export class N8NDocumentationMCPServer {
     const isCommunityNode = node.isCommunity ?? false;
     const isMarkedAsAITool = node.isAITool ?? false;
 
-    // Built-in flags come from the declared usableAsTool property; community
-    // flags can be inferred from the package's AI codex category, so
-    // hasUsableAsToolProperty is a weaker claim for them.
+    // Built-in flags come from the declared usableAsTool property. Community
+    // ingestion collapses a declared usableAsTool and the package's codex AI
+    // category into one flag, so for community nodes the two are not
+    // distinguishable after the fact - the value says exactly that.
     let aiToolFlagSource: string | null = null;
     if (isMarkedAsAITool) {
-      aiToolFlagSource = isCommunityNode ? 'community-metadata' : 'declared-property';
+      aiToolFlagSource = isCommunityNode ? 'declared-or-ai-category' : 'declared-property';
     }
 
     const aiToolCapabilities = {

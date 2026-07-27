@@ -1058,8 +1058,19 @@ export class WorkflowValidator {
     }
 
     if (!nodeInfo) {
-      // Node not found in database - might be a community node or unknown
-      // Don't error here, let other validation handle unknown nodes
+      // Node not found in database - other validation reports unknown node
+      // types, so no error here. A package-qualified non-core type is commonly
+      // a user-installed community package the bundled database doesn't know;
+      // it still needs the environment variable to serve as a tool, so keep
+      // that guidance, which the pre-#955 target-side check emitted by accident.
+      if (!this.isCorePackageType(normalizedType) && normalizedType.includes('.')) {
+        result.warnings.push({
+          type: 'warning',
+          nodeId: sourceNode.id,
+          nodeName: sourceNode.name,
+          message: `Community node "${sourceNode.name}" is being used as an AI tool. Ensure N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true is set on the n8n instance.`
+        });
+      }
       return;
     }
 
@@ -1067,7 +1078,12 @@ export class WorkflowValidator {
     // parameters, so a connection type can exist only for particular values —
     // vector stores expose ai_tool only when mode is 'retrieve-as-tool'. The
     // database stores the raw expression; scan it for ai_tool instead of
-    // maintaining a list of the nodes that do this.
+    // maintaining a list of the nodes that do this. The scan is deliberately
+    // permissive: any expression that can produce ai_tool passes, even when the
+    // current parameters would not produce it (the LangChain Code node lists
+    // ai_tool in a connector lookup, for example). Beyond the retrieve-as-tool
+    // mode gate checked below, under-warning beats reinstating the false
+    // INVALID_AI_TOOL_SOURCE this replaced.
     const aiToolOutputExpression = this.findConditionalAIToolExpression(nodeInfo.outputs);
     if (aiToolOutputExpression) {
       // Valid - the node emits ai_tool for the right parameter values, but the
@@ -1122,9 +1138,14 @@ export class WorkflowValidator {
    * include ai_tool.
    */
   private findConditionalAIToolExpression(outputs: unknown): string | null {
-    if (!Array.isArray(outputs)) return null;
+    // Community ingestion stores nodeDesc.outputs verbatim, so a conditional
+    // expression can arrive as a bare string rather than a one-element array.
+    const candidates =
+      Array.isArray(outputs) ? outputs :
+      typeof outputs === 'string' ? [outputs] :
+      [];
 
-    return outputs.find(
+    return candidates.find(
       (output): output is string =>
         typeof output === 'string' && output.startsWith('={{') && output.includes('ai_tool')
     ) ?? null;
