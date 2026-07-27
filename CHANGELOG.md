@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.66.2] - 2026-07-27
+
+### Fixed
+
+- **Vector stores in `retrieve-as-tool` mode validate as AI tools (#953).** n8n's vector-store nodes expose an `ai_tool` output only when `mode` is `retrieve-as-tool`, but `validate_workflow` resolved ai_tool sources against a fixed node list and rejected the connection with `INVALID_AI_TOOL_SOURCE`. The database stores each node's raw outputs expression, so the validator now recognises an output that exists only for particular parameter values by scanning that expression — covering every vector store in 2.31.3 without maintaining a list. When the node's `mode` is a different literal (or unset, so the default `retrieve` applies), a new `AI_TOOL_MODE_MISMATCH` warning names the parameter to change instead of a false error.
+- **Community AI-tool detection no longer infers capability from the node name (#954).** Any package whose name contained the letters "ai" — `n8n-nodes-raia`, `@firefliesai/n8n-nodes-fireflies` — was flagged `is_ai_tool`, 901 of 1,455 community rows in total. Detection now requires a declared `usableAsTool` (any non-`false` value, matching the core parser's handling of the object form) or the package's codex AI category, which stays as a labelled inference because community metadata often omits `usableAsTool`. `get_node` reports the provenance in a new `aiToolFlagSource` field, and the community data was refreshed: 853 of 1,457 rows remain flagged, all from declared or codex signals.
+- **The "Community node used as an AI tool" warning now describes a community node (#955).** It defined community as `package !== 'n8n-nodes-base'` — sweeping in first-party `@n8n/n8n-nodes-langchain` — and it inspected the target of the `ai_tool` connection, which is always the AI Agent, so essentially every agent workflow warned that "Community node \"AI Agent\"" needed `N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true`. The check now tests the database's community flag on the connection's source — the tool node — and `get_node`'s `requiresEnvironmentVariable` follows the same flag instead of the AI-tool flag and a package-name test.
+- **The AI Agent `systemMessage` advisory reads the parameter where n8n stores it (#956).** The check read `parameters.systemMessage`, but the node keeps it under `options`, so "has no systemMessage" fired on every agent regardless of configuration — and an agent following the advice by setting the top-level field saw the message persist. The too-short check, previously unreachable, now runs as intended. The top-level read is kept as a fallback.
+- Removed `getNodeAsToolInfo` and `getAIToolExamples` from the MCP server: dead code with no dispatch path, carrying the same package-name assumption as #955.
+
 ## [2.66.1] - 2026-07-26
 
 ### Changed
