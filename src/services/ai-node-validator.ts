@@ -251,7 +251,12 @@ export function validateAIAgent(
       nodeName: node.name,
       message: `AI Agent "${node.name}" has no systemMessage. Consider adding one to define the agent's role, capabilities, and constraints.`
     });
-  } else if (typeof systemMessage === 'string' && systemMessage.trim().length < MIN_SYSTEM_MESSAGE_LENGTH) {
+  } else if (
+    typeof systemMessage === 'string' &&
+    // An expression's length says nothing about the resolved prompt
+    !systemMessage.startsWith('=') &&
+    systemMessage.trim().length < MIN_SYSTEM_MESSAGE_LENGTH
+  ) {
     issues.push({
       severity: 'info',
       nodeId: node.id,

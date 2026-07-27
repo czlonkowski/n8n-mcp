@@ -1162,7 +1162,7 @@ export class WorkflowValidator {
       nodeId: sourceNode.id,
       nodeName: sourceNode.name,
       message: `Node "${sourceNode.name}" connects to an AI Agent as a tool, but its ai_tool output only exists when mode is "retrieve-as-tool"` +
-        (mode ? ` (current mode: "${mode}")` : ' (mode is not set, so the default applies)') +
+        (isUnset ? ' (mode is not set, so the default applies)' : ` (current mode: "${mode}")`) +
         `. Set mode to "retrieve-as-tool".`,
       code: 'AI_TOOL_MODE_MISMATCH'
     });

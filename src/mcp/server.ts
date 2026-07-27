@@ -2883,7 +2883,7 @@ export class N8NDocumentationMCPServer {
       totalCount: tools.length,
       requirements: {
         environmentVariable: 'N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true',
-        nodeProperty: 'usableAsTool: true',
+        nodeProperty: 'usableAsTool (declared; community nodes may instead carry the codex AI category)',
       },
       usage: {
         description: 'These nodes are marked as AI tools. For built-in nodes this reflects a declared usableAsTool property; for community nodes it can also be inferred from the package\'s AI category, since community metadata often omits the property.',

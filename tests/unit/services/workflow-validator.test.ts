@@ -835,6 +835,14 @@ describe('WorkflowValidator', () => {
       expect(result.warnings.filter(w => (w as any).code === 'AI_TOOL_MODE_MISMATCH')).toHaveLength(0);
     });
 
+    it('reports an empty-string mode as set, not as missing', async () => {
+      const result = await validator.validateWorkflow(vectorStoreWorkflow({ mode: '' }) as any);
+      const mismatches = result.warnings.filter(w => (w as any).code === 'AI_TOOL_MODE_MISMATCH');
+      expect(mismatches).toHaveLength(1);
+      expect(mismatches[0].message).toContain('current mode: ""');
+      expect(mismatches[0].message).not.toContain('mode is not set');
+    });
+
     it('treats mode: null as unset and warns', async () => {
       const result = await validator.validateWorkflow(vectorStoreWorkflow({ mode: null as any }) as any);
       const mismatches = result.warnings.filter(w => (w as any).code === 'AI_TOOL_MODE_MISMATCH');

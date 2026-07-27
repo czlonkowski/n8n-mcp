@@ -477,6 +477,33 @@ describe('AI Node Validator', () => {
       expect(issues.filter(i => i.message.includes('has no systemMessage'))).toHaveLength(0);
     });
 
+    it('should not flag a short systemMessage expression (#956)', () => {
+      const agent: WorkflowNode = {
+        id: 'agent1',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        position: [0, 0],
+        parameters: {
+          promptType: 'auto',
+          options: { systemMessage: '={{ $json.p }}' }
+        }
+      };
+
+      const workflow: WorkflowJson = {
+        nodes: [agent],
+        connections: {
+          'OpenAI': {
+            'ai_languageModel': [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]]
+          }
+        }
+      };
+
+      const reverseMap = buildReverseConnectionMap(workflow);
+      const issues = validateAIAgent(agent, reverseMap, workflow);
+
+      expect(issues.filter(i => i.message.includes('systemMessage'))).toHaveLength(0);
+    });
+
     it('should error on multiple memory connections', () => {
       const agent: WorkflowNode = {
         id: 'agent1',
