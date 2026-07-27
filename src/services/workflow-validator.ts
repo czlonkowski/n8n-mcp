@@ -1035,13 +1035,11 @@ export class WorkflowValidator {
     // Get node info from repository (single lookup, reused below)
     const nodeInfo = this.nodeRepository.getNode(normalizedType);
 
-    // A community node used as a tool needs N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE
-    // on the n8n instance — the variable gates community packages as tools at all,
-    // so it applies even when the node declares usableAsTool. This tests the
-    // database's community flag rather than inferring community status from the
-    // package name, which would sweep in first-party @n8n/* packages (#955), and
-    // it fires on the tool (the ai_tool source), not on the agent receiving the
-    // connection.
+    // N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE gates community packages as tools
+    // at all, so this applies even when the node declares usableAsTool. It tests
+    // the database's community flag rather than the package name, which would
+    // sweep in first-party @n8n/* packages (#955), and it fires on the tool (the
+    // ai_tool source), not on the agent receiving the connection.
     if (nodeInfo?.isCommunity) {
       result.warnings.push({
         type: 'warning',
@@ -1070,27 +1068,12 @@ export class WorkflowValidator {
     // vector stores expose ai_tool only when mode is 'retrieve-as-tool'. The
     // database stores the raw expression; scan it for ai_tool instead of
     // maintaining a list of the nodes that do this.
-    const aiToolOutputExpression = this.getConditionalAIToolExpression(nodeInfo);
+    const aiToolOutputExpression = this.findConditionalAIToolExpression(nodeInfo.outputs);
     if (aiToolOutputExpression) {
-      if (aiToolOutputExpression.includes('retrieve-as-tool')) {
-        const mode = sourceNode.parameters?.mode;
-        // Skip the check when mode is itself an expression - it can't be
-        // evaluated statically.
-        const isStaticMode =
-          mode === undefined || (typeof mode === 'string' && !mode.startsWith('='));
-        if (isStaticMode && mode !== 'retrieve-as-tool') {
-          result.warnings.push({
-            type: 'warning',
-            nodeId: sourceNode.id,
-            nodeName: sourceNode.name,
-            message: `Node "${sourceNode.name}" connects to an AI Agent as a tool, but its ai_tool output only exists when mode is "retrieve-as-tool"` +
-              (mode ? ` (current mode: "${mode}")` : ' (mode is not set, so the default applies)') +
-              `. Set mode to "retrieve-as-tool".`,
-            code: 'AI_TOOL_MODE_MISMATCH'
-          });
-        }
-      }
-      return; // Valid - the node emits ai_tool for the right parameter values
+      // Valid - the node emits ai_tool for the right parameter values, but the
+      // current parameters may not be those values.
+      this.validateConditionalAIToolMode(sourceNode, aiToolOutputExpression, result);
+      return;
     }
 
     // Check if this is a base node that has a Tool variant available
@@ -1138,14 +1121,41 @@ export class WorkflowValidator {
    * parameter, or null when the node's outputs are static or never
    * include ai_tool.
    */
-  private getConditionalAIToolExpression(nodeInfo: { outputs?: unknown }): string | null {
-    const outputs = nodeInfo.outputs;
+  private findConditionalAIToolExpression(outputs: unknown): string | null {
     if (!Array.isArray(outputs)) return null;
-    const expression = outputs.find(
+
+    return outputs.find(
       (output): output is string =>
         typeof output === 'string' && output.startsWith('={{') && output.includes('ai_tool')
-    );
-    return expression ?? null;
+    ) ?? null;
+  }
+
+  /**
+   * Warn when a node whose ai_tool output is gated on `mode` is not set to the
+   * mode that exposes it. Stays silent when mode is itself an expression, which
+   * cannot be evaluated statically.
+   */
+  private validateConditionalAIToolMode(
+    sourceNode: WorkflowNode,
+    outputExpression: string,
+    result: WorkflowValidationResult
+  ): void {
+    if (!outputExpression.includes('retrieve-as-tool')) return;
+
+    const mode = sourceNode.parameters?.mode;
+    const isStaticMode =
+      mode === undefined || (typeof mode === 'string' && !mode.startsWith('='));
+    if (!isStaticMode || mode === 'retrieve-as-tool') return;
+
+    result.warnings.push({
+      type: 'warning',
+      nodeId: sourceNode.id,
+      nodeName: sourceNode.name,
+      message: `Node "${sourceNode.name}" connects to an AI Agent as a tool, but its ai_tool output only exists when mode is "retrieve-as-tool"` +
+        (mode ? ` (current mode: "${mode}")` : ' (mode is not set, so the default applies)') +
+        `. Set mode to "retrieve-as-tool".`,
+      code: 'AI_TOOL_MODE_MISMATCH'
+    });
   }
 
   /**

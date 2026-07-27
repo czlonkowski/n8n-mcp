@@ -257,18 +257,16 @@ export class CommunityNodeService {
       nodeType = nodeType.replace('n8n-nodes-preview-', 'n8n-nodes-');
     }
 
-    // Determine if it's an AI tool. usableAsTool is declared capability -
-    // n8n types it `true | UsableAsToolDescription`, so any value other than
-    // false/absent counts, matching the core parser. The codex AI category is
-    // an inference kept because community metadata often omits usableAsTool.
-    // Never infer from the node's name: "ai" as a substring matches packages
-    // like fireflies*ai* that are not tools (#954).
-    const isAITool =
-      (nodeDesc.usableAsTool !== undefined &&
-        nodeDesc.usableAsTool !== null &&
-        nodeDesc.usableAsTool !== false) ||
-      nodeDesc.codex?.categories?.includes('AI') ||
-      false;
+    // n8n types usableAsTool as `true | UsableAsToolDescription`, so any value
+    // other than false/absent is a declared capability, matching the core parser.
+    // The codex AI category stays as an inference because community metadata
+    // often omits usableAsTool. The node's name is never a signal: "ai" as a
+    // substring matches packages like fireflies*ai* that are not tools (#954).
+    const usableAsTool = nodeDesc.usableAsTool;
+    const declaresToolUse =
+      usableAsTool !== undefined && usableAsTool !== null && usableAsTool !== false;
+    const hasAICategory = nodeDesc.codex?.categories?.includes('AI') ?? false;
+    const isAITool = declaresToolUse || hasAICategory;
 
     return {
       // Core ParsedNode fields

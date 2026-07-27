@@ -2020,27 +2020,31 @@ export class N8NDocumentationMCPServer {
       throw new Error(`Node ${nodeType} not found`);
     }
     
-    // Add AI tool capabilities information with null safety.
     // N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE gates community packages being
     // used as tools at all, so the requirement follows the community flag -
     // not the AI-tool flag (which can be inferred, #954) and not a package-name
     // test (which would sweep in first-party @n8n/* packages, #955).
     const isCommunityNode = node.isCommunity ?? false;
+    const isMarkedAsAITool = node.isAITool ?? false;
+
+    // Built-in flags come from the declared usableAsTool property; community
+    // flags can be inferred from the package's AI codex category, so
+    // hasUsableAsToolProperty is a weaker claim for them.
+    let aiToolFlagSource: string | null = null;
+    if (isMarkedAsAITool) {
+      aiToolFlagSource = isCommunityNode ? 'community-metadata' : 'declared-property';
+    }
+
     const aiToolCapabilities = {
       canBeUsedAsTool: true, // Any node can be used as a tool in n8n
-      hasUsableAsToolProperty: node.isAITool ?? false,
-      // Built-in flags come from the declared usableAsTool property; community
-      // flags can be inferred from the package's AI codex category, so the
-      // strong claim above is qualified for them.
-      aiToolFlagSource: (node.isAITool ?? false)
-        ? (isCommunityNode ? 'community-metadata' : 'declared-property')
-        : null,
+      hasUsableAsToolProperty: isMarkedAsAITool,
+      aiToolFlagSource,
       requiresEnvironmentVariable: isCommunityNode,
       toolConnectionType: 'ai_tool',
       commonToolUseCases: this.getCommonAIToolUseCases(node.nodeType),
-      environmentRequirement: isCommunityNode ?
-        'N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true' :
-        null
+      environmentRequirement: isCommunityNode
+        ? 'N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true'
+        : null
     };
 
     // Process outputs to provide clear mapping with null safety
