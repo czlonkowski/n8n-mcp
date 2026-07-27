@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.66.3] - 2026-07-28
+
+### Fixed
+
+- **`updateNode` bracket-index paths update the array element instead of writing a junk key (#950).** Property paths split only on dots, so an update keyed `parameters.assignments.assignments[0].value` wrote a literal `"assignments[0]"` property onto the array, reported success, and left the real element untouched. A shared tokenizer now resolves bracket segments as array indices (digits only) for both `updateNode` and `patchNodeField`, and rejects the forms that used to corrupt silently: malformed or out-of-range brackets, empty segments (`a..b`), and non-index segments on arrays for writes — `parameters.arr.length: 0` previously truncated the array. An `updates` object applies to a draft that is swapped in only on success, so a failing key no longer leaves a half-updated node behind under `continueOnError`; removal by index splices instead of leaving a JSON `null` hole; and batched removals on the same array apply highest index first, so removing `[0]` and `[1]` from `[A,B,C]` removes A and B rather than A and C.
+- **`search_nodes` no longer fabricates node types for npm-sourced community nodes (#949).** The npm fallback derived the type suffix from the package name — `n8n-nodes-globals` became `n8n-nodes-globals.globals`, but the package's only node is `globalConstants` — so a workflow built from the search result failed to import. The suffix now comes from the package's own `n8n.nodes` manifest entry (first parseable file, a leading acronym lowercased as a unit, the old heuristic kept as a logged fallback), and the sync self-heals: a package whose stored type no longer matches is re-keyed in place, dropping the stale row and carrying its README and AI summary over — including under `--update`, which previously skipped such packages outright. The bundled database is repaired in this release: 45 fabricated types re-keyed (`…globals` → `…globalConstants`, `…deepseekchatmodel` → `…lmChatDeepSeek`, `…telegramgrampro` → `…telegramMtproto`), 1,460 community nodes total. The filename-derived name remains a heuristic — ground truth is the node's `description.name`, which only tarball parsing could read — so isolated mismatches stay possible for unverified packages.
+
 ## [2.66.2] - 2026-07-27
 
 ### Fixed

@@ -42,6 +42,37 @@ export interface SyncOptions {
 }
 
 /**
+ * package.json lookups during the npm sync are best-effort: one attempt with a
+ * short timeout. A miss falls back to the package-name heuristic, so a slow
+ * registry must not stretch a sync of hundreds of packages by hours.
+ */
+const NPM_MANIFEST_FETCH = { maxRetries: 1, timeout: 5000 } as const;
+
+/**
+ * Derive a node name from an n8n node entry point declared in package.json.
+ * e.g., "dist/nodes/GlobalConstants/GlobalConstants.node.js" -> "globalConstants"
+ * Returns undefined when the entry is not a node file.
+ */
+function extractNodeNameFromEntryPath(entryPath: string): string | undefined {
+  const match = /([^\\/]+)\.node\.(?:js|ts)$/.exec(entryPath);
+  if (!match) {
+    return undefined;
+  }
+
+  const className = match[1];
+
+  // A leading acronym is lowercased as a unit: PDFGeneration publishes as
+  // pdfGeneration, while plain PascalCase keeps the single-letter form
+  // (GlobalConstants -> globalConstants).
+  const acronym = /^[A-Z]+(?=[A-Z][a-z])/.exec(className);
+  if (acronym) {
+    return acronym[0].toLowerCase() + className.slice(acronym[0].length);
+  }
+
+  return className.charAt(0).toLowerCase() + className.slice(1);
+}
+
+/**
  * Service for syncing community nodes from n8n Strapi API and npm registry.
  *
  * Key insight: Verified nodes from Strapi include full `nodeDescription` schemas,
@@ -201,18 +232,28 @@ export class CommunityNodeService {
           continue;
         }
 
-        // Skip if already exists and skipExisting is true
-        if (skipExisting && this.repository.hasNodeByNpmPackage(packageName)) {
+        const existing = this.repository.getNodeByNpmPackage(packageName);
+
+        // For npm packages, we create a basic node entry with metadata
+        // Full schema extraction would require downloading and parsing the tarball
+        const parsedNode = await this.npmPackageToParsedNode(pkg);
+        const staleRow = this.staleCommunityRow(existing, parsedNode.nodeType);
+
+        // Skip if already exists and skipExisting is true. A row keyed by an
+        // outdated node type is the one case that must not be skipped — only a
+        // re-key corrects it.
+        if (skipExisting && existing && !staleRow) {
           result.skipped++;
           continue;
         }
 
-        // For npm packages, we create a basic node entry with metadata
-        // Full schema extraction would require downloading and parsing the tarball
-        const parsedNode = this.npmPackageToParsedNode(pkg);
-
         // Save to database
         this.repository.saveNode(parsedNode);
+
+        if (staleRow) {
+          this.replaceStaleCommunityRow(packageName, staleRow, parsedNode.nodeType);
+        }
+
         result.saved++;
 
         if (progressCallback) {
@@ -308,11 +349,12 @@ export class CommunityNodeService {
    * Convert npm package info to basic ParsedNode.
    * Note: This is a minimal entry - full schema requires tarball parsing.
    */
-  private npmPackageToParsedNode(pkg: NpmSearchResult): ParsedNode & CommunityNodeFields {
+  private async npmPackageToParsedNode(
+    pkg: NpmSearchResult
+  ): Promise<ParsedNode & CommunityNodeFields> {
     const { package: pkgInfo, score } = pkg;
 
-    // Extract node name from package name (e.g., n8n-nodes-globals -> GlobalConstants)
-    const nodeName = this.extractNodeNameFromPackage(pkgInfo.name);
+    const nodeName = await this.resolveNpmNodeName(pkgInfo.name, pkgInfo.version);
     const nodeType = `${pkgInfo.name}.${nodeName}`;
 
     return {
@@ -373,6 +415,78 @@ export class CommunityNodeService {
   }
 
   /**
+   * A stored row is stale when this sync resolves a different node type for the
+   * same npm package, which happens for packages saved under the fabricated
+   * package-name type (#949). Verified rows carry the real node name from
+   * Strapi and are never re-keyed.
+   */
+  private staleCommunityRow(existing: any, nodeType: string): any | undefined {
+    if (!existing || !existing.isCommunity || existing.isVerified) {
+      return undefined;
+    }
+    return existing.nodeType && existing.nodeType !== nodeType ? existing : undefined;
+  }
+
+  /**
+   * Drop the rows this package no longer resolves to and carry the generated
+   * documentation over to the new row, which saveNode could not preserve
+   * because preservation is keyed by node type.
+   */
+  private replaceStaleCommunityRow(packageName: string, staleRow: any, nodeType: string): void {
+    const removed = this.repository.deleteStaleCommunityNodes(packageName, nodeType);
+    logger.info(
+      `Re-keyed ${packageName}: "${staleRow.nodeType}" -> "${nodeType}" (${removed} outdated row(s) removed)`
+    );
+
+    if (staleRow.npmReadme) {
+      this.repository.updateNodeReadme(nodeType, staleRow.npmReadme);
+    }
+    if (staleRow.aiDocumentationSummary) {
+      this.repository.updateNodeAISummary(nodeType, staleRow.aiDocumentationSummary);
+    }
+  }
+
+  /**
+   * Resolve the node name for an npm-only package.
+   *
+   * The package.json `n8n.nodes` array lists the package's node entry points
+   * (e.g. "dist/nodes/GlobalConstants/GlobalConstants.node.js"), which carry the
+   * real node name. Deriving it from the package name instead fabricated node
+   * types that do not exist in n8n (#949).
+   *
+   * Only the first entry is used: the npm path stores one row per package.
+   */
+  private async resolveNpmNodeName(packageName: string, version?: string): Promise<string> {
+    let entries: unknown[] = [];
+
+    try {
+      const packageJson = await this.fetcher.fetchPackageJson(
+        packageName,
+        version,
+        NPM_MANIFEST_FETCH
+      );
+      if (Array.isArray(packageJson?.n8n?.nodes)) {
+        entries = packageJson.n8n.nodes;
+      }
+    } catch (error: any) {
+      logger.warn(`Could not fetch package.json for ${packageName}: ${error.message}`);
+    }
+
+    for (const entry of entries) {
+      const nodeName = typeof entry === 'string' ? extractNodeNameFromEntryPath(entry) : undefined;
+      if (nodeName) {
+        return nodeName;
+      }
+    }
+
+    const fallback = this.extractNodeNameFromPackage(packageName);
+    logger.warn(
+      `No usable n8n.nodes entry for ${packageName}, falling back to the package-name heuristic: "${fallback}"`
+    );
+    return fallback;
+  }
+
+  /**
    * Extract node name from npm package name.
    * n8n community nodes typically use lowercase node class names.
    * e.g., "n8n-nodes-chatwoot" -> "chatwoot"
@@ -380,6 +494,7 @@ export class CommunityNodeService {
    *
    * Note: We use lowercase because most community nodes follow this convention.
    * Verified nodes from Strapi have the correct casing in nodeDesc.name.
+   * Only a fallback — see resolveNpmNodeName.
    */
   private extractNodeNameFromPackage(packageName: string): string {
     // Remove scope if present

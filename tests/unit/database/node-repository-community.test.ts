@@ -109,6 +109,21 @@ class MockPreparedStatement implements PreparedStatement {
       });
     }
 
+    // deleteStaleCommunityNodes
+    if (this.sql.includes('DELETE FROM nodes') && this.sql.includes('node_type != ?')) {
+      this.run = vi.fn((npmPackageName: string, keepNodeType: string): RunResult => {
+        const nodes = this.mockData.get('community_nodes') || [];
+        const remaining = nodes.filter((n: any) => !(
+          n.npm_package_name === npmPackageName &&
+          n.node_type !== keepNodeType &&
+          n.is_community === 1 &&
+          n.is_verified === 0
+        ));
+        this.mockData.set('community_nodes', remaining);
+        return { changes: nodes.length - remaining.length, lastInsertRowid: 0 };
+      });
+    }
+
     // deleteCommunityNodes
     if (this.sql.includes('DELETE FROM nodes WHERE is_community = 1')) {
       this.run = vi.fn(() => {
@@ -429,6 +444,42 @@ describe('NodeRepository - Community Node Methods', () => {
       const deletedCount = repository.deleteCommunityNodes();
 
       expect(deletedCount).toBe(0);
+    });
+  });
+
+  describe('deleteStaleCommunityNodes', () => {
+    const staleRow = {
+      ...sampleCommunityNodes[1],
+      node_type: 'n8n-nodes-unverified.unverified',
+    };
+
+    beforeEach(() => {
+      mockAdapter._setMockData('community_nodes', [...sampleCommunityNodes, staleRow]);
+    });
+
+    it('should remove rows of the package that are keyed by another node type', () => {
+      const deletedCount = repository.deleteStaleCommunityNodes(
+        'n8n-nodes-unverified',
+        'n8n-nodes-unverified.testNode'
+      );
+
+      expect(deletedCount).toBe(1);
+      const remaining = mockAdapter._getMockData('community_nodes');
+      expect(remaining.map((n: any) => n.node_type)).toEqual([
+        'n8n-nodes-verified.testNode',
+        'n8n-nodes-unverified.testNode',
+        'n8n-nodes-popular.testNode',
+      ]);
+    });
+
+    it('should never remove verified rows', () => {
+      const deletedCount = repository.deleteStaleCommunityNodes(
+        'n8n-nodes-verified',
+        'n8n-nodes-verified.renamed'
+      );
+
+      expect(deletedCount).toBe(0);
+      expect(mockAdapter._getMockData('community_nodes')).toHaveLength(4);
     });
   });
 

@@ -7,12 +7,14 @@ import {
   NpmSearchResult,
 } from '@/community/community-node-fetcher';
 import { ParsedNode } from '@/parsers/node-parser';
+import { logger } from '@/utils/logger';
 
 // Mock the fetcher
 vi.mock('@/community/community-node-fetcher', () => ({
   CommunityNodeFetcher: vi.fn().mockImplementation(() => ({
     fetchVerifiedNodes: vi.fn(),
     fetchNpmPackages: vi.fn(),
+    fetchPackageJson: vi.fn(),
   })),
 }));
 
@@ -32,6 +34,7 @@ describe('CommunityNodeService', () => {
   let mockFetcher: {
     fetchVerifiedNodes: ReturnType<typeof vi.fn>;
     fetchNpmPackages: ReturnType<typeof vi.fn>;
+    fetchPackageJson: ReturnType<typeof vi.fn>;
   };
 
   // Sample test data
@@ -97,6 +100,10 @@ describe('CommunityNodeService', () => {
     mockRepository = {
       saveNode: vi.fn(),
       hasNodeByNpmPackage: vi.fn().mockReturnValue(false),
+      getNodeByNpmPackage: vi.fn().mockReturnValue(null),
+      deleteStaleCommunityNodes: vi.fn().mockReturnValue(0),
+      updateNodeReadme: vi.fn(),
+      updateNodeAISummary: vi.fn(),
       getCommunityNodes: vi.fn().mockReturnValue([]),
       getCommunityStats: vi.fn().mockReturnValue({ total: 0, verified: 0, unverified: 0 }),
       deleteCommunityNodes: vi.fn().mockReturnValue(0),
@@ -106,6 +113,7 @@ describe('CommunityNodeService', () => {
     mockFetcher = {
       fetchVerifiedNodes: vi.fn().mockResolvedValue([]),
       fetchNpmPackages: vi.fn().mockResolvedValue([]),
+      fetchPackageJson: vi.fn().mockResolvedValue(null),
     };
 
     // Override CommunityNodeFetcher to return our mock
@@ -308,7 +316,12 @@ describe('CommunityNodeService', () => {
 
     it('should skip existing packages when skipExisting is true', async () => {
       mockFetcher.fetchNpmPackages.mockResolvedValue([mockNpmPackage]);
-      (mockRepository.hasNodeByNpmPackage as any).mockReturnValue(true);
+      (mockRepository.getNodeByNpmPackage as any).mockReturnValue({
+        nodeType: 'n8n-nodes-npm-test.npmtest',
+        npmPackageName: 'n8n-nodes-npm-test',
+        isCommunity: true,
+        isVerified: false,
+      });
 
       const result = await service.syncNpmNodes(100, undefined, true);
 
@@ -655,6 +668,155 @@ describe('CommunityNodeService', () => {
       );
     });
 
+    it('should derive the node name from the package.json n8n.nodes entry (#949)', async () => {
+      const globalsPackage = {
+        ...mockNpmPackage,
+        package: { ...mockNpmPackage.package, name: 'n8n-nodes-globals' },
+      };
+      mockFetcher.fetchNpmPackages.mockResolvedValue([globalsPackage]);
+      mockFetcher.fetchPackageJson.mockResolvedValue({
+        n8n: { nodes: ['dist/nodes/GlobalConstants/GlobalConstants.node.js'] },
+      });
+
+      await service.syncNpmNodes();
+
+      expect(mockFetcher.fetchPackageJson).toHaveBeenCalledWith(
+        'n8n-nodes-globals',
+        '1.0.0',
+        expect.objectContaining({ maxRetries: 1 })
+      );
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nodeType: 'n8n-nodes-globals.globalConstants',
+          displayName: 'globalConstants',
+        })
+      );
+    });
+
+    it('should lowercase a leading acronym in the node name (#949)', async () => {
+      mockFetcher.fetchNpmPackages.mockResolvedValue([mockNpmPackage]);
+      mockFetcher.fetchPackageJson.mockResolvedValue({
+        n8n: { nodes: ['dist/nodes/PDFGeneration/PDFGeneration.node.js'] },
+      });
+
+      await service.syncNpmNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nodeType: 'n8n-nodes-npm-test.pdfGeneration',
+        })
+      );
+    });
+
+    it('should use the first n8n.nodes entry that names a node file (#949)', async () => {
+      mockFetcher.fetchNpmPackages.mockResolvedValue([mockNpmPackage]);
+      mockFetcher.fetchPackageJson.mockResolvedValue({
+        n8n: { nodes: ['dist/README.js', 'dist/nodes/Foo/Foo.node.js'] },
+      });
+
+      await service.syncNpmNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nodeType: 'n8n-nodes-npm-test.foo',
+        })
+      );
+    });
+
+    it('should fall back and warn when no n8n.nodes entry names a node file (#949)', async () => {
+      mockFetcher.fetchNpmPackages.mockResolvedValue([mockNpmPackage]);
+      mockFetcher.fetchPackageJson.mockResolvedValue({
+        n8n: { nodes: ['dist/index.js'] },
+      });
+
+      await service.syncNpmNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nodeType: 'n8n-nodes-npm-test.npmtest',
+        })
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('n8n-nodes-npm-test')
+      );
+    });
+
+    it('should look up the manifest with a single attempt and a short timeout (#949)', async () => {
+      mockFetcher.fetchNpmPackages.mockResolvedValue([mockNpmPackage]);
+
+      await service.syncNpmNodes();
+
+      const options = mockFetcher.fetchPackageJson.mock.calls[0][2];
+      expect(options.maxRetries).toBe(1);
+      expect(options.timeout).toBeLessThan(15000);
+    });
+
+    it('should derive the node name from package.json for scoped packages (#949)', async () => {
+      const scopedPackage = {
+        ...mockNpmPackage,
+        package: { ...mockNpmPackage.package, name: '@myorg/n8n-nodes-custom' },
+      };
+      mockFetcher.fetchNpmPackages.mockResolvedValue([scopedPackage]);
+      mockFetcher.fetchPackageJson.mockResolvedValue({
+        n8n: { nodes: ['dist/nodes/CustomThing/CustomThing.node.js'] },
+      });
+
+      await service.syncNpmNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nodeType: '@myorg/n8n-nodes-custom.customThing',
+        })
+      );
+    });
+
+    it('should use the first entry of a multi-node n8n.nodes array (#949)', async () => {
+      mockFetcher.fetchNpmPackages.mockResolvedValue([mockNpmPackage]);
+      mockFetcher.fetchPackageJson.mockResolvedValue({
+        n8n: {
+          nodes: [
+            'dist/nodes/FirstNode/FirstNode.node.js',
+            'dist/nodes/SecondNode/SecondNode.node.js',
+          ],
+        },
+      });
+
+      await service.syncNpmNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nodeType: 'n8n-nodes-npm-test.firstNode',
+        })
+      );
+    });
+
+    it('should fall back to the package-name heuristic when n8n.nodes is missing (#949)', async () => {
+      mockFetcher.fetchNpmPackages.mockResolvedValue([mockNpmPackage]);
+      mockFetcher.fetchPackageJson.mockResolvedValue({ name: 'n8n-nodes-npm-test' });
+
+      await service.syncNpmNodes();
+
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nodeType: 'n8n-nodes-npm-test.npmtest',
+        })
+      );
+    });
+
+    it('should fall back to the package-name heuristic when package.json cannot be fetched (#949)', async () => {
+      mockFetcher.fetchNpmPackages.mockResolvedValue([mockNpmPackage]);
+      mockFetcher.fetchPackageJson.mockRejectedValue(new Error('npm registry down'));
+
+      const result = await service.syncNpmNodes();
+
+      expect(result.saved).toBe(1);
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nodeType: 'n8n-nodes-npm-test.npmtest',
+        })
+      );
+    });
+
     it('should calculate approximate downloads from popularity score', async () => {
       const popularPackage = {
         ...mockNpmPackage,
@@ -675,6 +837,85 @@ describe('CommunityNodeService', () => {
           npmDownloads: 5000, // 0.5 * 10000
         })
       );
+    });
+  });
+
+  describe('stale node type re-keying (#949)', () => {
+    const globalsPackage: NpmSearchResult = {
+      ...mockNpmPackage,
+      package: { ...mockNpmPackage.package, name: 'n8n-nodes-globals' },
+    };
+
+    const staleRow = {
+      nodeType: 'n8n-nodes-globals.globals',
+      npmPackageName: 'n8n-nodes-globals',
+      isCommunity: true,
+      isVerified: false,
+      npmReadme: '# Globals',
+      aiDocumentationSummary: { summary: 'existing summary' },
+    };
+
+    beforeEach(() => {
+      mockFetcher.fetchNpmPackages.mockResolvedValue([globalsPackage]);
+      mockFetcher.fetchPackageJson.mockResolvedValue({
+        n8n: { nodes: ['dist/nodes/GlobalConstants/GlobalConstants.node.js'] },
+      });
+    });
+
+    it('should replace a row keyed by the old node type and carry over its docs', async () => {
+      (mockRepository.getNodeByNpmPackage as any).mockReturnValue(staleRow);
+
+      const result = await service.syncNpmNodes();
+
+      expect(result.saved).toBe(1);
+      expect(mockRepository.saveNode).toHaveBeenCalledWith(
+        expect.objectContaining({ nodeType: 'n8n-nodes-globals.globalConstants' })
+      );
+      expect(mockRepository.deleteStaleCommunityNodes).toHaveBeenCalledWith(
+        'n8n-nodes-globals',
+        'n8n-nodes-globals.globalConstants'
+      );
+      expect(mockRepository.updateNodeReadme).toHaveBeenCalledWith(
+        'n8n-nodes-globals.globalConstants',
+        '# Globals'
+      );
+      expect(mockRepository.updateNodeAISummary).toHaveBeenCalledWith(
+        'n8n-nodes-globals.globalConstants',
+        { summary: 'existing summary' }
+      );
+    });
+
+    it('should re-key even when skipExisting is set', async () => {
+      (mockRepository.getNodeByNpmPackage as any).mockReturnValue(staleRow);
+
+      const result = await service.syncNpmNodes(100, undefined, true);
+
+      expect(result.saved).toBe(1);
+      expect(result.skipped).toBe(0);
+      expect(mockRepository.deleteStaleCommunityNodes).toHaveBeenCalled();
+    });
+
+    it('should leave a row with the same node type alone', async () => {
+      (mockRepository.getNodeByNpmPackage as any).mockReturnValue({
+        ...staleRow,
+        nodeType: 'n8n-nodes-globals.globalConstants',
+      });
+
+      await service.syncNpmNodes();
+
+      expect(mockRepository.deleteStaleCommunityNodes).not.toHaveBeenCalled();
+      expect(mockRepository.updateNodeReadme).not.toHaveBeenCalled();
+    });
+
+    it('should never re-key a verified row', async () => {
+      (mockRepository.getNodeByNpmPackage as any).mockReturnValue({
+        ...staleRow,
+        isVerified: true,
+      });
+
+      await service.syncNpmNodes();
+
+      expect(mockRepository.deleteStaleCommunityNodes).not.toHaveBeenCalled();
     });
   });
 

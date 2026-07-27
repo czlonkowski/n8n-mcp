@@ -81,6 +81,97 @@ function isUnsafeRegex(pattern: string): boolean {
   return false;
 }
 
+interface PathSegment {
+  key: string;
+  /** Segment came from bracket syntax (`items[0]`), which only an array can satisfy. */
+  bracket: boolean;
+}
+
+/**
+ * Split a property path into segments, understanding dot notation and bracket
+ * indices: "assignments[0].value" → ["assignments", "0", "value"].
+ *
+ * Bracket indices must be non-negative integers. Anything else is malformed and
+ * throws — treating "assignments[0]" as a literal key silently wrote a junk
+ * sibling property instead of updating the array element (#950).
+ */
+function parsePropertyPath(path: string): PathSegment[] {
+  const segments: PathSegment[] = [];
+
+  for (const part of path.split('.')) {
+    if (!part.includes('[') && !part.includes(']')) {
+      if (part === '') {
+        throw new Error(
+          `Invalid property path "${path}": empty path segment. ` +
+          `Write "parameters.url" without leading, trailing or repeated dots.`
+        );
+      }
+      segments.push({ key: part, bracket: false });
+      continue;
+    }
+
+    const match = /^([^[\]]*)((?:\[\d+\])+)$/.exec(part);
+    if (!match) {
+      throw new Error(
+        `Invalid property path "${path}": malformed bracket index in "${part}". ` +
+        `Use "items[0].name" with a non-negative integer, or the equivalent "items.0.name".`
+      );
+    }
+
+    const [, base, indices] = match;
+    if (base) segments.push({ key: base, bracket: false });
+    for (const [, index] of indices.matchAll(/\[(\d+)\]/g)) {
+      segments.push({ key: index, bracket: true });
+    }
+  }
+
+  return segments;
+}
+
+/**
+ * Resolve a path segment against its container, returning the key to read or
+ * write. Numeric segments address array elements by index; a bracket segment
+ * that does not land on an array is a caller mistake, not a new property.
+ *
+ * Writes additionally refuse non-index segments on arrays: keys like "-1" or
+ * "length" would either be dropped on serialization or truncate the array,
+ * which is the same silent corruption bracket parsing fixes (#950). Reads stay
+ * permissive so an unresolvable path simply reads as undefined.
+ */
+function resolveSegment(
+  container: any,
+  segment: PathSegment,
+  path: string,
+  forWrite: boolean
+): string | number {
+  if (Array.isArray(container)) {
+    if (/^\d+$/.test(segment.key)) {
+      const index = Number(segment.key);
+      if (index >= container.length) {
+        throw new Error(
+          `Invalid property path "${path}": index ${index} is out of range for an array of ${container.length} item(s).`
+        );
+      }
+      return index;
+    }
+
+    if (forWrite) {
+      throw new Error(
+        `Invalid property path "${path}": "${segment.key}" is not an array index. ` +
+        `Address array elements by position, e.g. "items[0].name".`
+      );
+    }
+  }
+
+  if (segment.bracket) {
+    throw new Error(
+      `Invalid property path "${path}": "[${segment.key}]" expects an array but found ${container === null ? 'null' : typeof container}.`
+    );
+  }
+
+  return segment.key;
+}
+
 function countOccurrences(str: string, search: string): number {
   let count = 0;
   let pos = 0;
@@ -565,8 +656,14 @@ export class WorkflowDiffEngine {
       }
     }
 
-    // Validate __patch_find_replace syntax (#642)
     for (const [path, value] of Object.entries(operation.updates)) {
+      try {
+        parsePropertyPath(path);
+      } catch (error) {
+        return error instanceof Error ? error.message : `Invalid property path "${path}"`;
+      }
+
+      // Validate __patch_find_replace syntax (#642)
       if (value !== null && typeof value === 'object' && !Array.isArray(value)
           && '__patch_find_replace' in value) {
         const patches = value.__patch_find_replace;
@@ -602,16 +699,25 @@ export class WorkflowDiffEngine {
       return `patchNodeField requires a "fieldPath" string (e.g., "parameters.jsCode")`;
     }
 
+    let pathSegments: PathSegment[];
+    try {
+      pathSegments = parsePropertyPath(operation.fieldPath);
+    } catch (error) {
+      const reason = error instanceof Error
+        ? error.message
+        : `invalid fieldPath "${operation.fieldPath}"`;
+      return `patchNodeField: ${reason}`;
+    }
+
     // Prototype pollution protection
-    const pathSegments = operation.fieldPath.split('.');
-    if (pathSegments.some(k => DANGEROUS_PATH_KEYS.has(k))) {
+    if (pathSegments.some(s => DANGEROUS_PATH_KEYS.has(s.key))) {
       return `patchNodeField: fieldPath "${operation.fieldPath}" contains a forbidden key (__proto__, constructor, or prototype)`;
     }
 
     // Same reason updateNode refuses it: canvas groups and pinned data reference the node id, so
     // rewriting it here would orphan them. Only the node's OWN id is protected — a nested id such
     // as `parameters.assignments.assignments[0].id` is ordinary node data.
-    if (pathSegments[0] === 'id') {
+    if (pathSegments[0].key === 'id') {
       return `Cannot patch the id of a node: node IDs are immutable because canvas groups and pinned data reference them. Remove and re-add the node instead.`;
     }
 
@@ -950,14 +1056,20 @@ export class WorkflowDiffEngine {
       ? { oldName: node.name, newName: operation.updates.name }
       : undefined;
 
+    // Apply updates to a draft: a path that throws halfway through the object
+    // (e.g. after auto-creating an intermediate) would otherwise leave the node
+    // half-updated, and in continueOnError mode a later operation would persist
+    // that state. The draft is swapped in only once every update succeeded.
+    const draft: WorkflowNode = JSON.parse(JSON.stringify(node));
+
     // Apply updates using dot notation
-    Object.entries(operation.updates).forEach(([path, value]) => {
+    this.orderUpdateEntries(operation.updates).forEach(([path, value]) => {
       // Handle __patch_find_replace for surgical string edits (#642)
       // Format and type validation already passed in validateUpdateNode()
       if (value !== null && typeof value === 'object' && !Array.isArray(value)
           && '__patch_find_replace' in value) {
         const patches = value.__patch_find_replace as Array<{ find: string; replace: string }>;
-        let current = this.getNestedProperty(node, path) as string;
+        let current = this.getNestedProperty(draft, path) as string;
         for (const patch of patches) {
           if (!current.includes(patch.find)) {
             this.warnings.push({
@@ -968,16 +1080,21 @@ export class WorkflowDiffEngine {
           }
           current = current.replace(patch.find, patch.replace);
         }
-        this.setNestedProperty(node, path, current);
+        this.setNestedProperty(draft, path, current);
       } else {
-        this.setNestedProperty(node, path, value);
+        this.setNestedProperty(draft, path, value);
       }
     });
 
-    // Sanitize node after updates to ensure metadata is complete
-    const sanitized = sanitizeNode(node);
-
-    // Update the node in-place
+    // Sanitize the draft after updates to ensure metadata is complete, then swap
+    // it in without replacing the node object itself — the workflow arrays and
+    // the rename bookkeeping hold this reference.
+    const sanitized = sanitizeNode(draft);
+    for (const key of Object.keys(node)) {
+      if (!Object.prototype.hasOwnProperty.call(sanitized, key)) {
+        delete (node as any)[key];
+      }
+    }
     Object.assign(node, sanitized);
 
     // Commit the rename only after updates+sanitization succeeded and the
@@ -987,6 +1104,41 @@ export class WorkflowDiffEngine {
       this.renameMap.set(pendingRename.oldName, pendingRename.newName);
       logger.debug(`Tracking rename: "${pendingRename.oldName}" → "${pendingRename.newName}"`);
     }
+  }
+
+  /**
+   * Order the updates of one operation so that removals of elements of the same
+   * array run from the highest index down. Splicing "items[0]" before "items[1]"
+   * would shift the array under the second removal and drop the wrong element.
+   * Every other entry keeps its position.
+   */
+  private orderUpdateEntries(updates: Record<string, any>): Array<[string, any]> {
+    const entries = Object.entries(updates);
+    const removalsByParent = new Map<string, Array<{ position: number; index: number }>>();
+
+    entries.forEach(([path, value], position) => {
+      if (value !== null && value !== undefined) return;
+
+      const segments = parsePropertyPath(path);
+      const lastSegment = segments[segments.length - 1];
+      if (!/^\d+$/.test(lastSegment.key)) return;
+
+      const parent = segments.slice(0, -1).map(s => s.key).join('.');
+      const removals = removalsByParent.get(parent) ?? [];
+      removals.push({ position, index: Number(lastSegment.key) });
+      removalsByParent.set(parent, removals);
+    });
+
+    const ordered = [...entries];
+    for (const removals of removalsByParent.values()) {
+      if (removals.length < 2) continue;
+      const descending = [...removals].sort((a, b) => b.index - a.index);
+      removals.forEach(({ position }, i) => {
+        ordered[position] = entries[descending[i].position];
+      });
+    }
+
+    return ordered;
   }
 
   private applyPatchNodeField(workflow: Workflow, operation: PatchNodeFieldOperation): void {
@@ -1839,31 +1991,36 @@ export class WorkflowDiffEngine {
   }
 
   private getNestedProperty(obj: any, path: string): any {
-    const keys = path.split('.');
     let current = obj;
-    for (const key of keys) {
-      if (DANGEROUS_PATH_KEYS.has(key)) return undefined;
-      if (current == null || typeof current !== 'object') return undefined;
-      current = current[key];
+    try {
+      for (const segment of parsePropertyPath(path)) {
+        if (DANGEROUS_PATH_KEYS.has(segment.key)) return undefined;
+        if (current == null || typeof current !== 'object') return undefined;
+        const key = resolveSegment(current, segment, path, false);
+        current = current[key];
+      }
+    } catch {
+      // Malformed or unsatisfiable path — the property does not exist.
+      return undefined;
     }
     return current;
   }
 
   private setNestedProperty(obj: any, path: string, value: any): void {
-    const keys = path.split('.');
+    const segments = parsePropertyPath(path);
     let current = obj;
 
     // Prototype pollution protection (eager: throw before any write).
-    if (keys.some(k => DANGEROUS_PATH_KEYS.has(k))) {
+    if (segments.some(s => DANGEROUS_PATH_KEYS.has(s.key))) {
       throw new Error(`Invalid property path: "${path}" contains a forbidden key`);
     }
 
-    for (let i = 0; i < keys.length - 1; i++) {
-      const key = keys[i];
+    for (let i = 0; i < segments.length - 1; i++) {
+      const key = resolveSegment(current, segments[i], path, true);
       // Per-iteration guard. Redundant with the eager check above (which
       // already throws), but kept so CodeQL's `js/prototype-pollution-utility`
       // dataflow sees the write site is guarded at the point of assignment.
-      if (DANGEROUS_PATH_KEYS.has(key)) {
+      if (typeof key === 'string' && DANGEROUS_PATH_KEYS.has(key)) {
         throw new Error(`Invalid property path: "${path}" contains a forbidden key`);
       }
       if (!Object.prototype.hasOwnProperty.call(current, key)
@@ -1876,9 +2033,9 @@ export class WorkflowDiffEngine {
       current = current[key];
     }
 
-    const finalKey = keys[keys.length - 1];
+    const finalKey = resolveSegment(current, segments[segments.length - 1], path, true);
     // Same CodeQL-visible guard at the final write site.
-    if (DANGEROUS_PATH_KEYS.has(finalKey)) {
+    if (typeof finalKey === 'string' && DANGEROUS_PATH_KEYS.has(finalKey)) {
       throw new Error(`Invalid property path: "${path}" contains a forbidden key`);
     }
     // Both null and undefined remove the property. undefined is accepted because
@@ -1886,7 +2043,13 @@ export class WorkflowDiffEngine {
     // (see processErrorOutputFixes), so treating only null as the deletion marker
     // left those fixes silently inert at the diff-engine layer.
     if (value === null || value === undefined) {
-      delete current[finalKey];
+      // A numeric key only resolves against an array, where deleting in place
+      // would leave a hole that serializes back to n8n as a null element.
+      if (typeof finalKey === 'number') {
+        current.splice(finalKey, 1);
+      } else {
+        delete current[finalKey];
+      }
     } else {
       current[finalKey] = value;
     }

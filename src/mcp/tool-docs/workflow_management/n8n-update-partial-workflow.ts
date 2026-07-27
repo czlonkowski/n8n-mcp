@@ -260,6 +260,21 @@ n8n_update_partial_workflow({
     updates: { "parameters.headers": null }
   }]
 });
+
+// Remove single array elements: the array is spliced, so later elements shift
+// down. Several removals on the same array in one updates object are applied
+// from the highest index down, so the indices you pass are the ones you see.
+n8n_update_partial_workflow({
+  id: "wf_345",
+  operations: [{
+    type: "updateNode",
+    nodeName: "Edit Fields",
+    updates: {
+      "parameters.assignments.assignments[0]": null,
+      "parameters.assignments.assignments[1]": null
+    }
+  }]
+});
 \`\`\`
 
 ### Migrating from Deprecated Properties
@@ -445,7 +460,7 @@ n8n_update_partial_workflow({
       'When properties are mutually exclusive (e.g., continueOnFail and onError), setting only the new property will fail - you must remove the old one with null',
       'Removing a required property may cause validation errors - check node documentation first',
       'Nested property removal with dot notation only removes the specific nested field, not the entire parent object',
-      'Array index notation (e.g., "parameters.headers[0]") is not supported - remove the entire array property instead'
+      'Array elements are addressed by index in bracket or dot form (e.g., "parameters.assignments.assignments[0].value" or "parameters.assignments.assignments.0.value") - out-of-range indices are rejected, so new elements cannot be appended this way'
     ],
     relatedTools: ['n8n_update_full_workflow', 'n8n_get_workflow', 'validate_workflow', 'tools_documentation']
   }

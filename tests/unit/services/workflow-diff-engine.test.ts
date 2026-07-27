@@ -6869,4 +6869,419 @@ describe('WorkflowDiffEngine', () => {
       expect(result.workflow).toBeUndefined();
     });
   });
+
+  describe('Bracket index paths (Issue #950)', () => {
+    const buildSetWorkflow = (): Workflow => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'set-1',
+        name: 'Set',
+        type: 'n8n-nodes-base.set',
+        typeVersion: 3.4,
+        position: [900, 300],
+        parameters: {
+          assignments: {
+            assignments: [
+              { id: 'a1', name: 'first', value: 'old value', type: 'string' },
+              { id: 'a2', name: 'second', value: 'untouched', type: 'string' }
+            ]
+          }
+        }
+      });
+      return workflow;
+    };
+
+    const findSetNode = (result: any) =>
+      result.workflow!.nodes.find((n: any) => n.name === 'Set');
+
+    it('should update an array element addressed with a bracket index', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeId: 'set-1',
+          updates: {
+            'parameters.assignments.assignments[0].value': 'new value'
+          }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const assignments = findSetNode(result).parameters.assignments.assignments;
+      expect(assignments[0].value).toBe('new value');
+      expect(assignments[1].value).toBe('untouched');
+    });
+
+    it('should not create a literal bracket key on the array', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeId: 'set-1',
+          updates: {
+            'parameters.assignments.assignments[0].value': 'new value'
+          }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const container = findSetNode(result).parameters.assignments;
+      expect(Object.prototype.hasOwnProperty.call(container, 'assignments[0]')).toBe(false);
+      expect(container.assignments.length).toBe(2);
+    });
+
+    it('should update through multiple bracket indices', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'matrix-1',
+        name: 'Matrix',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 2,
+        position: [900, 300],
+        parameters: { rows: [[{ label: 'a' }, { label: 'b' }]] }
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeId: 'matrix-1',
+          updates: { 'parameters.rows[0][1].label': 'c' }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const rows = result.workflow!.nodes.find((n: any) => n.id === 'matrix-1')!.parameters.rows as any;
+      expect(rows[0][1].label).toBe('c');
+      expect(rows[0][0].label).toBe('a');
+    });
+
+    it('should still support the numeric dot notation form', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeId: 'set-1',
+          updates: {
+            'parameters.assignments.assignments.0.value': 'dotted value'
+          }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      expect(findSetNode(result).parameters.assignments.assignments[0].value).toBe('dotted value');
+    });
+
+    it('should remove an array element without leaving a hole', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeId: 'set-1',
+          updates: { 'parameters.assignments.assignments[0]': null }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const assignments = findSetNode(result).parameters.assignments.assignments;
+      expect(assignments).toHaveLength(1);
+      expect(assignments[0].name).toBe('second');
+    });
+
+    it('should reject a malformed bracket index', async () => {
+      for (const path of [
+        'parameters.assignments.assignments[x].value',
+        'parameters.assignments.assignments[].value',
+        'parameters.assignments.assignments[0.value',
+        'parameters.assignments.assignments[-1].value'
+      ]) {
+        const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+          id: 'test',
+          operations: [{
+            type: 'updateNode' as const,
+            nodeId: 'set-1',
+            updates: { [path]: 'new value' }
+          }]
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errors![0].message).toContain('malformed bracket index');
+      }
+    });
+
+    it('should reject an out-of-range bracket index instead of writing a junk key', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeId: 'set-1',
+          updates: { 'parameters.assignments.assignments[5].value': 'new value' }
+        }]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('out of range');
+    });
+
+    it('should reject a bracket index applied to a non-array value', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeId: 'set-1',
+          updates: { 'parameters.assignments[0].value': 'new value' }
+        }]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('expects an array');
+    });
+
+    it('should reject a forbidden key that follows a bracket index', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeId: 'set-1',
+          updates: { 'parameters.assignments.assignments[0].__proto__.polluted': 'malicious' }
+        }]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('forbidden key');
+      expect(({} as any).polluted).toBeUndefined();
+    });
+
+    it('should patch a string field addressed with a bracket index', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'patchNodeField' as const,
+          nodeId: 'set-1',
+          fieldPath: 'parameters.assignments.assignments[0].value',
+          patches: [{ find: 'old', replace: 'new' }]
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const container = findSetNode(result).parameters.assignments;
+      expect(container.assignments[0].value).toBe('new value');
+      expect(Object.prototype.hasOwnProperty.call(container, 'assignments[0]')).toBe(false);
+    });
+
+    it('should report a malformed bracket path in patchNodeField', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'patchNodeField' as const,
+          nodeId: 'set-1',
+          fieldPath: 'parameters.assignments.assignments[x].value',
+          patches: [{ find: 'old', replace: 'new' }]
+        }]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('malformed bracket index');
+    });
+
+    it('should report an out-of-range bracket path in patchNodeField', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'patchNodeField' as const,
+          nodeId: 'set-1',
+          fieldPath: 'parameters.assignments.assignments[5].value',
+          patches: [{ find: 'old', replace: 'new' }]
+        }]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('does not exist');
+    });
+
+    it('should reject an index equal to the array length', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeId: 'set-1',
+          updates: { 'parameters.assignments.assignments[2].value': 'appended' }
+        }]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('out of range');
+    });
+
+    it('should apply __patch_find_replace through a bracket path', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeId: 'set-1',
+          updates: {
+            'parameters.assignments.assignments[0].value': {
+              __patch_find_replace: [{ find: 'old', replace: 'new' }]
+            }
+          }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const container = findSetNode(result).parameters.assignments;
+      expect(container.assignments[0].value).toBe('new value');
+      expect(Object.prototype.hasOwnProperty.call(container, 'assignments[0]')).toBe(false);
+    });
+
+    it('should reject empty path segments', async () => {
+      for (const path of [
+        'parameters..url',
+        'parameters.',
+        '.parameters',
+        ''
+      ]) {
+        const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+          id: 'test',
+          operations: [{
+            type: 'updateNode' as const,
+            nodeId: 'set-1',
+            updates: { [path]: 'new value' }
+          }]
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errors![0].message).toContain('empty path segment');
+      }
+    });
+
+    it('should reject an empty path segment in patchNodeField', async () => {
+      const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+        id: 'test',
+        operations: [{
+          type: 'patchNodeField' as const,
+          nodeId: 'set-1',
+          fieldPath: 'parameters..assignments',
+          patches: [{ find: 'old', replace: 'new' }]
+        }]
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('empty path segment');
+    });
+
+    it('should reject a non-numeric dot segment applied to an array', async () => {
+      for (const path of [
+        'parameters.assignments.assignments.-1.value',
+        'parameters.assignments.assignments.length'
+      ]) {
+        const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+          id: 'test',
+          operations: [{
+            type: 'updateNode' as const,
+            nodeId: 'set-1',
+            updates: { [path]: 0 }
+          }]
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errors![0].message).toContain('is not an array index');
+      }
+    });
+
+    it('should remove several elements of the same array in one updates object', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'list-1',
+        name: 'List',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 2,
+        position: [900, 300],
+        parameters: { items: [{ label: 'A' }, { label: 'B' }, { label: 'C' }] }
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeId: 'list-1',
+          updates: {
+            'parameters.items[0]': null,
+            'parameters.items[1]': null
+          }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const items = result.workflow!.nodes.find((n: any) => n.id === 'list-1')!.parameters.items as any;
+      expect(items).toEqual([{ label: 'C' }]);
+    });
+
+    describe('atomic updates', () => {
+      it('should leave the node untouched when a later update path fails', async () => {
+        const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+          id: 'test',
+          operations: [{
+            type: 'updateNode' as const,
+            nodeId: 'set-1',
+            updates: {
+              'parameters.mode': 'manual',
+              'parameters.created[0].value': 'never applied'
+            }
+          }]
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errors![0].message).toContain('expects an array');
+      });
+
+      it('should not leave remnants of a failed updates object under continueOnError', async () => {
+        const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+          id: 'test',
+          continueOnError: true,
+          operations: [
+            {
+              type: 'updateNode' as const,
+              nodeId: 'set-1',
+              updates: {
+                'parameters.mode': 'manual',
+                'parameters.created[0].value': 'never applied'
+              }
+            },
+            {
+              type: 'updateNode' as const,
+              nodeId: 'set-1',
+              updates: { 'parameters.assignments.assignments[1].value': 'applied' }
+            }
+          ]
+        });
+
+        expect(result.applied).toEqual([1]);
+        expect(result.failed).toEqual([0]);
+        const setNode = findSetNode(result);
+        expect(setNode.parameters.created).toBeUndefined();
+        expect(setNode.parameters.mode).toBeUndefined();
+        expect(setNode.parameters.assignments.assignments[1].value).toBe('applied');
+      });
+
+      it('should not apply earlier keys when a later key is out of range', async () => {
+        const result = await diffEngine.applyDiff(buildSetWorkflow(), {
+          id: 'test',
+          continueOnError: true,
+          operations: [{
+            type: 'updateNode' as const,
+            nodeId: 'set-1',
+            updates: {
+              'parameters.mode': 'manual',
+              'parameters.assignments.assignments[9].value': 'never applied'
+            }
+          }]
+        });
+
+        expect(result.failed).toEqual([0]);
+        const setNode = findSetNode(result);
+        expect(setNode.parameters.mode).toBeUndefined();
+        expect(setNode.parameters.assignments.assignments).toHaveLength(2);
+      });
+    });
+  });
 });

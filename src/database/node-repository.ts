@@ -702,6 +702,20 @@ export class NodeRepository {
   }
 
   /**
+   * Delete unverified community rows for an npm package that are keyed by a
+   * node type other than the given one. Rows are keyed by node_type, so a sync
+   * that resolves a corrected node type for a package would otherwise insert a
+   * second row and leave the outdated one in search results (#949).
+   */
+  deleteStaleCommunityNodes(npmPackageName: string, keepNodeType: string): number {
+    const result = this.db.prepare(`
+      DELETE FROM nodes
+      WHERE npm_package_name = ? AND node_type != ? AND is_community = 1 AND is_verified = 0
+    `).run(npmPackageName, keepNodeType);
+    return result.changes;
+  }
+
+  /**
    * Delete all community nodes (for rebuild)
    */
   deleteCommunityNodes(): number {

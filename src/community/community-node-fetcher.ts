@@ -365,8 +365,15 @@ export class CommunityNodeFetcher {
   /**
    * Fetch package.json for a specific npm package to get the n8n node configuration.
    * Validates package name to prevent path traversal attacks.
+   *
+   * Callers that can proceed without the manifest may pass a smaller retry
+   * budget or timeout so one slow package does not hold up a bulk sync.
    */
-  async fetchPackageJson(packageName: string, version?: string): Promise<any | null> {
+  async fetchPackageJson(
+    packageName: string,
+    version?: string,
+    options?: { maxRetries?: number; timeout?: number }
+  ): Promise<any | null> {
     // Validate package name to prevent path traversal
     if (!this.validatePackageName(packageName)) {
       logger.warn(`Invalid package name rejected: ${packageName}`);
@@ -379,10 +386,13 @@ export class CommunityNodeFetcher {
 
     return this.retryWithBackoff(
       async () => {
-        const response = await axios.get(url, { timeout: FETCH_CONFIG.NPM_REGISTRY_TIMEOUT });
+        const response = await axios.get(url, {
+          timeout: options?.timeout ?? FETCH_CONFIG.NPM_REGISTRY_TIMEOUT
+        });
         return response.data;
       },
-      `Fetching package.json for ${packageName}${version ? `@${version}` : ''}`
+      `Fetching package.json for ${packageName}${version ? `@${version}` : ''}`,
+      options?.maxRetries ?? this.maxRetries
     );
   }
 
