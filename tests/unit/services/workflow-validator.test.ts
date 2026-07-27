@@ -783,7 +783,10 @@ describe('WorkflowValidator', () => {
     }}`;
 
     beforeEach(() => {
-      const conditionalRepo = { getNode: vi.fn((t: string) => {
+      // getAllNodes serves NodeSimilarityService's suggestions for the
+      // unknown-node test - the validator's repository surface, satisfied
+      // explicitly rather than via a caught TypeError.
+      const conditionalRepo = { getAllNodes: vi.fn(() => []), getNode: vi.fn((t: string) => {
         const m: Record<string, any> = {
           'nodes-langchain.vectorStorePinecone': { nodeType: 'nodes-langchain.vectorStorePinecone', displayName: 'Pinecone Vector Store', package: '@n8n/n8n-nodes-langchain', isAITool: false, isCommunity: false, outputs: [VECTOR_STORE_OUTPUTS_EXPRESSION], properties: [] },
           'nodes-langchain.vectorStoreToolFirst': { nodeType: 'nodes-langchain.vectorStoreToolFirst', displayName: 'Tool-First Vector Store', package: '@n8n/n8n-nodes-langchain', isAITool: false, isCommunity: false, outputs: [VECTOR_STORE_OUTPUTS_EXPRESSION.replace("?? 'retrieve'", "?? 'retrieve-as-tool'")], properties: [] },
