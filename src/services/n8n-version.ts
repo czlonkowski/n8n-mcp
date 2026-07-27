@@ -122,11 +122,12 @@ export function getSupportedSettingsProperties(version: N8nVersionInfo): Set<str
  */
 export async function fetchN8nVersion(
   baseUrl: string,
-  options?: { headers?: Record<string, string>; pinnedAgents?: PinnedAgents }
+  options?: { headers?: Record<string, string>; pinnedAgents?: PinnedAgents; forceRefresh?: boolean }
 ): Promise<N8nVersionInfo | null> {
-  const { headers, pinnedAgents } = options ?? {};
-  // Check cache first (with TTL)
-  const cached = versionCache.get(baseUrl);
+  const { headers, pinnedAgents, forceRefresh } = options ?? {};
+  // Check cache first (with TTL), unless the caller needs a current reading
+  // because it is about to blame the instance version for a failure.
+  const cached = forceRefresh ? undefined : versionCache.get(baseUrl);
   if (cached && Date.now() - cached.fetchedAt < VERSION_CACHE_TTL_MS) {
     logger.debug(`Using cached n8n version for ${baseUrl}: ${cached.info.version}`);
     return cached.info;

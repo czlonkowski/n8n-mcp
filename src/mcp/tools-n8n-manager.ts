@@ -522,14 +522,14 @@ export const n8nManagementTools: ToolDefinition[] = [
   },
   {
     name: 'n8n_evaluations',
-    description: `Read evaluation test runs for a workflow (read-only). Requires n8n >= 2.30 and an API key created on 2.30+ (testRun scopes). Actions: list_runs=list runs for a workflow, get_run=single run with aggregated metrics, list_cases=per-case results (paginate - cases can be large). Triggering runs via API is not yet supported by n8n.`,
+    description: `Run and read evaluation test runs for a workflow. Reading requires n8n >= 2.30, run/cancel require n8n >= 2.32, and the API key must be created on the matching release to carry the testRun scopes. Actions: list_runs=list runs for a workflow, get_run=single run with aggregated metrics, list_cases=per-case results (paginate - cases can be large), run=trigger a run on a workflow with an evaluation trigger, cancel=stop a running run.`,
     inputSchema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['list_runs', 'get_run', 'list_cases'],
-          description: 'Operation: list_runs=list test runs, get_run=run details with metrics, list_cases=per-case results'
+          enum: ['list_runs', 'get_run', 'list_cases', 'run', 'cancel'],
+          description: 'Operation: list_runs=list test runs, get_run=run details with metrics, list_cases=per-case results, run=trigger a run, cancel=stop a running run'
         },
         workflowId: {
           type: 'string',
@@ -537,7 +537,7 @@ export const n8nManagementTools: ToolDefinition[] = [
         },
         runId: {
           type: 'string',
-          description: 'Test run ID (required for action=get_run or action=list_cases)'
+          description: 'Test run ID (required for action=get_run, list_cases, or cancel)'
         },
         status: {
           type: 'string',
@@ -556,9 +556,9 @@ export const n8nManagementTools: ToolDefinition[] = [
       required: ['action', 'workflowId']
     },
     annotations: {
-      title: 'Read Evaluation Test Runs',
-      readOnlyHint: true,
-      destructiveHint: false,
+      title: 'Manage Evaluation Test Runs',
+      readOnlyHint: false,
+      destructiveHint: true,
       openWorldHint: true,
     },
   },
@@ -819,5 +819,6 @@ export const TOOL_OPERATION_PARAM: Record<string, string> = {
  */
 export const DESTRUCTIVE_TOOL_OPERATIONS: Record<string, Set<string>> = {
   'n8n_executions': new Set(['delete']),
+  'n8n_evaluations': new Set(['run', 'cancel']),
   'n8n_workflow_versions': new Set(['delete', 'rollback', 'prune']),
 };

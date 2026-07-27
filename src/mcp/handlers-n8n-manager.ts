@@ -22,6 +22,7 @@ import {
   getWebhookUrl
 } from '../services/n8n-validation';
 import { nodeGroupsField, parseNodeGroupsInput } from '../services/node-groups';
+import { versionAtLeast } from '../services/n8n-version';
 import {
   N8nApiError,
   N8nNotFoundError,
@@ -531,23 +532,37 @@ const listExecutionsSchema = z.object({
   includeData: z.boolean().optional(),
 });
 
+// Evaluation ids become API path segments; trim and require content so a blank
+// or whitespace-only value fails here as "Invalid input" rather than surfacing
+// later as a transport-layer error.
+const testRunPathId = z.string().trim().min(1);
+
 const listTestRunsSchema = z.object({
-  workflowId: z.string(),
+  workflowId: testRunPathId,
   status: optionalEmptyAware(z.enum(['new', 'running', 'completed', 'error', 'cancelled'])),
   limit: z.number().min(1).max(250).optional(),
   cursor: optionalEmptyAware(z.string()),
 });
 
 const getTestRunSchema = z.object({
-  workflowId: z.string(),
-  runId: z.string(),
+  workflowId: testRunPathId,
+  runId: testRunPathId,
 });
 
 const listTestCasesSchema = z.object({
-  workflowId: z.string(),
-  runId: z.string(),
+  workflowId: testRunPathId,
+  runId: testRunPathId,
   limit: z.number().min(1).max(250).optional(),
   cursor: optionalEmptyAware(z.string()),
+});
+
+const triggerTestRunSchema = z.object({
+  workflowId: testRunPathId,
+});
+
+const cancelTestRunSchema = z.object({
+  workflowId: testRunPathId,
+  runId: testRunPathId,
 });
 
 const workflowVersionsSchema = z.object({
@@ -1984,46 +1999,153 @@ export async function handleDeleteExecution(args: unknown, context?: InstanceCon
   }
 }
 
-// Evaluation Test Run Handlers (n8n >= 2.30)
+// Evaluation Test Run Handlers (reads n8n >= 2.30, run/cancel n8n >= 2.32)
 
-const TEST_RUN_SCOPE_HINT =
-  'n8n rejected the request (403). The API key lacks testRun scopes - keys created before n8n 2.30 do not have them; re-create the API key on n8n 2.30+. Other causes: evaluations not licensed on this plan, or the key\'s owner lacks access to this workflow.';
+const TEST_RUN_QUOTA_HINT =
+  'n8n rejected the request (402): the plan\'s evaluation quota is used up. It caps how many workflows may have test runs, and this workflow does not hold one of the slots. Re-run a workflow that already has runs, or raise the limit on your n8n plan.';
+
+/**
+ * 403 guidance for the write actions. All three causes - a key without the
+ * scope, an unlicensed instance, and a key owner without workflow:execute -
+ * surface identically, so name them all.
+ */
+function testRunWriteScopeHint(scope: 'testRun:create' | 'testRun:cancel'): string {
+  return `n8n rejected the request (403). The API key lacks the ${scope} scope - that scope only exists on keys created on n8n 2.32+, so re-create the key there. Other causes: evaluations not licensed on this plan, or the key's owner lacks workflow:execute on this workflow.`;
+}
+
+const TEST_RUN_IDS_HINT =
+  'Workflow or test run not found. A runId must belong to the given workflowId; check both ids.';
+
+/** For the actions that take no runId, where TEST_RUN_IDS_HINT would misdirect. */
+const TEST_RUN_WORKFLOW_HINT =
+  "Workflow not found. Check the workflowId, and that the API key's owner has access to that workflow.";
+
+/** Per-action tuning for handleTestRunError. */
+interface TestRunErrorOptions {
+  /** Minimum n8n 2.x minor whose Public API serves the route. */
+  minMinor: number;
+  /** Completes "Upgrade the instance to ..." in the version-gate message. */
+  capability: string;
+  /** 403 guidance; each action names the scope it needs. */
+  scopeHint: string;
+  /** 404 guidance once the instance version is ruled out. */
+  notFoundHint: string;
+  /** 409 guidance; only the write actions can produce one. */
+  conflictHint?: string;
+  /**
+   * True for the actions whose route is POST. Only they can read a 405 as "the
+   * instance does not document this method"; the read routes are GET, so a 405
+   * on one of those comes from something in front of n8n, not from its version.
+   */
+  postRoute?: boolean;
+}
+
+/** Common to the read actions; they differ only in their 404 guidance. */
+const READ_TEST_RUN_BASE = {
+  minMinor: 30,
+  capability: 'read test runs',
+  scopeHint:
+    'n8n rejected the request (403). The API key lacks testRun scopes - keys created before n8n 2.30 do not have them; re-create the API key on n8n 2.30+. Other causes: evaluations not licensed on this plan, or the key\'s owner lacks access to this workflow.',
+};
+
+const LIST_TEST_RUNS_ERRORS: TestRunErrorOptions = {
+  ...READ_TEST_RUN_BASE,
+  notFoundHint: TEST_RUN_WORKFLOW_HINT,
+};
+
+/** get_run and list_cases both address a run within a workflow. */
+const READ_TEST_RUN_ERRORS: TestRunErrorOptions = {
+  ...READ_TEST_RUN_BASE,
+  notFoundHint: TEST_RUN_IDS_HINT,
+};
+
+const TRIGGER_TEST_RUN_ERRORS: TestRunErrorOptions = {
+  minMinor: 32,
+  capability: 'trigger runs from the API',
+  scopeHint: testRunWriteScopeHint('testRun:create'),
+  notFoundHint: TEST_RUN_WORKFLOW_HINT,
+  conflictHint:
+    'The workflow has no evaluation trigger node. Add an evaluation trigger (n8n-nodes-base.evaluationTrigger) pointing at a dataset, save the workflow, then trigger the run.',
+  postRoute: true,
+};
+
+const CANCEL_TEST_RUN_ERRORS: TestRunErrorOptions = {
+  minMinor: 32,
+  capability: 'cancel runs from the API',
+  scopeHint: testRunWriteScopeHint('testRun:cancel'),
+  notFoundHint: TEST_RUN_IDS_HINT,
+  conflictHint:
+    "The test run already finished (status completed, error, or cancelled), so there is nothing to cancel. Use action='get_run' to see its final state.",
+  postRoute: true,
+};
+
+/**
+ * Guidance for the two statuses an instance without the route produces: 404 when
+ * the path is undocumented, 405 when the path exists for another method (a
+ * pre-2.32 instance serves GET /test-runs but not POST). Returns null when the
+ * instance is new enough, leaving the status to the caller's normal mapping.
+ */
+async function testRunRouteGate(
+  statusCode: number,
+  context: InstanceContext | undefined,
+  options: TestRunErrorOptions
+): Promise<string | null> {
+  // Re-read the version rather than trusting the cache: it lives as long as the
+  // client, so an instance upgraded mid-session would still be blamed for a
+  // genuine bad-id 404. One extra request, only on these two statuses.
+  const client = getN8nApiClient(context);
+  const version = client ? await client.refreshVersion().catch(() => null) : null;
+
+  if (version) {
+    return versionAtLeast(version, 2, options.minMinor)
+      ? null
+      : `The evaluation API requires n8n 2.${options.minMinor}.0 or later; this instance runs ${version.version}. Upgrade the instance to ${options.capability}.`;
+  }
+
+  // Version unreadable, so the gate cannot be asserted. On a POST route a 405
+  // still has one cause - the instance does not document the method - while a
+  // 404 is equally consistent with wrong ids, so offer both.
+  const requirement = `This endpoint requires n8n 2.${options.minMinor}.0 or later, and this instance's n8n version could not be read.`;
+  return statusCode === 405 && options.postRoute
+    ? `${requirement} It rejected POST on the route, which is what an instance predating 2.${options.minMinor}.0 does. Upgrade the instance to ${options.capability}.`
+    : `${requirement} Either the instance predates it, or the request simply did not match. ${options.notFoundHint}`;
+}
 
 /**
  * Builds the error response for the evaluation handlers. Mirrors handleCrudError
- * but adds evaluation-specific guidance for the three failure modes that are easy
- * to confuse from raw HTTP statuses alone: a pre-2.30 instance, an API key without
- * testRun scopes, and a runId that does not belong to the given workflow.
+ * but adds evaluation-specific guidance for the failure modes that are easy to
+ * confuse from raw HTTP statuses alone: an instance too old for the route, an
+ * API key without testRun scopes, an exhausted evaluation quota, a workflow
+ * without an evaluation trigger, and a runId that does not belong to the given
+ * workflow.
  */
-async function handleTestRunError(error: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+async function handleTestRunError(
+  error: unknown,
+  context: InstanceContext | undefined,
+  options: TestRunErrorOptions
+): Promise<McpToolResponse> {
   if (error instanceof z.ZodError) {
     return { success: false, error: 'Invalid input', details: { errors: error.errors } };
   }
   if (error instanceof N8nApiError) {
-    if (error.statusCode === 403) {
-      return { success: false, error: TEST_RUN_SCOPE_HINT, code: error.code };
+    if (error.statusCode === 402) {
+      return { success: false, error: TEST_RUN_QUOTA_HINT, code: error.code };
     }
+    if (error.statusCode === 403) {
+      return { success: false, error: options.scopeHint, code: error.code };
+    }
+    if (error.statusCode === 409 && options.conflictHint) {
+      return { success: false, error: options.conflictHint, code: error.code };
+    }
+    if (error.statusCode === 404 || error.statusCode === 405) {
+      const gate = await testRunRouteGate(error.statusCode, context, options);
+      if (gate) {
+        return { success: false, error: gate, code: error.code };
+      }
+    }
+    // On a current instance only the 404 form is about the request; a 405 falls through.
     if (error.statusCode === 404) {
-      // A 404 from a pre-2.30 instance means the endpoint doesn't exist, not
-      // that the ids are wrong. The version cache is usually cold on a fresh
-      // session, so fetch it (one extra request, failure path only).
-      const client = getN8nApiClient(context);
-      let version = client?.getCachedVersionInfo() ?? null;
-      if (!version && client) {
-        version = await client.getVersion().catch(() => null);
-      }
-      if (version && (version.major < 2 || (version.major === 2 && version.minor < 30))) {
-        return {
-          success: false,
-          error: `The evaluation API requires n8n 2.30 or later; this instance runs ${version.version}. Upgrade the instance to read test runs.`,
-          code: error.code,
-        };
-      }
-      return {
-        success: false,
-        error: 'Workflow or test run not found. A runId must belong to the given workflowId; check both ids.',
-        code: error.code,
-      };
+      return { success: false, error: options.notFoundHint, code: error.code };
     }
     return { success: false, error: getUserFriendlyErrorMessage(error), code: error.code };
   }
@@ -2063,7 +2185,7 @@ export async function handleListTestRuns(args: unknown, context?: InstanceContex
       }
     };
   } catch (error) {
-    return handleTestRunError(error, context);
+    return handleTestRunError(error, context, LIST_TEST_RUNS_ERRORS);
   }
 }
 
@@ -2079,7 +2201,7 @@ export async function handleGetTestRun(args: unknown, context?: InstanceContext)
       data: response
     };
   } catch (error) {
-    return handleTestRunError(error, context);
+    return handleTestRunError(error, context, READ_TEST_RUN_ERRORS);
   }
 }
 
@@ -2106,7 +2228,45 @@ export async function handleListTestCases(args: unknown, context?: InstanceConte
       }
     };
   } catch (error) {
-    return handleTestRunError(error, context);
+    return handleTestRunError(error, context, READ_TEST_RUN_ERRORS);
+  }
+}
+
+export async function handleTriggerTestRun(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = triggerTestRunSchema.parse(args || {});
+
+    const response = await client.triggerTestRun(input.workflowId);
+
+    return {
+      success: true,
+      data: {
+        ...response,
+        _note: `Run started. Cases execute asynchronously - poll with action='get_run', runId='${response.id}' until status is completed, error, or cancelled.`
+      }
+    };
+  } catch (error) {
+    return handleTestRunError(error, context, TRIGGER_TEST_RUN_ERRORS);
+  }
+}
+
+export async function handleCancelTestRun(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = cancelTestRunSchema.parse(args || {});
+
+    const response = await client.cancelTestRun(input.workflowId, input.runId);
+
+    return {
+      success: true,
+      data: {
+        ...response,
+        _note: "Cancellation accepted. In-flight cases stop asynchronously - use action='get_run' to confirm the run reached status 'cancelled'."
+      }
+    };
+  } catch (error) {
+    return handleTestRunError(error, context, CANCEL_TEST_RUN_ERRORS);
   }
 }
 

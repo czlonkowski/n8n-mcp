@@ -1480,6 +1480,45 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
 
       await expect(client.listTestRuns('wf1')).rejects.toThrow(N8nApiError);
     });
+
+    it('should trigger a test run', async () => {
+      const triggered = { id: 'run1', status: 'new', createdAt: '2026-07-27T10:00:00.000Z' };
+      mockAxiosInstance.post.mockResolvedValue({ data: triggered });
+
+      const result = await client.triggerTestRun('wf1');
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/workflows/wf1/test-runs', {});
+      expect(result).toEqual(triggered);
+    });
+
+    it('should reject hostile workflow ids before triggering a run', async () => {
+      await expect(client.triggerTestRun('a/../b')).rejects.toThrow();
+      expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+    });
+
+    it('should cancel a test run', async () => {
+      const cancelled = { id: 'run1', status: 'cancelled' };
+      mockAxiosInstance.post.mockResolvedValue({ data: cancelled });
+
+      const result = await client.cancelTestRun('wf1', 'run1');
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/workflows/wf1/test-runs/run1/cancel', {});
+      expect(result).toEqual(cancelled);
+    });
+
+    it('should reject hostile run ids before cancelling', async () => {
+      await expect(client.cancelTestRun('wf1', '../../executions')).rejects.toThrow();
+      expect(mockAxiosInstance.post).not.toHaveBeenCalled();
+    });
+
+    it('should throw N8nApiError when triggering a run fails', async () => {
+      await mockAxiosInstance.simulateError('post', {
+        message: 'Payment Required',
+        response: { status: 402, data: { message: 'Evaluation quota exceeded' } },
+      });
+
+      await expect(client.triggerTestRun('wf1')).rejects.toThrow(N8nApiError);
+    });
   });
 
   describe('triggerWebhook', () => {

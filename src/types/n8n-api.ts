@@ -355,6 +355,19 @@ export interface TestCaseExecution {
   executionId: string | null;
 }
 
+// Returned by the trigger/cancel routes (n8n Public API >= 2.32), which answer
+// with the run identity only - poll the get route for metrics.
+export interface TestRunTriggerResult {
+  id: string;
+  status: TestRunStatus;
+  createdAt: string;
+}
+
+export interface TestRunCancelResult {
+  id: string;
+  status: 'cancelled';
+}
+
 export interface TestRunListParams {
   status?: TestRunStatus;
   limit?: number;

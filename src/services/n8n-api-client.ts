@@ -13,6 +13,8 @@ import {
   TestCaseListParams,
   TestRunListResponse,
   TestCaseListResponse,
+  TestRunTriggerResult,
+  TestRunCancelResult,
   Credential,
   CredentialListParams,
   CredentialListResponse,
@@ -295,6 +297,26 @@ export class N8nApiClient {
    */
   getCachedVersionInfo(): N8nVersionInfo | null {
     return this.versionInfo;
+  }
+
+  /**
+   * Re-read the instance version, bypassing both the per-client and the shared
+   * TTL cache. `versionInfo` lives as long as the client, so an instance
+   * upgraded mid-session keeps reporting its old version - callers that are
+   * about to blame the version for a failure need a current reading. Returns
+   * null when the version cannot be read, leaving any cached value in place.
+   */
+  async refreshVersion(): Promise<N8nVersionInfo | null> {
+    const agents = await this.getPinnedAgents();
+    const version = await fetchN8nVersion(this.baseUrl, {
+      headers: this.cfAccessHeadersOrUndefined(),
+      pinnedAgents: agents,
+      forceRefresh: true,
+    });
+    if (version) {
+      this.versionInfo = version;
+    }
+    return version;
   }
 
   // Health check to verify API connectivity
@@ -742,7 +764,7 @@ export class N8nApiClient {
     }
   }
 
-  // Evaluation test runs (n8n >= 2.30)
+  // Evaluation test runs (reads n8n >= 2.30, trigger/cancel n8n >= 2.32)
 
   async listTestRuns(workflowId: string, params: TestRunListParams = {}): Promise<TestRunListResponse> {
     try {
@@ -778,6 +800,30 @@ export class N8nApiClient {
         { params }
       );
       return this.validateListResponse<TestCaseExecution>(response.data, 'test cases');
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async triggerTestRun(workflowId: string): Promise<TestRunTriggerResult> {
+    try {
+      const response = await this.client.post(
+        `/workflows/${encodeApiPathSegment(workflowId, 'workflowId')}/test-runs`,
+        {}
+      );
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async cancelTestRun(workflowId: string, runId: string): Promise<TestRunCancelResult> {
+    try {
+      const response = await this.client.post(
+        `/workflows/${encodeApiPathSegment(workflowId, 'workflowId')}/test-runs/${encodeApiPathSegment(runId, 'runId')}/cancel`,
+        {}
+      );
+      return response.data;
     } catch (error) {
       throw handleN8nApiError(error);
     }

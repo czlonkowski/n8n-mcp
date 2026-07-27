@@ -270,6 +270,60 @@ describe('Disabled Tool Operations Feature (Issue #714)', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // 3b. Dispatch enforcement — n8n_evaluations
+  // ---------------------------------------------------------------------------
+
+  describe('executeTool() - Dispatch Enforcement for n8n_evaluations', () => {
+    it('should block the write actions', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_evaluations:run,cancel';
+      server = new TestableN8NMCPServer();
+
+      for (const action of ['run', 'cancel']) {
+        await expect(
+          server.testExecuteTool('n8n_evaluations', { action, workflowId: 'abc', runId: 'run1' })
+        ).rejects.toThrow(`Operation '${action}' on tool 'n8n_evaluations' is disabled by server policy`);
+      }
+    });
+
+    it('should not block read actions when the write actions are disabled', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_evaluations:run,cancel';
+      server = new TestableN8NMCPServer();
+
+      for (const action of ['list_runs', 'get_run', 'list_cases']) {
+        try {
+          await server.testExecuteTool('n8n_evaluations', { action, workflowId: 'abc', runId: 'run1' });
+        } catch (error: any) {
+          expect(error.message).not.toContain('disabled by server policy');
+        }
+      }
+    });
+
+    it('should recompute annotations to read-only when run and cancel are disabled', () => {
+      const disabledOps = new Map([['n8n_evaluations', new Set(['run', 'cancel'])]]);
+      server = new TestableN8NMCPServer();
+      const cache = server.testBuildFilteredToolDefinitions(disabledOps);
+
+      const filtered = cache.get('n8n_evaluations');
+      const enumValues: string[] = filtered.inputSchema.properties.action.enum;
+      expect(enumValues).not.toContain('run');
+      expect(enumValues).not.toContain('cancel');
+      expect(enumValues).toContain('list_runs');
+      expect(filtered.annotations.readOnlyHint).toBe(true);
+      expect(filtered.annotations.destructiveHint).toBe(false);
+    });
+
+    it('should keep the tool writable when only run is disabled', () => {
+      const disabledOps = new Map([['n8n_evaluations', new Set(['run'])]]);
+      server = new TestableN8NMCPServer();
+      const cache = server.testBuildFilteredToolDefinitions(disabledOps);
+
+      const filtered = cache.get('n8n_evaluations');
+      expect(filtered.annotations.readOnlyHint).toBe(false);
+      expect(filtered.annotations.destructiveHint).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // 4. Interaction with DISABLED_TOOLS
   // ---------------------------------------------------------------------------
 

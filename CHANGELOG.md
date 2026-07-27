@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.67.0] - 2026-07-29
+
+### Added
+
+- **`n8n_evaluations` can now trigger and cancel evaluation test runs (#936).** n8n 2.32.0 added the Public API endpoints (`POST /workflows/{id}/test-runs` and `POST /workflows/{id}/test-runs/{runId}/cancel`, behind the new `testRun:create`/`testRun:cancel` API-key scopes), so the tool gains `run` and `cancel` actions beside the three reads. Failures map to guidance for the causes n8n actually distinguishes: 402 is the plan's evaluation quota running out; 403 covers both a key missing the scope and an unlicensed instance; 409 on `run` means the workflow has no evaluation trigger node, on `cancel` that the run already finished. An instance older than 2.32.0 answers `run` with 405 — the route exists with GET only — and the error path re-reads the instance version instead of trusting the client's cached reading, so a connection that outlives an n8n upgrade cannot misreport a genuine not-found as a version problem, nor the reverse. The tool is no longer read-only: its annotations change accordingly, `run` and `cancel` are registered as destructive operations for `DISABLED_TOOL_OPERATIONS`, and the read-only deployment recipe in the README, the HTTP deployment guide, and `.env.example` now blocks them explicitly.
 ## [2.66.3] - 2026-07-28
 
 ### Fixed

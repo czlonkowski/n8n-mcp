@@ -1866,8 +1866,15 @@ export class N8NDocumentationMCPServer {
               throw new Error('runId is required for action=list_cases');
             }
             return n8nHandlers.handleListTestCases(args, this.instanceContext);
+          case 'run':
+            return n8nHandlers.handleTriggerTestRun(args, this.instanceContext);
+          case 'cancel':
+            if (!args.runId) {
+              throw new Error('runId is required for action=cancel');
+            }
+            return n8nHandlers.handleCancelTestRun(args, this.instanceContext);
           default:
-            throw new Error(`Unknown action: ${evalAction}. Valid actions: list_runs, get_run, list_cases`);
+            throw new Error(`Unknown action: ${evalAction}. Valid actions: list_runs, get_run, list_cases, run, cancel`);
         }
       }
       case 'n8n_health_check':
