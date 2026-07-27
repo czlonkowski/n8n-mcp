@@ -1041,12 +1041,7 @@ export class WorkflowValidator {
     // sweep in first-party @n8n/* packages (#955), and it fires on the tool (the
     // ai_tool source), not on the agent receiving the connection.
     if (nodeInfo?.isCommunity) {
-      result.warnings.push({
-        type: 'warning',
-        nodeId: sourceNode.id,
-        nodeName: sourceNode.name,
-        message: `Community node "${sourceNode.name}" is being used as an AI tool. Ensure N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true is set on the n8n instance.`
-      });
+      this.pushCommunityToolUsageWarning(sourceNode, result);
     }
 
     // Check if it's a Tool variant (ends with Tool and is in database as isToolVariant)
@@ -1064,12 +1059,7 @@ export class WorkflowValidator {
       // it still needs the environment variable to serve as a tool, so keep
       // that guidance, which the pre-#955 target-side check emitted by accident.
       if (!this.isCorePackageType(normalizedType) && normalizedType.includes('.')) {
-        result.warnings.push({
-          type: 'warning',
-          nodeId: sourceNode.id,
-          nodeName: sourceNode.name,
-          message: `Community node "${sourceNode.name}" is being used as an AI tool. Ensure N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true is set on the n8n instance.`
-        });
+        this.pushCommunityToolUsageWarning(sourceNode, result);
       }
       return;
     }
@@ -1137,6 +1127,18 @@ export class WorkflowValidator {
    * parameter, or null when the node's outputs are static or never
    * include ai_tool.
    */
+  private pushCommunityToolUsageWarning(
+    sourceNode: WorkflowNode,
+    result: WorkflowValidationResult
+  ): void {
+    result.warnings.push({
+      type: 'warning',
+      nodeId: sourceNode.id,
+      nodeName: sourceNode.name,
+      message: `Community node "${sourceNode.name}" is being used as an AI tool. Ensure N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true is set on the n8n instance.`
+    });
+  }
+
   private findConditionalAIToolExpression(outputs: unknown): string | null {
     // Community ingestion stores nodeDesc.outputs verbatim, so a conditional
     // expression can arrive as a bare string rather than a one-element array.
