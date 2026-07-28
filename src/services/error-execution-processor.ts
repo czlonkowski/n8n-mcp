@@ -33,6 +33,40 @@ export interface ErrorProcessorOptions {
 const MAX_STACK_LINES = 3;
 
 /**
+ * Extract per-branch item arrays from a task-data connections object
+ * (e.g. `run.data`). Regular nodes populate `main`, but LangChain AI
+ * Agent sub-nodes (Chat Model, Output Parser, Tool, Memory, etc.) use
+ * special `ai_*` connection types instead. A node's task data only ever
+ * populates one of these keys, so merging all of them is equivalent to
+ * "whichever one this node uses".
+ */
+function extractConnectionBranches(connections: unknown): unknown[][] {
+  const branches: unknown[][] = [];
+
+  if (!connections || typeof connections !== 'object') {
+    return branches;
+  }
+
+  for (const value of Object.values(connections as Record<string, unknown>)) {
+    if (Array.isArray(value)) {
+      for (const branch of value) {
+        branches.push(Array.isArray(branch) ? branch : []);
+      }
+    }
+  }
+
+  return branches;
+}
+
+/**
+ * Get the first output branch's items for a run, across `main` and any
+ * `ai_*` connection types.
+ */
+function getRunOutputItems(run: any): unknown[] {
+  return extractConnectionBranches(run?.data)[0] || [];
+}
+
+/**
  * Keys that could enable prototype pollution attacks
  * These are blocked entirely from processing
  */
@@ -177,7 +211,7 @@ function extractUpstreamContext(
     .filter(([name, data]) => {
       if (name === errorNodeName) return false;
       const runs = data as any[];
-      return runs?.[0]?.data?.main?.[0]?.length > 0 && !runs?.[0]?.error;
+      return getRunOutputItems(runs?.[0]).length > 0 && !runs?.[0]?.error;
     })
     .map(([name, data]) => ({
       name,
@@ -252,9 +286,9 @@ function extractNodeOutput(
   itemsLimit: number
 ): ErrorAnalysis['upstreamContext'] | undefined {
   const nodeData = runData[nodeName];
-  if (!nodeData?.[0]?.data?.main?.[0]) return undefined;
-
-  const items = nodeData[0].data.main[0];
+  const branches = extractConnectionBranches(nodeData?.[0]?.data);
+  if (branches.length === 0) return undefined;
+  const items = branches[0];
 
   // Sanitize sample items to remove sensitive data
   const rawSamples = items.slice(0, itemsLimit);
@@ -288,7 +322,7 @@ function buildExecutionPath(
       const nodeData = runData[nodeName];
       const runs = nodeData as any[] | undefined;
       const hasError = runs?.[0]?.error;
-      const itemCount = runs?.[0]?.data?.main?.[0]?.length || 0;
+      const itemCount = getRunOutputItems(runs?.[0]).length;
 
       path.push({
         nodeName,
@@ -320,7 +354,7 @@ function buildExecutionPath(
       path.push({
         nodeName: name,
         status: data?.[0]?.error ? 'error' : 'success',
-        itemCount: data?.[0]?.data?.main?.[0]?.length || 0,
+        itemCount: getRunOutputItems(data?.[0]).length,
         executionTime: data?.[0]?.executionTime
       });
     }

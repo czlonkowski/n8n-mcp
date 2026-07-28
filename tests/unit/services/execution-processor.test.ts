@@ -342,7 +342,9 @@ describe('ExecutionProcessor - Filtering', () => {
           {
             startTime: Date.now(),
             executionTime: 100,
-            inputData: [[{ json: { input: 'test' } }]],
+            inputOverride: {
+              main: [[{ json: { input: 'test' } }]],
+            },
             data: {
               main: [[{ json: { output: 'result' } }]],
             },
@@ -370,7 +372,9 @@ describe('ExecutionProcessor - Filtering', () => {
           {
             startTime: Date.now(),
             executionTime: 100,
-            inputData: [[{ json: { input: 'test' } }]],
+            inputOverride: {
+              main: [[{ json: { input: 'test' } }]],
+            },
             data: {
               main: [[{ json: { output: 'result' } }]],
             },
@@ -661,5 +665,153 @@ describe('ExecutionProcessor - Summary Statistics', () => {
     const result = filterExecutionData(execution, { mode: 'summary' });
 
     expect(result.summary?.totalItems).toBe(18);
+  });
+});
+
+/**
+ * AI Agent sub-node connection type tests
+ *
+ * LangChain AI Agent sub-nodes (Chat Model, Output Parser, Tool, Memory,
+ * Embeddings, etc.) connect to their parent Agent node via special `ai_*`
+ * connection types instead of `main`. Their task data therefore lives at
+ * `run.data.ai_languageModel`, `run.data.ai_outputParser`, `run.data.ai_tool`,
+ * etc. rather than `run.data.main`.
+ */
+describe('ExecutionProcessor - AI Agent sub-node connection types', () => {
+  it('should extract itemsOutput from ai_languageModel connection data', () => {
+    const execution = createMockExecution({
+      nodeData: {
+        'OpenAI Chat Model': [
+          {
+            startTime: Date.now(),
+            executionTime: 850,
+            data: {
+              ai_languageModel: [[{ json: { response: { generations: [[{ text: 'hi' }]] }, tokenUsage: { totalTokens: 42 } } }]],
+            },
+          },
+        ],
+      },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'full' });
+    const nodeData = result.nodes?.['OpenAI Chat Model'];
+
+    expect(nodeData?.itemsOutput).toBe(1);
+    expect(nodeData?.data?.output?.[0]?.[0]?.json?.tokenUsage?.totalTokens).toBe(42);
+  });
+
+  it('should extract itemsOutput from ai_outputParser connection data', () => {
+    const execution = createMockExecution({
+      nodeData: {
+        'Structured Output Parser': [
+          {
+            startTime: Date.now(),
+            executionTime: 5,
+            data: {
+              ai_outputParser: [[{ json: { output: { category: 'buyer_request' } } }]],
+            },
+          },
+        ],
+      },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'summary' });
+    const nodeData = result.nodes?.['Structured Output Parser'];
+
+    expect(nodeData?.itemsOutput).toBe(1);
+    expect(nodeData?.data?.output?.[0]?.[0]?.json?.output?.category).toBe('buyer_request');
+  });
+
+  it('should extract itemsOutput from ai_tool connection data', () => {
+    const execution = createMockExecution({
+      nodeData: {
+        'HTTP Request Tool': [
+          {
+            startTime: Date.now(),
+            executionTime: 200,
+            data: {
+              ai_tool: [[{ json: { result: 'tool output' } }]],
+            },
+          },
+        ],
+      },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'filtered', itemsLimit: -1 });
+    const nodeData = result.nodes?.['HTTP Request Tool'];
+
+    expect(nodeData?.itemsOutput).toBe(1);
+    expect(nodeData?.data?.output?.[0]?.[0]?.json?.result).toBe('tool output');
+  });
+
+  it('should include ai_* nodes in preview mode item counts and structure', () => {
+    const execution = createMockExecution({
+      nodeData: {
+        'OpenAI Chat Model': [
+          {
+            startTime: Date.now(),
+            executionTime: 850,
+            data: {
+              ai_languageModel: [[{ json: { tokenUsage: { totalTokens: 10 } } }]],
+            },
+          },
+        ],
+      },
+    });
+
+    const { preview } = generatePreview(execution);
+    const nodePreview = preview.nodes['OpenAI Chat Model'];
+
+    expect(nodePreview.itemCounts.output).toBe(1);
+    expect(nodePreview.dataStructure).toHaveProperty('json');
+  });
+
+  it('should extract input data from inputOverride for ai_* connection types', () => {
+    const execution = createMockExecution({
+      nodeData: {
+        'OpenAI Chat Model': [
+          {
+            startTime: Date.now(),
+            executionTime: 850,
+            inputOverride: {
+              ai_languageModel: [[{ json: { messages: ['System: hi'] } }]],
+            },
+            data: {
+              ai_languageModel: [[{ json: { tokenUsage: { totalTokens: 10 } } }]],
+            },
+          },
+        ],
+      },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'full', includeInputData: true });
+    const nodeData = result.nodes?.['OpenAI Chat Model'];
+
+    expect(nodeData?.itemsInput).toBe(1);
+    expect(nodeData?.data?.input?.[0]?.[0]?.json?.messages?.[0]).toBe('System: hi');
+  });
+
+  it('should not conflate ai_* and main data when both happen to be present', () => {
+    const execution = createMockExecution({
+      nodeData: {
+        'Mixed Node': [
+          {
+            startTime: Date.now(),
+            executionTime: 10,
+            data: {
+              main: [[{ json: { a: 1 } }]],
+              ai_tool: [[{ json: { b: 2 } }]],
+            },
+          },
+        ],
+      },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'full' });
+    const nodeData = result.nodes?.['Mixed Node'];
+
+    // Both branches should be counted/included since a node's task data
+    // could in principle populate more than one connection type.
+    expect(nodeData?.itemsOutput).toBe(2);
   });
 });

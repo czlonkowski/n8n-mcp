@@ -106,6 +106,50 @@ function estimateDataSize(data: unknown): number {
 }
 
 /**
+ * Extract per-branch item arrays from a task-data connections object
+ * (e.g. `run.data` or `run.inputOverride`).
+ *
+ * Regular nodes connect via the `main` connection type, but LangChain
+ * AI Agent sub-nodes (Chat Model, Output Parser, Tool, Memory, etc.)
+ * connect via special `ai_*` connection types (ai_languageModel,
+ * ai_outputParser, ai_tool, ai_memory, ai_embedding, ...) instead of
+ * `main`. A node's task data only ever populates one of these keys, so
+ * merging all of them is equivalent to "whichever one this node uses".
+ */
+function extractConnectionBranches(connections: unknown): unknown[][] {
+  const branches: unknown[][] = [];
+
+  if (!connections || typeof connections !== 'object') {
+    return branches;
+  }
+
+  for (const value of Object.values(connections as Record<string, unknown>)) {
+    if (Array.isArray(value)) {
+      for (const branch of value) {
+        branches.push(Array.isArray(branch) ? branch : []);
+      }
+    }
+  }
+
+  return branches;
+}
+
+/**
+ * Get a run's output data across `main` and any `ai_*` connection types.
+ */
+function getRunOutputData(run: any): unknown[][] {
+  return extractConnectionBranches(run?.data);
+}
+
+/**
+ * Get a run's input data (n8n stores this under `inputOverride`, keyed by
+ * connection type, mirroring the `data` field's shape).
+ */
+function getRunInputData(run: any): unknown[][] {
+  return extractConnectionBranches(run?.inputOverride);
+}
+
+/**
  * Count items in execution data
  */
 function countItems(nodeData: unknown): { input: number; output: number } {
@@ -116,15 +160,11 @@ function countItems(nodeData: unknown): { input: number; output: number } {
   }
 
   for (const run of nodeData) {
-    if (run?.data?.main) {
-      const mainData = run.data.main;
-      if (Array.isArray(mainData)) {
-        for (const output of mainData) {
-          if (Array.isArray(output)) {
-            counts.output += output.length;
-          }
-        }
-      }
+    for (const output of getRunOutputData(run)) {
+      counts.output += output.length;
+    }
+    for (const input of getRunInputData(run)) {
+      counts.input += input.length;
     }
   }
 
@@ -171,7 +211,7 @@ export function generatePreview(execution: Execution): {
     let dataStructure: Record<string, unknown> = {};
     if (Array.isArray(nodeData) && nodeData.length > 0) {
       const firstRun = nodeData[0];
-      const firstItem = firstRun?.data?.main?.[0]?.[0];
+      const firstItem = getRunOutputData(firstRun)?.[0]?.[0];
       if (firstItem) {
         dataStructure = extractStructure(firstItem) as Record<string, unknown>;
       }
@@ -481,7 +521,7 @@ export function filterExecutionData(
     // Handle full mode - include all data
     if (mode === 'full') {
       nodeResult.data = {
-        output: firstRun.data?.main || [],
+        output: getRunOutputData(firstRun),
         metadata: {
           totalItems: itemCounts.output,
           itemsShown: itemCounts.output,
@@ -489,12 +529,13 @@ export function filterExecutionData(
         },
       };
 
-      if (includeInputData && firstRun.inputData) {
-        nodeResult.data.input = firstRun.inputData;
+      const inputData = getRunInputData(firstRun);
+      if (includeInputData && inputData.length > 0) {
+        nodeResult.data.input = inputData;
       }
     } else {
       // Summary or filtered mode - apply limits
-      const outputData = firstRun.data?.main || [];
+      const outputData = getRunOutputData(firstRun);
       const { truncated, metadata } = truncateItems(outputData, itemsLimit);
 
       if (metadata.truncated) {
@@ -506,8 +547,9 @@ export function filterExecutionData(
         metadata,
       };
 
-      if (includeInputData && firstRun.inputData) {
-        nodeResult.data.input = firstRun.inputData;
+      const inputData = getRunInputData(firstRun);
+      if (includeInputData && inputData.length > 0) {
+        nodeResult.data.input = inputData;
       }
     }
 
