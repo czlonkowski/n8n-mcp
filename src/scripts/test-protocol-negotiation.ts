@@ -5,11 +5,12 @@
  * This script tests the protocol version negotiation logic with different client scenarios.
  */
 
-import { 
-  negotiateProtocolVersion, 
+import {
+  negotiateProtocolVersion,
   isN8nClient,
   STANDARD_PROTOCOL_VERSION,
-  N8N_PROTOCOL_VERSION 
+  DEFAULT_NEGOTIATED_PROTOCOL_VERSION,
+  N8N_PROTOCOL_VERSION
 } from '../utils/protocol-version';
 
 interface TestCase {
@@ -24,7 +25,21 @@ interface TestCase {
 
 const testCases: TestCase[] = [
   {
-    name: 'Standard MCP client (Claude Desktop)',
+    name: 'Standard MCP client requesting latest revision',
+    clientVersion: '2025-11-25',
+    clientInfo: { name: 'Claude Desktop', version: '1.0.0' },
+    expectedVersion: '2025-11-25',
+    expectedIsN8nClient: false
+  },
+  {
+    name: 'Standard MCP client requesting 2025-06-18',
+    clientVersion: '2025-06-18',
+    clientInfo: { name: 'Claude Desktop', version: '1.0.0' },
+    expectedVersion: '2025-06-18',
+    expectedIsN8nClient: false
+  },
+  {
+    name: 'Standard MCP client requesting 2025-03-26',
     clientVersion: '2025-03-26',
     clientInfo: { name: 'Claude Desktop', version: '1.0.0' },
     expectedVersion: '2025-03-26',
@@ -58,10 +73,17 @@ const testCases: TestCase[] = [
     expectedIsN8nClient: true
   },
   {
-    name: 'Client requesting older version',
+    name: 'Client requesting oldest supported version',
+    clientVersion: '2024-10-07',
+    clientInfo: { name: 'Some Client', version: '1.0.0' },
+    expectedVersion: '2024-10-07',
+    expectedIsN8nClient: false
+  },
+  {
+    name: 'Client requesting retired version (2024-06-25 was never an MCP revision)',
     clientVersion: '2024-06-25',
     clientInfo: { name: 'Some Client', version: '1.0.0' },
-    expectedVersion: '2024-06-25',
+    expectedVersion: STANDARD_PROTOCOL_VERSION,
     expectedIsN8nClient: false
   },
   {
@@ -73,7 +95,7 @@ const testCases: TestCase[] = [
   },
   {
     name: 'No client info provided',
-    expectedVersion: STANDARD_PROTOCOL_VERSION,
+    expectedVersion: DEFAULT_NEGOTIATED_PROTOCOL_VERSION,
     expectedIsN8nClient: false
   },
   {
@@ -172,12 +194,12 @@ async function testIntegration(): Promise<void> {
     {
       name: 'Claude Desktop connecting',
       clientInfo: { name: 'Claude Desktop', version: '1.0.0' },
-      clientVersion: '2025-03-26'
+      clientVersion: '2025-11-25'
     },
     {
       name: 'n8n connecting via HTTP',
       headers: { 'user-agent': 'n8n/1.52.0' },
-      clientVersion: '2025-03-26'
+      clientVersion: '2025-11-25'
     }
   ];
   

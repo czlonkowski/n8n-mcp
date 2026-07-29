@@ -18,9 +18,12 @@ export interface ProtocolNegotiationResult {
 }
 
 /**
- * Standard MCP protocol version (latest)
+ * Latest MCP protocol revision this server offers.
+ *
+ * Must stay within the pinned @modelcontextprotocol/sdk's
+ * SUPPORTED_PROTOCOL_VERSIONS — the SDK cannot serve a revision it does not know.
  */
-export const STANDARD_PROTOCOL_VERSION = '2025-03-26';
+export const STANDARD_PROTOCOL_VERSION = '2025-11-25';
 
 /**
  * n8n specific protocol version (what n8n expects)
@@ -28,12 +31,28 @@ export const STANDARD_PROTOCOL_VERSION = '2025-03-26';
 export const N8N_PROTOCOL_VERSION = '2024-11-05';
 
 /**
- * Supported protocol versions in order of preference
+ * Revision assumed when a client omits protocolVersion during initialize.
+ *
+ * The field is required by the spec, but lenient clients leave it out. Mirroring
+ * the SDK's DEFAULT_NEGOTIATED_PROTOCOL_VERSION keeps those clients on the
+ * revision they already received instead of handing them a newer one they may
+ * not implement.
+ */
+export const DEFAULT_NEGOTIATED_PROTOCOL_VERSION = '2025-03-26';
+
+/**
+ * Supported protocol versions in order of preference.
+ *
+ * Mirrors the SDK's SUPPORTED_PROTOCOL_VERSIONS. Every entry here must be one
+ * the SDK can negotiate, otherwise we echo back a revision the transport will
+ * not honor.
  */
 export const SUPPORTED_VERSIONS = [
-  STANDARD_PROTOCOL_VERSION,
-  N8N_PROTOCOL_VERSION,
-  '2024-06-25', // Older fallback
+  STANDARD_PROTOCOL_VERSION,           // 2025-11-25
+  '2025-06-18',
+  DEFAULT_NEGOTIATED_PROTOCOL_VERSION, // 2025-03-26
+  N8N_PROTOCOL_VERSION,                // 2024-11-05
+  '2024-10-07',
 ];
 
 /**
@@ -121,11 +140,12 @@ export function negotiateProtocolVersion(
     };
   }
 
-  // Default to standard protocol version for unknown clients
+  // Client omitted protocolVersion — stay on the conservative default rather
+  // than offering our latest to a client that never stated what it speaks
   return {
-    version: STANDARD_PROTOCOL_VERSION,
+    version: DEFAULT_NEGOTIATED_PROTOCOL_VERSION,
     isN8nClient: false,
-    reasoning: 'No specific client detected, using standard protocol version'
+    reasoning: 'Client did not request a version, using default negotiated version'
   };
 }
 
@@ -142,7 +162,7 @@ export function isVersionSupported(version: string): boolean {
  */
 export function getCompatibleVersion(targetVersion?: string): string {
   if (!targetVersion) {
-    return STANDARD_PROTOCOL_VERSION;
+    return DEFAULT_NEGOTIATED_PROTOCOL_VERSION;
   }
 
   if (SUPPORTED_VERSIONS.includes(targetVersion)) {
