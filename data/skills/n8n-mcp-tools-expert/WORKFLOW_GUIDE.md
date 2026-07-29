@@ -981,12 +981,13 @@ n8n_evaluations({
   workflowId: "workflow-id",
   runId: "run-id"
 })
-// → accepted; the run moves to status "cancelled"
+// → {id, status: "cancelled"} plus a note: in-flight cases stop
+// asynchronously — confirm with get_run that the run reached "cancelled"
 ```
 
 **Gotchas**:
 - A 404 can mean three things: the instance predates the action's minimum version, the workflowId is wrong, or the runId belongs to a different workflow (the tool's error message disambiguates using the instance version when it can read it)
-- Pre-2.32 instances answer `run`/`cancel` with 405, not 404 — the route exists but only accepts GET; the tool maps this to an upgrade hint
+- Pre-2.32 instances answer `run` with 405 (the route exists, GET-only) and `cancel` with 404 (the route does not exist); the tool folds both into its upgrade guidance
 - 409 on `run` = the workflow has no evaluation trigger; 409 on `cancel` = the run already finished
 - 402 on `run` = the license's evaluation-run quota is exhausted
 - Evaluations are license/quota-gated in n8n — an instance without the feature simply has no runs
