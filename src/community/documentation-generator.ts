@@ -79,6 +79,141 @@ const DEFAULT_CONFIG: Required<Omit<DocumentationGeneratorConfig, 'baseUrl' | 't
 };
 
 /**
+ * Deployment region for provider presets that expose regional endpoints.
+ * `global` is the international endpoint; `cn` is the mainland-China endpoint.
+ */
+export type LLMRegion = 'global' | 'cn';
+
+/**
+ * Thinking (reasoning) behaviour of a preset model.
+ * - `adaptive`: the model decides when to emit reasoning
+ * - `disabled`: reasoning can be turned off
+ * - `always_on`: reasoning is always emitted and cannot be disabled
+ */
+export type LLMThinkingMode = 'adaptive' | 'disabled' | 'always_on';
+
+/**
+ * A model offered by a provider preset.
+ */
+export interface LLMProviderModel {
+  /** Thinking modes this model supports; the first entry is the default. */
+  thinking: LLMThinkingMode[];
+}
+
+/**
+ * A first-class provider preset for the OpenAI-compatible documentation
+ * generator. Presets remove the need to hand-configure base URL, model and
+ * thinking handling for a known cloud provider.
+ */
+export interface LLMProviderPreset {
+  /** OpenAI-compatible chat-completions base URLs, keyed by region. */
+  baseUrls: Record<LLMRegion, string>;
+  /** Region used when `N8N_MCP_LLM_REGION` is unset. */
+  defaultRegion: LLMRegion;
+  /** Model used when `N8N_MCP_LLM_MODEL` is unset. */
+  defaultModel: string;
+  /** Supported models and their thinking behaviour. */
+  models: Record<string, LLMProviderModel>;
+  /**
+   * Whether to send the vLLM-only `chat_template_kwargs.enable_thinking` body
+   * field. Cloud OpenAI-compatible APIs reject unknown params (HTTP 400), so
+   * this is false for them; their reasoning output is removed by the
+   * `<think>...</think>` stripping in `extractJson` instead.
+   */
+  sendThinkingKwargs: boolean;
+  /** Environment variables checked, in order, for the API key. */
+  apiKeyEnvVars: string[];
+}
+
+/**
+ * Built-in provider presets. A preset is selected with `N8N_MCP_LLM_PROVIDER`.
+ */
+export const LLM_PROVIDER_PRESETS: Record<string, LLMProviderPreset> = {
+  minimax: {
+    baseUrls: {
+      global: 'https://api.minimax.io/v1',
+      cn: 'https://api.minimaxi.com/v1',
+    },
+    defaultRegion: 'global',
+    defaultModel: 'MiniMax-M3',
+    models: {
+      'MiniMax-M3': { thinking: ['adaptive', 'disabled'] },
+      'MiniMax-M2.7': { thinking: ['always_on'] },
+    },
+    // MiniMax is a cloud OpenAI-compatible API and rejects unknown body params,
+    // so the vLLM-only chat_template_kwargs field is never sent. Reasoning
+    // output (always on for MiniMax-M2.7) is removed by <think> stripping.
+    sendThinkingKwargs: false,
+    apiKeyEnvVars: ['MINIMAX_API_KEY'],
+  },
+};
+
+/**
+ * The active provider preset resolved from environment configuration.
+ */
+export interface ResolvedProviderPreset {
+  /** Lower-cased provider name (e.g. `minimax`). */
+  provider: string;
+  /** The selected preset definition. */
+  preset: LLMProviderPreset;
+  /** The resolved region. */
+  region: LLMRegion;
+  /** OpenAI-compatible base URL for the resolved region. */
+  baseUrl: string;
+  /** Default model for the preset. */
+  defaultModel: string;
+  /** API key discovered via the preset's fallback env vars, if any. */
+  apiKey?: string;
+  /** Whether the provider understands the vLLM-only chat_template_kwargs field. */
+  sendThinkingKwargs: boolean;
+}
+
+/**
+ * Resolve the active provider preset from environment configuration.
+ *
+ * Returns `undefined` when no known provider is selected, in which case the
+ * caller keeps its own base-URL/model resolution.
+ */
+export function resolveProviderPreset(
+  env: Record<string, string | undefined> = process.env
+): ResolvedProviderPreset | undefined {
+  const providerName = env.N8N_MCP_LLM_PROVIDER?.trim().toLowerCase();
+  if (!providerName) {
+    return undefined;
+  }
+
+  const preset = LLM_PROVIDER_PRESETS[providerName];
+  if (!preset) {
+    logger.warn(`Unknown N8N_MCP_LLM_PROVIDER "${providerName}"; ignoring provider preset.`);
+    return undefined;
+  }
+
+  let region: LLMRegion = preset.defaultRegion;
+  const regionEnv = env.N8N_MCP_LLM_REGION?.trim().toLowerCase();
+  if (regionEnv) {
+    if (regionEnv in preset.baseUrls) {
+      region = regionEnv as LLMRegion;
+    } else {
+      logger.warn(
+        `Unknown N8N_MCP_LLM_REGION "${regionEnv}" for provider "${providerName}"; using "${region}".`
+      );
+    }
+  }
+
+  const apiKey = preset.apiKeyEnvVars.map((name) => env[name]).find(Boolean);
+
+  return {
+    provider: providerName,
+    preset,
+    region,
+    baseUrl: preset.baseUrls[region],
+    defaultModel: preset.defaultModel,
+    ...(apiKey ? { apiKey } : {}),
+    sendThinkingKwargs: preset.sendThinkingKwargs,
+  };
+}
+
+/**
  * Generates structured documentation summaries for community nodes
  * using a local LLM via OpenAI-compatible API.
  */
@@ -392,10 +527,18 @@ Guidelines:
  * Create a documentation generator with environment variable configuration
  */
 export function createDocumentationGenerator(): DocumentationGenerator {
-  const baseUrl = process.env.N8N_MCP_LLM_BASE_URL || 'http://localhost:1234/v1';
-  const model = process.env.N8N_MCP_LLM_MODEL || 'qwen3-4b-thinking-2507';
+  // A provider preset (N8N_MCP_LLM_PROVIDER) supplies regional base URLs, a
+  // default model, an API-key fallback and thinking handling for a known cloud
+  // provider. Explicit N8N_MCP_LLM_* vars still take precedence over it.
+  const provider = resolveProviderPreset();
+
+  const baseUrl =
+    process.env.N8N_MCP_LLM_BASE_URL || provider?.baseUrl || 'http://localhost:1234/v1';
+  const model =
+    process.env.N8N_MCP_LLM_MODEL || provider?.defaultModel || 'qwen3-4b-thinking-2507';
   const timeout = parseInt(process.env.N8N_MCP_LLM_TIMEOUT || '60000', 10);
-  const apiKey = process.env.N8N_MCP_LLM_API_KEY || process.env.OPENAI_API_KEY;
+  const apiKey =
+    process.env.N8N_MCP_LLM_API_KEY || provider?.apiKey || process.env.OPENAI_API_KEY;
   // Only set temperature for local LLM servers; cloud APIs like OpenAI may
   // not support custom values. Parse the URL and check the hostname suffix
   // instead of `baseUrl.includes('openai.com')` so an arbitrary URL like
@@ -413,13 +556,32 @@ export function createDocumentationGenerator(): DocumentationGenerator {
     // Malformed URL — fall through with the default (treat as local).
   }
 
+  // Provider-specific thinking handling: a preset knows whether its API
+  // understands the vLLM-only chat_template_kwargs field; otherwise fall back
+  // to host detection. Presets target cloud APIs, so temperature is left to
+  // the provider default rather than forced to a local-server value.
+  const sendThinkingKwargs = provider ? provider.sendThinkingKwargs : isLocalServer;
+  const setTemperature = provider ? false : isLocalServer;
+
+  if (provider) {
+    const modelInfo = provider.preset.models[model];
+    if (modelInfo) {
+      logger.info(
+        `Using ${provider.provider} model ${model} ` +
+          `(region: ${provider.region}, thinking: ${modelInfo.thinking.join('/')})`
+      );
+    } else {
+      logger.warn(`Model "${model}" is not a known ${provider.provider} model; sending it as-is.`);
+    }
+  }
+
   return new DocumentationGenerator({
     baseUrl,
     model,
     timeout,
     ...(apiKey ? { apiKey } : {}),
-    ...(isLocalServer ? { temperature: 0.3 } : {}),
+    ...(setTemperature ? { temperature: 0.3 } : {}),
     // Only vLLM/local servers understand chat_template_kwargs; cloud APIs reject it.
-    sendThinkingKwargs: isLocalServer,
+    sendThinkingKwargs,
   });
 }
