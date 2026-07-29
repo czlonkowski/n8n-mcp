@@ -150,6 +150,73 @@ function getRunInputData(run: any): unknown[][] {
 }
 
 /**
+ * Merge per-branch item arrays across every run of a node, aligned by
+ * branch/port index, in run order.
+ *
+ * A node's `runData` entry is an array of runs, not a single run: nodes
+ * invoked more than once within an execution (e.g. an AI Agent's Chat
+ * Model, called once to decide to call a tool and again to produce the
+ * final answer) get one array entry per invocation. Reading only
+ * `nodeData[0]` silently drops every later invocation's data - this
+ * merges branch[i] of every run into a single flat, run-ordered branch[i],
+ * so `itemsLimit` truncation still behaves like "first N items overall".
+ */
+function mergeRunsByBranch(nodeData: unknown, selector: (run: any) => unknown[][]): unknown[][] {
+  const merged: unknown[][] = [];
+
+  if (!Array.isArray(nodeData)) {
+    return merged;
+  }
+
+  for (const run of nodeData) {
+    const branches = selector(run);
+    branches.forEach((items, branchIndex) => {
+      if (!merged[branchIndex]) {
+        merged[branchIndex] = [];
+      }
+      merged[branchIndex].push(...items);
+    });
+  }
+
+  return merged;
+}
+
+/**
+ * Get output data across `main`/`ai_*` connection types AND across every
+ * run of the node (see {@link mergeRunsByBranch}).
+ */
+function getAllRunsOutputData(nodeData: unknown): unknown[][] {
+  return mergeRunsByBranch(nodeData, getRunOutputData);
+}
+
+/**
+ * Get input data (`inputOverride`) across every run of the node.
+ */
+function getAllRunsInputData(nodeData: unknown): unknown[][] {
+  return mergeRunsByBranch(nodeData, getRunInputData);
+}
+
+/**
+ * Find the error from a node's runs, if any. A node invoked multiple times
+ * only fails on one of its runs, and n8n does not necessarily record that
+ * as the first one - the last run with an error is the one that actually
+ * stopped the branch, so it wins over any earlier error.
+ */
+function getAnyRunError(nodeData: unknown): unknown {
+  if (!Array.isArray(nodeData)) {
+    return undefined;
+  }
+
+  let found: unknown;
+  for (const run of nodeData) {
+    if (run?.error) {
+      found = run.error;
+    }
+  }
+  return found;
+}
+
+/**
  * Count items in execution data
  */
 function countItems(nodeData: unknown): { input: number; output: number } {
@@ -207,11 +274,10 @@ export function generatePreview(execution: Execution): {
     const nodeData = runData[nodeName];
     const itemCounts = countItems(nodeData);
 
-    // Extract structure from first run's first output item
+    // Extract structure from the first available output item across all runs
     let dataStructure: Record<string, unknown> = {};
     if (Array.isArray(nodeData) && nodeData.length > 0) {
-      const firstRun = nodeData[0];
-      const firstItem = getRunOutputData(firstRun)?.[0]?.[0];
+      const firstItem = getAllRunsOutputData(nodeData)?.[0]?.[0];
       if (firstItem) {
         dataStructure = extractStructure(firstItem) as Record<string, unknown>;
       }
@@ -500,7 +566,11 @@ export function filterExecutionData(
       continue;
     }
 
-    // Get first run data
+    // Node-level metadata (executionTime) still comes from the first run;
+    // item data and error status are aggregated across every run below,
+    // since a node invoked multiple times in one execution (e.g. an AI
+    // Agent's Chat Model, called once to decide to call a tool and again
+    // to produce the final answer) produces one runData entry per call.
     const firstRun = nodeData[0];
     const itemCounts = countItems(nodeData);
     totalItems += itemCounts.output;
@@ -512,16 +582,17 @@ export function filterExecutionData(
       status: 'success',
     };
 
-    // Check for errors
-    if (firstRun.error) {
+    // Check for errors across all runs, not just the first
+    const runError = getAnyRunError(nodeData);
+    if (runError) {
       nodeResult.status = 'error';
-      nodeResult.error = extractErrorMessage(firstRun.error);
+      nodeResult.error = extractErrorMessage(runError);
     }
 
     // Handle full mode - include all data
     if (mode === 'full') {
       nodeResult.data = {
-        output: getRunOutputData(firstRun),
+        output: getAllRunsOutputData(nodeData),
         metadata: {
           totalItems: itemCounts.output,
           itemsShown: itemCounts.output,
@@ -529,13 +600,14 @@ export function filterExecutionData(
         },
       };
 
-      const inputData = getRunInputData(firstRun);
+      const inputData = getAllRunsInputData(nodeData);
       if (includeInputData && inputData.length > 0) {
         nodeResult.data.input = inputData;
       }
     } else {
-      // Summary or filtered mode - apply limits
-      const outputData = getRunOutputData(firstRun);
+      // Summary or filtered mode - apply limits (flat, run-ordered across
+      // every invocation of the node)
+      const outputData = getAllRunsOutputData(nodeData);
       const { truncated, metadata } = truncateItems(outputData, itemsLimit);
 
       if (metadata.truncated) {
@@ -547,7 +619,7 @@ export function filterExecutionData(
         metadata,
       };
 
-      const inputData = getRunInputData(firstRun);
+      const inputData = getAllRunsInputData(nodeData);
       if (includeInputData && inputData.length > 0) {
         nodeResult.data.input = inputData;
       }

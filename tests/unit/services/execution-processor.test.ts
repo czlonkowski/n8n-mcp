@@ -815,3 +815,102 @@ describe('ExecutionProcessor - AI Agent sub-node connection types', () => {
     expect(nodeData?.itemsOutput).toBe(2);
   });
 });
+
+/**
+ * Multi-run node tests
+ *
+ * A node invoked more than once within a single execution (e.g. an AI
+ * Agent's Chat Model, called once to decide to call a tool and again to
+ * produce the final answer) gets one runData array entry per invocation.
+ * itemsInput/itemsOutput already summed across every run; the returned
+ * data itself must too, in run order.
+ */
+describe('ExecutionProcessor - multi-run nodes', () => {
+  function twoRunChatModel() {
+    return [
+      {
+        startTime: Date.now(),
+        executionTime: 500,
+        data: {
+          ai_languageModel: [[{ json: { text: 'first turn: deciding to call a tool', tokenUsage: { completionTokens: 56 } } }]],
+        },
+      },
+      {
+        startTime: Date.now() + 500,
+        executionTime: 1200,
+        data: {
+          ai_languageModel: [[{ json: { text: 'second turn: the real answer', tokenUsage: { completionTokens: 800 } } }]],
+        },
+      },
+    ];
+  }
+
+  it('should return items from every run, not just the first, in full mode', () => {
+    const execution = createMockExecution({
+      nodeData: { 'Chat Model': twoRunChatModel() },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'full' });
+    const nodeData = result.nodes?.['Chat Model'];
+    const flat = nodeData?.data?.output.flat() ?? [];
+
+    expect(nodeData?.itemsOutput).toBe(2);
+    expect(flat).toHaveLength(2);
+    expect(flat[0]?.json?.text).toBe('first turn: deciding to call a tool');
+    expect(flat[1]?.json?.text).toBe('second turn: the real answer');
+  });
+
+  it('should truncate across all runs in flat run order for summary/filtered mode', () => {
+    const execution = createMockExecution({
+      nodeData: { 'Chat Model': twoRunChatModel() },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'filtered', itemsLimit: 1 });
+    const nodeData = result.nodes?.['Chat Model'];
+    const flat = nodeData?.data?.output.flat() ?? [];
+
+    expect(nodeData?.itemsOutput).toBe(2);
+    expect(nodeData?.data?.metadata.truncated).toBe(true);
+    expect(flat).toHaveLength(1);
+    expect(flat[0]?.json?.text).toBe('first turn: deciding to call a tool');
+  });
+
+  it('should merge inputOverride across all runs too', () => {
+    const nodeData = twoRunChatModel();
+    (nodeData[0] as any).inputOverride = { ai_languageModel: [[{ json: { prompt: 'prompt 1' } }]] };
+    (nodeData[1] as any).inputOverride = { ai_languageModel: [[{ json: { prompt: 'prompt 2' } }]] };
+
+    const execution = createMockExecution({ nodeData: { 'Chat Model': nodeData } });
+    const result = filterExecutionData(execution, { mode: 'full', includeInputData: true });
+    const flatInput = result.nodes?.['Chat Model']?.data?.input?.flat() ?? [];
+
+    expect(flatInput).toHaveLength(2);
+    expect(flatInput[0]?.json?.prompt).toBe('prompt 1');
+    expect(flatInput[1]?.json?.prompt).toBe('prompt 2');
+  });
+
+  it('should detect an error on a non-first run', () => {
+    const nodeData = twoRunChatModel();
+    (nodeData[0] as any).error = undefined;
+    (nodeData[1] as any).error = { message: 'The AI model returned an empty response', name: 'NodeOperationError' };
+
+    const execution = createMockExecution({ nodeData: { 'Output Parser': nodeData } });
+    const result = filterExecutionData(execution, { mode: 'summary' });
+    const nodeResult = result.nodes?.['Output Parser'];
+
+    expect(nodeResult?.status).toBe('error');
+    expect(nodeResult?.error).toBe('The AI model returned an empty response');
+  });
+
+  it('should sample the first available item across runs in preview mode', () => {
+    const nodeData = twoRunChatModel();
+    // First run has no output at all; only the second run does.
+    (nodeData[0] as any).data = { ai_languageModel: [[]] };
+
+    const execution = createMockExecution({ nodeData: { 'Chat Model': nodeData } });
+    const { preview } = generatePreview(execution);
+
+    expect(preview.nodes['Chat Model'].itemCounts.output).toBe(1);
+    expect(preview.nodes['Chat Model'].dataStructure).toHaveProperty('json');
+  });
+});
