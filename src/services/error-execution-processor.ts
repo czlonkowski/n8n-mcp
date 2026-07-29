@@ -59,11 +59,54 @@ function extractConnectionBranches(connections: unknown): unknown[][] {
 }
 
 /**
- * Get the first output branch's items for a run, across `main` and any
- * `ai_*` connection types.
+ * Whether a node's runData entry has any connection-type data at all
+ * (as opposed to genuinely having zero items in an existing branch).
  */
-function getRunOutputItems(run: any): unknown[] {
-  return extractConnectionBranches(run?.data)[0] || [];
+function nodeHasConnectionData(nodeData: unknown): boolean {
+  if (!Array.isArray(nodeData)) return false;
+  return nodeData.some(run => extractConnectionBranches(run?.data).length > 0);
+}
+
+/**
+ * Get a node's first-branch output items, merged across every run in
+ * run order.
+ *
+ * A node's runData entry is an array of runs, not a single run: nodes
+ * invoked more than once within an execution (e.g. an AI Agent's Chat
+ * Model, called once to decide to call a tool and again to produce the
+ * final answer) get one array entry per invocation. Reading only
+ * `nodeData[0]` silently drops every later invocation's data.
+ */
+function getAllRunsOutputItems(nodeData: unknown): unknown[] {
+  const merged: unknown[] = [];
+  if (!Array.isArray(nodeData)) return merged;
+
+  for (const run of nodeData) {
+    const branches = extractConnectionBranches(run?.data);
+    if (branches[0]) {
+      merged.push(...branches[0]);
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Find the error from a node's runs, if any. A node invoked multiple
+ * times only fails on one of its runs, and the last run with an error is
+ * the one that actually stopped the branch, so it wins over any earlier
+ * error.
+ */
+function getAnyRunError(nodeData: unknown): any {
+  if (!Array.isArray(nodeData)) return undefined;
+
+  let found: any;
+  for (const run of nodeData) {
+    if (run?.error) {
+      found = run.error;
+    }
+  }
+  return found;
 }
 
 /**
@@ -164,9 +207,9 @@ function extractPrimaryError(
   const errorNode = error?.node as Record<string, unknown> | undefined;
   const nodeName = (errorNode?.name as string) || lastNode || 'Unknown';
 
-  // Also check runData for node-level errors
+  // Also check runData for node-level errors, across every run of the node
   const nodeRunData = runData[nodeName];
-  const nodeError = nodeRunData?.[0]?.error;
+  const nodeError = getAnyRunError(nodeRunData);
 
   const stackTrace = (error?.stack || nodeError?.stack) as string | undefined;
 
@@ -211,7 +254,7 @@ function extractUpstreamContext(
     .filter(([name, data]) => {
       if (name === errorNodeName) return false;
       const runs = data as any[];
-      return getRunOutputItems(runs?.[0]).length > 0 && !runs?.[0]?.error;
+      return getAllRunsOutputItems(runs).length > 0 && !getAnyRunError(runs);
     })
     .map(([name, data]) => ({
       name,
@@ -286,11 +329,11 @@ function extractNodeOutput(
   itemsLimit: number
 ): ErrorAnalysis['upstreamContext'] | undefined {
   const nodeData = runData[nodeName];
-  const branches = extractConnectionBranches(nodeData?.[0]?.data);
-  if (branches.length === 0) return undefined;
-  const items = branches[0];
+  if (!nodeHasConnectionData(nodeData)) return undefined;
+  const items = getAllRunsOutputItems(nodeData);
 
-  // Sanitize sample items to remove sensitive data
+  // Sanitize sample items to remove sensitive data (flat, run-ordered
+  // across every invocation of the node)
   const rawSamples = items.slice(0, itemsLimit);
   const sanitizedSamples = rawSamples.map((item: unknown) => sanitizeData(item));
 
@@ -321,8 +364,8 @@ function buildExecutionPath(
     for (const nodeName of upstreamNodes) {
       const nodeData = runData[nodeName];
       const runs = nodeData as any[] | undefined;
-      const hasError = runs?.[0]?.error;
-      const itemCount = getRunOutputItems(runs?.[0]).length;
+      const hasError = getAnyRunError(runs);
+      const itemCount = getAllRunsOutputItems(runs).length;
 
       path.push({
         nodeName,
@@ -353,8 +396,8 @@ function buildExecutionPath(
     for (const { name, data } of nodesByTime) {
       path.push({
         nodeName: name,
-        status: data?.[0]?.error ? 'error' : 'success',
-        itemCount: getRunOutputItems(data?.[0]).length,
+        status: getAnyRunError(data) ? 'error' : 'success',
+        itemCount: getAllRunsOutputItems(data).length,
         executionTime: data?.[0]?.executionTime
       });
     }
@@ -376,7 +419,7 @@ function findAdditionalErrors(
     if (nodeName === primaryErrorNode) continue;
 
     const runs = data as any[];
-    const error = runs?.[0]?.error;
+    const error = getAnyRunError(runs);
     if (error) {
       additional.push({
         nodeName,
