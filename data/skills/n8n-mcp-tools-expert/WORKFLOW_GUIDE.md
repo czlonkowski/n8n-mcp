@@ -926,7 +926,7 @@ n8n_executions({
 
 **Use when**: Working with evaluation test runs — starting or cancelling a run, polling one in progress, comparing metrics across runs, pulling per-case results into a report or dashboard.
 
-Reads (`list_runs`/`get_run`/`list_cases`) require n8n >= 2.30 and an API key created on 2.30+; `run`/`cancel` require n8n >= 2.32 and a key created on 2.32+ — older keys silently lack the `testRun` scopes. A 403 has three causes: a key created before the action's minimum version (re-create it), evaluations not licensed on the plan, or — for `run`/`cancel` — the key's owner lacking `workflow:execute` on the workflow. Runs exist only for workflows with an evaluation trigger.
+Reads (`list_runs`/`get_run`/`list_cases`) require n8n >= 2.30 and an API key created on 2.30+; `run`/`cancel` require n8n >= 2.32 and a key created on 2.32+ — older keys silently lack the `testRun` scopes. A 403 can mean: a key created before the action's minimum version (re-create it), evaluations not licensed on the plan, or the key's owner lacking access to the workflow — for `run`/`cancel`, specifically the `workflow:execute` scope. Runs exist only for workflows with an evaluation trigger.
 
 ### List Test Runs
 ```javascript

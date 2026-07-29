@@ -293,7 +293,7 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for examples.
 - n8n_list_workflows, n8n_get_workflow, n8n_delete_workflow
 - n8n_test_workflow
 - n8n_executions
-- n8n_evaluations (reads: n8n 2.30+; run/cancel: n8n 2.32+ — API key must be created on that version or later for the testRun scopes)
+- n8n_evaluations (reads: n8n 2.30+ with an API key created on 2.30+; run/cancel: n8n 2.32+ with a key created on 2.32+ — older keys lack the testRun scopes)
 - n8n_deploy_template
 - n8n_workflow_versions
 - n8n_autofix_workflow
