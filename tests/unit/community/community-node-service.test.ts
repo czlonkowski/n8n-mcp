@@ -889,6 +889,7 @@ describe('CommunityNodeService', () => {
 
     it('should still re-key when package.json is readable but declares no node', async () => {
       mockFetcher.fetchPackageJson.mockResolvedValue({ name: 'n8n-nodes-npm-test' });
+      (mockRepository.deleteStaleCommunityNodes as any).mockReturnValue(2);
 
       const result = await service.syncNpmNodes();
 
@@ -1218,7 +1219,7 @@ describe('CommunityNodeService', () => {
       expect(mockRepository.deleteStaleCommunityNodes).not.toHaveBeenCalled();
     });
 
-    it('should accumulate removed rows across packages', async () => {
+    it('should accumulate the rows each package reported removing', async () => {
       const otherPackage: NpmSearchResult = {
         ...mockNpmPackage,
         package: { ...mockNpmPackage.package, name: 'n8n-nodes-other' },
@@ -1228,10 +1229,12 @@ describe('CommunityNodeService', () => {
         { ...staleRow, nodeType: `${packageName}.old`, npmPackageName: packageName },
         { ...staleRow, nodeType: `${packageName}.older`, npmPackageName: packageName },
       ]);
+      (mockRepository.deleteStaleCommunityNodes as any).mockReturnValue(2);
 
       const result = await service.syncNpmNodes();
 
       expect(result.saved).toBe(2);
+      expect(mockRepository.deleteStaleCommunityNodes).toHaveBeenCalledTimes(2);
       expect(result.nodesRemoved).toBe(4);
     });
   });

@@ -53,6 +53,18 @@ class MockPreparedStatement implements PreparedStatement {
     this.setupMockBehavior();
   }
 
+  /** Rows the stale-community-node WHERE clause matches. */
+  private staleRows(npmPackageName: string, keepNodeTypes: string[]): any[] {
+    const nodes = this.mockData.get('community_nodes') || [];
+    return nodes.filter(
+      (n: any) =>
+        n.npm_package_name === npmPackageName &&
+        n.is_community === 1 &&
+        n.is_verified === 0 &&
+        !keepNodeTypes.includes(n.node_type)
+    );
+  }
+
   private setupMockBehavior() {
     // Community nodes queries
     if (this.sql.includes('SELECT * FROM nodes WHERE is_community = 1')) {
@@ -111,18 +123,27 @@ class MockPreparedStatement implements PreparedStatement {
       });
     }
 
+    // deleteStaleCommunityNodes - count of the rows the DELETE will match
+    if (this.sql.includes('SELECT COUNT(*) as count FROM nodes') &&
+        this.sql.includes('npm_package_name = ?')) {
+      this.get = vi.fn((npmPackageName: string, ...keepNodeTypes: string[]) => ({
+        count: this.staleRows(npmPackageName, keepNodeTypes).length,
+      }));
+    }
+
     // deleteStaleCommunityNodes
     if (this.sql.includes('DELETE FROM nodes') && this.sql.includes('npm_package_name = ?')) {
       this.run = vi.fn((npmPackageName: string, ...keepNodeTypes: string[]): RunResult => {
+        const stale = new Set(
+          this.staleRows(npmPackageName, keepNodeTypes).map((n: any) => n.node_type)
+        );
         const nodes = this.mockData.get('community_nodes') || [];
-        const remaining = nodes.filter((n: any) => !(
-          n.npm_package_name === npmPackageName &&
-          !keepNodeTypes.includes(n.node_type) &&
-          n.is_community === 1 &&
-          n.is_verified === 0
-        ));
-        this.mockData.set('community_nodes', remaining);
-        return { changes: nodes.length - remaining.length, lastInsertRowid: 0 };
+        this.mockData.set(
+          'community_nodes',
+          nodes.filter((n: any) => !stale.has(n.node_type))
+        );
+        // Mirrors the sql.js adapter, which cannot report a real change count.
+        return { changes: 1, lastInsertRowid: 0 };
       });
     }
 
@@ -486,6 +507,25 @@ describe('NodeRepository - Community Node Methods', () => {
 
       expect(deletedCount).toBe(0);
       expect(mockAdapter._getMockData('community_nodes')).toHaveLength(4);
+    });
+
+    it('should report the real number of rows removed, not the run() change count', () => {
+      // The mock run() returns changes: 1 like the sql.js adapter does, so a count
+      // taken from the DELETE result would under-report a multi-row set-diff.
+      mockAdapter._setMockData('community_nodes', [
+        ...sampleCommunityNodes,
+        staleRow,
+        { ...staleRow, node_type: 'n8n-nodes-unverified.alsoStale' },
+      ]);
+
+      const deletedCount = repository.deleteStaleCommunityNodes('n8n-nodes-unverified', [
+        'n8n-nodes-unverified.testNode',
+      ]);
+
+      expect(deletedCount).toBe(2);
+      expect(
+        mockAdapter._getMockData('community_nodes').map((n: any) => n.node_type)
+      ).not.toContain('n8n-nodes-unverified.alsoStale');
     });
 
     it('should no-op on an empty keep set rather than wipe the package', () => {

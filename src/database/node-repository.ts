@@ -711,9 +711,10 @@ export class NodeRepository {
 
   /**
    * Delete unverified community rows for an npm package that are keyed by a node
-   * type outside the given set. Rows are keyed by node_type, so a sync that
-   * resolves a corrected (#949) or larger (#967) set of node types for a package
-   * would otherwise insert new rows and leave the outdated ones in search results.
+   * type outside the given set, returning how many rows were removed. Rows are
+   * keyed by node_type, so a sync that resolves a corrected (#949) or larger
+   * (#967) set of node types for a package would otherwise insert new rows and
+   * leave the outdated ones in search results.
    */
   deleteStaleCommunityNodes(npmPackageName: string, keepNodeTypes: string[]): number {
     // "Keep nothing" is a caller bug, not an intent to wipe the package: deleting
@@ -722,12 +723,26 @@ export class NodeRepository {
       return 0;
     }
 
-    const result = this.db.prepare(`
-      DELETE FROM nodes
+    // Both statements are built from one WHERE so the reported count cannot drift
+    // from what is deleted. The count comes from a SELECT rather than the run
+    // result because the sql.js adapter reports a fixed change count of 1.
+    const where = `
       WHERE npm_package_name = ? AND is_community = 1 AND is_verified = 0
         AND node_type NOT IN (${keepNodeTypes.map(() => '?').join(', ')})
-    `).run(npmPackageName, ...keepNodeTypes);
-    return result.changes;
+    `;
+    const params = [npmPackageName, ...keepNodeTypes];
+
+    const stale = this.db.prepare(
+      `SELECT COUNT(*) as count FROM nodes ${where}`
+    ).get(...params) as { count: number } | undefined;
+
+    const staleCount = stale?.count ?? 0;
+    if (staleCount === 0) {
+      return 0;
+    }
+
+    this.db.prepare(`DELETE FROM nodes ${where}`).run(...params);
+    return staleCount;
   }
 
   /**

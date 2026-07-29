@@ -305,18 +305,19 @@ export class CommunityNodeService {
         // One package, one unit of work: a partial write would leave both the new
         // and the stale rows in search results, and rows saved without their docs
         // look current to the next --update run.
-        this.repository.transaction(() => {
+        const removed = this.repository.transaction(() => {
           for (const parsedNode of parsedNodes) {
             this.repository.saveNode(parsedNode);
           }
 
-          this.pruneStaleCommunityRows(packageName, staleRows, nodeTypes);
+          const pruned = this.pruneStaleCommunityRows(packageName, staleRows, nodeTypes);
           this.carryOverPackageDocs(existingRows, nodeTypes);
+          return pruned;
         });
 
         result.saved++;
         result.nodesSaved += parsedNodes.length;
-        result.nodesRemoved += staleRows.length;
+        result.nodesRemoved += removed;
 
         if (progressCallback) {
           progressCallback(`Saving npm packages`, result.saved + result.skipped, npmPackages.length);
@@ -520,24 +521,23 @@ export class CommunityNodeService {
   }
 
   /**
-   * Drop the rows this package no longer resolves to.
+   * Drop the rows this package no longer resolves to, returning how many went.
    */
   private pruneStaleCommunityRows(
     packageName: string,
     staleRows: any[],
     nodeTypes: string[]
-  ): void {
+  ): number {
     if (staleRows.length === 0) {
-      return;
+      return 0;
     }
 
-    this.repository.deleteStaleCommunityNodes(packageName, nodeTypes);
-    // Report the rows matched in the pre-delete snapshot: the sql.js adapter does
-    // not return a real change count.
+    const removed = this.repository.deleteStaleCommunityNodes(packageName, nodeTypes);
     logger.info(
-      `${packageName}: removed ${staleRows.length} row(s) the package no longer declares ` +
+      `${packageName}: removed ${removed} row(s) the package no longer declares ` +
         `(${staleRows.map((row) => row.nodeType).join(', ')})`
     );
+    return removed;
   }
 
   /**
