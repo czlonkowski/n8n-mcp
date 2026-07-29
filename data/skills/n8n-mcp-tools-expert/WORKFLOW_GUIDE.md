@@ -926,7 +926,7 @@ n8n_executions({
 
 **Use when**: Working with evaluation test runs — starting or cancelling a run, polling one in progress, comparing metrics across runs, pulling per-case results into a report or dashboard.
 
-Reads (`list_runs`/`get_run`/`list_cases`) require n8n >= 2.30; `run`/`cancel` require n8n >= 2.32. Either way the API key must be created on that version or later — older keys silently lack the `testRun` scopes, so a 403 means "re-create the API key", not a bug. For `run`/`cancel` a 403 can also mean the key's owner lacks `workflow:execute` on the workflow. Runs exist only for workflows with an evaluation trigger.
+Reads (`list_runs`/`get_run`/`list_cases`) require n8n >= 2.30 and an API key created on 2.30+; `run`/`cancel` require n8n >= 2.32 and a key created on 2.32+ — older keys silently lack the `testRun` scopes. A 403 has three causes: a key created before the action's minimum version (re-create it), evaluations not licensed on the plan, or — for `run`/`cancel` — the key's owner lacking `workflow:execute` on the workflow. Runs exist only for workflows with an evaluation trigger.
 
 ### List Test Runs
 ```javascript
@@ -990,7 +990,7 @@ n8n_evaluations({
 - Pre-2.32 instances answer `run` with 405 (the route exists, GET-only) and `cancel` with 404 (the route does not exist); the tool folds both into its upgrade guidance
 - 409 on `run` = the workflow has no evaluation trigger; 409 on `cancel` = the run already finished
 - 402 on `run` = the license's evaluation-run quota is exhausted
-- Evaluations are license/quota-gated in n8n — an instance without the feature simply has no runs
+- Evaluations are license/quota-gated in n8n — an unlicensed instance answers `run`/`cancel` with 403, and its reads have no runs to return
 - Compare `metrics` across runs of the same workflow to catch prompt/model regressions
 
 ---

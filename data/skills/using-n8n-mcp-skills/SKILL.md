@@ -131,7 +131,7 @@ closes the gap where a tool's full description isn't loaded until first use.
 **Test & run**
 - `n8n_test_workflow` — runs real nodes (Code, HTTP, DB writes, sends all fire). Ask the user before running when side effects exist.
 - `n8n_executions` — list/inspect executions. **There is no `execute_workflow` tool.**
-- `n8n_evaluations` — evaluation test runs: list runs, aggregated metrics, per-case results (n8n ≥ 2.30), plus `run`/`cancel` to start or stop a run (n8n ≥ 2.32). `run` executes the workflow against its whole dataset — real nodes fire, so ask the user first. A 403 usually means the API key predates the feature (re-create it for the testRun scopes); for `run`/`cancel` it can also mean the key's owner lacks `workflow:execute` on the workflow.
+- `n8n_evaluations` — evaluation test runs: list runs, aggregated metrics, per-case results (n8n ≥ 2.30), plus `run`/`cancel` to start or stop a run (n8n ≥ 2.32). `run` executes the workflow against its whole dataset — real nodes fire, so ask the user first. A 403 means the API key was created before the action's minimum version (re-create it for the testRun scopes), evaluations aren't licensed on the plan, or — for `run`/`cancel` — the key's owner lacks `workflow:execute` on the workflow.
 
 **Data, credentials, audit**
 - `n8n_manage_datatable` — Data Table CRUD, filtering, dry-run.

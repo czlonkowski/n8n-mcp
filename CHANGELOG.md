@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Bundled skills pack synced to n8n-skills v1.27.1.** The pack still described `n8n_evaluations` as read-only and gated on n8n 2.30 only. The router one-liner, the tools-expert API list, and the WORKFLOW_GUIDE section now document the `run` and `cancel` actions that shipped in 2.67.0: per-action version gating (reads on 2.30+, run/cancel on 2.32+), the `testRun` scope and `workflow:execute` requirements, the 402/403/405/409 error semantics, and a warning to confirm with the user before starting a run, since a run executes the workflow against its whole dataset with real side effects.
+- **Bundled skills pack synced to n8n-skills v1.27.2.** The pack still described `n8n_evaluations` as read-only and gated on n8n 2.30 only. The router one-liner, the tools-expert API list, and the WORKFLOW_GUIDE section now document the `run` and `cancel` actions that shipped in 2.67.0: per-action version gating (reads on 2.30+, run/cancel on 2.32+), the `testRun` scope and `workflow:execute` requirements, the 402/403/405/409 error semantics, and a warning to confirm with the user before starting a run, since a run executes the workflow against its whole dataset with real side effects.
 
 ## [2.67.0] - 2026-07-29
 
