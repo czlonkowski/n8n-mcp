@@ -168,10 +168,11 @@ export class DocumentationBatchProcessor {
       return { fetched: 0, failed: 0, skipped: 0, errors: [] };
     }
 
-    // Get package names
-    const packageNames = nodes
-      .map((n) => n.npmPackageName)
-      .filter((name): name is string => !!name);
+    // Get package names. READMEs are package-level, so the rows of a multi-node
+    // package resolve to a single fetch (#967).
+    const packageNames = [
+      ...new Set(nodes.map((n) => n.npmPackageName).filter((name): name is string => !!name)),
+    ];
 
     // Fetch READMEs in batches
     const readmeMap = await this.fetcher.fetchReadmesBatch(
@@ -245,14 +246,38 @@ export class DocumentationBatchProcessor {
 
     logger.info(`LLM connection successful: ${connectionTest.message}`);
 
-    // Prepare inputs for batch generation
-    const inputs: DocumentationInput[] = nodes.map((node) => ({
-      nodeType: node.nodeType,
-      displayName: node.displayName,
-      description: node.description,
-      readme: node.npmReadme || '',
-      npmPackageName: node.npmPackageName,
-    }));
+    // The rows of a multi-node package share one README, so summarising each row
+    // would repeat the same LLM call. Generate once per package and fan the
+    // result out to its rows (#967).
+    const packageGroups = new Map<string, any[]>();
+    for (const node of nodes) {
+      const key = node.npmPackageName || node.nodeType;
+      const group = packageGroups.get(key);
+      if (group) {
+        group.push(node);
+      } else {
+        packageGroups.set(key, [node]);
+      }
+    }
+
+    // Prepare inputs for batch generation - one per package, keyed by the
+    // representative row's node type so results map back to their group. The
+    // prompt gets the package's node names, not the representative's identity:
+    // the summary is stored on every row of the package.
+    const targetsByNodeType = new Map<string, any[]>();
+    const inputs: DocumentationInput[] = [];
+    for (const group of packageGroups.values()) {
+      const [representative] = group;
+      targetsByNodeType.set(representative.nodeType, group);
+      inputs.push({
+        nodeType: representative.nodeType,
+        displayName: representative.displayName,
+        description: representative.description,
+        readme: representative.npmReadme || '',
+        npmPackageName: representative.npmPackageName,
+        nodeNames: group.map((node) => node.displayName || node.nodeType),
+      });
+    }
 
     // Generate summaries in parallel
     const results = await this.generator.generateBatch(inputs, concurrency, progressCallback);
@@ -263,22 +288,30 @@ export class DocumentationBatchProcessor {
     const errors: string[] = [];
 
     for (const result of results) {
+      // A result that maps to no group is stored under its own node type.
+      const targets = targetsByNodeType.get(result.nodeType) ?? [{ nodeType: result.nodeType }];
+
       if (result.error) {
         errors.push(`${result.nodeType}: ${result.error}`);
-        failed++;
-      } else {
+        failed += targets.length;
+        continue;
+      }
+
+      for (const target of targets) {
         try {
-          this.repository.updateNodeAISummary(result.nodeType, result.summary);
+          this.repository.updateNodeAISummary(target.nodeType, result.summary);
           generated++;
         } catch (error) {
-          const msg = `Failed to save summary for ${result.nodeType}: ${error}`;
+          const msg = `Failed to save summary for ${target.nodeType}: ${error}`;
           errors.push(msg);
           failed++;
         }
       }
     }
 
-    logger.info(`AI summary generation complete: ${generated} generated, ${failed} failed`);
+    logger.info(
+      `AI summary generation complete: ${generated} row(s) from ${inputs.length} package(s), ${failed} failed`
+    );
     return { generated, failed, skipped: 0, errors };
   }
 

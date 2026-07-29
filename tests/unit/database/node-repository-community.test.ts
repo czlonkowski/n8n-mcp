@@ -101,21 +101,23 @@ class MockPreparedStatement implements PreparedStatement {
       });
     }
 
-    // getNodeByNpmPackage
-    if (this.sql.includes('SELECT * FROM nodes WHERE npm_package_name = ?')) {
-      this.get = vi.fn((npmPackageName: string) => {
+    // getNodesByNpmPackage
+    if (this.sql.includes('SELECT * FROM nodes WHERE npm_package_name = ? ORDER BY node_type')) {
+      this.all = vi.fn((npmPackageName: string) => {
         const nodes = this.mockData.get('community_nodes') || [];
-        return nodes.find((n: any) => n.npm_package_name === npmPackageName);
+        return nodes
+          .filter((n: any) => n.npm_package_name === npmPackageName)
+          .sort((a: any, b: any) => a.node_type.localeCompare(b.node_type));
       });
     }
 
     // deleteStaleCommunityNodes
-    if (this.sql.includes('DELETE FROM nodes') && this.sql.includes('node_type != ?')) {
-      this.run = vi.fn((npmPackageName: string, keepNodeType: string): RunResult => {
+    if (this.sql.includes('DELETE FROM nodes') && this.sql.includes('npm_package_name = ?')) {
+      this.run = vi.fn((npmPackageName: string, ...keepNodeTypes: string[]): RunResult => {
         const nodes = this.mockData.get('community_nodes') || [];
         const remaining = nodes.filter((n: any) => !(
           n.npm_package_name === npmPackageName &&
-          n.node_type !== keepNodeType &&
+          !keepNodeTypes.includes(n.node_type) &&
           n.is_community === 1 &&
           n.is_verified === 0
         ));
@@ -396,37 +398,6 @@ describe('NodeRepository - Community Node Methods', () => {
     });
   });
 
-  describe('getNodeByNpmPackage', () => {
-    beforeEach(() => {
-      mockAdapter._setMockData('community_nodes', [...sampleCommunityNodes]);
-    });
-
-    it('should return node for existing package', () => {
-      const node = repository.getNodeByNpmPackage('n8n-nodes-verified');
-
-      expect(node).toBeDefined();
-      expect(node.npmPackageName).toBe('n8n-nodes-verified');
-      expect(node.displayName).toBe('Verified Test Node');
-    });
-
-    it('should return null for non-existent package', () => {
-      const node = repository.getNodeByNpmPackage('n8n-nodes-nonexistent');
-
-      expect(node).toBeNull();
-    });
-
-    it('should correctly parse all community fields', () => {
-      const node = repository.getNodeByNpmPackage('n8n-nodes-popular');
-
-      expect(node).toBeDefined();
-      expect(node.isCommunity).toBe(true);
-      expect(node.isVerified).toBe(true);
-      expect(node.isWebhook).toBe(true);
-      expect(node.isVersioned).toBe(true);
-      expect(node.npmDownloads).toBe(50000);
-    });
-  });
-
   describe('deleteCommunityNodes', () => {
     beforeEach(() => {
       mockAdapter._setMockData('community_nodes', [...sampleCommunityNodes]);
@@ -447,6 +418,42 @@ describe('NodeRepository - Community Node Methods', () => {
     });
   });
 
+  describe('getNodesByNpmPackage', () => {
+    const siblingRow = {
+      ...sampleCommunityNodes[1],
+      node_type: 'n8n-nodes-unverified.otherNode',
+    };
+
+    beforeEach(() => {
+      mockAdapter._setMockData('community_nodes', [...sampleCommunityNodes, siblingRow]);
+    });
+
+    it('should return every row a package stores', () => {
+      const nodes = repository.getNodesByNpmPackage('n8n-nodes-unverified');
+
+      expect(nodes.map((n: any) => n.nodeType)).toEqual([
+        'n8n-nodes-unverified.otherNode',
+        'n8n-nodes-unverified.testNode',
+      ]);
+      expect(nodes.every((n: any) => n.isCommunity)).toBe(true);
+    });
+
+    it('should return an empty array for an unknown package', () => {
+      expect(repository.getNodesByNpmPackage('n8n-nodes-nonexistent')).toEqual([]);
+    });
+
+    it('should parse the community fields of each row', () => {
+      const [node] = repository.getNodesByNpmPackage('n8n-nodes-popular');
+
+      expect(node.npmPackageName).toBe('n8n-nodes-popular');
+      expect(node.displayName).toBe('Popular Test Node');
+      expect(node.isVerified).toBe(true);
+      expect(node.isWebhook).toBe(true);
+      expect(node.isVersioned).toBe(true);
+      expect(node.npmDownloads).toBe(50000);
+    });
+  });
+
   describe('deleteStaleCommunityNodes', () => {
     const staleRow = {
       ...sampleCommunityNodes[1],
@@ -458,10 +465,9 @@ describe('NodeRepository - Community Node Methods', () => {
     });
 
     it('should remove rows of the package that are keyed by another node type', () => {
-      const deletedCount = repository.deleteStaleCommunityNodes(
-        'n8n-nodes-unverified',
-        'n8n-nodes-unverified.testNode'
-      );
+      const deletedCount = repository.deleteStaleCommunityNodes('n8n-nodes-unverified', [
+        'n8n-nodes-unverified.testNode',
+      ]);
 
       expect(deletedCount).toBe(1);
       const remaining = mockAdapter._getMockData('community_nodes');
@@ -472,11 +478,27 @@ describe('NodeRepository - Community Node Methods', () => {
       ]);
     });
 
+    it('should keep every node type in the set (#967)', () => {
+      const deletedCount = repository.deleteStaleCommunityNodes('n8n-nodes-unverified', [
+        'n8n-nodes-unverified.testNode',
+        'n8n-nodes-unverified.unverified',
+      ]);
+
+      expect(deletedCount).toBe(0);
+      expect(mockAdapter._getMockData('community_nodes')).toHaveLength(4);
+    });
+
+    it('should no-op on an empty keep set rather than wipe the package', () => {
+      const deletedCount = repository.deleteStaleCommunityNodes('n8n-nodes-unverified', []);
+
+      expect(deletedCount).toBe(0);
+      expect(mockAdapter._getMockData('community_nodes')).toHaveLength(4);
+    });
+
     it('should never remove verified rows', () => {
-      const deletedCount = repository.deleteStaleCommunityNodes(
-        'n8n-nodes-verified',
-        'n8n-nodes-verified.renamed'
-      );
+      const deletedCount = repository.deleteStaleCommunityNodes('n8n-nodes-verified', [
+        'n8n-nodes-verified.renamed',
+      ]);
 
       expect(deletedCount).toBe(0);
       expect(mockAdapter._getMockData('community_nodes')).toHaveLength(4);

@@ -32,6 +32,11 @@ export interface DocumentationInput {
   description?: string;
   readme: string;
   npmPackageName?: string;
+  /**
+   * Names of every node the package ships. Set when the summary will be stored
+   * on all of them, so the prompt describes the package rather than one node.
+   */
+  nodeNames?: string[];
 }
 
 /**
@@ -202,6 +207,23 @@ export class DocumentationGenerator {
   private buildPrompt(input: DocumentationInput): string {
     // Truncate README to avoid token limits (keep first ~6000 chars)
     const truncatedReadme = this.truncateReadme(input.readme, 6000);
+
+    // A package-scoped summary is stored on every node the package ships, so
+    // naming one of them would attribute the text to the wrong node.
+    if (input.nodeNames?.length) {
+      return `
+Package Information:
+- Package: ${input.npmPackageName || 'unknown'}
+- Nodes: ${input.nodeNames.join(', ')}
+- Description: ${input.description || 'No description provided'}
+
+README Content:
+${truncatedReadme}
+
+Based on the README and package information above, generate a structured documentation summary
+covering the package as a whole, including every node listed above.
+`.trim();
+    }
 
     return `
 Node Information:

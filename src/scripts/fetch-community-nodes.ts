@@ -125,19 +125,21 @@ async function main(): Promise<void> {
   console.log();
 
   console.log('Verified nodes (Strapi API):');
-  console.log(`  - Fetched: ${result.verified.fetched}`);
-  console.log(`  - Saved: ${result.verified.saved}`);
-  console.log(`  - Skipped: ${result.verified.skipped}`);
+  console.log(`  - Fetched: ${result.verified.fetched} nodes`);
+  console.log(`  - Saved: ${result.verified.saved} nodes`);
+  console.log(`  - Skipped: ${result.verified.skipped} nodes`);
   if (result.verified.errors.length > 0) {
     console.log(`  - Errors: ${result.verified.errors.length}`);
     result.verified.errors.forEach((e) => console.log(`    ! ${e}`));
   }
 
   if (!cliOptions.verifiedOnly) {
+    // A package can declare several nodes, so package and node counts differ.
     console.log('\nnpm packages:');
-    console.log(`  - Fetched: ${result.npm.fetched}`);
-    console.log(`  - Saved: ${result.npm.saved}`);
-    console.log(`  - Skipped: ${result.npm.skipped}`);
+    console.log(`  - Fetched: ${result.npm.fetched} packages`);
+    console.log(`  - Saved: ${result.npm.saved} packages (${result.npm.nodesSaved} node rows)`);
+    console.log(`  - Skipped: ${result.npm.skipped} packages`);
+    console.log(`  - Removed (no longer declared): ${result.npm.nodesRemoved} node rows`);
     if (result.npm.errors.length > 0) {
       console.log(`  - Errors: ${result.npm.errors.length}`);
       result.npm.errors.forEach((e) => console.log(`    ! ${e}`));

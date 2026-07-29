@@ -356,6 +356,7 @@ describe('DocumentationBatchProcessor', () => {
       const manyNodes = Array.from({ length: 10 }, (_, i) =>
         createMockCommunityNode({
           nodeType: `node${i}`,
+          npmPackageName: `pkg${i}`,
           npmReadme: `# README ${i}`,
         })
       );
@@ -684,9 +685,94 @@ describe('DocumentationBatchProcessor', () => {
       expect(result.readmesFetched).toBe(0);
       expect(result.readmesFailed).toBe(0);
     });
+
+    it('should fetch a README once for a package that ships several nodes (#967)', async () => {
+      const nodes = [
+        createMockCommunityNode({ nodeType: 'pkg1.first', npmPackageName: 'pkg1' }),
+        createMockCommunityNode({ nodeType: 'pkg1.second', npmPackageName: 'pkg1' }),
+      ];
+
+      vi.mocked(mockRepository.getCommunityNodes).mockReturnValue(nodes);
+      vi.mocked(mockFetcher.fetchReadmesBatch).mockResolvedValue(
+        new Map([['pkg1', '# README']])
+      );
+
+      const result = await processor.processAll({ readmeOnly: true });
+
+      expect(mockFetcher.fetchReadmesBatch).toHaveBeenCalledWith(['pkg1'], undefined, 5);
+      // Both rows still get the README.
+      expect(result.readmesFetched).toBe(2);
+      expect(mockRepository.updateNodeReadme).toHaveBeenCalledWith('pkg1.first', '# README');
+      expect(mockRepository.updateNodeReadme).toHaveBeenCalledWith('pkg1.second', '# README');
+    });
   });
 
   describe('summary generation edge cases', () => {
+    it('should generate one summary per package and store it on every row (#967)', async () => {
+      const nodes = [
+        createMockCommunityNode({
+          nodeType: 'pkg1.first',
+          displayName: 'First',
+          npmPackageName: 'pkg1',
+          npmReadme: '# README',
+        }),
+        createMockCommunityNode({
+          nodeType: 'pkg1.second',
+          displayName: 'Second',
+          npmPackageName: 'pkg1',
+          npmReadme: '# README',
+        }),
+      ];
+
+      vi.mocked(mockRepository.getCommunityNodes).mockReturnValue(nodes);
+      vi.mocked(mockGenerator.generateBatch).mockResolvedValue([
+        { nodeType: 'pkg1.first', summary: createMockDocumentationSummary('pkg1') },
+      ]);
+
+      const result = await processor.processAll({ summaryOnly: true });
+
+      const inputs = vi.mocked(mockGenerator.generateBatch).mock.calls[0][0];
+      expect(inputs).toHaveLength(1);
+      // The prompt must describe the package, not whichever sibling was picked.
+      expect(inputs[0].nodeNames).toEqual(['First', 'Second']);
+      expect(inputs[0].npmPackageName).toBe('pkg1');
+      expect(result.summariesGenerated).toBe(2);
+      expect(mockRepository.updateNodeAISummary).toHaveBeenCalledWith(
+        'pkg1.first',
+        expect.any(Object)
+      );
+      expect(mockRepository.updateNodeAISummary).toHaveBeenCalledWith(
+        'pkg1.second',
+        expect.any(Object)
+      );
+    });
+
+    it('should count every row of a package as failed when its summary fails (#967)', async () => {
+      const nodes = [
+        createMockCommunityNode({
+          nodeType: 'pkg1.first',
+          npmPackageName: 'pkg1',
+          npmReadme: '# README',
+        }),
+        createMockCommunityNode({
+          nodeType: 'pkg1.second',
+          npmPackageName: 'pkg1',
+          npmReadme: '# README',
+        }),
+      ];
+
+      vi.mocked(mockRepository.getCommunityNodes).mockReturnValue(nodes);
+      vi.mocked(mockGenerator.generateBatch).mockResolvedValue([
+        { nodeType: 'pkg1.first', summary: {} as any, error: 'LLM timeout' },
+      ]);
+
+      const result = await processor.processAll({ summaryOnly: true });
+
+      expect(result.summariesGenerated).toBe(0);
+      expect(result.summariesFailed).toBe(2);
+      expect(mockRepository.updateNodeAISummary).not.toHaveBeenCalled();
+    });
+
     it('should skip nodes without README for summary generation', async () => {
       const nodes = [
         createMockCommunityNode({ nodeType: 'node1', npmReadme: '# README' }),
@@ -851,6 +937,7 @@ describe('DocumentationBatchProcessor', () => {
         description: 'A test node',
         readme: '# Test README\nThis is a test.',
         npmPackageName: 'n8n-nodes-test',
+        nodeNames: ['Test Node'],
       });
     });
 

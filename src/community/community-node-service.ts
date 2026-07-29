@@ -22,9 +22,16 @@ export interface SyncResult {
     errors: string[];
   };
   npm: {
+    /** Packages returned by the registry search */
     fetched: number;
+    /** Packages written */
     saved: number;
+    /** Packages left untouched */
     skipped: number;
+    /** Rows written — a package can ship several nodes */
+    nodesSaved: number;
+    /** Rows dropped because the package no longer declares them */
+    nodesRemoved: number;
     errors: string[];
   };
   duration: number;
@@ -47,6 +54,30 @@ export interface SyncOptions {
  * registry must not stretch a sync of hundreds of packages by hours.
  */
 const NPM_MANIFEST_FETCH = { maxRetries: 1, timeout: 5000 } as const;
+
+/**
+ * Upper bound on the rows a single npm package may contribute. The manifest is
+ * arbitrary third-party input; a package declaring thousands of entries would
+ * otherwise fill the shipped database and overrun SQLite's variable limit in the
+ * set-diff.
+ */
+const MAX_NODES_PER_PACKAGE = 100;
+
+/**
+ * Where an npm package's node names came from.
+ * - `manifest`: parsed from the package's own `n8n.nodes` array — authoritative.
+ * - `fallback`: package.json was read but declares no usable node entry, so the
+ *   names are the package-name heuristic.
+ * - `unavailable`: package.json could not be read at all. The names are the same
+ *   heuristic, but nothing about the package's real nodes is known, so stored
+ *   rows must not be re-keyed against them.
+ */
+type NpmNodeNameSource = 'manifest' | 'fallback' | 'unavailable';
+
+interface ResolvedNpmNodeNames {
+  names: string[];
+  source: NpmNodeNameSource;
+}
 
 /**
  * Derive a node name from an n8n node entry point declared in package.json.
@@ -97,7 +128,7 @@ export class CommunityNodeService {
     const startTime = Date.now();
     const result: SyncResult = {
       verified: { fetched: 0, saved: 0, skipped: 0, errors: [] },
-      npm: { fetched: 0, saved: 0, skipped: 0, errors: [] },
+      npm: { fetched: 0, saved: 0, skipped: 0, nodesSaved: 0, nodesRemoved: 0, errors: [] },
       duration: 0,
     };
 
@@ -125,7 +156,8 @@ export class CommunityNodeService {
     result.duration = Date.now() - startTime;
     logger.info(
       `Community node sync complete in ${(result.duration / 1000).toFixed(1)}s: ` +
-        `${result.verified.saved} verified, ${result.npm.saved} npm`
+        `${result.verified.saved} verified, ` +
+        `${result.npm.nodesSaved} npm node(s) from ${result.npm.saved} package(s)`
     );
 
     return result;
@@ -199,7 +231,14 @@ export class CommunityNodeService {
     progressCallback?: (message: string, current: number, total: number) => void,
     skipExisting?: boolean
   ): Promise<SyncResult['npm']> {
-    const result = { fetched: 0, saved: 0, skipped: 0, errors: [] as string[] };
+    const result = {
+      fetched: 0,
+      saved: 0,
+      skipped: 0,
+      nodesSaved: 0,
+      nodesRemoved: 0,
+      errors: [] as string[],
+    };
 
     // Fetch npm packages
     const npmPackages = await this.fetcher.fetchNpmPackages(limit, progressCallback);
@@ -232,29 +271,52 @@ export class CommunityNodeService {
           continue;
         }
 
-        const existing = this.repository.getNodeByNpmPackage(packageName);
+        const existingRows = this.repository.getNodesByNpmPackage(packageName);
+        const resolved = await this.resolveNpmNodeNames(packageName, pkg.package.version);
 
-        // For npm packages, we create a basic node entry with metadata
-        // Full schema extraction would require downloading and parsing the tarball
-        const parsedNode = await this.npmPackageToParsedNode(pkg);
-        const staleRow = this.staleCommunityRow(existing, parsedNode.nodeType);
-
-        // Skip if already exists and skipExisting is true. A row keyed by an
-        // outdated node type is the one case that must not be skipped — only a
-        // re-key corrects it.
-        if (skipExisting && existing && !staleRow) {
+        // A registry miss yields the package-name heuristic, which says nothing
+        // about the nodes the package actually ships. Re-keying stored rows
+        // against it would delete correct rows and reinstate a fabricated type
+        // (#949), so leave the package alone until a manifest can be read.
+        if (resolved.source === 'unavailable' && existingRows.length > 0) {
+          logger.warn(
+            `Skipping ${packageName}: package.json unavailable, keeping ${existingRows.length} stored row(s)`
+          );
           result.skipped++;
           continue;
         }
 
-        // Save to database
-        this.repository.saveNode(parsedNode);
+        // For npm packages, we create a basic node entry with metadata
+        // Full schema extraction would require downloading and parsing the tarball
+        const parsedNodes = this.npmPackageToParsedNodes(pkg, resolved);
+        const nodeTypes = parsedNodes.map((node) => node.nodeType);
+        const staleRows = this.staleCommunityRows(existingRows, nodeTypes);
 
-        if (staleRow) {
-          this.replaceStaleCommunityRow(packageName, staleRow, parsedNode.nodeType);
+        // Skip if already exists and skipExisting is true. Stored rows that no
+        // longer match the resolved set are the one case that must not be
+        // skipped — only a re-sync corrects them.
+        const upToDate =
+          existingRows.length > 0 && !this.rowsOutOfSync(existingRows, nodeTypes, staleRows);
+        if (skipExisting && upToDate) {
+          result.skipped++;
+          continue;
         }
 
+        // One package, one unit of work: a partial write would leave both the new
+        // and the stale rows in search results, and rows saved without their docs
+        // look current to the next --update run.
+        this.repository.transaction(() => {
+          for (const parsedNode of parsedNodes) {
+            this.repository.saveNode(parsedNode);
+          }
+
+          this.pruneStaleCommunityRows(packageName, staleRows, nodeTypes);
+          this.carryOverPackageDocs(existingRows, nodeTypes);
+        });
+
         result.saved++;
+        result.nodesSaved += parsedNodes.length;
+        result.nodesRemoved += staleRows.length;
 
         if (progressCallback) {
           progressCallback(`Saving npm packages`, result.saved + result.skipped, npmPackages.length);
@@ -264,7 +326,10 @@ export class CommunityNodeService {
       }
     }
 
-    logger.info(`npm packages: ${result.saved} saved, ${result.skipped} skipped`);
+    logger.info(
+      `npm packages: ${result.saved} saved (${result.nodesSaved} node row(s), ` +
+        `${result.nodesRemoved} removed), ${result.skipped} skipped`
+    );
     return result;
   }
 
@@ -346,20 +411,24 @@ export class CommunityNodeService {
   }
 
   /**
-   * Convert npm package info to basic ParsedNode.
-   * Note: This is a minimal entry - full schema requires tarball parsing.
+   * Convert npm package info to one basic ParsedNode per node the package ships.
+   * Note: These are minimal entries - full schema requires tarball parsing.
+   * Everything except the node name and type is package-level and shared.
    */
-  private async npmPackageToParsedNode(
-    pkg: NpmSearchResult
-  ): Promise<ParsedNode & CommunityNodeFields> {
+  private npmPackageToParsedNodes(
+    pkg: NpmSearchResult,
+    resolved: ResolvedNpmNodeNames
+  ): (ParsedNode & CommunityNodeFields)[] {
     const { package: pkgInfo, score } = pkg;
 
-    const nodeName = await this.resolveNpmNodeName(pkgInfo.name, pkgInfo.version);
-    const nodeType = `${pkgInfo.name}.${nodeName}`;
+    // Once a package resolves to several nodes, each row's own name is the only
+    // signal that tells them apart — the package name would flag every row of
+    // n8n-nodes-foo-trigger as a trigger. A single row keeps both signals.
+    const perNodeSignal = resolved.names.length > 1;
 
-    return {
+    return resolved.names.map((nodeName) => ({
       // Core ParsedNode fields (minimal - no schema available)
-      nodeType,
+      nodeType: `${pkgInfo.name}.${nodeName}`,
       packageName: pkgInfo.name,
       displayName: nodeName,
       description: pkgInfo.description || `Community node from ${pkgInfo.name}`,
@@ -369,8 +438,8 @@ export class CommunityNodeService {
       credentials: [],
       operations: [],
       isAITool: false,
-      isTrigger: pkgInfo.name.includes('trigger'),
-      isWebhook: pkgInfo.name.includes('webhook'),
+      isTrigger: this.matchesRole(pkgInfo.name, nodeName, 'trigger', perNodeSignal),
+      isWebhook: this.matchesRole(pkgInfo.name, nodeName, 'webhook', perNodeSignal),
       isVersioned: false,
       // No descriptor available without parsing the npm tarball — declarative community
       // nodes default to typeVersion 1 at runtime when version isn't declared.
@@ -386,7 +455,24 @@ export class CommunityNodeService {
       npmVersion: pkgInfo.version,
       npmDownloads: Math.round(score.detail.popularity * 10000), // Approximate
       communityFetchedAt: new Date().toISOString(),
-    };
+    }));
+  }
+
+  /**
+   * Decide whether an npm-only node plays a role (trigger, webhook) from the
+   * names available. Only the node's own name counts once the package resolves
+   * to several nodes; see npmPackageToParsedNodes.
+   */
+  private matchesRole(
+    packageName: string,
+    nodeName: string,
+    role: string,
+    perNodeSignal: boolean
+  ): boolean {
+    if (nodeName.toLowerCase().includes(role)) {
+      return true;
+    }
+    return perNodeSignal ? false : packageName.includes(role);
   }
 
   /**
@@ -415,75 +501,125 @@ export class CommunityNodeService {
   }
 
   /**
-   * A stored row is stale when this sync resolves a different node type for the
-   * same npm package, which happens for packages saved under the fabricated
-   * package-name type (#949). Verified rows carry the real node name from
-   * Strapi and are never re-keyed.
+   * The stored rows for a package are out of sync when this sync resolves a node
+   * type the package has no row for, or when an unverified row is keyed by a type
+   * the package no longer declares — the shape left behind by the fabricated
+   * package-name types (#949) and by the one-row-per-package sync (#967).
+   * Verified rows carry the real node name from Strapi and are never re-keyed.
    */
-  private staleCommunityRow(existing: any, nodeType: string): any | undefined {
-    if (!existing || !existing.isCommunity || existing.isVerified) {
-      return undefined;
-    }
-    return existing.nodeType && existing.nodeType !== nodeType ? existing : undefined;
+  private rowsOutOfSync(existingRows: any[], nodeTypes: string[], staleRows: any[]): boolean {
+    const storedTypes = new Set(existingRows.map((row) => row.nodeType));
+    return nodeTypes.some((nodeType) => !storedTypes.has(nodeType)) || staleRows.length > 0;
   }
 
-  /**
-   * Drop the rows this package no longer resolves to and carry the generated
-   * documentation over to the new row, which saveNode could not preserve
-   * because preservation is keyed by node type.
-   */
-  private replaceStaleCommunityRow(packageName: string, staleRow: any, nodeType: string): void {
-    const removed = this.repository.deleteStaleCommunityNodes(packageName, nodeType);
-    logger.info(
-      `Re-keyed ${packageName}: "${staleRow.nodeType}" -> "${nodeType}" (${removed} outdated row(s) removed)`
+  private staleCommunityRows(existingRows: any[], nodeTypes: string[]): any[] {
+    const keep = new Set(nodeTypes);
+    return existingRows.filter(
+      (row) => row.isCommunity && !row.isVerified && row.nodeType && !keep.has(row.nodeType)
     );
+  }
 
-    if (staleRow.npmReadme) {
-      this.repository.updateNodeReadme(nodeType, staleRow.npmReadme);
+  /**
+   * Drop the rows this package no longer resolves to.
+   */
+  private pruneStaleCommunityRows(
+    packageName: string,
+    staleRows: any[],
+    nodeTypes: string[]
+  ): void {
+    if (staleRows.length === 0) {
+      return;
     }
-    if (staleRow.aiDocumentationSummary) {
-      this.repository.updateNodeAISummary(nodeType, staleRow.aiDocumentationSummary);
+
+    this.repository.deleteStaleCommunityNodes(packageName, nodeTypes);
+    // Report the rows matched in the pre-delete snapshot: the sql.js adapter does
+    // not return a real change count.
+    logger.info(
+      `${packageName}: removed ${staleRows.length} row(s) the package no longer declares ` +
+        `(${staleRows.map((row) => row.nodeType).join(', ')})`
+    );
+  }
+
+  /**
+   * Documentation is generated per package but stored per row, so a row this sync
+   * re-keyed or added arrives empty — saveNode only preserves docs under the same
+   * node type. Seed those rows from whatever the package already had.
+   */
+  private carryOverPackageDocs(existingRows: any[], nodeTypes: string[]): void {
+    const readme = existingRows.find((row) => row.npmReadme)?.npmReadme;
+    const summary = existingRows.find((row) => row.aiDocumentationSummary)?.aiDocumentationSummary;
+    if (!readme && !summary) {
+      return;
+    }
+
+    const storedByType = new Map(existingRows.map((row) => [row.nodeType, row]));
+    for (const nodeType of nodeTypes) {
+      const stored = storedByType.get(nodeType);
+      if (readme && !stored?.npmReadme) {
+        this.repository.updateNodeReadme(nodeType, readme);
+      }
+      if (summary && !stored?.aiDocumentationSummary) {
+        this.repository.updateNodeAISummary(nodeType, summary);
+      }
     }
   }
 
   /**
-   * Resolve the node name for an npm-only package.
+   * Resolve the node names for an npm-only package.
    *
    * The package.json `n8n.nodes` array lists the package's node entry points
    * (e.g. "dist/nodes/GlobalConstants/GlobalConstants.node.js"), which carry the
-   * real node name. Deriving it from the package name instead fabricated node
-   * types that do not exist in n8n (#949).
-   *
-   * Only the first entry is used: the npm path stores one row per package.
+   * real node names. Deriving them from the package name instead fabricated node
+   * types that do not exist in n8n (#949); using only the first entry hid every
+   * other node a package ships (#967).
    */
-  private async resolveNpmNodeName(packageName: string, version?: string): Promise<string> {
-    let entries: unknown[] = [];
+  private async resolveNpmNodeNames(
+    packageName: string,
+    version?: string
+  ): Promise<ResolvedNpmNodeNames> {
+    let packageJson: any = null;
 
     try {
-      const packageJson = await this.fetcher.fetchPackageJson(
-        packageName,
-        version,
-        NPM_MANIFEST_FETCH
-      );
-      if (Array.isArray(packageJson?.n8n?.nodes)) {
-        entries = packageJson.n8n.nodes;
-      }
+      packageJson = await this.fetcher.fetchPackageJson(packageName, version, NPM_MANIFEST_FETCH);
     } catch (error: any) {
       logger.warn(`Could not fetch package.json for ${packageName}: ${error.message}`);
     }
 
+    const fallback = this.extractNodeNameFromPackage(packageName);
+
+    // fetchPackageJson resolves to null once every attempt failed, so a registry
+    // miss is not always a thrown error.
+    if (!packageJson) {
+      logger.warn(
+        `Could not read package.json for ${packageName}, falling back to the package-name heuristic: "${fallback}"`
+      );
+      return { names: [fallback], source: 'unavailable' };
+    }
+
+    const entries: unknown[] = Array.isArray(packageJson?.n8n?.nodes) ? packageJson.n8n.nodes : [];
+    const nodeNames = new Set<string>();
     for (const entry of entries) {
       const nodeName = typeof entry === 'string' ? extractNodeNameFromEntryPath(entry) : undefined;
       if (nodeName) {
-        return nodeName;
+        nodeNames.add(nodeName);
       }
     }
 
-    const fallback = this.extractNodeNameFromPackage(packageName);
+    if (nodeNames.size > 0) {
+      const names = [...nodeNames];
+      if (names.length > MAX_NODES_PER_PACKAGE) {
+        logger.warn(
+          `${packageName} declares ${names.length} nodes, storing the first ${MAX_NODES_PER_PACKAGE}`
+        );
+        names.length = MAX_NODES_PER_PACKAGE;
+      }
+      return { names, source: 'manifest' };
+    }
+
     logger.warn(
       `No usable n8n.nodes entry for ${packageName}, falling back to the package-name heuristic: "${fallback}"`
     );
-    return fallback;
+    return { names: [fallback], source: 'fallback' };
   }
 
   /**
@@ -494,7 +630,7 @@ export class CommunityNodeService {
    *
    * Note: We use lowercase because most community nodes follow this convention.
    * Verified nodes from Strapi have the correct casing in nodeDesc.name.
-   * Only a fallback — see resolveNpmNodeName.
+   * Only a fallback — see resolveNpmNodeNames.
    */
   private extractNodeNameFromPackage(packageName: string): string {
     // Remove scope if present

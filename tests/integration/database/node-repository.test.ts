@@ -458,6 +458,71 @@ describe('NodeRepository Integration Tests', () => {
     });
   });
 
+  describe('community node set-diff', () => {
+    // Exercises the generated NOT IN statement against a real SQLite engine —
+    // the unit-level mock re-implements the predicate in JS (#967).
+    const communityNode = (nodeType: string, isVerified = false): any => ({
+      ...createParsedNode(MOCK_NODES.webhook),
+      nodeType,
+      isCommunity: true,
+      isVerified,
+      npmPackageName: 'n8n-nodes-multi',
+    });
+
+    beforeEach(() => {
+      repository.saveNode(communityNode('n8n-nodes-multi.first'));
+      repository.saveNode(communityNode('n8n-nodes-multi.second'));
+      repository.saveNode(communityNode('n8n-nodes-multi.stale'));
+      repository.saveNode(communityNode('n8n-nodes-multi.verified', true));
+      repository.saveNode({
+        ...createParsedNode(MOCK_NODES.httpRequest),
+        isCommunity: true,
+        isVerified: false,
+        npmPackageName: 'n8n-nodes-other',
+      });
+    });
+
+    it('should return every row of a package', () => {
+      const nodes = repository.getNodesByNpmPackage('n8n-nodes-multi');
+
+      expect(nodes.map((n: any) => n.nodeType)).toEqual([
+        'n8n-nodes-multi.first',
+        'n8n-nodes-multi.second',
+        'n8n-nodes-multi.stale',
+        'n8n-nodes-multi.verified',
+      ]);
+    });
+
+    it('should delete only the unverified rows outside the keep set', () => {
+      const removed = repository.deleteStaleCommunityNodes('n8n-nodes-multi', [
+        'n8n-nodes-multi.first',
+        'n8n-nodes-multi.second',
+      ]);
+
+      expect(removed).toBe(1);
+      expect(repository.getNodesByNpmPackage('n8n-nodes-multi').map((n: any) => n.nodeType)).toEqual(
+        ['n8n-nodes-multi.first', 'n8n-nodes-multi.second', 'n8n-nodes-multi.verified']
+      );
+      expect(repository.getNodesByNpmPackage('n8n-nodes-other')).toHaveLength(1);
+    });
+
+    it('should treat node types as data, not SQL', () => {
+      const removed = repository.deleteStaleCommunityNodes('n8n-nodes-multi', [
+        "n8n-nodes-multi.first'; DROP TABLE nodes; --",
+      ]);
+
+      expect(removed).toBe(3);
+      expect(repository.getNodeCount()).toBe(2); // verified row + the other package
+    });
+
+    it('should no-op on an empty keep set', () => {
+      const removed = repository.deleteStaleCommunityNodes('n8n-nodes-multi', []);
+
+      expect(removed).toBe(0);
+      expect(repository.getNodesByNpmPackage('n8n-nodes-multi')).toHaveLength(4);
+    });
+  });
+
   describe('searchNodeProperties', () => {
     beforeEach(() => {
       const node: ParsedNode = {

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.67.2] - 2026-07-29
+
+### Fixed
+
+- **The community npm sync stores every node a package ships (#967).** The sync stored exactly one row per npm package — the first parseable `n8n.nodes` manifest entry — so multi-node packages lost the rest: `@custom-js/n8n-nodes-pdf-toolkit` declares 18 nodes and the database held one. The sync now stores one row per manifest entry, sharing the package's README and AI summary across siblings, with trigger/webhook detection reading each node's own name instead of the package name (the package's trigger node was previously invisible, and a `*-trigger` package name used to mark every sibling a trigger). The v2.66.3 stale-row self-heal becomes a set-diff that still touches only unverified community rows, the save-prune-seed sequence runs in one transaction, and a package whose package.json cannot be fetched is skipped untouched instead of collapsing to a single heuristic row — a transient registry failure previously became data loss. Shared AI summaries are prompted with the package's node list rather than one sibling's identity, fetch statistics report packages and node rows separately, and the bundled database is refreshed with the recovered sibling nodes.
+
 ## [2.67.1] - 2026-07-29
 
 ### Changed

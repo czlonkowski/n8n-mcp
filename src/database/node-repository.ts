@@ -35,6 +35,14 @@ export class NodeRepository {
   }
 
   /**
+   * Run several repository writes as one unit, so a failure part-way through
+   * leaves no half-applied state behind.
+   */
+  transaction<T>(fn: () => T): T {
+    return this.db.transaction(fn);
+  }
+
+  /**
    * Age-based housekeeping: remove version backups past the retention window.
    * Called once during database initialization. Internal maintenance only —
    * not callable by tenants and not tenant-scoped (deterministic retention,
@@ -690,28 +698,35 @@ export class NodeRepository {
   }
 
   /**
-   * Get node by npm package name
+   * Get every node stored for an npm package. A package can ship several nodes,
+   * each of which gets its own row (#967).
    */
-  getNodeByNpmPackage(npmPackageName: string): any | null {
-    const row = this.db.prepare(
-      'SELECT * FROM nodes WHERE npm_package_name = ?'
-    ).get(npmPackageName) as any;
+  getNodesByNpmPackage(npmPackageName: string): any[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM nodes WHERE npm_package_name = ? ORDER BY node_type'
+    ).all(npmPackageName) as any[];
 
-    if (!row) return null;
-    return this.parseNodeRow(row);
+    return rows.map(row => this.parseNodeRow(row));
   }
 
   /**
-   * Delete unverified community rows for an npm package that are keyed by a
-   * node type other than the given one. Rows are keyed by node_type, so a sync
-   * that resolves a corrected node type for a package would otherwise insert a
-   * second row and leave the outdated one in search results (#949).
+   * Delete unverified community rows for an npm package that are keyed by a node
+   * type outside the given set. Rows are keyed by node_type, so a sync that
+   * resolves a corrected (#949) or larger (#967) set of node types for a package
+   * would otherwise insert new rows and leave the outdated ones in search results.
    */
-  deleteStaleCommunityNodes(npmPackageName: string, keepNodeType: string): number {
+  deleteStaleCommunityNodes(npmPackageName: string, keepNodeTypes: string[]): number {
+    // "Keep nothing" is a caller bug, not an intent to wipe the package: deleting
+    // every unverified row of a package is deleteCommunityNodes' job, not this one.
+    if (keepNodeTypes.length === 0) {
+      return 0;
+    }
+
     const result = this.db.prepare(`
       DELETE FROM nodes
-      WHERE npm_package_name = ? AND node_type != ? AND is_community = 1 AND is_verified = 0
-    `).run(npmPackageName, keepNodeType);
+      WHERE npm_package_name = ? AND is_community = 1 AND is_verified = 0
+        AND node_type NOT IN (${keepNodeTypes.map(() => '?').join(', ')})
+    `).run(npmPackageName, ...keepNodeTypes);
     return result.changes;
   }
 
