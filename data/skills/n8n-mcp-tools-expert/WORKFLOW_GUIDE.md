@@ -924,9 +924,9 @@ n8n_executions({
 
 ## n8n_evaluations (EVALUATION TEST RUNS)
 
-**Use when**: Reading evaluation test runs — polling a run started in the editor, comparing metrics across runs, pulling per-case results into a report or dashboard.
+**Use when**: Working with evaluation test runs — starting or cancelling a run, polling one in progress, comparing metrics across runs, pulling per-case results into a report or dashboard.
 
-Read-only. Requires n8n >= 2.30 **and an API key created on 2.30+** — keys created earlier silently lack the `testRun` scopes, so a 403 means "re-create the API key", not a bug. Runs exist only for workflows with an evaluation trigger that have been run from the n8n editor; triggering runs via the public API is not yet supported by n8n (planned upstream, will arrive as `run`/`cancel` actions).
+Reads (`list_runs`/`get_run`/`list_cases`) require n8n >= 2.30; `run`/`cancel` require n8n >= 2.32. Either way the API key must be created on that version or later — older keys silently lack the `testRun` scopes, so a 403 means "re-create the API key", not a bug. For `run`/`cancel` a 403 can also mean the key's owner lacks `workflow:execute` on the workflow. Runs exist only for workflows with an evaluation trigger.
 
 ### List Test Runs
 ```javascript
@@ -962,8 +962,33 @@ n8n_evaluations({
 // with n8n_executions({action: "get", id: executionId, mode: "error"})
 ```
 
+### Start a Run
+```javascript
+n8n_evaluations({
+  action: "run",
+  workflowId: "workflow-id"
+})
+// → {id, status: "new", createdAt} — poll with get_run until completed
+```
+`run` executes the workflow once per dataset row — real nodes fire (HTTP calls,
+DB writes, sends) and LLM metric calls cost money. Ask the user before starting
+a run, especially against a large dataset.
+
+### Cancel a Run
+```javascript
+n8n_evaluations({
+  action: "cancel",
+  workflowId: "workflow-id",
+  runId: "run-id"
+})
+// → accepted; the run moves to status "cancelled"
+```
+
 **Gotchas**:
-- A 404 can mean three things: the instance predates 2.30, the workflowId is wrong, or the runId belongs to a different workflow (the tool's error message disambiguates using the instance version)
+- A 404 can mean three things: the instance predates the action's minimum version, the workflowId is wrong, or the runId belongs to a different workflow (the tool's error message disambiguates using the instance version when it can read it)
+- Pre-2.32 instances answer `run`/`cancel` with 405, not 404 — the route exists but only accepts GET; the tool maps this to an upgrade hint
+- 409 on `run` = the workflow has no evaluation trigger; 409 on `cancel` = the run already finished
+- 402 on `run` = the license's evaluation-run quota is exhausted
 - Evaluations are license/quota-gated in n8n — an instance without the feature simply has no runs
 - Compare `metrics` across runs of the same workflow to catch prompt/model regressions
 
@@ -1072,7 +1097,7 @@ update → update → update → ... (56s avg between edits)
 - `n8n_workflow_versions` - Version control & rollback
 - `n8n_test_workflow` - Trigger execution
 - `n8n_executions` - Manage executions
-- `n8n_evaluations` - Read evaluation test runs (n8n 2.30+, read-only)
+- `n8n_evaluations` - Evaluation test runs: reads (n8n 2.30+), run/cancel (n8n 2.32+)
 - `n8n_manage_datatable` - Data table and row management
 - `n8n_manage_credentials` - Credential CRUD + schema discovery
 - `n8n_audit_instance` - Security audit (built-in + custom scan)
