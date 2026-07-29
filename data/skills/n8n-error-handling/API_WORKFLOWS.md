@@ -34,8 +34,8 @@ A two-node processing chain, both fallible, both routing to one responder:
 
 ```javascript
 // Turn on error outputs
-{ type: "updateNode", nodeName: "Fetch User",    changes: { onError: "continueErrorOutput" } }
-{ type: "updateNode", nodeName: "Call External", changes: { onError: "continueErrorOutput" } }
+{ type: "updateNode", nodeName: "Fetch User",    updates: { onError: "continueErrorOutput" } }
+{ type: "updateNode", nodeName: "Call External", updates: { onError: "continueErrorOutput" } }
 
 // Success path
 { type: "addConnection", source: "Webhook",      target: "Fetch User",      sourceIndex: 0 }

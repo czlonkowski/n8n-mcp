@@ -646,6 +646,16 @@ Earlier versions of this guide listed "known n8n issues" to ignore. Those false 
 
 One precise caveat on template literals: they only evaluate **inside `{{ }}`**. A bare backtick string written as a plain field value (no `{{ }}`) is literal text — n8n evaluates only `{{ }}`, everything else is passed through verbatim.
 
+### Fixed in n8n-mcp ≥ 2.66.2 (AI agent workflows)
+
+Three of these fired on essentially *every* agent workflow, so if you are reading old notes or an older server's output, recognize them as noise rather than defects:
+
+- **`INVALID_AI_TOOL_SOURCE` on a correctly configured vector store.** The validator matched `ai_tool` sources against a fixed node list, so any vector store wired into an agent's tool slot was rejected — even in the right `retrieve-as-tool` mode. It now reads each node's actual outputs expression. A genuinely wrong mode is still reported, but as the `AI_TOOL_MODE_MISMATCH` *warning* (→ ERROR_CATALOG.md), which names the parameter to change.
+- **"Community node \"AI Agent\"" needing `N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true`.** Two bugs in one message: "community" meant `package !== 'n8n-nodes-base'`, which swept in first-party `@n8n/n8n-nodes-langchain`, and the check inspected the *target* of the `ai_tool` connection — always the agent itself. The notice now fires on the tool node and tests the real community flag. Do not set that environment variable because you saw this on a first-party node.
+- **"AI Agent has no systemMessage" on agents that clearly had one.** The check read `parameters.systemMessage`, but n8n stores it under `options`. Setting the field never silenced the notice — and an agent "fixing" it by writing the top-level property was writing a field n8n ignores. Keep the prompt in `options.systemMessage`.
+
+Related but not a false positive: `is_ai_tool` on **community** nodes used to be inferred from the node *name* containing "ai" (901 of 1,455 rows, including `n8n-nodes-raia`). Detection now requires a declared `usableAsTool` or the package's codex AI category, and `get_node` reports which in a new `aiToolFlagSource` field.
+
 ---
 
 ## Summary

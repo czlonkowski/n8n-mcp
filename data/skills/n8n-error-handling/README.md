@@ -108,7 +108,7 @@ The workflow-level catch-all.
 ```javascript
 // 1) create the error output
 { type: "updateNode", nodeName: "HTTP Request",
-  changes: { onError: "continueErrorOutput" } }
+  updates: { onError: "continueErrorOutput" } }
 
 // 2) wire it (sourceIndex 1 = error output)
 { type: "addConnection", source: "HTTP Request", target: "Handle Error", sourceIndex: 1 }
@@ -117,7 +117,7 @@ The workflow-level catch-all.
 ### Self-healing on network nodes
 ```javascript
 { type: "updateNode", nodeName: "HTTP Request",
-  changes: { retryOnFail: true, maxTries: 3, waitBetweenTries: 5000 } }
+  updates: { retryOnFail: true, maxTries: 3, waitBetweenTries: 5000 } }
 ```
 
 ### Set the status code on an error Respond (don't leave it 200)

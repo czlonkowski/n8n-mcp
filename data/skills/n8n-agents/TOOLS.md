@@ -68,6 +68,15 @@ Capability the agent needs?
       → MCP Client Tool
 ```
 
+### Community nodes as tools
+
+Two things differ when the tool node comes from a community package rather than `n8n-nodes-base` or `@n8n/n8n-nodes-langchain`:
+
+- **The instance must opt in.** Community packages are only usable as agent tools when the n8n instance runs with `N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true`. `validate_workflow` raises this as a notice on the tool node. It is an instance-level environment variable, so it is the operator's change to make, not something you can fix in the workflow — surface it to the user rather than working around it.
+- **Trust the tool flag less.** For core nodes, `isAITool` reflects a declared `usableAsTool` property. For community nodes, n8n-mcp cannot always read that, and falls back to the package's codex AI category. `get_node` says which in `aiToolFlagSource`: `declared-property` is authoritative, `declared-or-ai-category` means the flag may be an inference. If you are relying on an unverified community node as a tool, confirm against the package's own docs before building on it.
+
+Both notices moved onto the *tool* node in n8n-mcp 2.66.2. On older servers this warning named the AI Agent instead, which was always wrong — see **n8n-validation-expert / FALSE_POSITIVES.md**.
+
 ---
 
 ## `$fromAI()`: how the agent fills tool parameters

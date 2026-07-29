@@ -15,9 +15,10 @@ Common validation errors by priority:
 | type_mismatch | Medium | Error | ❌ |
 | invalid_expression | Medium | Error | ❌ |
 | invalid_reference | Low | Error | ❌ |
+| AI_TOOL_MODE_MISMATCH | Low | Warning | ❌ |
 | operator_structure | Lowest | Not flagged | ✅ normalized on save |
 
-> **operator_structure** is no longer a validation finding (n8n-mcp ≥ 2.63.0). n8n derives unary/binary operators from the operator name and defaults the metadata, so both the raw and normalized shapes validate clean; the sanitizer just tidies the canonical form on save. See section 9.
+> **operator_structure** is no longer a validation finding (n8n-mcp ≥ 2.63.0). n8n derives unary/binary operators from the operator name and defaults the metadata, so both the raw and normalized shapes validate clean; the sanitizer just tidies the canonical form on save. See section 10.
 
 ---
 
@@ -798,9 +799,39 @@ SELECT * FROM users WHERE active = true LIMIT 1000
 
 ---
 
+### 9. AI_TOOL_MODE_MISMATCH
+
+**What it means**: A node is wired into an AI Agent's `ai_tool` slot, but that node only exposes an `ai_tool` output for a particular parameter value — and it is currently set to something else.
+
+**Severity**: Warning (n8n-mcp ≥ 2.66.2)
+
+**When to fix**: Always. The connection is real in the JSON, but the agent will not get a working tool.
+
+This is the vector-store case in practice. A vector store exposes `ai_tool` only in `retrieve-as-tool` mode; in `insert` or `retrieve` mode the output does not exist.
+
+**Warning**:
+```json
+{
+  "code": "AI_TOOL_MODE_MISMATCH",
+  "message": "Node \"Pinecone Vector Store\" connects to an AI Agent as a tool, but its ai_tool output only exists when mode is \"retrieve-as-tool\" (current mode: \"insert\"). Set mode to \"retrieve-as-tool\"."
+}
+```
+
+**Fix** — set the mode the message names:
+```javascript
+{ type: "updateNode", nodeName: "Pinecone Vector Store",
+  updates: { "parameters.mode": "retrieve-as-tool" } }
+```
+
+Note the unset case: when `mode` is absent the node's own default applies, so the warning still fires and reads "(mode is not set, so the default applies)". Set the mode explicitly rather than relying on the default. If `mode` is itself an expression, the validator leaves it alone — it cannot know the runtime value, so verify that path yourself.
+
+**Before 2.66.2** this situation produced a false **error** (`INVALID_AI_TOOL_SOURCE`) on every vector store wired as a tool, including correctly configured ones. See FALSE_POSITIVES.md.
+
+---
+
 ## Auto-Sanitization Fixes
 
-### 9. operator_structure
+### 10. operator_structure
 
 **What it means**: The exact shape of an IF/Switch/Filter condition (`singleValue`, `conditions.options` metadata)
 

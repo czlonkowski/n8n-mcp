@@ -48,7 +48,7 @@ Get one without the other and you hit a failure mode:
 ```javascript
 // 1) Turn on the error output (creates main[1])
 { type: "updateNode", nodeName: "HTTP Request",
-  changes: { onError: "continueErrorOutput" } }
+  updates: { onError: "continueErrorOutput" } }
 
 // 2) Wire the error output to a handler. sourceIndex: 1 = the error output.
 { type: "addConnection",
@@ -82,7 +82,7 @@ Before you build error branches, absorb the transient failures so they never rea
 
 ```javascript
 { type: "updateNode", nodeName: "HTTP Request",
-  changes: {
+  updates: {
     retryOnFail: true,
     maxTries: 3,
     waitBetweenTries: 5000   // ms

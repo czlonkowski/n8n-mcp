@@ -308,6 +308,16 @@ Step 4: Use in Workflow
 }
 ```
 
+### Community node types are less certain than core ones
+
+For **core and verified** nodes the returned type is authoritative — use it as-is. For **unverified community** nodes (`source: "community"`) the type suffix is derived from the package's own `n8n.nodes` manifest, which is accurate but still a derivation, not a reading of the node descriptor. An isolated mismatch remains possible.
+
+The symptom of a wrong type is unmistakable and happens at import, not at validation: n8n rejects the workflow with **"Install this node to use it"** even though the package is installed. If you hit that, re-check the type against the package on npm rather than assuming the node is missing.
+
+**Upgrade note (n8n-mcp ≥ 2.66.3)**: older servers string-mangled the *package name* into the suffix, so `n8n-nodes-globals` was reported as `n8n-nodes-globals.globals` when the package's only node is `globalConstants`. 45 such types were fabricated, and every workflow built from one failed to import. If you are on an older server, verify any community node type before building with it — or upgrade, which repairs the bundled database.
+
+Also note that one npm package still yields one row even when it ships several nodes, so a multi-node community package may only surface its first node in search results.
+
 ---
 
 ## Examples

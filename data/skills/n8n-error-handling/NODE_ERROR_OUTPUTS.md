@@ -16,15 +16,10 @@ Set `onError: "continueErrorOutput"` on the node. This is what *adds* the second
 
 ```javascript
 { type: "updateNode", nodeName: "Google Sheets",
-  changes: { onError: "continueErrorOutput" } }
+  updates: { onError: "continueErrorOutput" } }
 ```
 
-Surgical alternative if you're touching only this field:
-
-```javascript
-{ type: "patchNodeField", nodeName: "Google Sheets",
-  fieldPath: "onError", value: "continueErrorOutput" }
-```
+The key is `updates`, not `changes` — `updateNode` rejects a `changes` object outright, so a typo here fails the whole call rather than silently doing nothing. `patchNodeField` is not an alternative for this field: it does strict find/replace inside an existing **string**, so it cannot set a scalar that may not be there yet. Use `updateNode` for `onError`.
 
 The valid `onError` values:
 

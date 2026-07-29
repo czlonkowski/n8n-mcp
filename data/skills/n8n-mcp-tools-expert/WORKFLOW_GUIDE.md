@@ -226,6 +226,32 @@ Remove properties by setting them to `null`:
 }
 ```
 
+### Addressing Array Elements in Update Paths
+
+Array elements are addressed by index, in either bracket or dot form. Both resolve to the same element:
+
+```javascript
+{
+  type: "updateNode",
+  nodeName: "Edit Fields",
+  updates: {
+    "parameters.assignments.assignments[0].value": "new value",  // bracket form
+    "parameters.assignments.assignments.1.value": "other value"  // dot form
+  }
+}
+```
+
+**Upgrade note (n8n-mcp ≥ 2.66.3)**: on older servers the bracket form was parsed as a literal key. `assignments[0]` became a junk property sitting *next to* the array, the call reported success, and the element you meant to change was never touched — a silent no-op that looked like a clean edit. If you are on an older server, use the dot form (`assignments.0.value`), which always worked. Upgrading is the real fix.
+
+**Rules that apply to both forms**:
+
+- **Out-of-range indices are rejected.** You cannot append by writing to `index === length` — add elements by rewriting the parent array.
+- **Removal splices.** Setting an element to `null` removes it and shifts later elements down; it does not leave a JSON `null` hole.
+- **Batched removals on the same array are applied highest-index-first**, so the indices you pass are the ones you read off the current node. Removing `[0]` and `[1]` from `[A, B, C]` removes A and B — not A and C.
+- **A bad key fails the whole `updates` object.** Malformed brackets (`a[x]`, `a[]`, unclosed), empty segments (`a..b`), and non-index segments on an array (`parameters.arr.length`) now error instead of silently corrupting the node. The node is left untouched — including under `continueOnError`.
+
+`patchNodeField`'s `fieldPath` uses the same path syntax, so `parameters.assignments.assignments[6].value` and `...assignments.6.value` both work there too.
+
 ### patchNodeField (Surgical String Edits)
 
 Use `patchNodeField` for strict find/replace edits on string fields — code, HTML, email templates, JSON bodies. Unlike `updateNode` with `__patch_find_replace` (which silently warns on misses), `patchNodeField` is strict: it errors if the find string is not found, and errors if multiple matches are found (preventing ambiguous replacements).
@@ -1083,7 +1109,7 @@ update → update → update → ... (56s avg between edits)
 ## Summary
 
 **Most Important**:
-1. **n8n_update_partial_workflow** is most-used tool (38,287 uses, 19 operation types)
+1. **n8n_update_partial_workflow** is most-used tool (38,287 uses, 20 operation types)
 2. Include **intent** parameter for better responses
 3. Workflows built **iteratively** (56s avg between edits)
 4. Use **smart parameters** (branch="true", case=0) for clarity

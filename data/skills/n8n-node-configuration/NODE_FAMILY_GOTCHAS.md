@@ -41,7 +41,7 @@ Each entry: **symptom** (what you see at runtime), **cause** (why), **fix** (in 
 }
 ```
 
-Apply surgically with `patchNodeField` on `parameters.options.fallbackOutput`, or with `updateNode` for the full `options` object. After wiring, confirm the fallback branch goes somewhere real (a log, an alert, a NoOp) — an enabled fallback that connects to nothing drops items just the same.
+Apply surgically with `updateNode` and a dotted path — `updates: {"parameters.options.fallbackOutput": "extra"}` — or with `updateNode` for the full `options` object. (`patchNodeField` is the wrong tool here: it does find/replace *inside* an existing string, so it cannot set an enum that may not be present yet.) After wiring, confirm the fallback branch goes somewhere real (a log, an alert, a NoOp) — an enabled fallback that connects to nothing drops items just the same.
 
 ---
 

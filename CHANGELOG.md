@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.67.2] - 2026-07-29
+
+### Changed
+
+- **Bundled skills pack synced to n8n-skills v1.28.0.** The pack had skipped 2.66.2 and 2.66.3, so it documented none of the behavior those releases changed. It now covers: array elements in `updateNode` paths (both bracket and dot-numeric forms, plus the rules that outlived the fix — out-of-range rejected so nothing can be appended, removal splices, batched removals applied highest-index-first, and one bad key failing the whole `updates` object); community node types as derived rather than read, with "Install this node to use it" at import named as the symptom of a wrong one; the new `AI_TOOL_MODE_MISMATCH` warning including its unset-mode and mode-as-expression cases; the three agent-workflow false positives 2.66.2 retired (`INVALID_AI_TOOL_SOURCE` on correctly configured vector stores, `Community node "AI Agent"`, and the `systemMessage` advisory that fired regardless of configuration); and, for community tool nodes, that `N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE` is the operator's change to make while `aiToolFlagSource` says whether `isAITool` was declared or inferred.
+- **Corrections in the pack unrelated to the version delta.** The error-handling skill keyed `updateNode` on `changes` in six places across four files — the diff engine rejects that object outright, so the skill's two headline operations (enabling an error output, setting `retryOnFail`) failed exactly as written. The same skill offered `patchNodeField` with a `value` parameter as a surgical alternative for `onError`, a shape the operation does not have and could not use on a scalar; node-configuration made the same mismatch for Switch's `options.fallbackOutput`. The `n8n_update_partial_workflow` operation count is corrected from 19 to 20.
+
 ## [2.67.1] - 2026-07-29
 
 ### Changed
