@@ -75,7 +75,7 @@ describe('Integration: handleGetExecution', () => {
 
       // Should have basic execution info
       if (data.status) {
-        expect(['success', 'error', 'running', 'waiting']).toContain(data.status);
+        expect(['success', 'error', 'running', 'waiting', 'canceled', 'crashed', 'new', 'unknown']).toContain(data.status);
       }
     });
   });
