@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.67.3] - 2026-08-03
+
+### Changed
+
+- **Updated n8n to 2.32.x.** Bumped `n8n-nodes-base` 2.31.3 → 2.32.4, `n8n-core` 2.31.3 → 2.32.2, `n8n-workflow` 2.31.3 → 2.32.1, and `@n8n/n8n-nodes-langchain` 2.31.3 → 2.32.4 — the package set n8n 2.32.7 ships. Rebuilt the node database (829 core nodes: 700 from `n8n-nodes-base` + 129 from `@n8n/n8n-nodes-langchain`) and refreshed community nodes to 1,583 rows (1,340 verified), with READMEs and AI summaries at 1,569/1,583 (the remainder are packages unpublished from npm). README badge and node counts updated to 2,412 total. n8n 2.32 is also the first stable n8n exposing the evaluation `run`/`cancel` endpoints that `n8n_evaluations` gained in n8n-mcp 2.67.0.
+
 ## [2.67.2] - 2026-07-29
 
 ### Fixed
