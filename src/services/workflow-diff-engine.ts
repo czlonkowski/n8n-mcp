@@ -31,6 +31,7 @@ import {
   CleanStaleConnectionsOperation,
   ReplaceConnectionsOperation,
   TransferWorkflowOperation,
+  MoveToFolderOperation,
   PatchNodeFieldOperation
 } from '../types/workflow-diff';
 import { Workflow, WorkflowNode, WorkflowConnection, WorkflowNodeGroup } from '../types/n8n-api';
@@ -488,6 +489,8 @@ export class WorkflowDiffEngine {
         return this.validateSetNodeGroups(workflow, operation as SetNodeGroupsOperation);
       case 'transferWorkflow':
         return this.validateTransferWorkflow(workflow, operation as TransferWorkflowOperation);
+      case 'moveToFolder':
+        return this.validateMoveToFolder(workflow, operation as MoveToFolderOperation);
       case 'activateWorkflow':
         return this.validateActivateWorkflow(workflow, operation);
       case 'deactivateWorkflow':
@@ -565,6 +568,9 @@ export class WorkflowDiffEngine {
         break;
       case 'transferWorkflow':
         this.applyTransferWorkflow(workflow, operation as TransferWorkflowOperation);
+        break;
+      case 'moveToFolder':
+        this.applyMoveToFolder(workflow, operation as MoveToFolderOperation);
         break;
     }
   }
@@ -1704,6 +1710,24 @@ export class WorkflowDiffEngine {
   private applyDeactivateWorkflow(workflow: Workflow, operation: DeactivateWorkflowOperation): void {
     (workflow as any)._shouldDeactivate = true;
     (workflow as any)._shouldActivate = false;
+  }
+
+  /**
+   * Folder move (n8n 2.32+) — rides the regular PUT body as write-only
+   * `parentFolderId`: null means project root, a string names the target
+   * folder. Whether the folder exists is n8n's call on write.
+   */
+  private validateMoveToFolder(_workflow: Workflow, operation: MoveToFolderOperation): string | null {
+    const target = operation.parentFolderId;
+    if (target !== null && (typeof target !== 'string' || target.trim().length === 0)) {
+      return 'moveToFolder requires parentFolderId to be a non-empty folder ID string, or null for the project root';
+    }
+    return null;
+  }
+
+  private applyMoveToFolder(workflow: Workflow, operation: MoveToFolderOperation): void {
+    const target = operation.parentFolderId;
+    workflow.parentFolderId = target === null ? null : target.trim();
   }
 
   // Transfer operation — uses dedicated API call (PUT /workflows/{id}/transfer)

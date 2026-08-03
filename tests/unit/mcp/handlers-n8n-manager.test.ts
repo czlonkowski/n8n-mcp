@@ -308,6 +308,43 @@ describe('handlers-n8n-manager', () => {
       expect(n8nValidation.validateWorkflowStructure).toHaveBeenCalledWith(input);
     });
 
+    it('forwards parentFolderId to the create payload (folder placement, n8n 2.32+)', async () => {
+      const testWorkflow = createTestWorkflow();
+      const input = {
+        name: 'Test Workflow',
+        nodes: testWorkflow.nodes,
+        connections: testWorkflow.connections,
+        parentFolderId: 'folder-abc',
+      };
+
+      mockApiClient.createWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleCreateWorkflow(input);
+
+      expect(result.success).toBe(true);
+      expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({ parentFolderId: 'folder-abc' }),
+        expect.anything()
+      );
+    });
+
+    it('treats a blank parentFolderId as omitted (lossy MCP clients, #774)', async () => {
+      const testWorkflow = createTestWorkflow();
+      const input = {
+        name: 'Test Workflow',
+        nodes: testWorkflow.nodes,
+        connections: testWorkflow.connections,
+        parentFolderId: '',
+      };
+
+      mockApiClient.createWorkflow.mockResolvedValue(testWorkflow);
+
+      await handlers.handleCreateWorkflow(input);
+
+      const payload = mockApiClient.createWorkflow.mock.calls[0][0];
+      expect(payload.parentFolderId).toBeUndefined();
+    });
+
     it('normalizes HTTP MCP serialized workflow fields before validation and create (#814)', async () => {
       const input = {
         name: 'Serialized Workflow',

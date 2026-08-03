@@ -537,6 +537,26 @@ describe('n8n-validation', () => {
         expect(cleaned.settings).toEqual({ executionOrder: 'v1', availableInMCP: false });
       });
 
+      it('should forward parentFolderId including an explicit null (folder move, n8n 2.32+)', () => {
+        const base = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: { executionOrder: 'v1' },
+        } as any;
+
+        // A folder ID moves the workflow there
+        const moved = cleanWorkflowForUpdate({ ...base, parentFolderId: 'folder-1' });
+        expect(moved.parentFolderId).toBe('folder-1');
+
+        // null is meaningful: move to the project root — must NOT be dropped
+        const toRoot = cleanWorkflowForUpdate({ ...base, parentFolderId: null });
+        expect(toRoot).toHaveProperty('parentFolderId', null);
+
+        // Absent means "leave the folder unchanged" — must NOT be sent at all
+        expect(cleanWorkflowForUpdate(base)).not.toHaveProperty('parentFolderId');
+      });
+
       it('should exclude versionCounter for n8n 1.118.1+ compatibility', () => {
         const workflow = {
           name: 'Test Workflow',

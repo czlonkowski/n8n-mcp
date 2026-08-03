@@ -454,6 +454,9 @@ const createWorkflowSchema = z.object({
   // Validated by parseNodeGroupsInput() — see services/node-groups.ts
   nodeGroups: z.any().optional(),
   projectId: z.string().optional(),
+  // Folder placement (n8n 2.32+). Omit for the project root; blank strings from
+  // lossy MCP clients are treated as omitted (issue #774 pattern).
+  parentFolderId: optionalEmptyAware(z.string()),
 });
 
 const updateWorkflowSchema = z.object({
@@ -464,6 +467,10 @@ const updateWorkflowSchema = z.object({
   settings: z.preprocess(normalizeMcpJsonValue, z.any()).optional(),
   // Validated by parseNodeGroupsInput() — see services/node-groups.ts
   nodeGroups: z.any().optional(),
+  // Folder move (n8n 2.32+): a folder ID moves the workflow there, null moves it to the
+  // project root, omitting the field leaves the current folder unchanged. Write-only in
+  // n8n's schema, so the merged GET response can never re-send a stale value.
+  parentFolderId: optionalEmptyAware(z.string().nullable()),
   createBackup: z.boolean().optional(),
   intent: z.string().optional(),
 });
@@ -1055,12 +1062,17 @@ export async function handleUpdateWorkflow(
   const sessionId = `mutation_${Date.now()}_${randomUUID()}`;
   let workflowBefore: any = null;
   let userIntent = 'Full workflow update';
+  // Tracked outside the try: a failed PUT that carried parentFolderId may still have
+  // persisted the folder move (write-only in n8n, so it can be neither read back nor
+  // rolled back), and the error path below must say so.
+  let sentParentFolderId = false;
 
   try {
     const client = ensureApiConfigured(context);
     const input = updateWorkflowSchema.parse(args);
     const { id, createBackup, intent, ...updateData } = input;
     userIntent = intent || 'Full workflow update';
+    sentParentFolderId = updateData.parentFolderId !== undefined;
 
     // n8n's Public API PUT /workflows is a FULL replace: the write schema requires name,
     // nodes, connections AND settings to all be present. This tool exposes them as optional,
@@ -1225,11 +1237,16 @@ export async function handleUpdateWorkflow(
     }
 
     if (error instanceof N8nApiError) {
+      const baseDetails = error.details as Record<string, unknown> | undefined;
       return {
         success: false,
-        error: getUserFriendlyErrorMessage(error),
+        error: getUserFriendlyErrorMessage(error) + (sentParentFolderId
+          ? ' A folder move in the failed update may still have persisted - n8n cannot report or restore folder placement.'
+          : ''),
         code: error.code,
-        details: error.details as Record<string, unknown> | undefined
+        details: sentParentFolderId
+          ? { ...(baseDetails ?? {}), folderMoveMayHavePersisted: true }
+          : baseDetails
       };
     }
 
@@ -3947,6 +3964,214 @@ export async function handleGetCredentialSchema(args: unknown, context?: Instanc
     };
   } catch (error) {
     return handleCrudError(error);
+  }
+}
+
+// ── Manage Folders ─────────────────────────────────────────────────────────
+//
+// Workflow folders (n8n public API 2.19+, licensed via feat:folders — available from
+// the registered free Community tier up). Only the folder-create route accepts the
+// `personal` project alias, so every other action resolves it through
+// N8nApiClient.resolvePersonalProjectId(). Moves use n8n's PROJECT_ROOT sentinel '0'
+// for "the project root" (folder.service.ts special-cases it; the id is reserved).
+
+/** n8n's sentinel for "the project root" in folder parent/transfer targets. */
+const FOLDER_PROJECT_ROOT = '0';
+
+const folderProjectSchema = z.object({
+  // The alias is the documented default: most folder users are on registered
+  // Community instances, which have exactly one (personal) project. The default is
+  // applied via transform, NOT .default(): ZodDefault fires only on a raw undefined,
+  // while lossy MCP clients send '' for omitted fields (issue #774) — the preprocess
+  // turns that into undefined only after the default check has already passed.
+  projectId: optionalEmptyAware(z.string().trim().min(1)).transform((v) => v ?? 'personal'),
+});
+
+const folderIdSchema = folderProjectSchema.extend({
+  folderId: z.string().trim().min(1),
+});
+
+// The published tool schema declares parentFolderId as string|null tool-wide (null is
+// how `move` addresses the project root). For create/list, null simply means "no
+// parent" — the same as omitting the field — so accept it instead of failing a
+// spec-compliant client on a Zod error.
+const nullOrEmptyToUndefined = (v: unknown) => (v === null ? undefined : emptyToUndefined(v));
+const optionalParentFolderId = z.preprocess(nullOrEmptyToUndefined, z.string().trim().min(1).optional());
+
+const createFolderSchema = folderProjectSchema.extend({
+  name: z.string().trim().min(1),
+  parentFolderId: optionalParentFolderId,
+});
+
+const listFoldersSchema = folderProjectSchema.extend({
+  nameFilter: optionalEmptyAware(z.string().trim().min(1)),
+  parentFolderId: optionalParentFolderId,
+  sortBy: z.enum(['name:asc', 'name:desc', 'createdAt:asc', 'createdAt:desc', 'updatedAt:asc', 'updatedAt:desc']).optional(),
+  skip: z.number().int().min(0).optional(),
+  take: z.number().int().min(1).max(100).optional(),
+});
+
+const renameFolderSchema = folderIdSchema.extend({
+  name: z.string().trim().min(1),
+});
+
+const moveFolderSchema = folderIdSchema.extend({
+  // null = move to the project root; mapped to the PROJECT_ROOT sentinel below.
+  parentFolderId: z.preprocess(emptyToUndefined, z.string().trim().min(1).nullable()),
+});
+
+const deleteFolderSchema = folderIdSchema.extend({
+  transferToFolderId: optionalEmptyAware(z.string().trim().min(1)),
+});
+
+/**
+ * Folder-specific error shaping on top of the generic CRUD mapping. n8n's answers here
+ * are terse: a 403 covers both a key without folder:* scopes and an instance whose
+ * license lacks feat:folders (folders unlock at the registered free Community tier);
+ * a 404 covers a missing project/folder and an instance too old to have the folders
+ * API at all (added in n8n 2.19).
+ */
+function handleFolderError(error: unknown): McpToolResponse {
+  const response = handleCrudError(error);
+  if (error instanceof N8nApiError) {
+    // n8n's own messages often end without punctuation - normalize before appending.
+    const appendHint = (hint: string) => {
+      const base = (response.error ?? '').trimEnd();
+      response.error = `${base}${/[.!?]$/.test(base) ? '' : '.'} ${hint}`;
+    };
+    if (error.statusCode === 403) {
+      appendHint('Folders need an API key with folder:* scopes AND a licensed instance: folders unlock on the registered free Community tier (Settings -> Usage and plan -> register) and up.');
+    } else if (error.statusCode === 404) {
+      appendHint('Check the projectId and folderId; on n8n older than 2.19 the folders API does not exist at all.');
+    }
+  }
+  return response;
+}
+
+/** Resolve the `personal` alias for the folder routes that require a real project ID. */
+async function resolveFolderProjectId(client: N8nApiClient, projectId: string): Promise<string> {
+  return projectId === 'personal' ? await client.resolvePersonalProjectId() : projectId;
+}
+
+/**
+ * Fields requested from the folder list endpoint. Fixed rather than caller-selectable:
+ * counts and the path breadcrumb are what make a listing useful to an agent, and the
+ * n8n default (id/name/timestamps only) would hide them.
+ */
+const FOLDER_LIST_SELECT = ['id', 'name', 'createdAt', 'updatedAt', 'parentFolder', 'workflowCount', 'subFolderCount', 'path'];
+
+export async function handleCreateFolder(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = createFolderSchema.parse(args);
+    // The create route resolves `personal` server-side - pass it through untouched.
+    const folder = await client.createFolder(input.projectId, {
+      name: input.name,
+      ...(input.parentFolderId ? { parentFolderId: input.parentFolderId } : {}),
+    });
+    if (!folder || !folder.id) {
+      return { success: false, error: 'Folder creation failed: n8n API returned an empty or invalid response' };
+    }
+    return {
+      success: true,
+      data: { id: folder.id, name: folder.name, parentFolderId: folder.parentFolderId ?? null },
+      message: `Folder "${folder.name}" created with ID: ${folder.id}. Place workflows in it via n8n_create_workflow's parentFolderId or the moveToFolder operation of n8n_update_partial_workflow.`,
+    };
+  } catch (error) {
+    return handleFolderError(error);
+  }
+}
+
+export async function handleListFolders(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = listFoldersSchema.parse(args || {});
+    const projectId = await resolveFolderProjectId(client, input.projectId);
+    const filter: Record<string, string> = {};
+    if (input.nameFilter) filter.name = input.nameFilter;
+    if (input.parentFolderId) filter.parentFolderId = input.parentFolderId;
+    const result = await client.listFolders(projectId, {
+      ...(Object.keys(filter).length > 0 ? { filter } : {}),
+      select: FOLDER_LIST_SELECT,
+      sortBy: input.sortBy ?? 'updatedAt:desc',
+      skip: input.skip ?? 0,
+      take: input.take ?? 50,
+    });
+    return {
+      success: true,
+      data: {
+        folders: result.data,
+        count: result.count, // Total matching the query, not the page size
+        projectId,
+      },
+    };
+  } catch (error) {
+    return handleFolderError(error);
+  }
+}
+
+export async function handleGetFolder(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = folderIdSchema.parse(args);
+    const projectId = await resolveFolderProjectId(client, input.projectId);
+    const folder = await client.getFolder(projectId, input.folderId);
+    return { success: true, data: { ...folder, projectId } };
+  } catch (error) {
+    return handleFolderError(error);
+  }
+}
+
+export async function handleRenameFolder(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = renameFolderSchema.parse(args);
+    const projectId = await resolveFolderProjectId(client, input.projectId);
+    const folder = await client.updateFolder(projectId, input.folderId, { name: input.name });
+    return {
+      success: true,
+      data: { id: folder.id, name: folder.name },
+      message: `Folder renamed to "${folder.name}"`,
+    };
+  } catch (error) {
+    return handleFolderError(error);
+  }
+}
+
+export async function handleMoveFolder(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = moveFolderSchema.parse(args);
+    const projectId = await resolveFolderProjectId(client, input.projectId);
+    const target = input.parentFolderId ?? FOLDER_PROJECT_ROOT;
+    const folder = await client.updateFolder(projectId, input.folderId, { parentFolderId: target });
+    return {
+      success: true,
+      data: { id: folder.id, name: folder.name, parentFolderId: folder.parentFolderId ?? null },
+      message: target === FOLDER_PROJECT_ROOT
+        ? `Folder "${folder.name}" moved to the project root`
+        : `Folder "${folder.name}" moved under folder ${target}`,
+    };
+  } catch (error) {
+    return handleFolderError(error);
+  }
+}
+
+export async function handleDeleteFolder(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = deleteFolderSchema.parse(args);
+    const projectId = await resolveFolderProjectId(client, input.projectId);
+    await client.deleteFolder(projectId, input.folderId, input.transferToFolderId);
+    return {
+      success: true,
+      data: { id: input.folderId, deleted: true },
+      message: input.transferToFolderId
+        ? `Folder ${input.folderId} deleted; contents transferred to ${input.transferToFolderId === FOLDER_PROJECT_ROOT ? 'the project root' : `folder ${input.transferToFolderId}`}`
+        : `Folder ${input.folderId} deleted; its workflows were moved to the project root and ARCHIVED, sub-folders were deleted`,
+    };
+  } catch (error) {
+    return handleFolderError(error);
   }
 }
 

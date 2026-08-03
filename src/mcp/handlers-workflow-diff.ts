@@ -103,6 +103,10 @@ const workflowDiffSchema = z.object({
     nodeGroups: z.preprocess(normalizeMcpJsonValue, z.any()).optional(),
     // Transfer operation
     destinationProjectId: z.string().min(1).optional(),
+    // Folder move (moveToFolder). Must be declared here — unknown keys are stripped, and a
+    // moveToFolder op arriving without its payload would fail validation instead of moving.
+    // null is meaningful: it moves the workflow to the project root.
+    parentFolderId: z.string().min(1).nullable().optional(),
     // Aliases: LLMs often use "id" instead of "nodeId" — accept both
     id: z.string().optional(),
   }).transform((op) => {
@@ -442,9 +446,15 @@ export async function handleUpdatePartialWorkflow(
           // Re-throw with rollback context attached so the outer N8nApiError
           // catch (below) surfaces it with the user-friendly formatting.
           if (updateError instanceof N8nApiError) {
+            // A folder move cannot be rolled back: workflowBefore comes from a GET, and
+            // n8n never returns parentFolderId (write-only), so the restore PUT omits it
+            // and the move - if the failed PUT persisted - survives. Say so rather than
+            // claiming a full restoration.
+            const folderMoveInPayload = (diffResult.workflow as any)?.parentFolderId !== undefined;
             const augmentedDetails: Record<string, unknown> = {
               ...((updateError.details as Record<string, unknown>) ?? {}),
               rollbackPerformed,
+              ...(folderMoveInPayload && rollbackPerformed ? { folderMoveMayHavePersisted: true } : {}),
               ...(rollbackErrorMessage ? { rollbackError: rollbackErrorMessage } : {}),
               ...(workflowBefore.versionId ? { priorVersionId: workflowBefore.versionId } : {}),
               // A rollback can have to drop a canvas group the server no longer accepts. That is a
@@ -456,7 +466,9 @@ export async function handleUpdatePartialWorkflow(
                 : {}),
             };
             const suffix = rollbackPerformed
-              ? ' (workflow restored to prior state)'
+              ? (folderMoveInPayload
+                  ? ' (workflow restored to prior state; a folder move in the failed update may have persisted — n8n cannot report or restore folder placement)'
+                  : ' (workflow restored to prior state)')
               : (rollbackErrorMessage
                   ? ' (rollback also failed; workflow may be in a broken state — try n8n_workflow_versions for a backup)'
                   : '');
@@ -745,6 +757,10 @@ function inferIntentFromOperations(operations: any[]): string {
         return 'Deactivate workflow';
       case 'transferWorkflow':
         return `Transfer workflow to project ${op.destinationProjectId || ''}`.trim();
+      case 'moveToFolder':
+        return op.parentFolderId === null
+          ? 'Move workflow to project root'
+          : `Move workflow to folder ${op.parentFolderId || ''}`.trim();
       default:
         return `Workflow ${op.type}`;
     }

@@ -390,6 +390,9 @@ These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
 - **`n8n_executions`** - Unified execution management (list, get, delete)
 - **`n8n_evaluations`** - Run and read evaluation test runs (list runs, aggregated metrics, per-case results on n8n 2.30+; trigger and cancel on 2.32+)
 
+#### Folder Management
+- **`n8n_manage_folders`** - Manage workflow folders (create, list, get, rename, move, delete; n8n 2.19+). Place workflows into folders via `n8n_create_workflow`'s `parentFolderId` or `n8n_update_partial_workflow`'s `moveToFolder` operation (n8n 2.32+)
+
 #### Data Table Management
 - **`n8n_manage_datatable`** - Manage n8n data tables and rows (list, get, create, update, delete)
 
@@ -413,7 +416,7 @@ DISABLED_TOOLS=n8n_create_workflow,n8n_update_full_workflow,n8n_update_partial_w
 For tools that bundle read and write operations under one name, block only the destructive operations while keeping `list` and `get`:
 
 ```bash
-DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel
+DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete
 ```
 
 Combine with a read-only n8n API key (Settings → API in your n8n instance) for defence in depth. See [Read-Only Deployment Recipe](./docs/HTTP_DEPLOYMENT.md#read-only-deployment-recipe) for the full setup guide.

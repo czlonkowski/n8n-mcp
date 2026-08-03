@@ -92,6 +92,7 @@ export interface Workflow {
   id?: string;
   name: string;
   description?: string; // Returned by GET but must be excluded from PUT/PATCH (n8n API limitation, Issue #431)
+  parentFolderId?: string | null; // Write-only (n8n 2.32+): create places into a folder, update moves (null = project root). Never present in GET responses.
   nodes: WorkflowNode[];
   connections: WorkflowConnection;
   nodeGroups?: WorkflowNodeGroup[]; // Canvas groups (n8n 2.28+); absent on older instances
@@ -168,6 +169,58 @@ export interface Tag {
   workflowIds?: string[];
   createdAt?: string;
   updatedAt?: string;
+}
+
+// Folder Types (n8n public API 2.19+; workflow placement via parentFolderId needs 2.32+)
+
+/**
+ * A workflow folder as returned by /projects/{projectId}/folders.
+ * List responses include only the fields named in the request's `select`;
+ * the detail endpoint adds recursive totals instead.
+ */
+export interface Folder {
+  id: string;
+  name: string;
+  parentFolderId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  // Present only when requested via `select` on the list endpoint
+  parentFolder?: { id: string; name: string } | null;
+  project?: { id: string; name: string; type?: string };
+  tags?: Array<{ id: string; name: string }>;
+  workflowCount?: number; // Direct children only
+  subFolderCount?: number; // Direct children only
+  path?: string[]; // Folder names from root to this folder
+  // Present only on the detail endpoint
+  totalSubFolders?: number; // Recursive
+  totalWorkflows?: number; // Recursive
+}
+
+export interface FolderListFilter {
+  parentFolderId?: string;
+  name?: string;
+  tags?: string[];
+  excludeFolderIdAndDescendants?: string;
+}
+
+export interface FolderListParams {
+  filter?: FolderListFilter;
+  select?: string[];
+  sortBy?: 'name:asc' | 'name:desc' | 'createdAt:asc' | 'createdAt:desc' | 'updatedAt:asc' | 'updatedAt:desc';
+  skip?: number;
+  take?: number;
+}
+
+export interface FolderListResponse {
+  count: number;
+  data: Folder[];
+}
+
+/** Minimal project shape from GET /projects (used only to resolve the `personal` alias). */
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  type?: string;
 }
 
 // Variable Types

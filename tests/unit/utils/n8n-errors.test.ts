@@ -129,6 +129,57 @@ describe('getUserFriendlyErrorMessage', () => {
 
     expect(message).toBe('An unexpected error occurred');
   });
+
+  describe('folder placement hint (parentFolderId, n8n 2.32+)', () => {
+    it('appends the upgrade hint when a 400 names parentFolderId in the message', () => {
+      const error = new N8nValidationError('request/body must NOT have additional properties: parentFolderId');
+      const message = getUserFriendlyErrorMessage(error);
+
+      expect(message).toContain('requires n8n 2.32 or later');
+    });
+
+    it('appends the hint when only the details name parentFolderId', () => {
+      const error = new N8nValidationError('request/body must NOT have additional properties', {
+        errors: [{ params: { additionalProperty: 'parentFolderId' } }],
+      });
+      const message = getUserFriendlyErrorMessage(error);
+
+      expect(message).toContain('requires n8n 2.32 or later');
+    });
+
+    it('does not fire on a semantic 400 about a folder ID on a supporting instance', () => {
+      // n8n >= 2.32 rejecting a deleted/foreign folder mentions the field but is
+      // not the additional-properties schema rejection - no upgrade advice.
+      const error = new N8nValidationError('parentFolderId does not reference a folder in this project');
+      const message = getUserFriendlyErrorMessage(error);
+
+      expect(message).not.toContain('2.32');
+    });
+
+    it('does not fire on an unrelated 400', () => {
+      const error = new N8nValidationError('Missing required field: name');
+      const message = getUserFriendlyErrorMessage(error);
+
+      expect(message).not.toContain('2.32');
+    });
+
+    it('does not fire on a non-400 that mentions parentFolderId', () => {
+      const error = new N8nApiError('parentFolderId not found', 404, 'NOT_FOUND');
+      const message = getUserFriendlyErrorMessage(error);
+
+      expect(message).not.toContain('2.32');
+    });
+
+    it('survives circular details', () => {
+      const details: any = {};
+      details.self = details;
+      details.field = 'parentFolderId';
+      const error = new N8nValidationError('bad request', details);
+
+      // Circular details cannot be stringified - the hint just doesn't fire from details
+      expect(() => getUserFriendlyErrorMessage(error)).not.toThrow();
+    });
+  });
 });
 
 describe('Error message integration', () => {

@@ -3001,6 +3001,76 @@ describe('WorkflowDiffEngine', () => {
     });
   });
 
+  describe('MoveToFolder Operation', () => {
+    it('sets parentFolderId on the workflow for the PUT body', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'moveToFolder', parentFolderId: 'folder-abc' } as any]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      expect((result.workflow as any).parentFolderId).toBe('folder-abc');
+    });
+
+    it('maps null to a null parentFolderId (project root)', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'moveToFolder', parentFolderId: null } as any]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      expect((result.workflow as any).parentFolderId).toBeNull();
+    });
+
+    it('trims a padded folder ID', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'moveToFolder', parentFolderId: '  folder-abc  ' } as any]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      expect((result.workflow as any).parentFolderId).toBe('folder-abc');
+    });
+
+    it.each([
+      ['empty string', ''],
+      ['whitespace', '   '],
+      ['missing', undefined],
+      ['non-string', 42],
+    ])('rejects %s parentFolderId', async (_label, value) => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'moveToFolder', parentFolderId: value } as any]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('moveToFolder');
+      expect((result as any).workflow?.parentFolderId).toBeUndefined();
+    });
+
+    it('does not leak parentFolderId onto the workflow in validateOnly mode result', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'moveToFolder', parentFolderId: 'folder-abc' } as any],
+        validateOnly: true
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      // The input workflow object must stay untouched either way
+      expect((baseWorkflow as any).parentFolderId).toBeUndefined();
+    });
+  });
+
   describe('UpdateName Operation', () => {
     it('should update workflow name', async () => {
       const operation: UpdateNameOperation = {

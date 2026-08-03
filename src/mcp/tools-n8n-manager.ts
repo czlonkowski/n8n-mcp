@@ -81,6 +81,10 @@ export const n8nManagementTools: ToolDefinition[] = [
         projectId: {
           type: 'string',
           description: 'Optional project ID to create the workflow in (enterprise feature)'
+        },
+        parentFolderId: {
+          type: 'string',
+          description: 'Optional folder ID to place the workflow in (n8n 2.32+). Omit for the project root. Find or create folders with n8n_manage_folders.'
         }
       },
       required: ['name', 'nodes', 'connections']
@@ -174,6 +178,10 @@ export const n8nManagementTools: ToolDefinition[] = [
             },
             required: ['name', 'nodeIds']
           }
+        },
+        parentFolderId: {
+          type: ['string', 'null'],
+          description: 'Move the workflow into this folder (n8n 2.32+): folder ID = move there, null = move to project root, omit = leave the current folder unchanged. For a move without other changes prefer the moveToFolder operation of n8n_update_partial_workflow.'
         }
       },
       required: ['id']
@@ -188,7 +196,7 @@ export const n8nManagementTools: ToolDefinition[] = [
   },
   {
     name: 'n8n_update_partial_workflow',
-    description: `Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, patchNodeField, moveNode, enable/disableNode, addConnection, removeConnection, rewireConnection, cleanStaleConnections, replaceConnections, updateSettings, updateName, setNodeGroups, add/removeTag, activate/deactivateWorkflow, transferWorkflow. patchNodeField requires fieldPath (dot path, e.g. "parameters.jsCode") and patches: [{find, replace}]. setNodeGroups replaces all canvas groups: [{name, nodeNames|nodeIds}] (or [] to ungroup). See tools_documentation("n8n_update_partial_workflow", "full") for details.`,
+    description: `Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, patchNodeField, moveNode, enable/disableNode, addConnection, removeConnection, rewireConnection, cleanStaleConnections, replaceConnections, updateSettings, updateName, setNodeGroups, add/removeTag, activate/deactivateWorkflow, transferWorkflow, moveToFolder. patchNodeField requires fieldPath (dot path, e.g. "parameters.jsCode") and patches: [{find, replace}]. setNodeGroups replaces all canvas groups: [{name, nodeNames|nodeIds}] (or [] to ungroup). moveToFolder moves the workflow into a folder (n8n 2.32+): {parentFolderId: folder ID or null for project root}. See tools_documentation("n8n_update_partial_workflow", "full") for details.`,
     inputSchema: {
       type: 'object',
       additionalProperties: true,  // Allow any extra properties Claude Desktop might add
@@ -734,6 +742,49 @@ Old backups are also pruned automatically (10 most recent per workflow, plus an 
     },
   },
   {
+    name: 'n8n_manage_folders',
+    description: `Manage workflow folders (n8n 2.19+; folders need a registered Community instance or higher). Actions: create, list, get, rename, move, delete. projectId defaults to 'personal' (the calling user's personal project). Place workflows into folders via n8n_create_workflow's parentFolderId or the moveToFolder operation of n8n_update_partial_workflow (both n8n 2.32+). Note: n8n's API cannot report which folder a workflow is in - folder contents are visible only as counts.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['create', 'list', 'get', 'rename', 'move', 'delete'],
+          description: 'Operation: create=new folder, list=folders in a project (with workflow/subfolder counts), get=folder details with recursive totals, rename=change name, move=re-parent under another folder or the project root, delete=remove folder',
+        },
+        projectId: {
+          type: 'string',
+          description: `Project containing the folder(s). Defaults to 'personal' - resolved to the calling user's personal project. Pass a real project ID on multi-project (enterprise) instances.`,
+        },
+        folderId: { type: 'string', description: 'Folder ID (required for get, rename, move, delete)' },
+        name: { type: 'string', description: 'For create: folder name (required). For rename: new name (required).' },
+        parentFolderId: {
+          type: ['string', 'null'],
+          description: 'For create: optional parent folder to nest under. For move: target parent folder ID, or null to move to the project root (required). For list: only return direct children of this folder.',
+        },
+        transferToFolderId: {
+          type: 'string',
+          description: `For delete: move contained workflows and sub-folders into this folder first ('0' = project root). If omitted, workflows are moved to the project root AND ARCHIVED, and sub-folders are deleted.`,
+        },
+        nameFilter: { type: 'string', description: 'For list: filter folders by name (contains match)' },
+        sortBy: {
+          type: 'string',
+          enum: ['name:asc', 'name:desc', 'createdAt:asc', 'createdAt:desc', 'updatedAt:asc', 'updatedAt:desc'],
+          description: 'For list: sort order (default: updatedAt:desc)',
+        },
+        skip: { type: 'number', description: 'For list: items to skip for pagination (default 0)' },
+        take: { type: 'number', description: 'For list: items to return (default 50, max 100)' },
+      },
+      required: ['action'],
+    },
+    annotations: {
+      title: 'Manage Workflow Folders',
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    },
+  },
+  {
     name: 'n8n_manage_credentials',
     description: 'Manage n8n credentials. Actions: list, get, create, update, delete, getSchema. Use getSchema to discover required fields before creating. For list, page beyond 100 results with cursor (from the previous response\'s nextCursor). NOTE: list/get need an n8n deployment whose public API permits credential reads — older n8n versions, restricted API keys, or instance settings can reject them, returning NOT_SUPPORTED (create, delete, getSchema — and update where the API version supports it — still work). SECURITY: credential data values are never logged.',
     inputSchema: {
@@ -807,6 +858,7 @@ Old backups are also pruned automatically (10 most recent per workflow, plus an 
 export const TOOL_OPERATION_PARAM: Record<string, string> = {
   'n8n_executions': 'action',
   'n8n_evaluations': 'action',
+  'n8n_manage_folders': 'action',
   'n8n_workflow_versions': 'mode',
 };
 
@@ -820,5 +872,8 @@ export const TOOL_OPERATION_PARAM: Record<string, string> = {
 export const DESTRUCTIVE_TOOL_OPERATIONS: Record<string, Set<string>> = {
   'n8n_executions': new Set(['delete']),
   'n8n_evaluations': new Set(['run', 'cancel']),
+  // Every write action; list/get are the read paths. delete is the sharpest — without
+  // transferToFolderId it archives the folder's workflows.
+  'n8n_manage_folders': new Set(['create', 'rename', 'move', 'delete']),
   'n8n_workflow_versions': new Set(['delete', 'rollback', 'prune']),
 };

@@ -116,6 +116,33 @@ export function formatNoExecutionError(): string {
   return "Workflow failed to execute. Use n8n_list_executions to find recent executions, then n8n_get_execution with mode='preview' to investigate.";
 }
 
+/**
+ * A 400 that names `parentFolderId` on a workflow write means the instance's OpenAPI
+ * schema predates workflow folder placement (n8n 2.32): the write schema declares
+ * `additionalProperties: false`, so older instances reject the whole request. The
+ * validator names the offending property in its message/details, which is what makes
+ * this check safe — a 400 for any other reason never mentions the field.
+ */
+function folderPlacementHint(error: N8nApiError): string {
+  if (error.statusCode !== 400) return '';
+  const haystack = `${error.message} ${safeStringify(error.details)}`;
+  if (!haystack.includes('parentFolderId')) return '';
+  // Only the schema-level rejection shape ("must NOT have additional properties" /
+  // params.additionalProperty) identifies a pre-2.32 instance. A semantic 400 that
+  // merely mentions the field (e.g. a deleted folder ID on n8n >= 2.32) must not
+  // earn upgrade advice.
+  if (!/additional ?propert/i.test(haystack)) return '';
+  return ' Note: workflow folder placement (parentFolderId) requires n8n 2.32 or later - retry without parentFolderId, or upgrade the instance.';
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return '';
+  }
+}
+
 // Utility to extract user-friendly error messages
 export function getUserFriendlyErrorMessage(error: N8nApiError): string {
   switch (error.code) {
@@ -124,7 +151,7 @@ export function getUserFriendlyErrorMessage(error: N8nApiError): string {
     case 'NOT_FOUND':
       return error.message;
     case 'VALIDATION_ERROR':
-      return `Invalid request: ${error.message}`;
+      return `Invalid request: ${error.message}${folderPlacementHint(error)}`;
     case 'RATE_LIMIT_ERROR':
       return 'Too many requests. Please wait a moment and try again.';
     case 'NO_RESPONSE':

@@ -1358,6 +1358,11 @@ export class N8NDocumentationMCPServer {
           ? { valid: true, errors: [] }
           : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
         break;
+      case 'n8n_manage_folders':
+        validationResult = args.action
+          ? { valid: true, errors: [] }
+          : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
+        break;
       case 'n8n_audit_instance':
         // No required parameters - all are optional
         validationResult = { valid: true, errors: [] };
@@ -1911,6 +1916,22 @@ export class N8NDocumentationMCPServer {
           case 'deleteRows':   return n8nHandlers.handleDeleteRows(args, this.instanceContext);
           default:
             throw new Error(`Unknown action: ${dtAction}. Valid actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows`);
+        }
+      }
+
+      case 'n8n_manage_folders': {
+        this.validateToolParams(name, args, ['action']);
+        const folderAction = args.action;
+        // Each handler validates its own inputs via Zod schemas
+        switch (folderAction) {
+          case 'create': return n8nHandlers.handleCreateFolder(args, this.instanceContext);
+          case 'list':   return n8nHandlers.handleListFolders(args, this.instanceContext);
+          case 'get':    return n8nHandlers.handleGetFolder(args, this.instanceContext);
+          case 'rename': return n8nHandlers.handleRenameFolder(args, this.instanceContext);
+          case 'move':   return n8nHandlers.handleMoveFolder(args, this.instanceContext);
+          case 'delete': return n8nHandlers.handleDeleteFolder(args, this.instanceContext);
+          default:
+            throw new Error(`Unknown action: ${folderAction}. Valid actions: create, list, get, rename, move, delete`);
         }
       }
 

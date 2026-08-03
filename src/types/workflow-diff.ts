@@ -163,6 +163,17 @@ export interface TransferWorkflowOperation extends DiffOperation {
   destinationProjectId: string;
 }
 
+/**
+ * Move the workflow into a folder, or to the project root (n8n 2.32+).
+ * n8n's PUT schema treats the field as write-only: null means project root,
+ * a string means the target folder ID. Instances older than 2.32 reject the
+ * field outright, which surfaces as a 400 naming parentFolderId.
+ */
+export interface MoveToFolderOperation extends DiffOperation {
+  type: 'moveToFolder';
+  parentFolderId: string | null;
+}
+
 // Connection Cleanup Operations
 export interface CleanStaleConnectionsOperation extends DiffOperation {
   type: 'cleanStaleConnections';
@@ -203,7 +214,8 @@ export type WorkflowDiffOperation =
   | DeactivateWorkflowOperation
   | CleanStaleConnectionsOperation
   | ReplaceConnectionsOperation
-  | TransferWorkflowOperation;
+  | TransferWorkflowOperation
+  | MoveToFolderOperation;
 
 // Main diff request structure
 export interface WorkflowDiffRequest {

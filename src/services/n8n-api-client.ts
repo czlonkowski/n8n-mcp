@@ -40,6 +40,10 @@ import {
   DataTableUpsertRowParams,
   DataTableDeleteRowsParams,
   WorkflowNodeGroup,
+  Folder,
+  FolderListParams,
+  FolderListResponse,
+  ProjectSummary,
 } from '../types/n8n-api';
 import { handleN8nApiError, logN8nError, N8nValidationError } from '../utils/n8n-errors';
 import { encodeApiPathSegment } from '../utils/validation-schemas';
@@ -100,6 +104,8 @@ export class N8nApiClient {
   private baseUrl: string;
   private versionInfo: N8nVersionInfo | null = null;
   private versionPromise: Promise<N8nVersionInfo | null> | null = null;
+  /** Resolved `personal` project alias, cached for the client's lifetime (see resolvePersonalProjectId). */
+  private personalProjectId: string | null = null;
   // SECURITY (GHSA-cmrh-wvq6-wm9r): cached pinned transport agents.
   private pinnedAgentsPromise: Promise<PinnedAgents> | null = null;
   private cfClientId?: string;
@@ -1165,7 +1171,7 @@ export class N8nApiClient {
     try {
       const response = await this.client.get(`/data-tables/${encodeApiPathSegment(id, 'dataTableId')}/rows`, {
         params,
-        paramsSerializer: (p) => this.serializeDataTableParams(p),
+        paramsSerializer: (p) => this.serializeQueryParams(p),
       });
       return this.validateListResponse<DataTableRow>(response.data, 'data-table-rows');
     } catch (error) {
@@ -1204,7 +1210,7 @@ export class N8nApiClient {
     try {
       const response = await this.client.delete(`/data-tables/${encodeApiPathSegment(id, 'dataTableId')}/rows/delete`, {
         params,
-        paramsSerializer: (p) => this.serializeDataTableParams(p),
+        paramsSerializer: (p) => this.serializeQueryParams(p),
       });
       return response.data;
     } catch (error) {
@@ -1212,11 +1218,181 @@ export class N8nApiClient {
     }
   }
 
+  // Folder operations (/projects/{projectId}/folders, n8n public API 2.19+).
+  // Only createFolder accepts the literal `personal` as projectId — n8n resolves
+  // it server-side for that route alone. Every other folder route needs a real
+  // project ID; resolvePersonalProjectId() below turns the alias into one.
+
+  async createFolder(
+    projectId: string,
+    data: { name: string; parentFolderId?: string }
+  ): Promise<Folder> {
+    try {
+      const response = await this.client.post(
+        `/projects/${encodeApiPathSegment(projectId, 'projectId')}/folders`,
+        data
+      );
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async listFolders(projectId: string, params: FolderListParams = {}): Promise<FolderListResponse> {
+    try {
+      const { filter, select, ...rest } = params;
+      const response = await this.client.get(
+        `/projects/${encodeApiPathSegment(projectId, 'projectId')}/folders`,
+        {
+          params: {
+            ...rest,
+            // n8n expects these two as JSON-encoded strings, not repeated params
+            ...(filter && Object.keys(filter).length > 0 ? { filter: JSON.stringify(filter) } : {}),
+            ...(select && select.length > 0 ? { select: JSON.stringify(select) } : {}),
+          },
+          // The JSON values carry reserved chars ({ } [ ] " :) that axios's default
+          // serializer leaves raw and n8n's validator rejects ("must be url encoded").
+          paramsSerializer: (p) => this.serializeQueryParams(p),
+        }
+      );
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async getFolder(projectId: string, folderId: string): Promise<Folder> {
+    try {
+      const response = await this.client.get(
+        `/projects/${encodeApiPathSegment(projectId, 'projectId')}/folders/${encodeApiPathSegment(folderId, 'folderId')}`
+      );
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async updateFolder(
+    projectId: string,
+    folderId: string,
+    data: { name?: string; parentFolderId?: string }
+  ): Promise<Folder> {
+    try {
+      const response = await this.client.patch(
+        `/projects/${encodeApiPathSegment(projectId, 'projectId')}/folders/${encodeApiPathSegment(folderId, 'folderId')}`,
+        data
+      );
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async deleteFolder(projectId: string, folderId: string, transferToFolderId?: string): Promise<void> {
+    try {
+      await this.client.delete(
+        `/projects/${encodeApiPathSegment(projectId, 'projectId')}/folders/${encodeApiPathSegment(folderId, 'folderId')}`,
+        { params: transferToFolderId ? { transferToFolderId } : {} }
+      );
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
   /**
-   * Serializes data table query params with explicit encodeURIComponent.
-   * Axios's default serializer doesn't encode some reserved chars that n8n rejects.
+   * Resolve the `personal` project alias to a real project ID, for the folder
+   * routes that don't accept the alias. Two-step ladder:
+   *
+   * 1. GET /projects (Enterprise-licensed): when the listing is available it is
+   *    authoritative — exactly one visible personal project resolves, anything
+   *    else (none, several, or a truncated listing) errors out rather than
+   *    guessing another project.
+   * 2. GET /workflows?limit=1, ONLY when the projects API answered 403/404
+   *    (Community / pre-projects instances): there, every project is the
+   *    caller's personal one and workflow sharing does not exist, so any
+   *    workflow's `shared[].projectId` is the personal project. On an instance
+   *    where /projects merely failed transiently or showed no personal project,
+   *    this probe could return a team project - which is why it never runs then.
+   *
+   * The result is cached for the client's lifetime — project IDs never change.
    */
-  private serializeDataTableParams(params: Record<string, any>): string {
+  async resolvePersonalProjectId(): Promise<string> {
+    if (this.personalProjectId) return this.personalProjectId;
+
+    let projects: ProjectSummary[] = [];
+    let truncated = false;
+    let projectsApiAvailable = true;
+    try {
+      const response = await this.client.get('/projects', { params: { limit: 100 } });
+      if (Array.isArray(response.data?.data)) projects = response.data.data;
+      truncated = Boolean(response.data?.nextCursor);
+    } catch (error) {
+      // Community answers 403 (projects API is enterprise-licensed) and very old
+      // instances 404 - both mean "no projects API here", where the workflow probe
+      // below is authoritative. Anything else (timeout, 429, 5xx) must NOT fall
+      // through: on a multi-project instance the probe would silently resolve
+      // 'personal' to whatever project the first workflow lives in, and cache it.
+      const apiError = handleN8nApiError(error);
+      if (apiError.statusCode !== 403 && apiError.statusCode !== 404) throw apiError;
+      projectsApiAvailable = false;
+    }
+
+    if (projectsApiAvailable) {
+      if (truncated) {
+        // The caller's personal project may sit beyond page 1; filtering a truncated
+        // listing could quietly pick another user's personal project instead.
+        throw new N8nValidationError(
+          `This instance has more projects than one listing page; resolving 'personal' from a ` +
+            `truncated listing could pick the wrong project. Pass an explicit projectId.`
+        );
+      }
+
+      const personal = projects.filter(p => p.type === 'personal');
+      if (personal.length === 1) {
+        this.personalProjectId = personal[0].id;
+        return personal[0].id;
+      }
+      if (personal.length > 1) {
+        throw new N8nValidationError(
+          `This API key sees ${personal.length} personal projects, so 'personal' is ambiguous. ` +
+            `Pass an explicit projectId. Visible personal projects: ` +
+            personal.map(p => `${p.id} (${p.name})`).join(', ')
+        );
+      }
+      // A successful listing with zero personal projects is authoritative too:
+      // probing a workflow here could resolve to a team project.
+      throw new N8nValidationError(
+        `The projects listing shows no personal project for this API key. Pass an explicit projectId.`
+      );
+    }
+
+    // Community / pre-projects instances only (see doc comment).
+    try {
+      const response = await this.client.get('/workflows', { params: { limit: 1 } });
+      const workflow = Array.isArray(response.data?.data) ? response.data.data[0] : undefined;
+      const projectId = workflow?.shared?.[0]?.projectId;
+      if (typeof projectId === 'string' && projectId.length > 0) {
+        this.personalProjectId = projectId;
+        return projectId;
+      }
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+
+    throw new N8nValidationError(
+      `Could not resolve the 'personal' project: the projects API is not available on this instance ` +
+        `and no workflow exists to infer the project from. Create any workflow first, or pass an ` +
+        `explicit projectId. (The folder 'create' action itself accepts 'personal' directly.)`
+    );
+  }
+
+  /**
+   * Serializes query params with explicit encodeURIComponent. Axios's default
+   * serializer leaves some reserved chars raw ([ ] : ,) that n8n's OpenAPI
+   * validator rejects — which breaks any JSON-in-a-query-param endpoint (data
+   * table rows, folder filter/select).
+   */
+  private serializeQueryParams(params: Record<string, any>): string {
     const parts: string[] = [];
     for (const [key, value] of Object.entries(params)) {
       // Skip blank strings as well so MCP clients that serialize all fields

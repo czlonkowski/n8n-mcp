@@ -22,7 +22,9 @@ export const n8nCreateWorkflowDoc: ToolDocumentation = {
       nodes: { type: 'array', required: true, description: 'Array of nodes with id, name, type, typeVersion, position, parameters' },
       connections: { type: 'object', required: true, description: 'Node connections. Keys are source node names (not IDs)' },
       settings: { type: 'object', description: 'Optional workflow settings (timezone, error handling, etc.)' },
-      nodeGroups: { type: 'array', description: 'Optional canvas groups (n8n 2.28+): [{name, nodeIds, description?}]. Members are node IDs from nodes[] and must form a connected run with no trigger among them. Dropped with a warning on n8n older than 2.28.' }
+      nodeGroups: { type: 'array', description: 'Optional canvas groups (n8n 2.28+): [{name, nodeIds, description?}]. Members are node IDs from nodes[] and must form a connected run with no trigger among them. Dropped with a warning on n8n older than 2.28.' },
+      projectId: { type: 'string', description: 'Optional project to create the workflow in (enterprise feature). Defaults to the personal project.' },
+      parentFolderId: { type: 'string', description: 'Optional folder to place the workflow in (n8n 2.32+; rejected with a 400 on older instances). Omit for the project root. Manage folders with n8n_manage_folders.' }
     },
     returns: 'Minimal summary (id, name, active, nodeCount) for token efficiency. Use n8n_get_workflow with mode "structure" to verify current state if needed.',
     examples: [

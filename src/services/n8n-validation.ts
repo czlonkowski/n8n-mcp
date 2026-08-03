@@ -190,6 +190,9 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
   if (source.connections !== undefined) cleanedWorkflow.connections = source.connections;
   if (Array.isArray(source.nodeGroups)) cleanedWorkflow.nodeGroups = source.nodeGroups;
   if (source.settings !== undefined) cleanedWorkflow.settings = source.settings;
+  // Write-only folder placement (n8n 2.32+): null moves to the project root. GET responses
+  // never echo it, so it only appears here when a caller explicitly asked for a move.
+  if (source.parentFolderId !== undefined) cleanedWorkflow.parentFolderId = source.parentFolderId;
 
   // ALL known settings properties accepted by n8n Public API (as of n8n 1.119.0+)
   // This list is the UNION of all properties ever accepted by any n8n version

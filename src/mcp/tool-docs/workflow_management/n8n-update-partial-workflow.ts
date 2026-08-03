@@ -4,7 +4,7 @@ export const n8nUpdatePartialWorkflowDoc: ToolDocumentation = {
   name: 'n8n_update_partial_workflow',
   category: 'workflow_management',
   essentials: {
-    description: 'Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, patchNodeField, moveNode, enable/disableNode, addConnection, removeConnection, rewireConnection, cleanStaleConnections, replaceConnections, updateSettings, updateName, setNodeGroups, add/removeTag, activateWorkflow, deactivateWorkflow, transferWorkflow. Supports smart parameters (branch, case) for multi-output nodes. Full support for AI connections (ai_languageModel, ai_tool, ai_memory, ai_embedding, ai_vectorStore, ai_document, ai_textSplitter, ai_outputParser).',
+    description: 'Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, patchNodeField, moveNode, enable/disableNode, addConnection, removeConnection, rewireConnection, cleanStaleConnections, replaceConnections, updateSettings, updateName, setNodeGroups, add/removeTag, activateWorkflow, deactivateWorkflow, transferWorkflow, moveToFolder. Supports smart parameters (branch, case) for multi-output nodes. Full support for AI connections (ai_languageModel, ai_tool, ai_memory, ai_embedding, ai_vectorStore, ai_document, ai_textSplitter, ai_outputParser).',
     keyParameters: ['id', 'operations', 'continueOnError'],
     example: 'n8n_update_partial_workflow({id: "wf_123", operations: [{type: "rewireConnection", source: "IF", from: "Old", to: "New", branch: "true"}]})',
     performance: 'Fast (50-200ms)',
@@ -64,8 +64,9 @@ n8n validates canvas groups on every write, including writes that have nothing t
 - **activateWorkflow**: Activate the workflow to enable automatic execution via triggers
 - **deactivateWorkflow**: Deactivate the workflow to prevent automatic execution
 
-### Project Management Operations (1 type):
+### Project Management Operations (2 types):
 - **transferWorkflow**: Transfer the workflow to a different project. Requires \`destinationProjectId\`. Enterprise/cloud feature.
+- **moveToFolder**: Move the workflow into a folder (n8n 2.32+). Requires \`parentFolderId\`: a folder ID, or null for the project root. The placement is write-only in n8n's API - it cannot be read back, so verify in the n8n UI if needed. Manage folders with n8n_manage_folders. When combined with transferWorkflow in one request, the folder move applies in the SOURCE project before the transfer runs - use a separate moveToFolder call after the transfer instead.
 
 ## Smart Parameters for Multi-Output Nodes
 
@@ -382,7 +383,9 @@ n8n_update_partial_workflow({
       '// Remove entire array property\nn8n_update_partial_workflow({id: "rm5", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {"parameters.headers": null}}]})',
       '\n// ============ PROJECT TRANSFER EXAMPLES ============',
       '// Transfer workflow to a different project\nn8n_update_partial_workflow({id: "tf1", operations: [{type: "transferWorkflow", destinationProjectId: "project-abc-123"}]})',
-      '// Transfer and activate in one call\nn8n_update_partial_workflow({id: "tf2", operations: [{type: "transferWorkflow", destinationProjectId: "project-abc-123"}, {type: "activateWorkflow"}]})'
+      '// Transfer and activate in one call\nn8n_update_partial_workflow({id: "tf2", operations: [{type: "transferWorkflow", destinationProjectId: "project-abc-123"}, {type: "activateWorkflow"}]})',
+      '// Move workflow into a folder (n8n 2.32+)\nn8n_update_partial_workflow({id: "mf1", operations: [{type: "moveToFolder", parentFolderId: "folder-abc-123"}]})',
+      '// Move workflow back to the project root\nn8n_update_partial_workflow({id: "mf2", operations: [{type: "moveToFolder", parentFolderId: null}]})'
     ],
     useCases: [
       'Rewire connections when replacing nodes',

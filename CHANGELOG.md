@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.68.0] - 2026-08-04
+
+### Added
+
+- **Workflow folder management: new `n8n_manage_folders` tool.** Folders have been in n8n's Public API since 2.19, but nothing could place a workflow into one until n8n 2.32 added `parentFolderId` to workflow writes — the gap that had kept this feature deferred. The tool covers `create`, `list`, `get`, `rename`, `move`, and `delete`: list returns per-folder workflow/sub-folder counts and path breadcrumbs, get returns recursive totals, move accepts `null` for the project root (mapped to n8n's `'0'` sentinel), and delete warns that omitting `transferToFolderId` archives the folder's workflows (`'0'` transfers them to the project root instead). `projectId` defaults to `personal`: folder creation passes the alias through (n8n resolves it server-side, 2.32+), while the other actions resolve it via the projects API when licensed, falling back to a workflow's owning project only where that is sound — the projects route answering 403/404 (Community, which has exactly one project). A successful projects listing with zero or several visible personal projects, or one truncated by pagination, errors out with guidance instead of guessing another project's ID, and the resolution is cached per client, which is per instance. All four write actions are registered for `DISABLED_TOOL_OPERATIONS`; the read-only deployment recipes in the README, `.env.example`, and the HTTP deployment guide block them.
+- **Workflow folder placement on the workflow tools (n8n 2.32+).** `n8n_create_workflow` accepts `parentFolderId` to create a workflow directly inside a folder; `n8n_update_partial_workflow` gains a `moveToFolder` operation (`parentFolderId`: folder ID, or `null` for the project root); `n8n_update_full_workflow` accepts the same field. n8n treats the field as write-only — a workflow's folder can never be read back, so the diff handler's rollback path and the full-update error path now say explicitly when a folder move in a failed update may have persisted rather than claiming full restoration. On instances older than 2.32, the schema-level 400 naming `parentFolderId` earns an upgrade hint; a semantic 400 (e.g. a deleted folder ID) on a supporting instance does not. Blank strings and `null` from lossy MCP clients are handled throughout (issue #774 pattern), including `parentFolderId: null` on folder create/list, which the published `string|null` schema allows as "no parent".
+
+### Fixed
+
+- **Folder list requests survive n8n's strict query validation.** The `filter`/`select` parameters travel as JSON in the query string; axios's default serializer leaves reserved characters raw and n8n rejects the request with "Parameter 'filter' must be url encoded" (caught in live testing). The folder list now uses the same fully-encoding serializer as the data-table row endpoints (renamed to `serializeQueryParams`).
+- **The `tools_documentation` overview lists all current tools.** The hardcoded category list was stale: it now includes `n8n_manage_credentials`, `n8n_audit_instance`, and the new `n8n_manage_folders`, with corrected counts (24 tools, 18 n8n API tools).
+
 ## [2.67.3] - 2026-08-03
 
 ### Changed
