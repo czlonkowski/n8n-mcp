@@ -1,6 +1,6 @@
 ---
 name: n8n-mcp-tools-expert
-description: Expert guide for using n8n-mcp MCP tools effectively. Use when searching for nodes, validating configurations, accessing templates, managing workflows, managing credentials, auditing instance security, or using any n8n-mcp tool. Provides tool selection guidance, parameter formats, and common patterns. IMPORTANT — Always consult this skill before calling any n8n-mcp tool — it prevents common mistakes like wrong nodeType formats, incorrect parameter structures, and inefficient tool usage. If the user mentions n8n, workflows, nodes, or automation and you have n8n MCP tools available, use this skill first.
+description: Expert guide for using n8n-mcp MCP tools effectively. Use when searching for nodes, validating configurations, accessing templates, managing workflows, organizing workflows into folders, managing credentials, auditing instance security, or using any n8n-mcp tool. Provides tool selection guidance, parameter formats, and common patterns. IMPORTANT — Always consult this skill before calling any n8n-mcp tool — it prevents common mistakes like wrong nodeType formats, incorrect parameter structures, and inefficient tool usage. If the user mentions n8n, workflows, nodes, or automation and you have n8n MCP tools available, use this skill first.
 ---
 
 # n8n MCP Tools Expert
@@ -18,9 +18,10 @@ n8n-mcp provides tools organized into categories:
 3. **Workflow Management** → [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md)
 4. **Template Library** - Search and deploy 2,700+ real workflows
 5. **Data Tables** - Manage n8n data tables and rows (`n8n_manage_datatable`)
-6. **Credential Management** - Full credential CRUD + schema discovery (`n8n_manage_credentials`)
-7. **Security & Audit** - Instance security auditing with custom deep scan (`n8n_audit_instance`)
-8. **Documentation & Guides** - Tool docs, AI agent guide, Code node guides
+6. **Workflow Folders** - Folder CRUD + workflow placement (`n8n_manage_folders`)
+7. **Credential Management** - Full credential CRUD + schema discovery (`n8n_manage_credentials`)
+8. **Security & Audit** - Instance security auditing with custom deep scan (`n8n_audit_instance`)
+9. **Documentation & Guides** - Tool docs, AI agent guide, Code node guides
 
 ---
 
@@ -38,6 +39,7 @@ n8n-mcp provides tools organized into categories:
 | `validate_workflow` | Checking complete workflow | 100-500ms |
 | `n8n_deploy_template` | Deploy template to n8n instance | 200-500ms |
 | `n8n_manage_datatable` | Managing data tables and rows | 50-500ms |
+| `n8n_manage_folders` | Folder CRUD + organizing workflows | 100-500ms |
 | `n8n_manage_credentials` | Credential CRUD + schema discovery | 50-500ms |
 | `n8n_audit_instance` | Security audit (built-in + custom scan) | 500-5000ms |
 | `n8n_autofix_workflow` | Auto-fix validation errors | 200-1500ms |
@@ -219,12 +221,13 @@ See [VALIDATION_GUIDE.md](VALIDATION_GUIDE.md) for:
 ### Workflow Management
 See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for:
 - n8n_create_workflow
-- n8n_update_partial_workflow (20 operation types including patchNodeField and setNodeGroups!)
+- n8n_update_partial_workflow (21 operation types including patchNodeField, setNodeGroups, and moveToFolder!)
 - Smart parameters (branch, case)
 - AI connection types (8 types)
 - Workflow activation (activateWorkflow/deactivateWorkflow)
 - n8n_deploy_template
 - n8n_workflow_versions
+- n8n_manage_folders (folder CRUD + workflow placement)
 - n8n_manage_credentials (credential CRUD + schema discovery)
 - n8n_audit_instance (security auditing)
 
@@ -249,6 +252,14 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for full search/get/deploy exampl
 `n8n_manage_datatable` is the MCP tool for managing data tables and rows from *outside* a workflow (table actions `createTable`/`listTables`/`getTable`/`updateTable`/`deleteTable`; row actions `getRows`/`insertRows`/`updateRows`/`upsertRows`/`deleteRows`, with filtering, pagination, and `dryRun`). Don't confuse it with the in-workflow `nodes-base.dataTable` node, which reads/writes rows *during execution* (see [n8n-node-configuration → OPERATION_PATTERNS.md](../n8n-node-configuration/OPERATION_PATTERNS.md#data-table-nodes-basedatatable)). Rule of thumb: MCP tool to set up a table once, workflow node to read/write on every execution. `deleteRows` requires a filter; use `dryRun: true` before bulk changes.
 
 See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for all actions, filter conditions, and examples.
+
+---
+
+## Workflow Folders
+
+`n8n_manage_folders` organizes workflows into folders (actions `create`/`list`/`get`/`rename`/`move`/`delete`; n8n 2.19+, registered free Community tier and up). `projectId` defaults to `'personal'`. Placing workflows happens in the *workflow* tools: `parentFolderId` on `n8n_create_workflow`, or the `moveToFolder` operation of `n8n_update_partial_workflow` (both n8n 2.32+; `null` = project root). Two things to internalize: a workflow's folder is **write-only** in n8n's API (verify placement via a folder's `get` counts, never by reading the workflow), and `delete` without `transferToFolderId` **archives** the folder's workflows (`transferToFolderId: "0"` moves them to the project root instead, keeping them active).
+
+See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for all actions, list filters/counts, and the delete semantics.
 
 ---
 
@@ -298,6 +309,7 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for examples.
 - n8n_workflow_versions
 - n8n_autofix_workflow
 - n8n_manage_datatable
+- n8n_manage_folders (folder CRUD: n8n 2.19+, registered Community tier and up; workflow placement via parentFolderId/moveToFolder: n8n 2.32+)
 - n8n_manage_credentials
 - n8n_audit_instance
 
@@ -322,6 +334,7 @@ If API tools unavailable, use templates and validation-only workflows.
 | validate_node (minimal) | <50ms | Small |
 | validate_node (full) | <100ms | Medium |
 | validate_workflow | 100-500ms | Medium |
+| n8n_manage_folders | 100-500ms | Small |
 | n8n_manage_credentials | 50-500ms | Small-Medium |
 | n8n_audit_instance | 500-5000ms | Large |
 | n8n_create_workflow | 100-500ms | Medium |
@@ -368,9 +381,10 @@ If API tools unavailable, use templates and validation-only workflows.
 7. Workflows can be **activated via API** (`activateWorkflow` operation)
 8. Workflows are built **iteratively** (56s avg between edits)
 9. **Data tables** managed with `n8n_manage_datatable` (CRUD + filtering)
-10. **Credentials** managed with `n8n_manage_credentials` (CRUD + schema discovery)
-11. **Security audits** via `n8n_audit_instance` (built-in + custom deep scan)
-12. **AI agent guide** available via `tools_documentation({topic: "ai_agents_guide", depth: "full"})`
+10. **Folders** managed with `n8n_manage_folders`; workflow placement is write-only (verify via folder counts, not the workflow)
+11. **Credentials** managed with `n8n_manage_credentials` (CRUD + schema discovery)
+12. **Security audits** via `n8n_audit_instance` (built-in + custom deep scan)
+13. **AI agent guide** available via `tools_documentation({topic: "ai_agents_guide", depth: "full"})`
 
 **Common Workflow**:
 1. search_nodes → find node

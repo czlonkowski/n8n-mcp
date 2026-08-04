@@ -24,7 +24,8 @@ n8n_create_workflow({
   name: "Webhook to Slack",  // Required
   nodes: [...],              // Required: array of nodes
   connections: {...},        // Required: connections object
-  settings: {...}            // Optional: workflow settings
+  settings: {...},           // Optional: workflow settings
+  parentFolderId: "abc123"   // Optional: folder to create in (n8n 2.32+; omit = project root)
 })
 ```
 
@@ -72,6 +73,7 @@ n8n_create_workflow({
 - Workflows created **inactive** (activate with `activateWorkflow` operation)
 - Auto-sanitization runs on creation
 - Validate before creating for best results
+- `parentFolderId` places the workflow in a folder at creation (find or create folders with `n8n_manage_folders`). On n8n < 2.32 the whole create is rejected with a 400 naming the field — retry without it
 
 ---
 
@@ -83,7 +85,7 @@ n8n_create_workflow({
 
 **Common pattern**: 56s average between edits (iterative building!)
 
-### 20 Operation Types
+### 21 Operation Types
 
 **Node Operations** (7 types):
 1. `addNode` - Add new node
@@ -112,8 +114,9 @@ n8n_create_workflow({
 18. `activateWorkflow` - Activate workflow for automatic execution
 19. `deactivateWorkflow` - Deactivate workflow
 
-**Project Management Operations** (1 type):
+**Project Management Operations** (2 types):
 20. `transferWorkflow` - Transfer workflow to a different project (enterprise/cloud)
+21. `moveToFolder` - Move workflow into a folder, or to the project root with `parentFolderId: null` (n8n 2.32+)
 
 ### Intent Parameter (IMPORTANT!)
 
@@ -440,6 +443,33 @@ workflow without groups and warns; it does not fail.
 **Reading groups.** `n8n_get_workflow` returns `nodeGroups` in `full`, `details` and `structure`
 modes when the workflow has any. `mode: "active"` returns the *published* version's groups, which
 can differ from the draft's.
+
+### moveToFolder (Folder Placement, n8n 2.32+)
+
+Move the workflow into a folder as part of a diff:
+
+```javascript
+n8n_update_partial_workflow({
+  id: "workflow-id",
+  intent: "Move into the Production folder",
+  operations: [
+    {type: "moveToFolder", parentFolderId: "abc123"}  // or null = project root
+  ]
+})
+```
+
+n8n treats a workflow's folder as **write-only**: it can be set but never read back
+(no field in `n8n_get_workflow`, no folder filter on `n8n_list_workflows`). Verify a
+move indirectly — `n8n_manage_folders({action: "get", folderId})` reports the folder's
+recursive `totalWorkflows` — or visually in the n8n UI. Two consequences:
+
+- If a mixed update fails after the PUT persisted, the rollback restores the graph but
+  **cannot** restore the previous folder (it was never readable); the error says so.
+- Combined with `transferWorkflow` in one request, the folder move applies in the
+  *source* project before the transfer — move in a separate call after transferring.
+
+On n8n < 2.32 the operation fails with a 400 naming `parentFolderId` plus upgrade
+guidance. Find or create folders with `n8n_manage_folders` (see below).
 
 ### Cleanup & Recovery
 
@@ -992,6 +1022,67 @@ n8n_evaluations({
 - 402 on `run` = the license's evaluation-run quota is exhausted
 - Evaluations are license/quota-gated in n8n — an unlicensed instance answers `run`/`cancel` with 403, and its reads have no runs to return
 - Compare `metrics` across runs of the same workflow to catch prompt/model regressions
+
+---
+
+## n8n_manage_folders (FOLDER MANAGEMENT)
+
+**Use when**: Organizing workflows into folders — creating structure before deploying a batch, restructuring a grown instance, or finding where to place a new workflow.
+
+Folder CRUD needs n8n >= 2.19 and a licensed instance (folders unlock on the **registered free Community tier** — Settings → Usage and plan → register — and up) plus `folder:*` API key scopes. Placing *workflows* into folders needs n8n >= 2.32 and happens in the workflow tools (`parentFolderId` on `n8n_create_workflow`, `moveToFolder` op), not here.
+
+### 6 Actions
+
+`create`, `list`, `get`, `rename`, `move`, `delete`. `projectId` defaults to `'personal'` (the calling user's personal project) on every action — pass a real project ID on multi-project enterprise instances.
+
+### Create a Folder
+
+```javascript
+n8n_manage_folders({action: "create", name: "Production"})
+// Nested: add parentFolderId: "abc123"
+// → {id, name, parentFolderId}
+```
+
+### List Folders (with contents counts)
+
+```javascript
+n8n_manage_folders({action: "list"})
+// Optional: nameFilter (contains match), parentFolderId (direct children only),
+//           sortBy ("name:asc" ... default "updatedAt:desc"), skip, take (max 100)
+// → folders: [{id, name, parentFolder, workflowCount, subFolderCount, path}], count
+// count = total matching the query, not the page size; path = names from root
+```
+
+### Folder Details (recursive totals)
+
+```javascript
+n8n_manage_folders({action: "get", folderId: "abc123"})
+// → {..., totalSubFolders, totalWorkflows}  // recursive — this is how you verify
+//    a workflow placement, since n8n never reports a workflow's folder directly
+```
+
+### Rename / Move
+
+```javascript
+n8n_manage_folders({action: "rename", folderId: "abc123", name: "Staging"})
+n8n_manage_folders({action: "move", folderId: "abc123", parentFolderId: "def456"})
+n8n_manage_folders({action: "move", folderId: "abc123", parentFolderId: null})  // → project root
+```
+
+### Delete (read this one)
+
+```javascript
+n8n_manage_folders({action: "delete", folderId: "abc123", transferToFolderId: "0"})
+```
+
+Without `transferToFolderId`, the folder's workflows are moved to the project root **and ARCHIVED** (deactivated), and sub-folders are deleted. Pass `transferToFolderId` to move contents somewhere first — `"0"` means the project root and keeps workflows active. Prefer the transfer form unless archiving is intended.
+
+**Gotchas**:
+- Folder names are not unique — `list` before `create` to avoid duplicates
+- A workflow's folder cannot be read back through the API; don't build logic that queries folder membership. Folder contents are visible only as counts
+- The `'personal'` default resolves through the projects API when licensed; on Community (where that API is 403) it infers the project from an existing workflow — a brand-new instance with zero workflows needs an explicit `projectId`, or create any workflow first
+- 403 = missing `folder:*` scopes or an unregistered/unlicensed instance; 404 = wrong project/folder ID, or n8n < 2.19 (no folders API at all)
+- On n8n 2.19–2.31 folder CRUD works but workflow placement doesn't (that needs 2.32+)
 
 ---
 
