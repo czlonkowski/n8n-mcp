@@ -367,4 +367,299 @@ describe('Integration: handleUpdateWorkflow', () => {
       expect(actual.settings?.timezone).toBe('America/New_York');
     });
   });
+
+  // ======================================================================
+  // Issue #433 — GET→UPDATE round-trip + n8n API quirks
+  //
+  // Real-world agents and scripts commonly do:
+  //   const wf = await getWorkflow(id);
+  //   await updateWorkflow(id, { ...wf, name: 'New' });
+  //
+  // n8n's API is asymmetric:
+  // - GET returns read-only fields (id, createdAt, updatedAt, versionId,
+  //   description, active, tags, meta, staticData, pinData, …)
+  // - PUT/PATCH rejects many of those fields (additionalProperties: false
+  //   on some n8n versions; description was specifically rejected — #431)
+  // - settings is required for a stable update path; empty {} is rejected
+  //
+  // N8nApiClient.updateWorkflow() runs cleanWorkflowForUpdate() before PUT.
+  // These tests hit a live instance so regressions like #431 cannot slip by.
+  // ======================================================================
+
+  describe('GET-UPDATE Round Trip (Issue #433)', () => {
+    it('should handle a workflow returned from GET when passed straight to UPDATE', async () => {
+      const created = await client.createWorkflow({
+        ...SIMPLE_WEBHOOK_WORKFLOW,
+        name: createTestWorkflowName('Update - GET round-trip'),
+        tags: ['mcp-integration-test'],
+      });
+      expect(created.id).toBeTruthy();
+      if (!created.id) throw new Error('Workflow ID is missing');
+      context.trackWorkflow(created.id);
+
+      // Full GET payload — includes read-only fields the PUT schema rejects
+      const fromGet = await client.getWorkflow(created.id);
+
+      // Must not throw: cleanWorkflowForUpdate strips read-only fields
+      const updated = await client.updateWorkflow(created.id, fromGet as any);
+
+      expect(updated.id).toBe(created.id);
+      expect(updated.name).toBe(fromGet.name);
+      expect(updated.nodes).toHaveLength(fromGet.nodes.length);
+    });
+
+    it('should handle workflow update with spread operator', async () => {
+      const created = await client.createWorkflow({
+        ...SIMPLE_WEBHOOK_WORKFLOW,
+        name: createTestWorkflowName('Update - Spread operator'),
+        tags: ['mcp-integration-test'],
+      });
+      expect(created.id).toBeTruthy();
+      if (!created.id) throw new Error('Workflow ID is missing');
+      context.trackWorkflow(created.id);
+
+      const fromGet = await client.getWorkflow(created.id);
+      const newName = createTestWorkflowName('Update - Spread operator (renamed)');
+
+      // Common user pattern: spread entire GET response then override fields
+      const updated = await client.updateWorkflow(created.id, {
+        ...fromGet,
+        name: newName,
+      } as any);
+
+      expect(updated.id).toBe(created.id);
+      expect(updated.name).toBe(newName);
+
+      const actual = await client.getWorkflow(created.id);
+      expect(actual.name).toBe(newName);
+      expect(actual.nodes).toHaveLength(fromGet.nodes.length);
+    });
+
+    it('should handle partial settings update via nested spread', async () => {
+      const created = await client.createWorkflow({
+        ...SIMPLE_WEBHOOK_WORKFLOW,
+        name: createTestWorkflowName('Update - Nested settings spread'),
+        tags: ['mcp-integration-test'],
+      });
+      expect(created.id).toBeTruthy();
+      if (!created.id) throw new Error('Workflow ID is missing');
+      context.trackWorkflow(created.id);
+
+      const fromGet = await client.getWorkflow(created.id);
+
+      const updated = await client.updateWorkflow(created.id, {
+        ...fromGet,
+        settings: {
+          ...fromGet.settings,
+          executionOrder: 'v1' as const,
+          timezone: 'UTC',
+        },
+      } as any);
+
+      expect(updated.id).toBe(created.id);
+
+      const actual = await client.getWorkflow(created.id);
+      expect(actual.settings?.timezone).toBe('UTC');
+      expect(actual.nodes).toHaveLength(fromGet.nodes.length);
+    });
+  });
+
+  describe('n8n API Constraints (Issue #433)', () => {
+    it('should strip description on update even when present on GET / payload (Issue #431)', async () => {
+      const created = await client.createWorkflow({
+        ...SIMPLE_WEBHOOK_WORKFLOW,
+        name: createTestWorkflowName('Update - Description strip'),
+        tags: ['mcp-integration-test'],
+      });
+      expect(created.id).toBeTruthy();
+      if (!created.id) throw new Error('Workflow ID is missing');
+      context.trackWorkflow(created.id);
+
+      const fromGet = await client.getWorkflow(created.id);
+
+      // description is read-only on write; client must clean it rather than 400
+      const updated = await client.updateWorkflow(created.id, {
+        ...fromGet,
+        description: 'Agent-supplied description that n8n PUT rejects',
+        name: createTestWorkflowName('Update - Description strip (ok)'),
+      } as any);
+
+      expect(updated.id).toBe(created.id);
+      expect(updated.name).toContain('Description strip (ok)');
+    });
+
+    it('should auto-supply settings when omitted from the update payload', async () => {
+      const created = await client.createWorkflow({
+        ...SIMPLE_WEBHOOK_WORKFLOW,
+        name: createTestWorkflowName('Update - Missing settings'),
+        tags: ['mcp-integration-test'],
+      });
+      expect(created.id).toBeTruthy();
+      if (!created.id) throw new Error('Workflow ID is missing');
+      context.trackWorkflow(created.id);
+
+      const fromGet = await client.getWorkflow(created.id);
+
+      // Absolute required fields only — cleanWorkflowForUpdate adds settings defaults
+      const updated = await client.updateWorkflow(created.id, {
+        name: fromGet.name,
+        nodes: fromGet.nodes,
+        connections: fromGet.connections,
+        // deliberately no settings
+      } as any);
+
+      expect(updated.id).toBe(created.id);
+      expect(updated.nodes).toHaveLength(fromGet.nodes.length);
+    });
+
+    it('should handle all common read-only fields in a spread payload', async () => {
+      const created = await client.createWorkflow({
+        ...SIMPLE_WEBHOOK_WORKFLOW,
+        name: createTestWorkflowName('Update - Read-only fields'),
+        tags: ['mcp-integration-test'],
+      });
+      expect(created.id).toBeTruthy();
+      if (!created.id) throw new Error('Workflow ID is missing');
+      context.trackWorkflow(created.id);
+
+      const fromGet = await client.getWorkflow(created.id);
+      const newName = createTestWorkflowName('Update - Read-only fields (cleaned)');
+
+      // Force-include fields that have historically broken updates when echoed
+      const updated = await client.updateWorkflow(created.id, {
+        ...fromGet,
+        name: newName,
+        createdAt: '2099-01-01T00:00:00.000Z',
+        updatedAt: '2099-01-01T00:00:00.000Z',
+        versionId: 'must-be-stripped',
+        versionCounter: 999,
+        active: true,
+        isArchived: false,
+        meta: { injected: true },
+        staticData: { junk: true },
+        pinData: { junk: true },
+        description: 'must-be-stripped',
+        activeVersionId: 'must-be-stripped',
+        nodeGroups: [],
+        availableInMCP: true,
+      } as any);
+
+      expect(updated.id).toBe(created.id);
+      expect(updated.name).toBe(newName);
+
+      const actual = await client.getWorkflow(created.id);
+      expect(actual.name).toBe(newName);
+      expect(actual.nodes).toHaveLength(fromGet.nodes.length);
+    });
+  });
+
+  describe('Minimal Updates (Issue #433)', () => {
+    it('should update with only required fields (name, nodes, connections)', async () => {
+      const created = await client.createWorkflow({
+        ...SIMPLE_WEBHOOK_WORKFLOW,
+        name: createTestWorkflowName('Update - Minimal required'),
+        tags: ['mcp-integration-test'],
+      });
+      expect(created.id).toBeTruthy();
+      if (!created.id) throw new Error('Workflow ID is missing');
+      context.trackWorkflow(created.id);
+
+      const current = await client.getWorkflow(created.id);
+
+      const updated = await client.updateWorkflow(created.id, {
+        name: current.name,
+        nodes: current.nodes,
+        connections: current.connections,
+      } as any);
+
+      expect(updated.id).toBe(created.id);
+      expect(updated.nodes).toHaveLength(current.nodes.length);
+    });
+
+    it('should update with minimal changes (rename only + required graph)', async () => {
+      const created = await client.createWorkflow({
+        ...SIMPLE_WEBHOOK_WORKFLOW,
+        name: createTestWorkflowName('Update - Minimal rename'),
+        tags: ['mcp-integration-test'],
+      });
+      expect(created.id).toBeTruthy();
+      if (!created.id) throw new Error('Workflow ID is missing');
+      context.trackWorkflow(created.id);
+
+      const current = await client.getWorkflow(created.id);
+      const newName = createTestWorkflowName('Update - Minimal rename (done)');
+
+      const updated = await client.updateWorkflow(created.id, {
+        name: newName,
+        nodes: current.nodes,
+        connections: current.connections,
+      } as any);
+
+      expect(updated.name).toBe(newName);
+
+      const actual = await client.getWorkflow(created.id);
+      expect(actual.name).toBe(newName);
+      expect(actual.nodes).toHaveLength(1);
+    });
+  });
+
+  describe('Edge Cases — settings filtering (Issue #433)', () => {
+    it('should succeed when settings contain only unknown properties (defaults applied)', async () => {
+      const created = await client.createWorkflow({
+        ...SIMPLE_WEBHOOK_WORKFLOW,
+        name: createTestWorkflowName('Update - Unknown settings only'),
+        tags: ['mcp-integration-test'],
+      });
+      expect(created.id).toBeTruthy();
+      if (!created.id) throw new Error('Workflow ID is missing');
+      context.trackWorkflow(created.id);
+
+      const current = await client.getWorkflow(created.id);
+
+      // Unknown settings are filtered; empty remainder → { executionOrder: 'v1' }
+      // Note: callerPolicy is now whitelisted (n8n 1.119+); use truly unknown keys.
+      const updated = await client.updateWorkflow(created.id, {
+        name: current.name,
+        nodes: current.nodes,
+        connections: current.connections,
+        settings: {
+          totallyUnknownSetting: true,
+          anotherGarbageField: 42,
+        } as any,
+      });
+
+      expect(updated.id).toBe(created.id);
+      expect(updated.nodes).toHaveLength(current.nodes.length);
+    });
+
+    it('should preserve valid settings while filtering unknown ones', async () => {
+      const created = await client.createWorkflow({
+        ...SIMPLE_WEBHOOK_WORKFLOW,
+        name: createTestWorkflowName('Update - Mixed settings filter'),
+        tags: ['mcp-integration-test'],
+      });
+      expect(created.id).toBeTruthy();
+      if (!created.id) throw new Error('Workflow ID is missing');
+      context.trackWorkflow(created.id);
+
+      const current = await client.getWorkflow(created.id);
+
+      const updated = await client.updateWorkflow(created.id, {
+        name: current.name,
+        nodes: current.nodes,
+        connections: current.connections,
+        settings: {
+          executionOrder: 'v1' as const,
+          timezone: 'Europe/Berlin',
+          totallyUnknownSetting: 'drop-me',
+        } as any,
+      });
+
+      expect(updated.id).toBe(created.id);
+
+      const actual = await client.getWorkflow(created.id);
+      expect(actual.settings?.timezone).toBe('Europe/Berlin');
+      expect((actual.settings as any)?.totallyUnknownSetting).toBeUndefined();
+    });
+  });
 });

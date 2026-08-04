@@ -777,6 +777,139 @@ describe('n8n-validation', () => {
         const cleaned = cleanWorkflowForUpdate(workflow);
         expect(cleaned.nodes![0].webhookId).toBeUndefined();
       });
+
+      // ====================================================================
+      // Issue #433 — GET→spread→UPDATE patterns (unit-level, always run in CI)
+      //
+      // n8n API quirks these tests lock in:
+      // - GET returns read-only fields (id, createdAt, versionId, description, …)
+      // - PUT/PATCH reject those fields (additionalProperties: false on some versions)
+      // - description is returned by GET but rejected on update (Issue #431)
+      // - empty settings {} is rejected; missing settings get { executionOrder: 'v1' }
+      // Users commonly do: updateWorkflow(id, { ...await getWorkflow(id), name: 'x' })
+      // ====================================================================
+
+      it('should clean a full GET-shaped response for safe PUT (Issue #433)', () => {
+        // Simulate the object shape returned by GET, then spread + rename
+        const getResponse = {
+          id: 'wf-abc',
+          name: 'Original Name',
+          description: 'Returned by GET but not writable on PUT',
+          nodes: [
+            {
+              id: 'webhook-1',
+              name: 'Webhook',
+              type: 'n8n-nodes-base.webhook',
+              typeVersion: 2,
+              position: [250, 300],
+              parameters: { path: 'test' },
+              webhookId: 'existing-wh',
+            },
+          ],
+          connections: {},
+          settings: { executionOrder: 'v1', timezone: 'UTC' },
+          active: false,
+          isArchived: false,
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-06-01T00:00:00.000Z',
+          versionId: 'ver-123',
+          versionCounter: 9,
+          meta: { templateCredsSetupCompleted: true },
+          staticData: { 'node:Webhook': { data: 1 } },
+          pinData: {},
+          tags: [{ id: 't1', name: 'prod' }],
+          triggerCount: 1,
+          shared: [],
+          activeVersionId: 'av-1',
+          nodeGroups: [],
+          availableInMCP: false,
+        } as any;
+
+        const cleaned = cleanWorkflowForUpdate({
+          ...getResponse,
+          name: 'Renamed via spread',
+        });
+
+        expect(cleaned.name).toBe('Renamed via spread');
+        expect(cleaned.nodes).toHaveLength(1);
+        expect(cleaned.connections).toEqual({});
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1', timezone: 'UTC' });
+        // nodeGroups is allowlisted for n8n 2.28+: empty array means ungroup everything
+        // and is intentionally forwarded (omitting the key would backfill stored groups).
+        expect(cleaned.nodeGroups).toEqual([]);
+
+        // Read-only / computed fields must never reach PUT
+        for (const key of [
+          'id',
+          'description',
+          'active',
+          'isArchived',
+          'createdAt',
+          'updatedAt',
+          'versionId',
+          'versionCounter',
+          'meta',
+          'staticData',
+          'pinData',
+          'tags',
+          'triggerCount',
+          'shared',
+          'activeVersionId',
+          'availableInMCP',
+        ]) {
+          expect(cleaned).not.toHaveProperty(key);
+        }
+
+        expect(Object.keys(cleaned).sort()).toEqual([
+          'connections',
+          'name',
+          'nodeGroups',
+          'nodes',
+          'settings',
+        ]);
+      });
+
+      it('should allow minimal payload (name/nodes/connections only) with settings defaults (Issue #433)', () => {
+        const cleaned = cleanWorkflowForUpdate({
+          name: 'Minimal',
+          nodes: [],
+          connections: {},
+        } as any);
+
+        expect(cleaned).toEqual({
+          name: 'Minimal',
+          nodes: [],
+          connections: {},
+          settings: { executionOrder: 'v1' },
+        });
+      });
+
+      it('should replace empty settings objects with minimal defaults (Issue #433 / #431)', () => {
+        const cleaned = cleanWorkflowForUpdate({
+          name: 'Empty Settings',
+          nodes: [],
+          connections: {},
+          settings: {},
+        } as any);
+
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
+      });
+
+      it('should default settings when only unknown settings properties remain (Issue #433)', () => {
+        const cleaned = cleanWorkflowForUpdate({
+          name: 'Filtered Settings',
+          nodes: [],
+          connections: {},
+          settings: {
+            totallyUnknownSetting: true,
+            anotherGarbageField: 42,
+          },
+        } as any);
+
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
+        expect(cleaned.settings).not.toHaveProperty('totallyUnknownSetting');
+        expect(cleaned.settings).not.toHaveProperty('anotherGarbageField');
+      });
     });
   });
 
