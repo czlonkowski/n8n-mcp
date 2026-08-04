@@ -135,7 +135,7 @@ closes the gap where a tool's full description isn't loaded until first use.
 
 **Data, folders, credentials, audit**
 - `n8n_manage_datatable` — Data Table CRUD, filtering, dry-run.
-- `n8n_manage_folders` — workflow folder CRUD with contents counts (n8n ≥ 2.19, registered Community tier and up; `projectId` defaults to `personal`). Place workflows via `parentFolderId` on `n8n_create_workflow` or the `moveToFolder` op (n8n ≥ 2.32). Placement is write-only — verify via a folder's `get` counts, never by reading the workflow. `delete` without `transferToFolderId` ARCHIVES the folder's workflows (`"0"` = transfer to project root instead).
+- `n8n_manage_folders` — workflow folder CRUD with contents counts (n8n ≥ 2.19, registered Community tier and up; `projectId` defaults to `personal`). Place workflows via `parentFolderId` on `n8n_create_workflow` or the `moveToFolder` op (n8n ≥ 2.32). Placement is write-only — verify via a folder's `get` counts, never by reading the workflow. `delete` without `transferToFolderId` moves the folder's workflows to the project root and ARCHIVES them — they still exist, but deactivated (`transferToFolderId: "0"` = transfer to project root without archiving).
 - `n8n_manage_credentials` — credential CRUD + `getSchema` discovery.
 - `n8n_audit_instance` — security audit (hardcoded secrets, unauthenticated webhooks, error-handling gaps).
 

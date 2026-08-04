@@ -460,8 +460,8 @@ n8n_update_partial_workflow({
 
 n8n treats a workflow's folder as **write-only**: it can be set but never read back
 (no field in `n8n_get_workflow`, no folder filter on `n8n_list_workflows`). Verify a
-move indirectly — `n8n_manage_folders({action: "get", folderId})` reports the folder's
-recursive `totalWorkflows` — or visually in the n8n UI. Two consequences:
+move indirectly — `n8n_manage_folders({action: "get", folderId: "abc123"})` reports the
+folder's recursive `totalWorkflows` — or visually in the n8n UI. Two consequences:
 
 - If a mixed update fails after the PUT persisted, the rollback restores the graph but
   **cannot** restore the previous folder (it was never readable); the error says so.
