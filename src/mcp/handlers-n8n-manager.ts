@@ -455,8 +455,9 @@ const createWorkflowSchema = z.object({
   nodeGroups: z.any().optional(),
   projectId: z.string().optional(),
   // Folder placement (n8n 2.32+). Omit for the project root; blank strings from
-  // lossy MCP clients are treated as omitted (issue #774 pattern).
-  parentFolderId: optionalEmptyAware(z.string()),
+  // lossy MCP clients are treated as omitted (issue #774 pattern). Trimmed to match
+  // the folder handlers and the moveToFolder diff operation.
+  parentFolderId: optionalEmptyAware(z.string().trim().min(1)),
 });
 
 const updateWorkflowSchema = z.object({
@@ -469,8 +470,9 @@ const updateWorkflowSchema = z.object({
   nodeGroups: z.any().optional(),
   // Folder move (n8n 2.32+): a folder ID moves the workflow there, null moves it to the
   // project root, omitting the field leaves the current folder unchanged. Write-only in
-  // n8n's schema, so the merged GET response can never re-send a stale value.
-  parentFolderId: optionalEmptyAware(z.string().nullable()),
+  // n8n's schema, so the merged GET response can never re-send a stale value. Trimmed to
+  // match the folder handlers and the moveToFolder diff operation.
+  parentFolderId: optionalEmptyAware(z.string().trim().min(1).nullable()),
   createBackup: z.boolean().optional(),
   intent: z.string().optional(),
 });

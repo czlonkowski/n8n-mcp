@@ -328,6 +328,25 @@ describe('handlers-n8n-manager', () => {
       );
     });
 
+    it('trims a padded parentFolderId before it reaches the API', async () => {
+      const testWorkflow = createTestWorkflow();
+      const input = {
+        name: 'Test Workflow',
+        nodes: testWorkflow.nodes,
+        connections: testWorkflow.connections,
+        parentFolderId: '  folder-abc  ',
+      };
+
+      mockApiClient.createWorkflow.mockResolvedValue(testWorkflow);
+
+      await handlers.handleCreateWorkflow(input);
+
+      expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({ parentFolderId: 'folder-abc' }),
+        expect.anything()
+      );
+    });
+
     it('treats a blank parentFolderId as omitted (lossy MCP clients, #774)', async () => {
       const testWorkflow = createTestWorkflow();
       const input = {
