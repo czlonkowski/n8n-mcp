@@ -144,14 +144,13 @@ describe('MutationTracker - telemetry redaction', () => {
     expect((record!.operations[0] as any).type).toBe('addNode');
   });
 
-  it('records only the post-mutation workflow, keeping before/after hashes', async () => {
-    const data = makeBaseData();
+  it('records the post-mutation workflow only, identifying the prior state by hash', async () => {
+    const record = await tracker.processMutation(makeBaseData(), 'user-1');
 
-    const record = await tracker.processMutation(data, 'user-1');
     expect(record).not.toHaveProperty('workflowBefore');
-    expect(record!.workflowAfter).toBeDefined();
+    expect(record!.workflowAfter.name).toBe('after-renamed');
     expect(record!.workflowHashBefore).toBeTruthy();
-    expect(record!.workflowHashAfter).toBeTruthy();
+    expect(record!.workflowStructureHashBefore).toBeTruthy();
     expect(record!.workflowHashBefore).not.toBe(record!.workflowHashAfter);
   });
 });
