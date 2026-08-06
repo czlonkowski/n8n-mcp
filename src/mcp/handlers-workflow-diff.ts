@@ -5,7 +5,8 @@
 
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
-import { McpToolResponse } from '../types/n8n-api';
+import { isDeepStrictEqual } from 'node:util';
+import { McpToolResponse, Workflow } from '../types/n8n-api';
 import { WorkflowDiffRequest, WorkflowDiffOperation, WorkflowDiffValidationError } from '../types/workflow-diff';
 import { WorkflowDiffEngine } from '../services/workflow-diff-engine';
 import { getN8nApiClient } from './handlers-n8n-manager';
@@ -48,28 +49,26 @@ function compareVersions(
   return 'unknown';
 }
 
-// Deterministic serialisation so two workflows that differ only in key order compare equal.
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
-  if (value && typeof value === 'object') {
-    const entries = Object.keys(value as Record<string, unknown>)
-      .sort()
-      .map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`);
-    return `{${entries.join(',')}}`;
+// The shape an update would send, for comparing two reads of the same workflow. Cloned because
+// cleanWorkflowForUpdate() mutates: it assigns a random webhookId to webhook nodes that lack one,
+// which is also why that field is dropped here. Without both, every workflow containing a webhook
+// node would compare unequal to itself.
+function writableShape(workflow: Workflow): Record<string, unknown> {
+  const cleaned = cleanWorkflowForUpdate(structuredClone(workflow)) as Record<string, unknown>;
+  const nodes = cleaned.nodes;
+  if (Array.isArray(nodes)) {
+    for (const node of nodes) {
+      if (node && typeof node === 'object') delete (node as Record<string, unknown>).webhookId;
+    }
   }
-  return JSON.stringify(value) ?? 'null';
+  return cleaned;
 }
 
-// Compare only the fields an update PUT actually sends. Version identity cannot be used to verify
-// a rollback: a successful rollback writes a new version, so compareVersions() reports 'changed'
-// even when the content was fully restored.
-function sameWritableContent(a: unknown, b: unknown): boolean {
-  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+// Compare only the fields the update allowlist accepts. Version identity cannot verify a rollback:
+// a successful rollback writes a new version, so compareVersions() reports 'changed' regardless.
+function sameWritableContent(a: Workflow, b: Workflow): boolean {
   try {
-    return (
-      stableStringify(cleanWorkflowForUpdate(a as any)) ===
-      stableStringify(cleanWorkflowForUpdate(b as any))
-    );
+    return isDeepStrictEqual(writableShape(a), writableShape(b));
   } catch {
     return false;
   }
@@ -465,11 +464,9 @@ export async function handleUpdatePartialWorkflow(
           } catch (rollbackErr) {
             rollbackErrorMessage = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
 
-            // A rollback PUT can persist and then throw. n8n's public API commits the workflow
-            // content before it checks publish permission, so a caller allowed to edit but not to
-            // publish gets an error on a write that landed. Trusting the throw tells the user their
-            // workflow may be broken when it was in fact restored, which invites a riskier recovery
-            // than doing nothing. Verify against the server instead.
+            // n8n can persist a rollback PUT and then reject it: the public API commits workflow
+            // content before it checks publish permission. Verify against the server rather than
+            // trusting the throw, or we warn of a broken workflow that was in fact restored.
             try {
               const afterRollback = await client.getWorkflow(input.id);
               if (sameWritableContent(afterRollback, workflowBefore)) {
