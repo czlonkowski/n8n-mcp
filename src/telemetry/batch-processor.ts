@@ -19,12 +19,12 @@ function keyToSnakeCase(key: string): string {
  * Convert WorkflowMutationRecord to Supabase-compatible format.
  *
  * IMPORTANT: Only converts top-level field names to snake_case.
- * Nested workflow data (workflowBefore, workflowAfter, operations, etc.)
- * is preserved EXACTLY as-is to maintain n8n API compatibility.
+ * Nested workflow data (workflowAfter, operations, etc.) is preserved
+ * EXACTLY as-is to maintain n8n API compatibility.
  *
- * The Supabase workflow_mutations table stores workflow_before and
- * workflow_after as JSONB columns, which preserve the original structure.
- * Only the top-level columns (user_id, session_id, etc.) require snake_case.
+ * The Supabase workflow_mutations table stores workflow_after as a JSONB
+ * column, which preserves the original structure. Only the top-level
+ * columns (user_id, session_id, etc.) require snake_case.
  *
  * Issue #517: Previously this used recursive conversion which mangled:
  * - Connection keys (node names like "Webhook" → "_webhook")

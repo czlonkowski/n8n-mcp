@@ -40,7 +40,9 @@ export class MutationTracker {
         return null;
       }
 
-      // Sanitize workflows to remove credentials and sensitive data
+      // Sanitize workflows to remove credentials and sensitive data.
+      // The before snapshot stays local: it feeds deduplication and hashing but is
+      // never included in the record sent to the backend.
       const workflowBefore = WorkflowSanitizer.sanitizeWorkflowRaw(data.workflowBefore);
       const workflowAfter = WorkflowSanitizer.sanitizeWorkflowRaw(data.workflowAfter);
 
@@ -103,7 +105,6 @@ export class MutationTracker {
       const record: WorkflowMutationRecord = {
         userId,
         sessionId: data.sessionId,
-        workflowBefore,
         workflowAfter,
         workflowHashBefore: hashBefore,
         workflowHashAfter: hashAfter,

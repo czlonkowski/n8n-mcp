@@ -87,7 +87,11 @@ export interface WorkflowMutationRecord {
   id?: string;
   userId: string;
   sessionId: string;
-  workflowBefore: any;
+  /**
+   * Only the post-mutation workflow is stored. The pre-mutation snapshot is used
+   * locally for hashing, deduplication, and change detection, then discarded —
+   * the before/after hashes below identify the prior state.
+   */
   workflowAfter: any;
   workflowHashBefore: string;
   workflowHashAfter: string;

@@ -82,7 +82,7 @@ export interface SanitizedWorkflow {
 
 export const TELEMETRY_CONFIG = {
   // Batch processing
-  BATCH_FLUSH_INTERVAL: 5000, // 5 seconds
+  BATCH_FLUSH_INTERVAL: 60000, // 60 seconds
   EVENT_QUEUE_THRESHOLD: 10, // Batch events for efficiency
   WORKFLOW_QUEUE_THRESHOLD: 5, // Batch workflows
 
@@ -101,7 +101,7 @@ export const TELEMETRY_CONFIG = {
 
 export const TELEMETRY_BACKEND = {
   URL: 'https://ydyufsohxdfpopqbubwk.supabase.co',
-  ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlkeXVmc29oeGRmcG9wcWJ1YndrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg3OTYyMDAsImV4cCI6MjA3NDM3MjIwMH0.xESphg6h5ozaDsm4Vla3QnDJGc6Nc_cpfoqTHRynkCk'
+  ANON_KEY: 'sb_publishable_UbVUTyXgIyvemM9b15auQg_YzGa47Gq'
 } as const;
 
 export interface TelemetryMetrics {

@@ -46,7 +46,6 @@ describe('TelemetryBatchProcessor', () => {
   const createMutationRecord = (index: number): WorkflowMutationRecord => ({
     userId: `mutation-user-${index}`,
     sessionId: `mutation-session-${index}`,
-    workflowBefore: { nodes: [], connections: {} },
     workflowAfter: { nodes: [], connections: {} },
     workflowHashBefore: `before-${index}`,
     workflowHashAfter: `after-${index}`,
@@ -590,7 +589,6 @@ describe('TelemetryBatchProcessor', () => {
       const mutation: WorkflowMutationRecord = {
         userId: 'user1',
         sessionId: 'session1',
-        workflowBefore: { nodes: [], connections: {} },
         workflowAfter: { nodes: [], connections: {} },
         workflowHashBefore: 'hash1',
         workflowHashAfter: 'hash2',
@@ -870,7 +868,6 @@ describe('TelemetryBatchProcessor', () => {
       const mutation = {
         userId: 'mutation-user',
         sessionId: 'concurrent-session',
-        workflowBefore: { nodes: [], connections: {} },
         workflowAfter: { nodes: [], connections: {} },
         workflowHashBefore: 'before',
         workflowHashAfter: 'after',
@@ -1051,10 +1048,6 @@ describe('TelemetryBatchProcessor', () => {
       const mutation: WorkflowMutationRecord = {
         userId: 'user1',
         sessionId: 'session1',
-        workflowBefore: {
-          nodes: [],
-          connections: {}
-        },
         workflowAfter: {
           nodes: [
             { id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0], parameters: {} }
@@ -1126,7 +1119,6 @@ describe('TelemetryBatchProcessor', () => {
       const mutation: WorkflowMutationRecord = {
         userId: 'user1',
         sessionId: 'session1',
-        workflowBefore: { nodes: [], connections: {} },
         workflowAfter: {
           nodes: [
             {
@@ -1214,7 +1206,6 @@ describe('TelemetryBatchProcessor', () => {
       const mutation: WorkflowMutationRecord = {
         userId: 'user1',
         sessionId: 'session1',
-        workflowBefore: { nodes: [], connections: {} },
         workflowAfter: { nodes: [], connections: {} },
         workflowHashBefore: 'hash1',
         workflowHashAfter: 'hash2',
@@ -1267,7 +1258,7 @@ describe('TelemetryBatchProcessor', () => {
       // Top-level fields should be converted to snake_case
       expect(saved).toHaveProperty('user_id', 'user1');
       expect(saved).toHaveProperty('session_id', 'session1');
-      expect(saved).toHaveProperty('workflow_before');
+      expect(saved).not.toHaveProperty('workflow_before');
       expect(saved).toHaveProperty('workflow_after');
       expect(saved).toHaveProperty('workflow_hash_before', 'hash1');
       expect(saved).toHaveProperty('workflow_hash_after', 'hash2');

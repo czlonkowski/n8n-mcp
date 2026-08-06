@@ -7,7 +7,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const TELEMETRY_BACKEND = {
   URL: 'https://ydyufsohxdfpopqbubwk.supabase.co',
-  ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlkeXVmc29oeGRmcG9wcWJ1YndrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzc2MzAxMDgsImV4cCI6MjA1MzIwNjEwOH0.LsUTx9OsNtnqg-jxXaJPc84aBHVDehHiMaFoF2Ir8s0'
+  ANON_KEY: 'sb_publishable_UbVUTyXgIyvemM9b15auQg_YzGa47Gq'
 };
 
 async function testDirect() {
