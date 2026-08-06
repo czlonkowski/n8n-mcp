@@ -462,6 +462,11 @@ describe('TelemetryManager', () => {
       vi.mocked(createClient).mockClear();
       const untouched = TelemetryManager.getInstance();
 
+      // The assertions below only have teeth while the mocked config manager
+      // reports enabled — otherwise a missing guard would be masked by the
+      // disabled check rather than caught.
+      expect(mockConfigManager.isEnabled()).toBe(true);
+
       await untouched.flushBeforeExit();
 
       expect(createClient).not.toHaveBeenCalled();

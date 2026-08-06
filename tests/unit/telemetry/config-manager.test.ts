@@ -336,8 +336,15 @@ describe('TelemetryConfigManager', () => {
 
       expect(manager.isEnabled()).toBe(true);
 
-      // Restore original environment
-      process.env.N8N_MCP_TELEMETRY_DISABLED = originalEnv;
+      // Restore original environment. Assigning an undefined value would set the
+      // literal string "undefined", which config-manager reads as an invalid
+      // opt-out value; afterEach restores it either way, but keep the local
+      // restore honest.
+      if (originalEnv === undefined) {
+        delete process.env.N8N_MCP_TELEMETRY_DISABLED;
+      } else {
+        process.env.N8N_MCP_TELEMETRY_DISABLED = originalEnv;
+      }
     });
 
     it('should handle invalid JSON in config file gracefully', () => {
