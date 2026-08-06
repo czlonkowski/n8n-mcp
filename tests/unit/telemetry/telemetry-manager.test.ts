@@ -414,14 +414,27 @@ describe('TelemetryManager', () => {
     });
 
     it('should return by the deadline when the backend never responds', async () => {
-      // A flush that never settles: shutdown must not hang behind it
-      mockBatchProcessor.flush.mockReturnValue(new Promise(() => {}));
+      // A flush that never settles: shutdown must not hang behind it. Fake timers
+      // keep this deterministic instead of asserting on wall-clock elapsed time.
+      vi.useFakeTimers();
+      try {
+        mockBatchProcessor.flush.mockReturnValue(new Promise(() => {}));
 
-      const start = Date.now();
-      await manager.flushBeforeExit(50);
+        let settled = false;
+        const pending = manager.flushBeforeExit(5000).then(() => {
+          settled = true;
+        });
 
-      expect(Date.now() - start).toBeLessThan(1000);
-      expect(mockBatchProcessor.flush).toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(4999);
+        expect(settled).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(1);
+        await pending;
+        expect(settled).toBe(true);
+        expect(mockBatchProcessor.flush).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should not throw when the flush rejects', async () => {

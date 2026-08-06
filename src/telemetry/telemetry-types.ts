@@ -102,6 +102,12 @@ export const TELEMETRY_CONFIG = {
 
 export const TELEMETRY_BACKEND = {
   URL: 'https://ydyufsohxdfpopqbubwk.supabase.co',
+  /**
+   * Supabase publishable key (`sb_publishable_…`), the successor to the legacy
+   * anon JWT. The field keeps the ANON_KEY name to match the SUPABASE_ANON_KEY
+   * environment variable that overrides it — a documented public contract.
+   * Insert-only by design; row access is governed by RLS policies.
+   */
   ANON_KEY: 'sb_publishable_UbVUTyXgIyvemM9b15auQg_YzGa47Gq'
 } as const;
 

@@ -310,6 +310,11 @@ export class TelemetryManager {
    * short session's events are still queued. Shutdown callers await this
    * instead. Bounded and non-throwing: an unreachable backend must not delay or
    * fail an exit.
+   *
+   * The deadline stops this method awaiting; it does not cancel the flush. The
+   * requests themselves are already bounded — telemetryFetch hard-aborts each
+   * one at FETCH_TIMEOUT_MS — so nothing outlives the deadline by more than one
+   * request, and callers exit immediately after this returns.
    */
   async flushBeforeExit(timeoutMs: number = TELEMETRY_CONFIG.SHUTDOWN_FLUSH_TIMEOUT_MS): Promise<void> {
     if (!this.isInitialized || !this.configManager.isEnabled()) return;
