@@ -319,8 +319,8 @@ export class TelemetryManager {
   async flushBeforeExit(timeoutMs: number = TELEMETRY_CONFIG.SHUTDOWN_FLUSH_TIMEOUT_MS): Promise<void> {
     if (!this.isInitialized || !this.configManager.isEnabled()) return;
 
+    let timer: NodeJS.Timeout | undefined;
     try {
-      let timer: NodeJS.Timeout | undefined;
       const deadline = new Promise<void>(resolve => {
         timer = setTimeout(resolve, timeoutMs);
         // Never let the deadline itself hold the event loop open
@@ -328,9 +328,12 @@ export class TelemetryManager {
       });
 
       await Promise.race([this.flush(), deadline]);
-      if (timer) clearTimeout(timer);
     } catch (error) {
       logger.debug('Telemetry flush before exit failed:', error);
+    } finally {
+      // Clear on every path, so a rejecting flush cannot leave the deadline
+      // pending — harmless while unref'd, but it would surface under fake timers.
+      if (timer) clearTimeout(timer);
     }
   }
 
