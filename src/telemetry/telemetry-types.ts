@@ -89,7 +89,10 @@ export const TELEMETRY_CONFIG = {
   // Network timeouts
   OPERATION_TIMEOUT: 5000, // 5 seconds
   FETCH_TIMEOUT_MS: 2000, // Hard deadline for each telemetry request
-  SHUTDOWN_FLUSH_TIMEOUT_MS: 3000, // Cap on the final flush so it cannot delay exit
+  // Cap on the final flush so it cannot delay exit. Kept below the shutdown
+  // budgets callers allow themselves (the integration test helper's is 3000ms)
+  // so the flush can never be the thing that ties or overruns them.
+  SHUTDOWN_FLUSH_TIMEOUT_MS: 2000,
 
   // Rate limiting
   RATE_LIMIT_WINDOW: 60000, // 1 minute

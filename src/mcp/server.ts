@@ -4749,6 +4749,15 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
 
     logger.info('Shutting down MCP server...');
 
+    // Ship queued telemetry first. Callers exit via process.exit() right after
+    // this method returns, which never emits 'beforeExit', so the batch
+    // processor's own exit handler does not get to run; without this a short
+    // session loses everything it queued since the last interval flush.
+    // Bounded and non-throwing, and deliberately ahead of the initialization
+    // await below: telemetry needs no database, so an initialization that never
+    // settles must not also cost us the queued events.
+    await telemetry.flushBeforeExit();
+
     // Wait for initialization to complete (or fail) before cleanup
     // This prevents race conditions where shutdown runs while init is in progress
     try {
@@ -4759,13 +4768,6 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         error: error instanceof Error ? error.message : String(error)
       });
     }
-
-    // Ship queued telemetry while the process is still healthy. Callers exit via
-    // process.exit() right after this method returns, which never emits
-    // 'beforeExit', so the batch processor's own exit handler does not get to
-    // run; without this a short session loses everything it queued since the
-    // last interval flush. Bounded and non-throwing.
-    await telemetry.flushBeforeExit();
 
     // Close MCP server connection (for consistency with close() method)
     try {

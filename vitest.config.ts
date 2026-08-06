@@ -9,7 +9,12 @@ export default defineConfig({
     setupFiles: ['./tests/setup/global-setup.ts'],
     // Load environment variables from .env.test
     env: {
-      NODE_ENV: 'test'
+      NODE_ENV: 'test',
+      // Tests must never talk to the telemetry backend. Without this the
+      // first-run default is enabled, so integration tests that construct a
+      // server would ship CI-generated rows to the production project and block
+      // each shutdown on a real round-trip.
+      N8N_MCP_TELEMETRY_DISABLED: 'true'
     },
     // Test execution settings
     pool: 'threads',

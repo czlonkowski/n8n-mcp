@@ -438,7 +438,10 @@ describe('TelemetryManager', () => {
     });
 
     it('should not throw when the flush rejects', async () => {
-      mockBatchProcessor.flush.mockRejectedValue(new Error('network down'));
+      // Reject from flush() itself rather than the batch processor: flush()
+      // swallows its own errors, so mocking the processor would leave
+      // flushBeforeExit's catch block unexercised.
+      vi.spyOn(manager, 'flush').mockRejectedValue(new Error('network down'));
 
       await expect(manager.flushBeforeExit(50)).resolves.toBeUndefined();
     });
@@ -448,6 +451,20 @@ describe('TelemetryManager', () => {
 
       await manager.flushBeforeExit();
 
+      expect(mockBatchProcessor.flush).not.toHaveBeenCalled();
+    });
+
+    it('should not initialize telemetry when it never was', async () => {
+      // The load-bearing safety property: a shutdown must never be the thing
+      // that creates a Supabase client. Tests and telemetry-disabled users hit
+      // this path on every server teardown.
+      TelemetryManager.resetInstance();
+      vi.mocked(createClient).mockClear();
+      const untouched = TelemetryManager.getInstance();
+
+      await untouched.flushBeforeExit();
+
+      expect(createClient).not.toHaveBeenCalled();
       expect(mockBatchProcessor.flush).not.toHaveBeenCalled();
     });
   });
