@@ -51,14 +51,19 @@ function compareVersions(
 
 // The shape an update would send, for comparing two reads of the same workflow. Cloned because
 // cleanWorkflowForUpdate() mutates: it assigns a random webhookId to webhook nodes that lack one,
-// which is also why that field is dropped here. Without both, every workflow containing a webhook
-// node would compare unequal to itself.
+// so two reads of one workflow would otherwise compare unequal to themselves. Only those generated
+// ids are dropped; a webhookId the workflow already carried is real content and stays compared.
 function writableShape(workflow: Workflow): Record<string, unknown> {
+  const generated = new Set(
+    (workflow.nodes ?? []).filter(node => !node.webhookId).map(node => node.id),
+  );
   const cleaned = cleanWorkflowForUpdate(structuredClone(workflow)) as Record<string, unknown>;
   const nodes = cleaned.nodes;
   if (Array.isArray(nodes)) {
     for (const node of nodes) {
-      if (node && typeof node === 'object') delete (node as Record<string, unknown>).webhookId;
+      if (node && typeof node === 'object' && generated.has(node.id)) {
+        delete (node as Record<string, unknown>).webhookId;
+      }
     }
   }
   return cleaned;

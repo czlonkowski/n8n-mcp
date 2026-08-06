@@ -1346,6 +1346,70 @@ describe('handlers-workflow-diff', () => {
       });
     });
 
+    it('should still report rollback failure when only a pre-existing webhookId differs', async () => {
+      // A webhookId the workflow already carried is real content, not a value the allowlist made up,
+      // so a change to one means the prior state was not restored. Only generated ids are ignored.
+      const hook = (webhookId: string) => ({
+        id: 'hook1',
+        name: 'Webhook',
+        type: 'n8n-nodes-base.webhook',
+        typeVersion: 2,
+        position: [0, 0],
+        parameters: { path: 'incoming' },
+        webhookId,
+      });
+      const before = createTestWorkflow({
+        name: 'Original Workflow',
+        versionId: 'v1',
+        nodes: [hook('stable-hook-id')],
+        connections: {},
+      });
+      const afterPersist = createTestWorkflow({
+        name: 'Original Workflow',
+        versionId: 'v2',
+        nodes: [hook('stable-hook-id')],
+        connections: {},
+      });
+      const afterRollback = createTestWorkflow({
+        name: 'Original Workflow',
+        versionId: 'v3',
+        nodes: [hook('replaced-hook-id')],
+        connections: {},
+      });
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+      const publishRefused = new N8nNotFoundError(
+        'You do not have permission to activate this workflow. Ask the owner to share it with you.',
+      );
+
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(afterPersist)
+        .mockResolvedValueOnce(afterRollback);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: before,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockRejectedValueOnce(publishRefused);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateName', name: 'Original Workflow' }],
+      }, mockRepository);
+
+      expect(result.error).toContain('rollback also failed');
+      expect(result.details).toMatchObject({
+        rollbackPerformed: false,
+      });
+    });
+
     it('should handle input validation errors', async () => {
       const invalidInput = {
         id: 'test-id',
