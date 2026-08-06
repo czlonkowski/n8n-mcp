@@ -1547,6 +1547,18 @@ export class SingleSessionHTTPServer {
       });
     }
 
+    // Ship queued telemetry before the process exits. This server closes each
+    // session's MCP server directly rather than calling its shutdown(), so the
+    // flush there does not cover this path. Lazy-required so telemetry stays off
+    // the module load path. Bounded and non-throwing.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { telemetry } = require('./telemetry');
+      await telemetry.flushBeforeExit();
+    } catch (error) {
+      logger.debug('Telemetry flush during shutdown failed:', error);
+    }
+
     // Close the shared database connection (only during process shutdown)
     // This must happen after all sessions are closed
     try {

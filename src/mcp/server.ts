@@ -4760,6 +4760,13 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
       });
     }
 
+    // Ship queued telemetry while the process is still healthy. Callers exit via
+    // process.exit() right after this method returns, which never emits
+    // 'beforeExit', so the batch processor's own exit handler does not get to
+    // run; without this a short session loses everything it queued since the
+    // last interval flush. Bounded and non-throwing.
+    await telemetry.flushBeforeExit();
+
     // Close MCP server connection (for consistency with close() method)
     try {
       await this.server.close();

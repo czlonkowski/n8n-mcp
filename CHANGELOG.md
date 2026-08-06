@@ -12,7 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Telemetry publishable key rotated.** The backend key moves from the legacy Supabase anon JWT to the new publishable key format (`sb_publishable_…`). `SUPABASE_ANON_KEY` still overrides the bundled default, so anyone pointing telemetry at their own project is unaffected.
-- **Telemetry batch flush interval raised from 5s to 60s.** Fewer, larger inserts for the same data. The queue thresholds (10 events, 5 workflows) and the flush on `beforeExit`/`SIGINT`/`SIGTERM` are unchanged, so short-lived stdio sessions still ship their batch on exit rather than waiting for the timer.
+- **Telemetry batch flush interval raised from 5s to 60s.** Fewer, larger inserts for the same data.
+
+### Fixed
+
+- **Queued telemetry is no longer lost on shutdown.** Every shutdown path ends in `process.exit()`, which does not emit `beforeExit`, so the batch processor's own exit handler never ran: whatever was queued since the last interval flush was dropped. Raising the flush interval to 60s widened that window enough to lose most short sessions, including single-mutation ones (mutations auto-flush only from the second queued record onward). The MCP server's `shutdown()` and the single-session HTTP server's now await `telemetry.flushBeforeExit()`, a bounded, non-throwing final flush that cannot delay or fail an exit if the backend is unreachable.
 - **Mutation telemetry no longer sends the pre-mutation workflow.** `workflow_before` was a full second copy of a workflow on every partial or full update, roughly doubling each mutation row for a snapshot nothing queried. The record now carries `workflow_after` only; the before snapshot is still built locally to drive deduplication, the meaningful-change check, and `workflow_hash_before` / `workflow_structure_hash_before`, which continue to identify the prior state.
 
 ## [2.68.1] - 2026-08-04

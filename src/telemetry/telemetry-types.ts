@@ -89,6 +89,7 @@ export const TELEMETRY_CONFIG = {
   // Network timeouts
   OPERATION_TIMEOUT: 5000, // 5 seconds
   FETCH_TIMEOUT_MS: 2000, // Hard deadline for each telemetry request
+  SHUTDOWN_FLUSH_TIMEOUT_MS: 3000, // Cap on the final flush so it cannot delay exit
 
   // Rate limiting
   RATE_LIMIT_WINDOW: 60000, // 1 minute

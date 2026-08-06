@@ -395,6 +395,50 @@ describe('TelemetryManager', () => {
     });
   });
 
+  describe('flushBeforeExit()', () => {
+    beforeEach(() => {
+      manager = TelemetryManager.getInstance();
+      // Initialize so the shutdown flush has a client to work with
+      manager.trackEvent('test', {});
+    });
+
+    it('should ship queued data so shutdown does not rely on beforeExit', async () => {
+      const events = [{ user_id: 'user1', event: 'test', properties: {} }];
+      mockEventTracker.getEventQueue.mockReturnValue(events);
+      mockEventTracker.getWorkflowQueue.mockReturnValue([]);
+      mockEventTracker.getMutationQueue.mockReturnValue([]);
+
+      await manager.flushBeforeExit();
+
+      expect(mockBatchProcessor.flush).toHaveBeenCalledWith(events, [], []);
+    });
+
+    it('should return by the deadline when the backend never responds', async () => {
+      // A flush that never settles: shutdown must not hang behind it
+      mockBatchProcessor.flush.mockReturnValue(new Promise(() => {}));
+
+      const start = Date.now();
+      await manager.flushBeforeExit(50);
+
+      expect(Date.now() - start).toBeLessThan(1000);
+      expect(mockBatchProcessor.flush).toHaveBeenCalled();
+    });
+
+    it('should not throw when the flush rejects', async () => {
+      mockBatchProcessor.flush.mockRejectedValue(new Error('network down'));
+
+      await expect(manager.flushBeforeExit(50)).resolves.toBeUndefined();
+    });
+
+    it('should do nothing when telemetry is disabled', async () => {
+      mockConfigManager.isEnabled.mockReturnValue(false);
+
+      await manager.flushBeforeExit();
+
+      expect(mockBatchProcessor.flush).not.toHaveBeenCalled();
+    });
+  });
+
   describe('enable/disable functionality', () => {
     beforeEach(() => {
       manager = TelemetryManager.getInstance();
