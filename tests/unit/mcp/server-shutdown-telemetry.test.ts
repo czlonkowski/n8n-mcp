@@ -19,15 +19,21 @@ const { flushBeforeExit, trackSessionStart } = vi.hoisted(() => ({
   trackSessionStart: vi.fn(),
 }));
 
+// Covers every telemetry method reached through this barrel — handlers-n8n-manager
+// imports the same one, so a partial stub would fail later tests in this file with
+// "is not a function" rather than a meaningful assertion.
 vi.mock('../../../src/telemetry', () => ({
   telemetry: {
     flushBeforeExit,
     trackSessionStart,
     trackToolUsage: vi.fn(),
     trackError: vi.fn(),
+    trackEvent: vi.fn(),
     trackSearchQuery: vi.fn(),
     trackValidationDetails: vi.fn(),
     trackToolSequence: vi.fn(),
+    trackWorkflowCreation: vi.fn(),
+    trackWorkflowMutation: vi.fn(),
   },
 }));
 
@@ -78,5 +84,8 @@ describe('MCP server shutdown flushes telemetry', () => {
     flushBeforeExit.mockRejectedValue(new Error('backend unreachable'));
 
     await expect(server.shutdown()).resolves.toBeUndefined();
+    // Resolving is not enough — assert the cleanup past the flush actually ran.
+    expect((server as any).db).toBeNull();
+    expect((server as any).repository).toBeNull();
   });
 });
