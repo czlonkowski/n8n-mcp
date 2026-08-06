@@ -12,7 +12,7 @@ import { getN8nApiClient } from './handlers-n8n-manager';
 import { N8nApiError, getUserFriendlyErrorMessage } from '../utils/n8n-errors';
 import { logger } from '../utils/logger';
 import { InstanceContext, getInstanceScopeId } from '../types/instance-context';
-import { validateWorkflowStructure } from '../services/n8n-validation';
+import { validateWorkflowStructure, cleanWorkflowForUpdate } from '../services/n8n-validation';
 import { NodeRepository } from '../database/node-repository';
 import { WorkflowVersioningService } from '../services/workflow-versioning-service';
 import { WorkflowValidator } from '../services/workflow-validator';
@@ -46,6 +46,33 @@ function compareVersions(
     return a.updatedAt === b.updatedAt ? 'same' : 'changed';
   }
   return 'unknown';
+}
+
+// Deterministic serialisation so two workflows that differ only in key order compare equal.
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+// Compare only the fields an update PUT actually sends. Version identity cannot be used to verify
+// a rollback: a successful rollback writes a new version, so compareVersions() reports 'changed'
+// even when the content was fully restored.
+function sameWritableContent(a: unknown, b: unknown): boolean {
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  try {
+    return (
+      stableStringify(cleanWorkflowForUpdate(a as any)) ===
+      stableStringify(cleanWorkflowForUpdate(b as any))
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -422,6 +449,7 @@ export async function handleUpdatePartialWorkflow(
 
           // Either persist-then-fail OR couldn't determine — attempt rollback.
           let rollbackPerformed = false;
+          let rollbackVerifiedAfterError = false;
           let rollbackErrorMessage: string | undefined;
           try {
             // No authoredGroups here: restoring the graph matters, frames do not. If the snapshot's
@@ -436,11 +464,34 @@ export async function handleUpdatePartialWorkflow(
             });
           } catch (rollbackErr) {
             rollbackErrorMessage = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
-            logger.error('updateWorkflow failed AND rollback failed', {
-              workflowId: input.id,
-              originalError: updateError instanceof Error ? updateError.message : String(updateError),
-              rollbackError: rollbackErrorMessage,
-            });
+
+            // A rollback PUT can persist and then throw. n8n's public API commits the workflow
+            // content before it checks publish permission, so a caller allowed to edit but not to
+            // publish gets an error on a write that landed. Trusting the throw tells the user their
+            // workflow may be broken when it was in fact restored, which invites a riskier recovery
+            // than doing nothing. Verify against the server instead.
+            try {
+              const afterRollback = await client.getWorkflow(input.id);
+              if (sameWritableContent(afterRollback, workflowBefore)) {
+                rollbackPerformed = true;
+                rollbackVerifiedAfterError = true;
+                logger.warn('rollback PUT errored but content matches the prior state; treating as rolled back', {
+                  workflowId: input.id,
+                  rollbackError: rollbackErrorMessage,
+                });
+                rollbackErrorMessage = undefined;
+              }
+            } catch (verifyErr) {
+              logger.debug('post-rollback verification GET failed', verifyErr);
+            }
+
+            if (!rollbackPerformed) {
+              logger.error('updateWorkflow failed AND rollback failed', {
+                workflowId: input.id,
+                originalError: updateError instanceof Error ? updateError.message : String(updateError),
+                rollbackError: rollbackErrorMessage,
+              });
+            }
           }
 
           // Re-throw with rollback context attached so the outer N8nApiError
@@ -454,6 +505,7 @@ export async function handleUpdatePartialWorkflow(
             const augmentedDetails: Record<string, unknown> = {
               ...((updateError.details as Record<string, unknown>) ?? {}),
               rollbackPerformed,
+              ...(rollbackVerifiedAfterError ? { rollbackVerifiedAfterError: true } : {}),
               ...(folderMoveInPayload && rollbackPerformed ? { folderMoveMayHavePersisted: true } : {}),
               ...(rollbackErrorMessage ? { rollbackError: rollbackErrorMessage } : {}),
               ...(workflowBefore.versionId ? { priorVersionId: workflowBefore.versionId } : {}),

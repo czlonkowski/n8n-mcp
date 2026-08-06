@@ -1182,6 +1182,53 @@ describe('handlers-workflow-diff', () => {
       });
     });
 
+    it('should treat a rollback as performed when its PUT errored but the content was restored', async () => {
+      // n8n's public API commits workflow content before it checks publish permission, so a
+      // rollback PUT can persist and then throw. Version identity cannot settle it: the restored
+      // workflow necessarily carries a new versionId, so the writable content is what must be
+      // compared. Reporting a broken workflow here invites a riskier recovery than doing nothing.
+      const before = createTestWorkflow({ versionId: 'v1' });
+      const afterPersist = createTestWorkflow({ versionId: 'v2' });
+      const afterRollback = createTestWorkflow({ versionId: 'v3' });
+      const validationError = new N8nValidationError('Invalid workflow structure', {
+        field: 'connections',
+        message: 'Invalid connection configuration',
+      });
+      const publishRefused = new N8nNotFoundError(
+        'You do not have permission to activate this workflow. Ask the owner to share it with you.',
+      );
+
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(afterPersist)
+        .mockResolvedValueOnce(afterRollback);
+      mockDiffEngine.applyDiff.mockResolvedValue({
+        success: true,
+        workflow: before,
+        operationsApplied: 1,
+        message: 'Success',
+        errors: [],
+      });
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(validationError)
+        .mockRejectedValueOnce(publishRefused);
+
+      const result = await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('workflow restored to prior state');
+      expect(result.error).not.toContain('rollback also failed');
+      expect(result.details).toMatchObject({
+        rollbackPerformed: true,
+        rollbackVerifiedAfterError: true,
+      });
+      expect(result.details).not.toHaveProperty('rollbackError');
+    });
+
     it('should handle input validation errors', async () => {
       const invalidInput = {
         id: 'test-id',
