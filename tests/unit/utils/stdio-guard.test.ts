@@ -2,6 +2,20 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { installStdioGuard } from '../../../src/utils/stdio-guard';
 
 /**
+ * Every console method the guard can replace under `silenceConsole`. Restoring a
+ * subset would leak no-ops into later tests sharing this process.
+ */
+const OVERRIDDEN_CONSOLE_METHODS = [
+  'log', 'error', 'warn', 'info', 'debug', 'trace', 'dir', 'time', 'timeEnd',
+  'timeLog', 'group', 'groupEnd', 'table', 'clear', 'count', 'countReset',
+] as const;
+
+/** Captured once at module load, before any test can override console. */
+const PRISTINE_CONSOLE: Record<string, any> = Object.fromEntries(
+  OVERRIDDEN_CONSOLE_METHODS.map(m => [m, (console as any)[m]])
+);
+
+/**
  * The guard is the last line of defence for the JSON-RPC channel: in stdio mode
  * anything written to stdout that is not a protocol frame corrupts the stream.
  */
@@ -13,13 +27,10 @@ describe('installStdioGuard', () => {
 
   beforeEach(() => {
     originalStdoutWrite = process.stdout.write;
-    originalConsole = {
-      log: console.log,
-      error: console.error,
-      warn: console.warn,
-      info: console.info,
-      debug: console.debug,
-    };
+    originalConsole = {};
+    for (const method of OVERRIDDEN_CONSOLE_METHODS) {
+      originalConsole[method] = (console as any)[method];
+    }
     stdoutChunks = [];
     stderrChunks = [];
 
@@ -36,7 +47,9 @@ describe('installStdioGuard', () => {
 
   afterEach(() => {
     process.stdout.write = originalStdoutWrite;
-    Object.assign(console, originalConsole);
+    for (const method of OVERRIDDEN_CONSOLE_METHODS) {
+      (console as any)[method] = originalConsole[method];
+    }
     vi.restoreAllMocks();
   });
 
@@ -78,6 +91,17 @@ describe('installStdioGuard', () => {
     expect(console.log).not.toBe(originalConsole.log);
     expect(console.error).not.toBe(originalConsole.error);
     expect(console.log('x')).toBeUndefined();
+    // Reaches well beyond the common methods — the whole set has to be restored.
+    expect(console.trace).not.toBe(originalConsole.trace);
+    expect(console.table).not.toBe(originalConsole.table);
+  });
+
+  // Runs after the silencing test above, so a no-op left on any console method
+  // would surface here rather than in an unrelated suite sharing this process.
+  it('leaves no silenced console methods behind for later tests', () => {
+    for (const method of OVERRIDDEN_CONSOLE_METHODS) {
+      expect((console as any)[method]).toBe(PRISTINE_CONSOLE[method]);
+    }
   });
 
   it('returns the original console methods captured before override', () => {

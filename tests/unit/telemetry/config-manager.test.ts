@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, MockInstance } from 'vitest';
 import { TelemetryConfigManager } from '../../../src/telemetry/config-manager';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
@@ -29,6 +29,10 @@ const OPT_OUT_VARS = [
 describe('TelemetryConfigManager', () => {
   let manager: TelemetryConfigManager;
   let savedOptOutVars: Record<string, string | undefined>;
+  // Owned here so individual tests can assert on them without re-spying.
+  let stderrWrite: MockInstance;
+  let stdoutWrite: MockInstance;
+  let consoleLog: MockInstance;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -43,8 +47,9 @@ describe('TelemetryConfigManager', () => {
 
     // Suppress the first-run notice in test output. It goes to stderr, never
     // stdout — stdout is the JSON-RPC channel in stdio mode.
-    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -88,9 +93,6 @@ describe('TelemetryConfigManager', () => {
     // be console.log'd, so every fresh install fed 34 lines of box-drawing
     // characters into the client's JSON parser.
     it('should write the first-run notice to stderr and never to stdout', () => {
-      const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-      const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
-      const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
       vi.mocked(existsSync).mockReturnValue(false);
 
       manager = TelemetryConfigManager.getInstance();

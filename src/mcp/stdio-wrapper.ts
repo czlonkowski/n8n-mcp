@@ -31,10 +31,21 @@ process.env.LOG_LEVEL = 'error';
 const { installStdioGuard } = require('../utils/stdio-guard');
 const originalConsoleError = installStdioGuard({ silenceConsole: true }).error;
 
-// Import and run the server AFTER suppressing output
-import { N8NDocumentationMCPServer } from './server';
+// Load the server AFTER the guard is installed.
+//
+// The type-only import is erased at compile time, so it cannot pull ./server in
+// early; the value comes from the require below. A static value import would work
+// under the current commonjs emit — tsc keeps the require at this position — but
+// would be hoisted above the guard under an ESM emit, silently defeating the
+// ordering this whole file exists to guarantee. The require makes that invariant
+// explicit rather than dependent on the module target.
+import type { N8NDocumentationMCPServer as N8NDocumentationMCPServerType } from './server';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { N8NDocumentationMCPServer } = require('./server') as {
+  N8NDocumentationMCPServer: typeof import('./server').N8NDocumentationMCPServer;
+};
 
-let server: N8NDocumentationMCPServer | null = null;
+let server: N8NDocumentationMCPServerType | null = null;
 
 async function main() {
   try {
