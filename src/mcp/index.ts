@@ -73,14 +73,19 @@ async function main() {
 
   // In stdio mode stdout is the JSON-RPC channel, so shield it before any module
   // can write there — notably TelemetryConfigManager's first-run notice, reached
-  // transitively via EarlyErrorLogger below. Gated on stdio: http mode writes
-  // ordinary output to stdout and must not be filtered.
+  // transitively via EarlyErrorLogger below.
+  //
+  // The condition must be `!== 'http'`, matching the transport selection below
+  // exactly. Selection treats anything that is not literally 'http' as stdio, so
+  // gating the guard on `=== 'stdio'` left every noncanonical value ('STDIO', a
+  // stray trailing space, a typo) running the stdio transport unguarded — the
+  // case that matters most, since a misspelled mode is also one nobody notices.
   //
   // This is weaker than stdio-wrapper.ts by construction. That file is a dedicated
   // preamble that installs the guard before ./server is required; this entrypoint
   // imports ./server at module load, so import-time writes are not covered here.
   // The published bin remains the hardened path.
-  if (mode === 'stdio') {
+  if (mode !== 'http') {
     installStdioGuard();
   }
 

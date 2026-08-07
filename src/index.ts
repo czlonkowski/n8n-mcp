@@ -9,6 +9,9 @@ export { N8NMCPEngine, EngineHealth, EngineOptions } from './mcp-engine';
 export { SingleSessionHTTPServer } from './http-server-single-session';
 export { ConsoleManager } from './utils/console-manager';
 export { N8NDocumentationMCPServer } from './mcp/server';
+// Embedders driving the stdio transport should call this before constructing the
+// server, so database-initialization logging cannot reach the JSON-RPC channel.
+export { installStdioGuard, StdioGuardOptions, OriginalConsole } from './utils/stdio-guard';
 
 // Type exports for multi-tenant and library usage
 export type {

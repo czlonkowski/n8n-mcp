@@ -935,12 +935,6 @@ export class ConfigValidator {
     
     // Check return format for Python
     if (language === 'python' && hasReturn) {
-      // DEBUG: Log to see if we're entering this block
-      if (code.includes('result = {"data": "value"}')) {
-        console.log('DEBUG: Processing Python code with result variable');
-        console.log('DEBUG: Language:', language);
-        console.log('DEBUG: Has return:', hasReturn);
-      }
       // Check for common incorrect patterns
       if (/return\s+items\s*$/.test(code) && !code.includes('json') && !code.includes('dict')) {
         warnings.push({

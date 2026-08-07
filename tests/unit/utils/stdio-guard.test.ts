@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { installStdioGuard } from '../../../src/utils/stdio-guard';
+import { installStdioGuard, resetStdioGuardForTests } from '../../../src/utils/stdio-guard';
 
 /**
  * Every console method the guard can replace under `silenceConsole`. Restoring a
@@ -31,6 +31,7 @@ describe('installStdioGuard', () => {
     for (const method of OVERRIDDEN_CONSOLE_METHODS) {
       originalConsole[method] = (console as any)[method];
     }
+    resetStdioGuardForTests();
     stdoutChunks = [];
     stderrChunks = [];
 
@@ -46,6 +47,7 @@ describe('installStdioGuard', () => {
   });
 
   afterEach(() => {
+    resetStdioGuardForTests();
     process.stdout.write = originalStdoutWrite;
     for (const method of OVERRIDDEN_CONSOLE_METHODS) {
       (console as any)[method] = originalConsole[method];
@@ -102,6 +104,48 @@ describe('installStdioGuard', () => {
     for (const method of OVERRIDDEN_CONSOLE_METHODS) {
       expect((console as any)[method]).toBe(PRISTINE_CONSOLE[method]);
     }
+  });
+
+  // The guard is installed from the entrypoints AND from the server's
+  // constructor/run(), so repeat calls are normal rather than exceptional.
+  describe('idempotency', () => {
+    it('does not wrap stdout.write a second time', () => {
+      installStdioGuard();
+      const afterFirst = process.stdout.write;
+
+      installStdioGuard();
+
+      expect(process.stdout.write).toBe(afterFirst);
+    });
+
+    it('does not let a later plain call undo an earlier silencing', () => {
+      installStdioGuard({ silenceConsole: true });
+      const silenced = console.log;
+
+      installStdioGuard();
+
+      expect(console.log).toBe(silenced);
+      expect(console.log).not.toBe(originalConsole.log);
+    });
+
+    it('returns the first call’s originals on every later call', () => {
+      const first = installStdioGuard({ silenceConsole: true });
+      const second = installStdioGuard();
+
+      expect(second).toBe(first);
+      expect(second.error).toBe(originalConsole.error);
+    });
+
+    it('still routes correctly after repeat installs', () => {
+      installStdioGuard();
+      installStdioGuard();
+
+      process.stdout.write('{"jsonrpc":"2.0","id":1,"result":{}}');
+      process.stdout.write('noise\n');
+
+      expect(stdoutChunks).toEqual(['{"jsonrpc":"2.0","id":1,"result":{}}']);
+      expect(stderrChunks.join('')).toContain('noise');
+    });
   });
 
   it('returns the original console methods captured before override', () => {

@@ -19,6 +19,7 @@ import { n8nManagementTools, TOOL_OPERATION_PARAM, DESTRUCTIVE_TOOL_OPERATIONS }
 import { makeToolsN8nFriendly } from './tools-n8n-friendly';
 import { getWorkflowExampleString } from './workflow-examples';
 import { logger } from '../utils/logger';
+import { installStdioGuard } from '../utils/stdio-guard';
 import { summarizeToolCallArgs } from '../utils/redaction';
 import { NodeRepository } from '../database/node-repository';
 import { DatabaseAdapter, createDatabaseAdapter } from '../database/database-adapter';
@@ -186,6 +187,20 @@ export class N8NDocumentationMCPServer {
   private additionalToolsByName: Map<string, AdditionalTool> = new Map();
 
   constructor(instanceContext?: InstanceContext, earlyLogger?: EarlyErrorLogger, options?: MCPServerOptions) {
+    // The constructor starts database initialization below without awaiting it,
+    // and that logs — so by the time run() could install the guard, output has
+    // already been written. Install here whenever an MCP mode is declared and it
+    // is not http, which covers noncanonical values like 'STDIO' or a typo.
+    //
+    // Deliberately keyed on MCP_MODE being *set*: with no mode declared this is
+    // an ordinary library embedding (or a CLI script), where filtering stdout
+    // would be surprising. Those callers are still covered from run() onward,
+    // and can call installStdioGuard() themselves before constructing — it is
+    // exported from the package root for exactly that.
+    if (process.env.MCP_MODE && process.env.MCP_MODE !== 'http') {
+      installStdioGuard();
+    }
+
     this.instanceContext = instanceContext;
     this.earlyLogger = earlyLogger || null;
     this.registerAdditionalTools(options?.additionalTools || []);
@@ -4714,9 +4729,17 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
   }
 
   async run(): Promise<void> {
+    // Connecting a StdioServerTransport is the moment stdout stops being an
+    // output stream and becomes the JSON-RPC channel, so the guard belongs here
+    // as well as in the entrypoints. This is the only protection embedders get:
+    // N8NDocumentationMCPServer is exported from the package root, and anyone
+    // constructing it directly and calling run() bypasses both bin scripts.
+    // Idempotent — a no-op when an entrypoint already installed it.
+    installStdioGuard();
+
     // Ensure database is initialized before starting server
     await this.ensureInitialized();
-    
+
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     

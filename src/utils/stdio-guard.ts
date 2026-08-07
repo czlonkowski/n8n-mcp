@@ -44,14 +44,28 @@ export interface StdioGuardOptions {
 }
 
 /**
+ * Set on first install so repeat calls are no-ops. The guard is installed from
+ * more than one place — the entrypoints install it as early as possible, and
+ * N8NDocumentationMCPServer.run() installs it as a backstop for embedders that
+ * bypass both. Without this, stdout.write would be wrapped once per call, and a
+ * later call without `silenceConsole` would appear to undo an earlier silencing.
+ */
+let installedGuard: OriginalConsole | null = null;
+
+/**
  * Redirect all non-JSON-RPC stdout to stderr, and optionally silence console.
  *
  * Call as early as possible, and only when running in stdio mode — in http mode
- * stdout is an ordinary output stream and must not be filtered.
+ * stdout is an ordinary output stream and must not be filtered. Idempotent: the
+ * first call wins and later calls return the originals it captured.
  *
  * @returns the original console methods, captured before any override
  */
 export function installStdioGuard(options: StdioGuardOptions = {}): OriginalConsole {
+  if (installedGuard) {
+    return installedGuard;
+  }
+
   const originals: OriginalConsole = {
     log: console.log,
     error: console.error,
@@ -96,5 +110,11 @@ export function installStdioGuard(options: StdioGuardOptions = {}): OriginalCons
     return stderrWrite(chunk, encodingOrCallback, callback);
   } as typeof process.stdout.write;
 
+  installedGuard = originals;
   return originals;
+}
+
+/** Test-only: forget the install so a suite can exercise a fresh guard. */
+export function resetStdioGuardForTests(): void {
+  installedGuard = null;
 }
