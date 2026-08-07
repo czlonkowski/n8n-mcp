@@ -1,0 +1,186 @@
+# n8n — QUEUE mode (main + Redis + Postgres + N workers), Caddy auto-TLS.
+# Use for horizontal scale / high execution volume. Requires Postgres (SQLite
+# is not supported in queue mode). The SAME N8N_ENCRYPTION_KEY must reach the
+# main AND every worker — the `x-n8n` anchor guarantees that here.
+#
+# Secrets come ONLY from the .env file in this directory — never inline them here.
+# main/workers/postgres/redis stay on the private network; only Caddy is public.
+
+# Shared config for the n8n main process and the workers. The environment list
+# below is the COMMON set every n8n container needs (DB, queue, encryption key).
+# Workers use exactly this; the main process overrides `environment` with the
+# same values PLUS the public-URL vars (see the `n8n` service).
+x-n8n: &n8n
+  image: docker.n8n.io/n8nio/n8n:${N8N_IMAGE_TAG:-stable}
+  restart: unless-stopped
+  environment:
+    # --- database (shared Postgres) ---
+    - DB_TYPE=postgresdb
+    - DB_POSTGRESDB_HOST=postgres
+    - DB_POSTGRESDB_PORT=5432
+    - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+    - DB_POSTGRESDB_USER=${POSTGRES_NON_ROOT_USER}
+    - DB_POSTGRESDB_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+    # --- queue (Redis / Bull) ---
+    - EXECUTIONS_MODE=queue
+    - QUEUE_BULL_REDIS_HOST=redis
+    - QUEUE_BULL_REDIS_PORT=6379
+    - QUEUE_HEALTH_CHECK_ACTIVE=true
+    - OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+    # --- the encryption key: identical for main + all workers; BACK IT UP ---
+    - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+    # --- timezone ---
+    - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+    - TZ=${GENERIC_TIMEZONE}
+    - NODE_ENV=production
+    # --- secure defaults ---
+    - N8N_DIAGNOSTICS_ENABLED=false
+    - N8N_PERSONALIZATION_ENABLED=false
+    - N8N_HIRING_BANNER_ENABLED=false
+    - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+    - N8N_RUNNERS_ENABLED=true
+    # Queue mode does NOT support filesystem binary mode — binary data lives in
+    # Postgres (`database`) so main + workers all see it. S3/Azure external
+    # storage needs an Enterprise license — see QUEUE_MODE.md.
+    - N8N_DEFAULT_BINARY_DATA_MODE=database
+    # Pruning is what keeps the DB bounded now that executions AND binary data
+    # live in Postgres (on by default upstream; made explicit + raised count).
+    - EXECUTIONS_DATA_PRUNE=true
+    - EXECUTIONS_DATA_MAX_AGE=336
+    - EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
+  volumes:
+    - n8n_storage:/home/node/.n8n
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  networks:
+    - n8n_net
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - N8N_SUBDOMAIN=${SUBDOMAIN}
+      - N8N_DOMAIN=${DOMAIN_NAME}
+      - SSL_EMAIL=${SSL_EMAIL}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - ${DATA_FOLDER}/caddy_config/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - n8n
+    networks:
+      - n8n_net
+
+  postgres:
+    # n8n supports "actively maintained" Postgres versions — 16 is fine through ~2028;
+    # revisit the pin when it nears EOL.
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      # POSTGRES_USER/PASSWORD = the superuser; the non-root pair is what n8n
+      # actually connects with (created by init-data.sh on first boot).
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+      - POSTGRES_NON_ROOT_USER
+      - POSTGRES_NON_ROOT_PASSWORD
+    volumes:
+      - db_storage:/var/lib/postgresql/data
+      - ./init-data.sh:/docker-entrypoint-initdb.d/init-data.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - n8n_net
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_storage:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - n8n_net
+
+  # The main process: editor UI, REST API, triggers/timers, receives webhooks.
+  # It enqueues executions; it does not run them (workers do). It needs the
+  # common env PLUS the public-URL vars, so it redeclares `environment` in full.
+  n8n:
+    <<: *n8n
+    # No `ports:` — reached only through Caddy.
+    environment:
+      # common (same as the x-n8n anchor)
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_NON_ROOT_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_HEALTH_CHECK_ACTIVE=true
+      - OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      - TZ=${GENERIC_TIMEZONE}
+      - NODE_ENV=production
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      - N8N_HIRING_BANNER_ENABLED=false
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_DEFAULT_BINARY_DATA_MODE=database
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=336
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
+      # public URL / reverse proxy (main only)
+      - N8N_HOST=${SUBDOMAIN}.${DOMAIN_NAME}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - N8N_EDITOR_BASE_URL=https://${SUBDOMAIN}.${DOMAIN_NAME}/
+      - WEBHOOK_URL=https://${SUBDOMAIN}.${DOMAIN_NAME}/
+      - N8N_PROXY_HOPS=1
+      - N8N_SECURE_COOKIE=true
+      # Optionally cap instance-wide concurrent production executions:
+      # - N8N_CONCURRENCY_PRODUCTION_LIMIT=15
+
+  # Workers execute the queued workflows. They need only the common env, so they
+  # inherit it from the anchor unchanged. Scale by raising `replicas` (or run
+  # `docker compose up -d --scale n8n-worker=N`). Concurrency is per-worker.
+  n8n-worker:
+    <<: *n8n
+    command: worker --concurrency=5
+    deploy:
+      replicas: 2
+
+# Volume names are pinned (`name:`) so they're stable regardless of the project
+# directory — the backup/restore commands in DAY2.md reference these exact names.
+volumes:
+  n8n_storage:
+    name: n8n_storage
+  db_storage:
+    name: db_storage
+  redis_storage:
+    name: redis_storage
+  caddy_data:
+    name: caddy_data
+  caddy_config:
+    name: caddy_config
+
+networks:
+  n8n_net:
+    driver: bridge

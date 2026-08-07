@@ -1,0 +1,31 @@
+# Caddy reverse proxy for n8n — automatic HTTPS via Let's Encrypt/ZeroSSL.
+# Domain-free: the site address is filled from the caddy service's environment
+# ({$N8N_SUBDOMAIN}.{$N8N_DOMAIN}), which compose populates from .env. Nothing
+# here is host- or client-specific, so this file is safe to commit.
+#
+# Requirements for the cert to issue: the domain's DNS A record must already
+# point at this server, and ports 80 + 443 must be reachable from the internet.
+
+{
+	# ACME contact address (optional but recommended). Empty = anonymous issuance.
+	email {$SSL_EMAIL}
+}
+
+{$N8N_SUBDOMAIN}.{$N8N_DOMAIN} {
+	reverse_proxy n8n:5678 {
+		# Stream responses immediately — keeps the editor's live push channel
+		# (SSE / websockets) responsive instead of buffering.
+		flush_interval -1
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {http.request.header.X-Forwarded-For}
+	}
+
+	# Baseline security headers.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}

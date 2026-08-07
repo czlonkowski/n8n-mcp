@@ -1,0 +1,79 @@
+# n8n — SINGLE / regular mode (one main process, SQLite, Caddy auto-TLS).
+# Good for a single user / light-to-moderate load. For horizontal scale or
+# heavy execution volume, use docker-compose.queue.yml instead.
+#
+# Secrets come ONLY from the .env file in this directory — never inline them here.
+# n8n is NOT published on the host; Caddy reaches it over the private network.
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Consumed by the Caddyfile via {$VAR} so no domain is hard-coded.
+      - N8N_SUBDOMAIN=${SUBDOMAIN}
+      - N8N_DOMAIN=${DOMAIN_NAME}
+      - SSL_EMAIL=${SSL_EMAIL}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - ${DATA_FOLDER}/caddy_config/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - n8n
+    networks:
+      - n8n_net
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_IMAGE_TAG:-stable}
+    restart: unless-stopped
+    # NOTE: intentionally NO `ports:` mapping — n8n stays on the private network
+    # and is only reachable through Caddy. Do not publish 5678 to the host.
+    environment:
+      # --- public URL / reverse proxy ---
+      - N8N_HOST=${SUBDOMAIN}.${DOMAIN_NAME}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - N8N_EDITOR_BASE_URL=https://${SUBDOMAIN}.${DOMAIN_NAME}/
+      - WEBHOOK_URL=https://${SUBDOMAIN}.${DOMAIN_NAME}/
+      - N8N_PROXY_HOPS=1
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      - TZ=${GENERIC_TIMEZONE}
+      - NODE_ENV=production
+      # --- the encryption key: set explicitly + BACK IT UP (see security.md) ---
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      # --- secure defaults ---
+      - N8N_SECURE_COOKIE=true
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      - N8N_HIRING_BANNER_ENABLED=false
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_DEFAULT_BINARY_DATA_MODE=filesystem
+      # --- keep the DB/disk from growing forever ---
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=336
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
+      # --- optional: turn the public REST API off if you don't use it ---
+      # - N8N_PUBLIC_API_DISABLED=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ${DATA_FOLDER}/local_files:/files
+    networks:
+      - n8n_net
+
+# Volume names are pinned (`name:`) so they're stable regardless of the project
+# directory — the backup/restore commands in DAY2.md reference these exact names.
+volumes:
+  n8n_data:
+    name: n8n_data
+  caddy_data:
+    name: caddy_data
+  caddy_config:
+    name: caddy_config
+
+networks:
+  n8n_net:
+    driver: bridge

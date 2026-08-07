@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 /**
- * Copy markdown skill files from the sibling n8n-skills repo into
- * data/skills/ so they ship inside the n8n-mcp npm/Docker artifacts.
+ * Copy skill files from the sibling n8n-skills repo into data/skills/ so they
+ * ship inside the n8n-mcp npm/Docker artifacts.
  *
  * Source defaults to ../n8n-skills/skills relative to this repo root.
  * Override with N8N_SKILLS_SOURCE.
@@ -20,7 +20,7 @@ const SOURCE = process.env.N8N_SKILLS_SOURCE
   : CANDIDATE_SOURCES.find((p) => existsSync(p)) ?? CANDIDATE_SOURCES[0];
 const DEST = path.join(REPO_ROOT, 'data', 'skills');
 
-async function copyMarkdownTree(src: string, dst: string): Promise<number> {
+async function copySkillTree(src: string, dst: string): Promise<number> {
   const entries = await fs.readdir(src, { withFileTypes: true });
   let copied = 0;
   await fs.mkdir(dst, { recursive: true });
@@ -31,8 +31,12 @@ async function copyMarkdownTree(src: string, dst: string): Promise<number> {
       // Skill-creator eval workspaces (skills/*-workspace/) are local debris,
       // untracked in n8n-skills and excluded from its dist builds — skip them.
       if (entry.name.endsWith('-workspace')) continue;
-      copied += await copyMarkdownTree(srcPath, dstPath);
-    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      copied += await copySkillTree(srcPath, dstPath);
+    } else if (entry.isFile() && entry.name !== '.DS_Store') {
+      // Every file ships, not only markdown. Skills reference sibling assets by
+      // relative path — n8n-self-hosting tells the agent to pipe
+      // assets/docker-compose.single.yml over ssh — so a markdown-only copy
+      // produces instructions pointing at files that are not in the artifact.
       await fs.copyFile(srcPath, dstPath);
       copied++;
     }
@@ -64,8 +68,8 @@ async function main(): Promise<void> {
   }
 
   await clearDestination(DEST);
-  const count = await copyMarkdownTree(SOURCE, DEST);
-  console.log(`Synced ${count} markdown files.`);
+  const count = await copySkillTree(SOURCE, DEST);
+  console.log(`Synced ${count} files.`);
 }
 
 main().catch((err) => {

@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.68.3] - 2026-08-07
+## [2.68.4] - 2026-08-07
+
+### Fixed
+
+- **Skill assets now ship with the skills that reference them.** `sync-skills.ts` copied `.md` files only, so the six template files under `n8n-self-hosting/assets/` — `docker-compose.single.yml`, `docker-compose.queue.yml`, `Caddyfile`, `init-data.sh`, and the two `.env.*.example` files — were absent from every published npm and Docker artifact. The skill instructs the agent to pipe them to the target host (`ssh <target> 'cat > …' < assets/docker-compose.single.yml`), so a deployment driven from the packaged skill referenced files that did not exist. The sync now copies every file in the tree, excluding only `.DS_Store` and the `*-workspace/` eval debris it already skipped.
+- **Two packaging rules that would have silently undone the sync.** The `files` allowlist in `package.json` was scoped to `data/skills/**/*.md`, and `.npmignore` carries project-wide `docker-compose*.yml` and `.env.*` rules that matched four of the six assets by name. Both are corrected, and `npm pack` was verified to contain all six. Docker was already copying the directory wholesale and needed no change.
 
 ### Fixed
 
