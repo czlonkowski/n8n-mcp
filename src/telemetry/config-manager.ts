@@ -349,10 +349,21 @@ For Docker: Set N8N_MCP_TELEMETRY_DISABLED=true
   }
 
   /**
-   * Show first-run notice to user
+   * Show first-run notice to user.
+   *
+   * Written to stderr, never stdout: in stdio mode stdout is the JSON-RPC
+   * channel, and this notice landing there produced a burst of
+   * `is not valid JSON` parse errors in the client on every fresh install.
+   * stderr is the channel the MCP spec reserves for logging, and Claude Desktop
+   * persists it to mcp-server-*.log, so the notice is more visible here than it
+   * was before — the published bin stubs console.* entirely, so on that path it
+   * previously reached nobody at all.
+   *
+   * Uses process.stderr.write rather than console.error so the notice survives
+   * the console silencing installed by stdio-wrapper.ts (see utils/stdio-guard.ts).
    */
   private showFirstRunNotice(): void {
-    console.log(`
+    process.stderr.write(`
 ╔════════════════════════════════════════════════════════════╗
 ║              Anonymous Usage Statistics                     ║
 ╠════════════════════════════════════════════════════════════╣

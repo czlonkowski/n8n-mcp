@@ -41,7 +41,9 @@ describe('TelemetryConfigManager', () => {
       delete process.env[name];
     }
 
-    // Mock console.log to suppress first-run notice in tests
+    // Suppress the first-run notice in test output. It goes to stderr, never
+    // stdout — stdout is the JSON-RPC channel in stdio mode.
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
@@ -80,6 +82,26 @@ describe('TelemetryConfigManager', () => {
         { recursive: true }
       );
       expect(vi.mocked(writeFileSync)).toHaveBeenCalled();
+    });
+
+    // In stdio mode process.stdout is the JSON-RPC channel. This notice used to
+    // be console.log'd, so every fresh install fed 34 lines of box-drawing
+    // characters into the client's JSON parser.
+    it('should write the first-run notice to stderr and never to stdout', () => {
+      const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      manager = TelemetryConfigManager.getInstance();
+      manager.loadConfig();
+
+      const stderrOutput = stderrWrite.mock.calls.map(c => String(c[0])).join('');
+      expect(stderrOutput).toContain('Anonymous Usage Statistics');
+
+      // The protocol channel must stay untouched.
+      expect(stdoutWrite).not.toHaveBeenCalled();
+      expect(consoleLog).not.toHaveBeenCalled();
     });
 
     it('should load existing config from disk', () => {

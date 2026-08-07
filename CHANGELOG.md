@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.68.3] - 2026-08-07
+
+### Fixed
+
+- **The telemetry first-run notice no longer corrupts the JSON-RPC stream.** In stdio mode `process.stdout` is the protocol channel, and the notice was written with `console.log`, so every fresh install fed 34 lines of box-drawing characters into the client's JSON parser — Claude Desktop logged one `SyntaxError: ... is not valid JSON` per line at startup. The handshake still completed, because the SDK skips unparseable lines, but a stricter client would drop the connection. The notice now goes to stderr, which is the channel the MCP specification reserves for logging and which Claude Desktop persists to `mcp-server-*.log`. This also makes the notice more visible than before rather than less: the published bin replaces every `console` method with a no-op, so on that path the notice previously reached nobody at all. `n8n-mcp telemetry status` output is unaffected and stays on stdout.
+- **The direct `dist/mcp/index.js` entrypoint now shields stdout in stdio mode.** Only `stdio-wrapper.ts`, the published npm bin, filtered non-protocol stdout writes; `index.js` had no such guard even though `docs/SELF_HOSTING.md` and `docs/README_CLAUDE_SETUP.md` instruct source installs to point their client at it, which is how the notice above reached a live client. The filter is extracted to `src/utils/stdio-guard.ts` and shared by both entrypoints, so a stray write from a native module or dependency is redirected to stderr rather than breaking the stream. It is installed only when `MCP_MODE` is stdio, leaving http-mode stdout untouched. The guard on `index.js` remains weaker than the wrapper by construction: the wrapper is a preamble that runs before `./server` is required, whereas `index.js` imports the server at module load, so import-time writes are still uncovered there. Unlike the wrapper, `index.js` does not silence `console`, because `logger.error()` writes through `console.error` and stderr is the only diagnostic channel a stdio server has. Docker is unaffected either way — its entrypoint already execs the wrapper.
+
 ## [2.68.2] - 2026-08-06
 
 ### Changed
