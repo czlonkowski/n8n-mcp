@@ -111,15 +111,21 @@ function assertChannelClean(stdout: string) {
   }
 }
 
-describe('stdio JSON-RPC channel purity', () => {
+const missingArtifacts = [
+  ...Object.entries(ENTRYPOINTS)
+    .filter(([, file]) => !fs.existsSync(file))
+    .map(([name]) => `${name} (run "npm run build")`),
+  ...(fs.existsSync(NODES_DB) ? [] : ['nodes.db (run "npm run rebuild")']),
+];
+
+// On CI the workflow builds before this suite, so a missing artifact is a broken
+// pipeline and must fail loudly — skipping is how this coverage went unnoticed
+// before. Locally, skip with a hint rather than failing a contributor who has
+// simply not built yet.
+describe.skipIf(missingArtifacts.length > 0 && !process.env.CI)('stdio JSON-RPC channel purity', () => {
   beforeAll(() => {
-    for (const [name, file] of Object.entries(ENTRYPOINTS)) {
-      if (!fs.existsSync(file)) {
-        throw new Error(`${name} missing at ${file} — run "npm run build" first`);
-      }
-    }
-    if (!fs.existsSync(NODES_DB)) {
-      throw new Error(`nodes.db missing at ${NODES_DB} — run "npm run rebuild" first`);
+    if (missingArtifacts.length > 0) {
+      throw new Error(`Missing build artifacts: ${missingArtifacts.join(', ')}`);
     }
   });
 

@@ -78,6 +78,13 @@ jobs:
         env:
           CI: true
       
+      # Compile to dist/ before the integration suites. Several of them spawn the
+      # real entrypoints as child processes (tests/integration/mcp/stdio-*.test.ts)
+      # and skip themselves when dist/ is absent — so without this step the stdio
+      # regression coverage silently never ran on CI at all.
+      - name: Build dist for entrypoint integration tests
+        run: npm run build
+
       # Pre-build the Docker test image used by tests/integration/docker/*.test.ts
       # Two test files used to build it independently inside their beforeAll hooks; the
       # builder stage does an `npm install` from the public registry which intermittently
