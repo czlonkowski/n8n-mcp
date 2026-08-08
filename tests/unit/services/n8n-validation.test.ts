@@ -9,6 +9,7 @@ import {
   validateWorkflowSettings,
   cleanWorkflowForCreate,
   cleanWorkflowForUpdate,
+  cleanNodeForApi,
   validateWorkflowStructure,
   hasWebhookTrigger,
   getWebhookUrl,
@@ -441,6 +442,29 @@ describe('n8n-validation', () => {
         const cleaned = cleanWorkflowForCreate(workflow as Workflow);
         expect(cleaned.nodes![0].webhookId).toBeUndefined();
       });
+
+      it('should strip unknown node properties echoed by n8n GET', () => {
+        const workflow = workflowWithNodes([
+          {
+            id: 'n1',
+            name: 'Set',
+            type: 'n8n-nodes-base.set',
+            typeVersion: 3,
+            position: [100, 200],
+            parameters: {},
+            onError: 'continueErrorOutput',
+            issues: { parameters: { missing: true } },
+            runIndex: 0,
+          } as unknown as WorkflowNode,
+        ]);
+
+        const cleaned = cleanWorkflowForCreate(workflow as Workflow);
+        const node = cleaned.nodes![0];
+
+        expect(node.onError).toBe('continueErrorOutput');
+        expect(node).not.toHaveProperty('issues');
+        expect(node).not.toHaveProperty('runIndex');
+      });
     });
 
     describe('cleanWorkflowForUpdate', () => {
@@ -845,6 +869,100 @@ describe('n8n-validation', () => {
 
         const cleaned = cleanWorkflowForUpdate(workflow);
         expect(cleaned.nodes![0].webhookId).toBeUndefined();
+      });
+
+      it('should strip unknown node properties echoed by n8n GET (Issue #extra-node-props)', () => {
+        const workflow = workflowWithNodes([
+          {
+            id: 'n1',
+            name: 'Set',
+            type: 'n8n-nodes-base.set',
+            typeVersion: 3,
+            position: [100, 200],
+            parameters: {},
+            onError: 'continueRegularOutput',
+            // Server-managed fields echoed by GET but rejected on PUT/PATCH:
+            issues: { parameters: { missing: true } },
+            runIndex: 0,
+          } as any,
+          {
+            id: 'n2',
+            name: 'Webhook',
+            type: 'n8n-nodes-base.webhook',
+            typeVersion: 1,
+            position: [300, 200],
+            parameters: {},
+            webhookId: 'existing-wh-id',
+            // Extra echo field
+            data: { some: 'thing' },
+          } as any,
+        ]);
+
+        const cleaned = cleanWorkflowForUpdate(workflow as any);
+        const setNode = cleaned.nodes![0];
+        const webhookNode2 = cleaned.nodes![1];
+
+        // Allowed fields survive
+        expect(setNode.id).toBe('n1');
+        expect(setNode.name).toBe('Set');
+        expect(setNode.type).toBe('n8n-nodes-base.set');
+        expect(setNode.typeVersion).toBe(3);
+        expect(setNode.position).toEqual([100, 200]);
+        expect(setNode.onError).toBe('continueRegularOutput');
+
+        // Unknown echo fields are stripped
+        expect(setNode).not.toHaveProperty('issues');
+        expect(setNode).not.toHaveProperty('runIndex');
+        expect(webhookNode2).not.toHaveProperty('data');
+
+        // webhookId survives (it's in the allowlist)
+        expect(webhookNode2.webhookId).toBe('existing-wh-id');
+      });
+    });
+
+    describe('cleanNodeForApi', () => {
+      it('should keep all known node properties', () => {
+        const node: WorkflowNode = {
+          id: 'n1',
+          name: 'Test',
+          type: 'n8n-nodes-base.set',
+          typeVersion: 3,
+          position: [0, 0],
+          parameters: { key: 'val' },
+          credentials: { api: 'cred' },
+          disabled: false,
+          notes: 'note',
+          notesInFlow: true,
+          continueOnFail: true,
+          onError: 'stopWorkflow',
+          retryOnFail: true,
+          maxTries: 3,
+          waitBetweenTries: 1000,
+          alwaysOutputData: true,
+          executeOnce: false,
+          webhookId: 'wh-id',
+        };
+        const cleaned = cleanNodeForApi(node);
+        expect(cleaned).toEqual(node);
+      });
+
+      it('should strip unknown properties', () => {
+        const node = {
+          id: 'n1',
+          name: 'Test',
+          type: 'n8n-nodes-base.set',
+          typeVersion: 3,
+          position: [0, 0],
+          parameters: {},
+          issues: { error: true },
+          runIndex: 0,
+          data: { extra: true },
+        } as unknown as WorkflowNode;
+        const cleaned = cleanNodeForApi(node);
+        expect(cleaned).not.toHaveProperty('issues');
+        expect(cleaned).not.toHaveProperty('runIndex');
+        expect(cleaned).not.toHaveProperty('data');
+        expect(cleaned.id).toBe('n1');
       });
     });
   });

@@ -27,12 +27,59 @@ export const workflowNodeSchema = z.preprocess(normalizeMcpWorkflowNode, z.objec
   notes: z.string().optional(),
   notesInFlow: z.boolean().optional(),
   continueOnFail: z.boolean().optional(),
+  onError: z.enum(['continueRegularOutput', 'continueErrorOutput', 'stopWorkflow']).optional(),
   retryOnFail: z.boolean().optional(),
   maxTries: z.number().optional(),
   waitBetweenTries: z.number().optional(),
   alwaysOutputData: z.boolean().optional(),
   executeOnce: z.boolean().optional(),
+  webhookId: z.string().optional(),
 }));
+
+/**
+ * Properties accepted by n8n's Public API write schema for a node.
+ * MUST stay in sync with `workflowNodeSchema` above.
+ * Used to strip unknown properties returned by GET that PUT/PATCH rejects.
+ */
+const ALLOWED_NODE_PROPERTIES = new Set([
+  'id',
+  'name',
+  'type',
+  'typeVersion',
+  'position',
+  'parameters',
+  'credentials',
+  'disabled',
+  'notes',
+  'notesInFlow',
+  'continueOnFail',
+  'onError',
+  'retryOnFail',
+  'maxTries',
+  'waitBetweenTries',
+  'alwaysOutputData',
+  'executeOnce',
+  'webhookId',
+]);
+
+/**
+ * Strip unknown properties from a single node so it conforms to n8n's write schema.
+ * n8n GET responses echo server-managed fields (e.g. issues, runIndex, data) that
+ * PUT/PATCH rejects with "must NOT have additional properties".
+ */
+export function cleanNodeForApi(node: WorkflowNode): WorkflowNode {
+  const cleaned: Partial<WorkflowNode> = {};
+  for (const key of Object.keys(node)) {
+    if (ALLOWED_NODE_PROPERTIES.has(key)) {
+      (cleaned as any)[key] = (node as any)[key];
+    }
+  }
+  // position is required; ensure it survives even if the set above drifts
+  if (!cleaned.position && node.position) {
+    cleaned.position = node.position;
+  }
+  return cleaned as WorkflowNode;
+}
 
 // Connection array schema used by all connection types
 const connectionArraySchema = z.array(
@@ -177,6 +224,11 @@ export function cleanWorkflowForCreate(workflow: Partial<Workflow>): Partial<Wor
 
   ensureWebhookIds(cleanedWorkflow.nodes);
 
+  // Strip unknown node properties that n8n GET echoes but PUT/PATCH rejects
+  if (cleanedWorkflow.nodes) {
+    cleanedWorkflow.nodes = cleanedWorkflow.nodes.map(cleanNodeForApi);
+  }
+
   return cleanedWorkflow;
 }
 
@@ -248,6 +300,11 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
   }
 
   ensureWebhookIds(cleanedWorkflow.nodes as WorkflowNode[] | undefined);
+
+  // Strip unknown node properties that n8n GET echoes but PUT/PATCH rejects
+  if (cleanedWorkflow.nodes) {
+    cleanedWorkflow.nodes = (cleanedWorkflow.nodes as WorkflowNode[]).map(cleanNodeForApi);
+  }
 
   return cleanedWorkflow as Partial<Workflow>;
 }
