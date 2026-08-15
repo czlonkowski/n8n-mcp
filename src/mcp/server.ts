@@ -60,10 +60,11 @@ import { STARTUP_CHECKPOINTS } from '../telemetry/startup-checkpoints';
 // report — the transport emits an error and closes, so the session dies. stdio
 // is a local pipe to the user's own MCP client rather than an untrusted network
 // caller, so the case for a tight bound is weaker than on HTTP, while the cost
-// of tripping it is higher: stdio is the npx channel, where we have no
-// telemetry and a version cached on the user's machine. 64 MB keeps a backstop
-// against a stream that never terminates a message while clearing any
-// realistic `n8n_update_full_workflow` body, pinned data included.
+// of tripping it is higher: the session dies before any tool call can report
+// what happened, and on the npx path the user's machine has the version cached,
+// so a fix reaches them slowly. 64 MB keeps a backstop against a stream that
+// never terminates a message, with room well above any workflow body the
+// bundled template corpus suggests is realistic.
 //
 // The ceiling is not a memory ceiling. The SDK accumulates with
 // Buffer.concat([existing, chunk]), so a message approaching the limit holds
@@ -4779,6 +4780,10 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     // channel the guard itself redirects non-JSON-RPC output to, and the one
     // Claude Desktop persists to mcp-server-*.log, so it reaches a bug report
     // without touching the JSON-RPC stream on stdout.
+    //
+    // Assigned before connect(): the SDK chains an existing onerror ahead of its
+    // own, so moving this below the connect() call would replace its error
+    // propagation rather than add to it.
     transport.onerror = (error: Error) => {
       const detail = error?.stack ?? error?.message ?? String(error);
       process.stderr.write(`[ERROR] stdio transport error: ${detail}\n`);
