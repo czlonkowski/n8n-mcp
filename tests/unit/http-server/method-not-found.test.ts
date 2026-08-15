@@ -57,6 +57,20 @@ vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
   StreamableHTTPServerTransport: TransportMock,
 }));
 
+// Capture the options the server passes to express-rate-limit so the real
+// requestWasSuccessful predicate can be exercised directly. The route handlers
+// are invoked directly in these tests, so the middleware itself never runs.
+const { rateLimitOptions } = vi.hoisted(() => ({
+  rateLimitOptions: [] as any[],
+}));
+
+vi.mock('express-rate-limit', () => ({
+  default: vi.fn((options: any) => {
+    rateLimitOptions.push(options);
+    return (_req: any, _res: any, next: any) => next();
+  }),
+}));
+
 const { mockConsoleManager } = vi.hoisted(() => ({
   mockConsoleManager: {
     wrapOperation: vi.fn().mockImplementation(async (fn: () => Promise<any>) => fn()),
@@ -147,6 +161,7 @@ function createMockRes() {
     getHeader: (key: string) => headers[key.toLowerCase()],
     on: vi.fn(),
     headers,
+    locals: {} as Record<string, unknown>,
   } as any;
 }
 
@@ -187,6 +202,7 @@ describe('Unimplemented JSON-RPC methods return -32601 (#994)', () => {
     mockHandlers.post = [];
     mockHandlers.delete = [];
     mockHandlers.use = [];
+    rateLimitOptions.length = 0;
 
     mockConsoleManager.wrapOperation.mockImplementation(async (fn: any) => fn());
     applyTransportMocks();
@@ -327,17 +343,32 @@ describe('Unimplemented JSON-RPC methods return -32601 (#994)', () => {
       expect(payload.error.code).toBe(-32000);
     });
 
-    it('leaves a body that is not JSON-RPC 2.0 to the existing handling', async () => {
+    it('still answers -32601 when the body omits the jsonrpc member', async () => {
       const handler = await startServer();
-      // No `jsonrpc` member, so this is not a JSON-RPC request at all and must
-      // not be reported as an unknown method — it falls through to the session
-      // dispatch, where the SDK's own validation applies.
+      // A minimal probe that omits `jsonrpc` must still be told the method is
+      // unknown — never seeing -32601 is the whole of #994, and the answer is
+      // inert, so there is nothing gained by withholding it.
       const req = createMockReq({ method: 'server/discover', id: 1 });
       const res = createMockRes();
 
       await handler(req, res);
 
-      expect(res.json.mock.calls[0][0].error.code).toBe(-32000);
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json.mock.calls[0][0].error.code).toBe(-32601);
+    });
+
+    it('truncates an oversized method before echoing it back', async () => {
+      const handler = await startServer();
+      // The JSON body limit is 10mb, so `method` is caller-controlled and
+      // unbounded; it must not be reflected or logged at full length.
+      const req = createMockReq({ jsonrpc: '2.0', method: 'x'.repeat(5000), id: 1 });
+      const res = createMockRes();
+
+      await handler(req, res);
+
+      const message = res.json.mock.calls[0][0].error.message;
+      expect(message.length).toBeLessThan(200);
+      expect(message).toBe(`Method not found: ${'x'.repeat(128)}…`);
     });
 
     it('does not answer -32601 for a body carrying a wrong jsonrpc version', async () => {
@@ -374,6 +405,61 @@ describe('Unimplemented JSON-RPC methods return -32601 (#994)', () => {
       } as any);
 
       expect(res.json.mock.calls[0][0].error.code).toBe(-32601);
+    });
+  });
+
+  describe('auth rate limiter accounting', () => {
+    it('flags the session-less 404 so it does not count as a failed auth attempt', async () => {
+      const handler = await startServer();
+      const req = createMockReq({ jsonrpc: '2.0', method: 'server/discover', id: 1 });
+      const res = createMockRes();
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.locals.mcpMethodNotFound).toBe(true);
+    });
+
+    it('does not flag the session-carrying 200, which the limiter already skips', async () => {
+      const handler = await startServer();
+      const req = createMockReq(
+        { jsonrpc: '2.0', method: 'server/discover', id: 1 },
+        { 'mcp-session-id': 'some-session-id' }
+      );
+      const res = createMockRes();
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.locals.mcpMethodNotFound).toBeUndefined();
+    });
+
+    it('does not flag a genuine session error, which must still be counted', async () => {
+      const handler = await startServer();
+      // An implemented method with no session: the pre-existing -32000 branch.
+      const req = createMockReq({ jsonrpc: '2.0', method: 'tools/list', id: 1 });
+      const res = createMockRes();
+
+      await handler(req, res);
+
+      expect(res.json.mock.calls[0][0].error.code).toBe(-32000);
+      expect(res.locals.mcpMethodNotFound).toBeUndefined();
+    });
+
+    it('exempts only the flagged response from the failure count', async () => {
+      await startServer();
+      const predicate = rateLimitOptions[0]?.requestWasSuccessful;
+      expect(typeof predicate).toBe('function');
+
+      // Flagged 404: treated as successful, so it is not counted.
+      expect(predicate({}, { statusCode: 404, locals: { mcpMethodNotFound: true } })).toBe(true);
+      // Unflagged failures still count — a 401 must never be exempted.
+      expect(predicate({}, { statusCode: 401, locals: {} })).toBe(false);
+      expect(predicate({}, { statusCode: 404, locals: {} })).toBe(false);
+      // Only an exact true exempts; a truthy value must not.
+      expect(predicate({}, { statusCode: 401, locals: { mcpMethodNotFound: 'yes' } })).toBe(false);
+      // Ordinary success is unaffected.
+      expect(predicate({}, { statusCode: 200, locals: {} })).toBe(true);
     });
   });
 

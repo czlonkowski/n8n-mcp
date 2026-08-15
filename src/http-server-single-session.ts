@@ -327,11 +327,9 @@ export class SingleSessionHTTPServer {
    * @returns true when the request has been answered and must not be processed further
    */
   private handleUnimplementedMethod(req: express.Request, res: express.Response): boolean {
-    // Only well-formed single JSON-RPC 2.0 request objects are classified here.
-    // Batches — removed from MCP in revision 2025-06-18 — and malformed bodies
-    // fall through to the existing handling unchanged, so a body that is not
-    // JSON-RPC at all is still answered by the SDK's own validation rather than
-    // being reported as an unknown method.
+    // Only single objects are classified here. Batches — removed from MCP in
+    // revision 2025-06-18 — and non-object bodies fall through to the existing
+    // handling unchanged.
     const body = req.body;
     if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
 
@@ -340,28 +338,47 @@ export class SingleSessionHTTPServer {
       method?: unknown;
       id?: unknown;
     };
-    if (jsonrpc !== '2.0') return false;
+
+    // A body that asserts a different JSON-RPC version is not ours to answer.
+    // A body that simply omits the member still is: "the client never sees
+    // -32601" is the whole of #994, and answering it is inert — no session is
+    // touched, no state written, no outbound request made — so there is nothing
+    // to be gained by withholding it from a client that sends a minimal probe.
+    if (jsonrpc !== undefined && jsonrpc !== '2.0') return false;
     if (typeof method !== 'string' || isImplementedMcpMethod(method)) return false;
 
     // A response is already on the wire, so there is nothing left to answer;
     // report the request handled rather than writing to it twice.
     if (res.headersSent) return true;
 
+    // The body limit is 10mb, so the method is caller-controlled and unbounded.
+    // Truncate before it reaches the log or the response.
+    const safeMethod = method.length > 128 ? `${method.slice(0, 128)}…` : method;
+
     // Notifications carry no id, so there is no response channel to put an error on.
     if (this.isJsonRpcNotification(body)) {
-      logger.info('Unimplemented JSON-RPC notification ignored', { method });
+      logger.info('Unimplemented JSON-RPC notification ignored', { method: safeMethod });
       res.status(202).end();
       return true;
     }
 
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
-    logger.info('Unimplemented JSON-RPC method', { method, hasSessionId: !!sessionId });
+    logger.info('Unimplemented JSON-RPC method', { method: safeMethod, hasSessionId: !!sessionId });
+
+    if (!sessionId && res.locals) {
+      // Exempt this one response from the auth limiter's failure count. The
+      // limiter only skips responses below 400 (#265), so without this the 404
+      // branch — the steady-state answer to every new client's first probe —
+      // spends one of the 20 tokens per 15 minutes that all users share behind
+      // a proxy when TRUST_PROXY is unset. Set only here, on the 404 branch.
+      res.locals.mcpMethodNotFound = true;
+    }
 
     res.status(sessionId ? 200 : 404).json({
       jsonrpc: '2.0',
       error: {
         code: -32601,
-        message: `Method not found: ${method}`
+        message: `Method not found: ${safeMethod}`
       },
       id: id ?? null
     });
@@ -1087,6 +1104,13 @@ export class SingleSessionHTTPServer {
       standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
       legacyHeaders: false, // Disable `X-RateLimit-*` headers
       skipSuccessfulRequests: true, // Only count failed auth attempts (#617)
+      // A "method not found" answer is a correct protocol response, not a failed
+      // authentication attempt, but it carries 404 on the session-less branch and
+      // the default predicate counts anything at or above 400. The guard that
+      // emits it runs after authentication, so an unauthenticated caller can
+      // never reach it and this cannot help a brute-forcer (#994, #265).
+      requestWasSuccessful: (_req: express.Request, res: express.Response) =>
+        res.statusCode < 400 || res.locals?.mcpMethodNotFound === true,
       handler: (req, res) => {
         logger.warn('Rate limit exceeded', {
           ip: req.ip,
