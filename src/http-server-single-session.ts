@@ -68,6 +68,10 @@ const IMPLEMENTED_MCP_METHOD_PREFIXES = [
   'tasks/',
 ];
 
+/**
+ * Whether `method` falls inside the surface described by the two lists above.
+ * Exported so tests can assert the surface without driving a request through.
+ */
 export function isImplementedMcpMethod(method: string): boolean {
   return (
     IMPLEMENTED_MCP_METHODS.has(method) ||
@@ -323,16 +327,24 @@ export class SingleSessionHTTPServer {
    * @returns true when the request has been answered and must not be processed further
    */
   private handleUnimplementedMethod(req: express.Request, res: express.Response): boolean {
+    // Only well-formed single JSON-RPC 2.0 request objects are classified here.
+    // Batches — removed from MCP in revision 2025-06-18 — and malformed bodies
+    // fall through to the existing handling unchanged, so a body that is not
+    // JSON-RPC at all is still answered by the SDK's own validation rather than
+    // being reported as an unknown method.
     const body = req.body;
-
-    // Only single JSON-RPC request objects are classified here. Batches — removed
-    // from MCP in revision 2025-06-18 — and malformed bodies fall through to the
-    // existing handling unchanged.
     if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
 
-    const method = (body as { method?: unknown }).method;
+    const { jsonrpc, method, id } = body as {
+      jsonrpc?: unknown;
+      method?: unknown;
+      id?: unknown;
+    };
+    if (jsonrpc !== '2.0') return false;
     if (typeof method !== 'string' || isImplementedMcpMethod(method)) return false;
 
+    // A response is already on the wire, so there is nothing left to answer;
+    // report the request handled rather than writing to it twice.
     if (res.headersSent) return true;
 
     // Notifications carry no id, so there is no response channel to put an error on.
@@ -351,7 +363,7 @@ export class SingleSessionHTTPServer {
         code: -32601,
         message: `Method not found: ${method}`
       },
-      id: (body as { id?: unknown }).id ?? null
+      id: id ?? null
     });
     return true;
   }

@@ -326,6 +326,29 @@ describe('Unimplemented JSON-RPC methods return -32601 (#994)', () => {
       const payload = res.json.mock.calls[0][0];
       expect(payload.error.code).toBe(-32000);
     });
+
+    it('leaves a body that is not JSON-RPC 2.0 to the existing handling', async () => {
+      const handler = await startServer();
+      // No `jsonrpc` member, so this is not a JSON-RPC request at all and must
+      // not be reported as an unknown method — it falls through to the session
+      // dispatch, where the SDK's own validation applies.
+      const req = createMockReq({ method: 'server/discover', id: 1 });
+      const res = createMockRes();
+
+      await handler(req, res);
+
+      expect(res.json.mock.calls[0][0].error.code).toBe(-32000);
+    });
+
+    it('does not answer -32601 for a body carrying a wrong jsonrpc version', async () => {
+      const handler = await startServer();
+      const req = createMockReq({ jsonrpc: '1.0', method: 'server/discover', id: 1 });
+      const res = createMockRes();
+
+      await handler(req, res);
+
+      expect(res.json.mock.calls[0][0].error.code).toBe(-32000);
+    });
   });
 
   describe('through handleRequest directly (embedder path)', () => {
