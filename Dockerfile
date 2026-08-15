@@ -19,7 +19,7 @@ COPY tsconfig*.json ./
 RUN --mount=type=cache,target=/root/.npm \
     echo '{}' > package.json && \
     npm install --no-save typescript@^5.8.3 @types/node@^22.15.30 @types/express@^5.0.3 \
-        @modelcontextprotocol/sdk@1.28.0 dotenv@^16.5.0 express@^5.1.0 axios@^1.18.1 \
+        @modelcontextprotocol/sdk@1.30.0 dotenv@^16.5.0 express@^5.1.0 axios@^1.18.1 \
         n8n-workflow@2.32.1 uuid@^11.1.1 @types/uuid@^10.0.0 \
         openai@^4.77.0 zod@3.25.67 lru-cache@^11.2.1 @supabase/supabase-js@^2.57.4
 

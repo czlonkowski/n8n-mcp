@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.69.2] - 2026-08-15
+
+### Changed
+
+- **`@modelcontextprotocol/sdk` upgraded 1.28.0 → 1.30.0.** Four changes reach this server. (1) `StreamableHTTPServerTransport` now writes SSE keep-alive comment frames (`: keepalive`) to open streams, so an idle standalone `GET` stream — or a `POST` stream held open through a long-running tool call — is no longer killed by a reverse proxy or a server idle timeout, which surfaced to clients as `SSE stream disconnected: TypeError: terminated`. The interval defaults to 15000ms and is configurable via the transport's new `keepAliveMs` option; the default is taken as-is. A companion fix clears the keep-alive interval when a stream is cleaned up, so the timers do not accumulate across sessions. (2) `Content-Type` on the HTTP transport is validated by parsed media type instead of a substring match, so a header that merely contains an accepted type no longer passes. (3) A Zod 3.25 method-literal fix, which matters here because the repository pins `zod` to the exact version `3.25.67`. (4) Zod validation issues raised on tool input are prioritized and formatted rather than surfaced raw.
+- **stdio now enforces a 10 MB read-buffer limit (new SDK default).** A single inbound JSON-RPC message larger than `STDIO_DEFAULT_MAX_BUFFER_SIZE` makes the transport emit an error and close rather than buffer without bound. This applies to messages the server reads from the client, not to the tool results it writes back, so response size is unaffected; the realistic path to the limit is an oversized `n8n_update_full_workflow` body. The limit matches the `10mb` JSON body limit the HTTP transport already applies, so both transports now refuse the same size. It is configurable through a third `StdioServerTransport` constructor argument, which this server does not set.
+- The SDK pin is updated in the three places it is declared — `package.json`, `package.runtime.json` (the manifest published to npm), and the `Dockerfile` builder stage — so a runtime-only install and a Docker build compile against the same SDK as the tested build.
+
+### Note
+
+- `@hono/node-server` remains at 1.19.14 in the dependency tree. The upgrade widens the SDK's own range to `^1.19.9 || ^2.0.5`, but `@n8n/n8n-nodes-langchain@2.32.4` carries its own `@modelcontextprotocol/sdk@1.26.0` with the narrower range, so the resolution does not move. The advisory against versions below 1.19.15 covers path traversal in `serve-static` on Windows, which is not code this server reaches.
+
 ## [2.69.1] - 2026-08-15
 
 ### Fixed
