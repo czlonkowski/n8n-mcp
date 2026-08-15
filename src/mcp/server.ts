@@ -64,7 +64,17 @@ import { STARTUP_CHECKPOINTS } from '../telemetry/startup-checkpoints';
 // telemetry and a version cached on the user's machine. 64 MB keeps a backstop
 // against a stream that never terminates a message while clearing any
 // realistic `n8n_update_full_workflow` body, pinned data included.
-const STDIO_MAX_BUFFER_SIZE = 64 * 1024 * 1024;
+//
+// The ceiling is not a memory ceiling. The SDK accumulates with
+// Buffer.concat([existing, chunk]), so a message approaching the limit holds
+// roughly twice its size while the buffers overlap, and the parsed object then
+// coexists with the string it was parsed from. A container sized well below
+// that should lower this rather than inherit it, which is what the env override
+// is for — the default suits the desktop and npx case the limit was raised for.
+const STDIO_MAX_BUFFER_SIZE = Math.max(
+  1024 * 1024,
+  parseInt(process.env.N8N_MCP_STDIO_MAX_BUFFER_SIZE || '', 10) || 64 * 1024 * 1024
+);
 
 /**
  * Escape a string for safe use as a literal inside `new RegExp(...)`.
@@ -4759,10 +4769,19 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
 
     // Without a handler the buffer cap trips silently: the SDK reports through
     // onerror and closes, and the user sees the session vanish with nothing to
-    // put in a bug report. stderr is safe to write here — stdout is the
-    // JSON-RPC channel, which the logger already keeps off.
+    // put in a bug report.
+    //
+    // This writes to stderr directly rather than through the logger, because on
+    // the npx path — the one this diagnostic exists for — the logger produces
+    // nothing: stdio-wrapper.ts sets DISABLE_CONSOLE_OUTPUT, which makes
+    // logger.error() return before writing, and installs the guard with
+    // silenceConsole, which replaces console.error with a no-op. stderr is the
+    // channel the guard itself redirects non-JSON-RPC output to, and the one
+    // Claude Desktop persists to mcp-server-*.log, so it reaches a bug report
+    // without touching the JSON-RPC stream on stdout.
     transport.onerror = (error: Error) => {
-      logger.error('stdio transport error:', error);
+      const detail = error?.stack ?? error?.message ?? String(error);
+      process.stderr.write(`[ERROR] stdio transport error: ${detail}\n`);
     };
 
     await this.server.connect(transport);
