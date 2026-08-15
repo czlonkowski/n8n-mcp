@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.69.1] - 2026-08-15
+
+### Fixed
+
+- **Unimplemented JSON-RPC methods on the HTTP transport now answer `-32601` instead of a session error.** The session check ran before the method was ever looked at, so a request for a method the server does not implement came back as `400` with `-32000 "Bad Request: No valid session ID provided and not an initialize request"`. Clients speaking MCP revision 2026-07-28 probe every remote server with a session-less `server/discover` first and read `-32601` as "this server is 2025-era", which is what makes them fall back to the `initialize` handshake. Never receiving it, they could not classify the server, re-probed until their retry counter ran out, and disabled the connector — surfacing as an MCP server stuck "in cooldown", repeated disconnects, and intermittent tool failures. A session-less unknown method now returns `404` with `-32601`, an unknown method carrying an `Mcp-Session-Id` returns `200` with `-32601` and leaves the session intact (a `404` there would read as "session gone, re-initialize" to a 2025-era client and force a needless teardown), and an unknown method sent as a notification returns `202` with no body. Unknown methods are answered before any session or tenant handling, so they neither create nor touch session state. The implemented surface is gated on namespace — `initialize`, `ping`, and everything under `tools/`, `resources/`, `prompts/`, `completion/`, `logging/`, `notifications/`, `sampling/`, `roots/`, `elicitation/` and `tasks/` — so a method added inside a namespace the server already serves keeps reaching the SDK. Affects the HTTP transport only; stdio was never impacted. This is a legacy-server correctness fix, not support for revision 2026-07-28.
+- **JSON-RPC error responses no longer rewrite an id of `0` to `null`.** The id was carried through with `||`, so the falsy-but-valid ids `0` and `""` were replaced with `null` and the client could not correlate the error with its request.
+
 ## [2.69.0] - 2026-08-08
 
 ### Security

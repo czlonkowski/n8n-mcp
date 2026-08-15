@@ -300,7 +300,9 @@ describe('HTTP Server n8n Mode', () => {
       req.method = 'POST';
       req.body = {
         jsonrpc: '2.0',
-        method: 'test',
+        // An implemented method: unknown ones are answered -32601 before
+        // handleRequest is reached (#994), which is not what these tests exercise.
+        method: 'tools/list',
         params: {},
         id: 1
       };
@@ -328,7 +330,9 @@ describe('HTTP Server n8n Mode', () => {
       req.method = 'POST';
       req.body = {
         jsonrpc: '2.0',
-        method: 'test',
+        // An implemented method: unknown ones are answered -32601 before
+        // handleRequest is reached (#994), which is not what these tests exercise.
+        method: 'tools/list',
         params: {},
         id: 1
       };
@@ -725,7 +729,8 @@ describe('HTTP Server n8n Mode', () => {
       const { req, res } = createMockReqRes();
       req.headers = { authorization: `Bearer ${TEST_AUTH_TOKEN}` };
       req.method = 'POST';
-      req.body = { jsonrpc: '2.0', method: 'test', id: 1 };
+      // Implemented method: unknown ones short-circuit before handleRequest (#994).
+      req.body = { jsonrpc: '2.0', method: 'tools/list', id: 1 };
       
       await handler(req, res);
 
