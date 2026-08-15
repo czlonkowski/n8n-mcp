@@ -283,6 +283,46 @@ describe('Unimplemented JSON-RPC methods return -32601 (#994)', () => {
       expect(res.json).not.toHaveBeenCalled();
     });
 
+    it('answers an unimplemented notification itself rather than forwarding it', async () => {
+      // The session-less 202 above is not proof the guard did anything: the
+      // stale-session branch already returned 202 for notifications before this
+      // fix (#654). With a live session, the pre-fix path handed the
+      // notification to the transport — so this is the case that regresses if
+      // the guard stops intercepting.
+      const handler = await startServer();
+      const sessionId = 'live-session-id';
+      const serverAny = server as any;
+      serverAny.transports[sessionId] = { handleRequest: transportHandleRequest };
+      serverAny.sessionMetadata[sessionId] = { lastAccess: new Date(0), createdAt: new Date(0) };
+
+      const req = createMockReq(
+        { jsonrpc: '2.0', method: 'server/discover', params: {} },
+        { 'mcp-session-id': sessionId }
+      );
+      const res = createMockRes();
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(202);
+      expect(transportHandleRequest).not.toHaveBeenCalled();
+      expect(serverAny.sessionMetadata[sessionId].lastAccess).toEqual(new Date(0));
+    });
+
+    it('admits an unregistered method inside an implemented namespace', async () => {
+      // Documents the deliberate cost of namespace gating: `tools/not-real` is
+      // not answered -32601 here. With a session the SDK's own dispatch answers
+      // it; without one it falls through to the session error, as before. The
+      // alternative — an exact method list — would falsely reject the next
+      // method the SDK adds, which is the regression this design avoids.
+      const handler = await startServer();
+      const req = createMockReq({ jsonrpc: '2.0', method: 'tools/not-real', id: 1 });
+      const res = createMockRes();
+
+      await handler(req, res);
+
+      expect(res.json.mock.calls[0][0].error.code).toBe(-32000);
+    });
+
     it('preserves a JSON-RPC id of 0 instead of rewriting it to null', async () => {
       const handler = await startServer();
       const req = createMockReq({ jsonrpc: '2.0', method: 'server/discover', id: 0, params: {} });

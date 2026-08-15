@@ -54,6 +54,13 @@ const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
 // Namespaces cover every request and notification defined by
 // @modelcontextprotocol/sdk 1.28.0; tests/unit/http-server/method-not-found.test.ts
 // fails if a later SDK introduces one outside them.
+//
+// The cost of that choice: an unregistered method inside an accepted namespace
+// (`tools/not-real`) is admitted rather than answered -32601 here. With a
+// session it still gets -32601, from the SDK's own dispatch; without one it
+// falls through to the session error. No client probes that way — the probe
+// this guard exists for is `server/discover` — and narrowing to an exact list
+// would trade this corner for falsely rejecting the next method the SDK adds.
 const IMPLEMENTED_MCP_METHODS = new Set(['initialize', 'ping']);
 const IMPLEMENTED_MCP_METHOD_PREFIXES = [
   'tools/',
