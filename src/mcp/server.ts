@@ -53,6 +53,19 @@ import { telemetry } from '../telemetry';
 import { EarlyErrorLogger } from '../telemetry/early-error-logger';
 import { STARTUP_CHECKPOINTS } from '../telemetry/startup-checkpoints';
 
+// Largest single inbound JSON-RPC message the stdio transport will buffer.
+//
+// @modelcontextprotocol/sdk 1.30.0 introduced a cap here where there was none,
+// defaulting to 10 MB, and the failure mode is not a tool error the client can
+// report — the transport emits an error and closes, so the session dies. stdio
+// is a local pipe to the user's own MCP client rather than an untrusted network
+// caller, so the case for a tight bound is weaker than on HTTP, while the cost
+// of tripping it is higher: stdio is the npx channel, where we have no
+// telemetry and a version cached on the user's machine. 64 MB keeps a backstop
+// against a stream that never terminates a message while clearing any
+// realistic `n8n_update_full_workflow` body, pinned data included.
+const STDIO_MAX_BUFFER_SIZE = 64 * 1024 * 1024;
+
 /**
  * Escape a string for safe use as a literal inside `new RegExp(...)`.
  *
@@ -4740,7 +4753,18 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     // Ensure database is initialized before starting server
     await this.ensureInitialized();
 
-    const transport = new StdioServerTransport();
+    const transport = new StdioServerTransport(process.stdin, process.stdout, {
+      maxBufferSize: STDIO_MAX_BUFFER_SIZE,
+    });
+
+    // Without a handler the buffer cap trips silently: the SDK reports through
+    // onerror and closes, and the user sees the session vanish with nothing to
+    // put in a bug report. stderr is safe to write here — stdout is the
+    // JSON-RPC channel, which the logger already keeps off.
+    transport.onerror = (error: Error) => {
+      logger.error('stdio transport error:', error);
+    };
+
     await this.server.connect(transport);
     
     // Force flush stdout for Docker environments
