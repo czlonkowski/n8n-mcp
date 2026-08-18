@@ -216,7 +216,10 @@ function checkErrorHandlingGaps(workflow: WorkflowInput): AuditFinding[] {
     (node) => (node.type ?? '').toLowerCase() === 'n8n-nodes-base.errortrigger',
   );
 
-  if (hasContinueOnFail || hasOnErrorHandling || hasErrorTrigger) {
+  const errorWorkflow = workflow.settings?.errorWorkflow;
+  const hasErrorWorkflow = typeof errorWorkflow === 'string' && errorWorkflow.trim().length > 0;
+
+  if (hasContinueOnFail || hasOnErrorHandling || hasErrorTrigger || hasErrorWorkflow) {
     return [];
   }
 
@@ -226,8 +229,8 @@ function checkErrorHandlingGaps(workflow: WorkflowInput): AuditFinding[] {
       severity: 'medium',
       category: 'error_handling',
       title: `No error handling in workflow "${workflow.name}"`,
-      description: `Workflow "${workflow.name}" has ${workflow.nodes.length} nodes but no error handling configured. There are no nodes with continueOnFail enabled, no custom onError behavior, and no Error Trigger node.`,
-      recommendation: 'Add error handling to prevent silent failures. Consider adding an Error Trigger node for global error notifications, or set continueOnFail on critical nodes that should not block the workflow.',
+      description: `Workflow "${workflow.name}" has ${workflow.nodes.length} nodes but no error handling configured. There are no nodes with continueOnFail enabled, no custom onError behavior, no Error Trigger node, and no workflow-level settings.errorWorkflow assigned.`,
+      recommendation: 'Add error handling to prevent silent failures. Assign an error workflow via settings.errorWorkflow to route failures to a shared handler, or add an Error Trigger node (a workflow containing one handles its own failures by default). Setting continueOnFail or onError="continueRegularOutput" on critical nodes also counts, but those swallow errors rather than surfacing them.',
       remediationType: 'review_recommended',
       location: {
         workflowId: workflow.id ?? '',

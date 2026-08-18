@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.70.3] - 2026-08-18
+
+### Fixed
+
+- **`n8n_audit_instance` no longer reports "No error handling" for workflows that route failures through `settings.errorWorkflow`.** The error-handling check looked only at node-level signals — `continueOnFail`, a non-default `onError`, an Error Trigger node — and never at the workflow-level error workflow assignment, n8n's first-class mechanism for exactly this. On instances that standardize on a shared error handler, that made the check's output almost entirely false positives (a reported production case: 105 workflows flagged where ground truth was 10). A workflow with a non-blank `settings.errorWorkflow` now counts as having error handling, and the finding's text names the missing signal and recommends the error-workflow route first, since `continueOnFail`/`onError: continueRegularOutput` swallow errors rather than surface them. Reported with root cause and fix by @johngluch. (#992)
+
 ## [2.70.2] - 2026-08-18
 
 ### Fixed
