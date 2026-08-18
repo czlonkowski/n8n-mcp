@@ -1586,7 +1586,7 @@ describe('WorkflowDiffEngine', () => {
         expect((globalThis as any).__syntaxGuardSentinel).toBeUndefined();
       });
 
-      it('should step aside for code beyond the size ceiling instead of parsing it', async () => {
+      it('should reject patching valid code into an oversized unverifiable blob without parsing it', async () => {
         const workflow = codeWorkflow('return 1;');
         const oversized = 'const x = (;\n' + '// filler\n'.repeat(120_000);
 
@@ -1596,16 +1596,18 @@ describe('WorkflowDiffEngine', () => {
             type: 'patchNodeField' as const,
             nodeName: 'Code',
             fieldPath: 'parameters.jsCode',
-            // Broken JS, but over 1MB — the guard must fail open, not spend
-            // seconds parsing attacker-sized input
+            // Over 1MB: never parsed (DoS protection), but a checkably-valid
+            // field must not silently become an unverifiable blob
             patches: [{ find: 'return 1;', replace: oversized }]
           }]
         });
 
-        expect(result.success).toBe(true);
+        expect(result.success).toBe(false);
+        expect(result.errors?.[0]?.message).toContain('could not verify');
+        expect(result.errors?.[0]?.message).toContain('updateNode');
       });
 
-      it('should fail open when the parser overflows on pathological nesting', async () => {
+      it('should reject patching valid code into nesting the parser cannot check', async () => {
         const workflow = codeWorkflow('return 1;');
         const nested = 'return ' + '('.repeat(50_000) + '1' + ')'.repeat(50_000) + ';';
 
@@ -1615,9 +1617,29 @@ describe('WorkflowDiffEngine', () => {
             type: 'patchNodeField' as const,
             nodeName: 'Code',
             fieldPath: 'parameters.jsCode',
-            // Valid but too deep for V8's parser stack: RangeError, not
-            // SyntaxError — the guard treats that as "could not check"
+            // Too deep for V8's parser stack: RangeError, not SyntaxError —
+            // uncheckable, and the baseline was checkably valid, so reject
             patches: [{ find: 'return 1;', replace: nested }]
+          }]
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errors?.[0]?.message).toContain('could not verify');
+      });
+
+      it('should let patches through when the baseline itself is unverifiable', async () => {
+        // An oversized field gives no standard to hold the patch to — the
+        // guard steps aside instead of trapping the field forever.
+        const oversized = 'const x = (;\n' + '// filler\n'.repeat(120_000);
+        const workflow = codeWorkflow(oversized);
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [{
+            type: 'patchNodeField' as const,
+            nodeName: 'Code',
+            fieldPath: 'parameters.jsCode',
+            patches: [{ find: 'const x = (;', replace: 'const y = (;' }]
           }]
         });
 

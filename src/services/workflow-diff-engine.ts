@@ -192,20 +192,30 @@ const JS_CODE_FIELD_NAMES = new Set(['jsCode', 'functionCode']);
 const AsyncFunctionCtor = (async () => {}).constructor as new (...args: string[]) => unknown;
 
 // Parsing is synchronous on the event loop; a 60 MiB body costs ~1s. Real
-// Code-node sources are kilobytes — beyond this the guard steps aside rather
-// than become a DoS lever (Codex review on #1014).
+// Code-node sources are kilobytes — beyond this the code is never parsed,
+// so oversized input cannot become a DoS lever (Codex review on #1014).
 const MAX_SYNTAX_CHECKED_LENGTH = 1_000_000;
 
-function jsSyntaxErrorOf(code: string): SyntaxError | undefined {
-  if (code.length > MAX_SYNTAX_CHECKED_LENGTH) return undefined;
+type JsSyntaxCheck =
+  | { status: 'valid' }
+  | { status: 'invalid'; message: string }
+  // Could not judge the code either way: oversized, or the parser gave up
+  // with a non-SyntaxError (a CSP EvalError, a RangeError from pathological
+  // nesting). Distinct from 'valid' so a checkably-valid field cannot be
+  // patched into an unverifiable blob unnoticed (Codex review on #1014).
+  | { status: 'uncheckable'; reason: string };
+
+function checkJsSyntax(code: string): JsSyntaxCheck {
+  if (code.length > MAX_SYNTAX_CHECKED_LENGTH) {
+    return { status: 'uncheckable', reason: `code exceeds ${MAX_SYNTAX_CHECKED_LENGTH} characters` };
+  }
   try {
     new AsyncFunctionCtor(code);
+    return { status: 'valid' };
   } catch (error) {
-    // A non-SyntaxError (a CSP EvalError, a RangeError from pathological
-    // nesting) means we could not check, not that the code is broken.
-    if (error instanceof SyntaxError) return error;
+    if (error instanceof SyntaxError) return { status: 'invalid', message: error.message };
+    return { status: 'uncheckable', reason: `the parser gave up (${error instanceof Error ? error.name : 'unknown error'})` };
   }
-  return undefined;
 }
 
 // jsCode/functionCode are noDataExpression fields: n8n strips one leading "="
@@ -227,14 +237,26 @@ function assertPatchedJsSyntax(operation: string, fieldPath: string, patched: st
   const fieldName = fieldPath.split('.').pop() ?? '';
   if (!JS_CODE_FIELD_NAMES.has(fieldName)) return;
 
-  const syntaxError = jsSyntaxErrorOf(stripExpressionPrefix(patched));
-  if (!syntaxError) return;
-  if (jsSyntaxErrorOf(stripExpressionPrefix(original)) !== undefined) return;
+  const patchedCheck = checkJsSyntax(stripExpressionPrefix(patched));
+  if (patchedCheck.status === 'valid') return;
+
+  // The gate: judge only against a baseline we could actually judge. A field
+  // that was already invalid stays patchable (incremental repair), and an
+  // uncheckable baseline gives no standard to hold the patch to.
+  if (checkJsSyntax(stripExpressionPrefix(original)).status !== 'valid') return;
+
+  if (patchedCheck.status === 'invalid') {
+    throw new Error(
+      `${operation}: patches would leave "${fieldPath}" with invalid JavaScript (${patchedCheck.message}). ` +
+      `The workflow was not modified. If several dependent edits pass through an invalid intermediate state, ` +
+      `apply them as one operation — only the final result of the patches array is checked.`
+    );
+  }
 
   throw new Error(
-    `${operation}: patches would leave "${fieldPath}" with invalid JavaScript (${syntaxError.message}). ` +
-    `The workflow was not modified. If several dependent edits pass through an invalid intermediate state, ` +
-    `apply them as one operation — only the final result of the patches array is checked.`
+    `${operation}: could not verify the JavaScript syntax of "${fieldPath}" after patching (${patchedCheck.reason}). ` +
+    `The workflow was not modified. To set the field anyway, replace its full value with an updateNode operation, ` +
+    `which is not syntax-checked.`
   );
 }
 
