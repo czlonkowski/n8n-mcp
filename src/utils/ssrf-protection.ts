@@ -1,6 +1,6 @@
 import { URL } from 'url';
 import { lookup } from 'dns/promises';
-import { isIPv6 } from 'net';
+import { isIPv4, isIPv6 } from 'net';
 import http from 'http';
 import https from 'https';
 import ipaddr from 'ipaddr.js';
@@ -490,7 +490,11 @@ export class SSRFProtection {
       return { valid: false, reason: 'Localhost access is blocked in strict mode' };
     }
 
-    if (PRIVATE_IP_RANGES.some(regex => regex.test(hostname))) {
+    // SECURITY (#984): PRIVATE_IP_RANGES are prefix regexes, so gate them on
+    // isIPv4 — otherwise a DNS name like `247.example.com` is misread as an
+    // IPv4 literal and wrongly refused. What a name resolves to is still
+    // checked by the async validateWebhookUrl and the DNS-pinned agents.
+    if (isIPv4(hostname) && PRIVATE_IP_RANGES.some(regex => regex.test(hostname))) {
       return {
         valid: false,
         reason: mode === 'strict'

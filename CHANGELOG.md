@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.70.4] - 2026-08-18
+
+### Fixed
+
+- **The synchronous SSRF pre-filter no longer refuses DNS hostnames whose first label looks like a blocked IPv4 octet.** `validateUrlSync` tested its IPv4 range regexes against the raw hostname, so ordinary DNS names like `247.example.com` or `10.example.com` were refused as "Private IP addresses not allowed" — long-standing behavior whose collision surface v2.69.0 widened from five first-octet values to the whole 224–255 range plus the CGNAT prefixes. The range check is now gated on `net.isIPv4(hostname)`, mirroring the existing `isIPv6` gate on the IPv6 path. This is a deliberate loosening of the sync pre-filter only: what such a name actually resolves to is still validated by the async DNS-resolving validator, and the transport is pinned to the address that validation approved. The WHATWG URL parser canonicalizes every numeric host form (hex, octal, integer, short) to dotted-quad before the gate, so no literal the regexes used to catch escapes it — now pinned by tests, along with the resolve-to-private safety net. Cloud-metadata hostname blocking is unchanged. (#984)
+
 ## [2.70.3] - 2026-08-18
 
 ### Fixed

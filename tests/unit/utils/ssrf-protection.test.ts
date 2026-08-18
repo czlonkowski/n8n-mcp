@@ -589,12 +589,62 @@ describe('SSRFProtection', () => {
         'http://192.168.1.1',
         'http://172.16.0.1',
         'http://172.31.255.255',
+        'http://224.0.0.1',    // multicast
+        'http://100.64.1.1',   // RFC 6598 CGNAT
       ];
       for (const url of privateUrls) {
         const result = SSRFProtection.validateUrlSync(url);
         expect(result.valid, `url=${url}`).toBe(false);
         expect(result.reason).toContain('Private IP');
       }
+    });
+
+    it('should not treat DNS hostnames with leading digits as IPv4 literals (#984)', () => {
+      // PRIVATE_IP_RANGES are prefix regexes over the raw hostname, so without
+      // the isIPv4 gate a DNS name whose first label matches a blocked first
+      // octet (`247.` hits the 224-255 reserved-range regexes) is refused.
+      delete process.env.WEBHOOK_SECURITY_MODE; // strict default
+      const dnsHostnameUrls = [
+        'http://247.example.com',
+        'http://224.foo.com',
+        'http://10.example.com',
+        'http://100.64.evil.example',
+      ];
+      for (const url of dnsHostnameUrls) {
+        const result = SSRFProtection.validateUrlSync(url);
+        expect(result.valid, `url=${url}`).toBe(true);
+        expect(result.reason).toBeUndefined();
+      }
+    });
+
+    it('rejects non-canonical IPv4 forms via WHATWG URL normalization (#984)', () => {
+      // The isIPv4 gate relies on the URL parser canonicalizing every
+      // numeric host form to dotted-quad before validateUrlSync sees it.
+      delete process.env.WEBHOOK_SECURITY_MODE; // strict default
+      const nonCanonicalPrivate = [
+        'http://0x7f.0.0.1',   // hex -> 127.0.0.1
+        'http://0177.0.0.1',   // octal -> 127.0.0.1
+        'http://2130706433',   // integer -> 127.0.0.1
+        'http://127.1',        // short form -> 127.0.0.1
+        'http://0xa.0.0.1',    // hex -> 10.0.0.1
+      ];
+      for (const url of nonCanonicalPrivate) {
+        const result = SSRFProtection.validateUrlSync(url);
+        expect(result.valid, `url=${url}`).toBe(false);
+      }
+    });
+
+    it('still blocks a digit-labelled hostname at DNS resolution when it resolves privately (#984)', async () => {
+      // The async validator is the real control behind the loosened sync
+      // pre-filter: `10.example.com` passes validateUrlSync but must be
+      // rejected once DNS shows it resolves to a private address.
+      delete process.env.WEBHOOK_SECURITY_MODE; // strict default
+      expect(SSRFProtection.validateUrlSync('http://10.example.com').valid).toBe(true);
+
+      vi.mocked(dns.lookup).mockResolvedValue({ address: '10.0.0.1', family: 4 } as any);
+      const result = await SSRFProtection.validateWebhookUrl('http://10.example.com');
+      expect(result.valid).toBe(false);
+      expect(result.reason).toContain('Private IP');
     });
 
     it('should reject private IPv4 literals in moderate mode', () => {
