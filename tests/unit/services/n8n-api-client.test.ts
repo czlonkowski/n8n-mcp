@@ -967,8 +967,9 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
 
       const result = await client.activateWorkflow('123');
 
-      // Version undetectable here, so the modern route is assumed
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/workflows/123/publish', {});
+      // Version undetectable here. The legacy route works on every version, so it is used
+      // directly rather than probing /publish - detection genuinely fails on real instances.
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/workflows/123/activate', {});
       expect(result).toEqual(activatedWorkflow);
       expect(result.active).toBe(true);
     });
@@ -994,12 +995,41 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
     });
 
     it('should fall back to /activate when /publish 404s', async () => {
-      vi.spyOn(client, 'getVersion').mockResolvedValue(null);
+      vi.spyOn(client, 'getVersion').mockResolvedValue(parseVersion('2.34.4'));
       const activated = { id: '123', active: true };
       // Through the interceptor: it rejects with an N8nApiError carrying statusCode, not a
       // raw axios error with .response - which is what the fallback has to read.
       mockAxiosInstance.simulateSequence('post', [
         { error: { response: { status: 404, data: { message: 'Not Found' } } } },
+        { data: activated },
+      ]);
+
+      const result = await client.activateWorkflow('123');
+
+      expect(mockAxiosInstance.post).toHaveBeenNthCalledWith(1, '/workflows/123/publish', {});
+      expect(mockAxiosInstance.post).toHaveBeenNthCalledWith(2, '/workflows/123/activate', {});
+      expect(result).toEqual(activated);
+    });
+
+    it('should use the legacy route when the version cannot be detected', async () => {
+      // Reproduces a live instance whose /rest/settings carries no version at all. Probing
+      // /publish there cost a failed request per call and broke activation outright.
+      vi.spyOn(client, 'getVersion').mockResolvedValue(null);
+      mockAxiosInstance.post.mockResolvedValue({ data: { id: '123', active: true } });
+
+      await client.activateWorkflow('123');
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledTimes(1);
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/workflows/123/activate', {});
+    });
+
+    it('should fall back to /activate when /publish answers 405', async () => {
+      // n8n answers "POST method not allowed" rather than 404 when the path prefix matches
+      // but the method does not - observed live on a pre-2.33 instance.
+      vi.spyOn(client, 'getVersion').mockResolvedValue(parseVersion('2.34.4'));
+      const activated = { id: '123', active: true };
+      mockAxiosInstance.simulateSequence('post', [
+        { error: { response: { status: 405, data: { message: 'POST method not allowed' } } } },
         { data: activated },
       ]);
 
@@ -1111,8 +1141,8 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
 
       const result = await client.deactivateWorkflow('123');
 
-      // Version undetectable here, so the modern route is assumed
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/workflows/123/unpublish', {});
+      // Version undetectable here - legacy route, which every version has
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/workflows/123/deactivate', {});
       expect(result).toEqual(deactivatedWorkflow);
       expect(result.active).toBe(false);
     });
@@ -1138,7 +1168,7 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
     });
 
     it('should fall back to /deactivate when /unpublish 404s', async () => {
-      vi.spyOn(client, 'getVersion').mockResolvedValue(null);
+      vi.spyOn(client, 'getVersion').mockResolvedValue(parseVersion('2.34.4'));
       const deactivated = { id: '123', active: false };
       mockAxiosInstance.simulateSequence('post', [
         { error: { response: { status: 404, data: { message: 'Not Found' } } } },

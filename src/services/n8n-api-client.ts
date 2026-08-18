@@ -678,10 +678,15 @@ export class N8nApiClient {
    * `/publish` additionally accepts an optional body naming a version to publish; we send none,
    * which keeps the semantics identical to `/activate`.
    *
-   * The fallback runs in one direction only. When the version is unknown we assume a modern
-   * instance and fall back to the legacy route if `/publish` turns out not to exist; when we
-   * positively detected a pre-2.33 instance there is nothing to fall back to, since the legacy
-   * routes still exist on every version that has the new ones.
+   * The new route is used only when the instance is *confirmed* to have it. The legacy pair
+   * works on every supported version - on 2.33+ they are the same handler - so an instance
+   * whose version could not be read is served by the legacy route rather than probed. That
+   * matters because detection fails on real instances: `/rest/settings` does not always carry
+   * `n8nVersion`, and probing a pre-2.33 instance then wastes a request on every call.
+   *
+   * The fallback remains for a stale or wrong detection, and accepts 404 or 405: a router with
+   * no `/publish` may report either, depending on whether it matches the path prefix before the
+   * method. n8n answers 405 here, so keying the fallback on 404 alone left it dead in practice.
    */
   private async postPublishRoute(
     id: string,
@@ -690,24 +695,26 @@ export class N8nApiClient {
   ): Promise<Workflow> {
     const safeId = encodeApiPathSegment(id, 'workflowId');
     const version = await this.getVersion();
-    const preferModern = !version || versionAtLeast(version, 2, 33, 0);
+    const preferModern = version !== null && versionAtLeast(version, 2, 33, 0);
     const post = async (path: string): Promise<Workflow> =>
       (await this.client.post(`/workflows/${safeId}/${path}`, {})).data;
+    let status: number | undefined;
 
     try {
       return await post(preferModern ? modernPath : legacyPath);
     } catch (error: any) {
-      if (!preferModern || failureStatus(error) !== 404) {
+      status = failureStatus(error);
+      if (!preferModern || (status !== 404 && status !== 405)) {
         throw handleN8nApiError(error);
       }
     }
 
     // n8n answers 404 for a workflow that does not exist as well as for a route it does not
     // have, so this retry also fires on a bad workflow ID. That costs one request and ends in
-    // the same error, which is why the 404 is logged as a route probe rather than a failure.
+    // the same error, which is why the status is logged as a route probe, not a failure.
     logger.debug(
-      `POST /workflows/{id}/${modernPath} returned 404 - retrying /${legacyPath} ` +
-        '(pre-2.33 n8n, or the workflow does not exist)'
+      `POST /workflows/{id}/${modernPath} returned ${status} - retrying /${legacyPath} ` +
+        '(the detected version was wrong, or the workflow does not exist)'
     );
     try {
       return await post(legacyPath);
