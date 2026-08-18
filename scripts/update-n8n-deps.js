@@ -214,6 +214,26 @@ class N8nDependencyUpdater {
   /**
    * Rebuild the node database
    */
+  /**
+   * Fail the update when n8n changed the workflowSettings schema, so a new setting is added to
+   * src/constants/workflow-settings.ts deliberately instead of being silently dropped from
+   * every workflow write.
+   */
+  checkSettingsDrift() {
+    console.log('\n🔍 Checking workflow settings schema against the new n8n...');
+    try {
+      execSync('npx tsx scripts/check-settings-drift.ts', {
+        cwd: path.join(__dirname, '..'),
+        stdio: 'inherit'
+      });
+      return true;
+    } catch (error) {
+      console.error('\n❌ Workflow settings schema drifted - see above.');
+      console.error('   Update src/constants/workflow-settings.ts, then re-run the update.');
+      return false;
+    }
+  }
+
   rebuildDatabase() {
     console.log('\n🔨 Rebuilding node database...');
     try {
@@ -298,6 +318,12 @@ class N8nDependencyUpdater {
       process.exit(1);
     }
     
+    // Check the settings schema before the rebuild - it is the cheap check of the two
+    if (!this.checkSettingsDrift()) {
+      console.error('\n❌ Update failed at settings drift check step');
+      process.exit(1);
+    }
+
     // Rebuild database
     if (!this.rebuildDatabase()) {
       console.error('\n❌ Update failed at database rebuild step');

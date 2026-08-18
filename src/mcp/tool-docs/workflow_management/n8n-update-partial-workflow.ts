@@ -64,6 +64,9 @@ n8n validates canvas groups on every write, including writes that have nothing t
 - **activateWorkflow**: Activate the workflow to enable automatic execution via triggers
 - **deactivateWorkflow**: Deactivate the workflow to prevent automatic execution
 
+n8n 2.33 renamed this to publish/unpublish - what the editor calls "Publish" is what these
+operations do, on every supported version. The operation names are unchanged.
+
 ### Project Management Operations (2 types):
 - **transferWorkflow**: Transfer the workflow to a different project. Requires \`destinationProjectId\`. Enterprise/cloud feature.
 - **moveToFolder**: Move the workflow into a folder (n8n 2.32+). Requires \`parentFolderId\`: a folder ID, or null for the project root. The placement is write-only in n8n's API - it cannot be read back, so verify in the n8n UI if needed. Manage folders with n8n_manage_folders. When combined with transferWorkflow in one request, the folder move applies in the SOURCE project before the transfer runs - use a separate moveToFolder call after the transfer instead.

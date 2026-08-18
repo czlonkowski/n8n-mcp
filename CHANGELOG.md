@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.70.0] - 2026-08-18
+
+### Fixed
+
+- **Workflow settings n8n added after this server last modelled them are no longer dropped from writes.** Updates filtered `settings` against a hand-maintained allowlist that ended at n8n 1.119.0, so five properties n8n has shipped since were removed from every write: `customTelemetryTags` (n8n 2.24.0), `redactionPolicy` (2.26.0), and `binaryMode`, `timeSavedMode` and `credentialResolverId` (2.33.0). `redactionPolicy` is the one that matters: it controls whether execution data is redacted, and because `n8n_update_partial_workflow` reads a workflow, applies a diff and writes the whole body back, an unrelated edit to a workflow whose redaction policy was stricter than the instance default could reset it. Anyone who set a redaction policy on a workflow this server has since updated should check it. Writes now forward every property except the two n8n documents as derived and ignores on write (`binaryMode`, `credentialResolverId`); a property the target instance does not know is answered by n8n's own validation error, which names the property, rather than disappearing. Instances below n8n 2.24.0 keep the version-appropriate filter, since those predate properties this server does know about and would reject the whole request.
+- **`callerPolicy: 'none'` is accepted.** The value is in n8n's schema — it blocks all other workflows from calling this one — but was missing from the validation enum, so a valid setting was rejected as invalid.
+
+### Changed
+
+- **Workflow activation uses n8n's current route names.** n8n 2.33.0 renamed `POST /workflows/{id}/activate` to `/publish` and `/deactivate` to `/unpublish`, and marked the old pair deprecated. The deprecated routes are aliases of the new handlers, so this is a rename with no behavioural difference; this server now calls the new route when the target instance has it, falls back to the old one if the route is absent, and sends no request body so the semantics stay identical. The `activateWorkflow` and `deactivateWorkflow` diff operations are unchanged.
+- **The three places that described workflow settings are now one.** A Zod schema, a write cleaner and a version filter each carried their own copy of the property list and had drifted apart; they now read `src/constants/workflow-settings.ts`, which records the n8n version that introduced each property.
+
+### Added
+
+- **`npm run check:settings-drift` compares that list against the OpenAPI schema n8n ships in its published package, and `npm run update:n8n` runs it before the database rebuild.** An n8n bump that changes the workflow settings schema now fails the update instead of quietly shipping a stale list.
+
 ## [2.69.2] - 2026-08-15
 
 ### Changed

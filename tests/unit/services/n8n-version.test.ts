@@ -245,6 +245,71 @@ describe('n8n-version', () => {
       expect(cleanSettingsForVersion({}, v)).toEqual({});
       expect(cleanSettingsForVersion(undefined, v)).toEqual({});
     });
+
+    describe('pass-through at n8n 2.24.0 and above', () => {
+      it('forwards a setting newer than our property list', () => {
+        const v = parseVersion('2.34.4')!;
+        const cleaned = cleanSettingsForVersion(
+          { executionOrder: 'v1', settingFromANewerN8n: 'forwarded' },
+          v
+        );
+
+        // The list trails n8n's weekly releases; the instance decides, not us
+        expect(cleaned).toEqual({ executionOrder: 'v1', settingFromANewerN8n: 'forwarded' });
+      });
+
+      it('keeps redactionPolicy instead of silently dropping it', () => {
+        const v = parseVersion('2.26.0')!;
+        const cleaned = cleanSettingsForVersion(
+          { executionOrder: 'v1', redactionPolicy: 'all' },
+          v
+        );
+
+        expect(cleaned).toHaveProperty('redactionPolicy', 'all');
+      });
+
+      it('still drops properties n8n derives and ignores on write', () => {
+        const v = parseVersion('2.34.4')!;
+        const cleaned = cleanSettingsForVersion(
+          { executionOrder: 'v1', binaryMode: 'combined', credentialResolverId: 'resolver-1' },
+          v
+        );
+
+        expect(cleaned).toEqual({ executionOrder: 'v1' });
+      });
+    });
+
+    describe('below the pass-through floor', () => {
+      it('filters unknown properties, which those versions reject outright', () => {
+        const v = parseVersion('2.23.0')!;
+        const cleaned = cleanSettingsForVersion(
+          { executionOrder: 'v1', settingFromANewerN8n: 'dropped' },
+          v
+        );
+
+        expect(cleaned).toEqual({ executionOrder: 'v1' });
+      });
+
+      it('filters properties introduced after the target version', () => {
+        const v = parseVersion('1.119.0')!;
+        const cleaned = cleanSettingsForVersion(
+          { executionOrder: 'v1', redactionPolicy: 'all' },
+          v
+        );
+
+        expect(cleaned).toEqual({ executionOrder: 'v1' });
+      });
+    });
+
+    it('passes unknown properties through when the version could not be detected', () => {
+      // Undetectable instances skew modern, and a surfaced 400 beats a silent drop
+      const cleaned = cleanSettingsForVersion(
+        { executionOrder: 'v1', redactionPolicy: 'all', binaryMode: 'combined' },
+        null
+      );
+
+      expect(cleaned).toEqual({ executionOrder: 'v1', redactionPolicy: 'all' });
+    });
   });
 
   describe('Version cache', () => {

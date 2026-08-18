@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { WorkflowNode, WorkflowConnection, Workflow } from '../types/n8n-api';
 import { isTriggerNode, isActivatableTrigger } from '../utils/node-type-utils';
+import { DERIVED_SETTINGS_PROPERTIES } from '../constants/workflow-settings';
 import { isNonExecutableNode } from '../utils/node-classification';
 import {
   normalizeMcpWorkflowConnections,
@@ -62,6 +63,9 @@ export const workflowConnectionSchema = z.preprocess(normalizeMcpWorkflowConnect
   }).catchall(connectionArraySchema) // Allow additional AI connection types (ai_outputParser, ai_document, ai_textSplitter, etc.)
 ));
 
+// Mirrors components.schemas.workflowSettings in n8n's Public API, minus the properties n8n
+// derives itself (see constants/workflow-settings.ts). Unknown keys are stripped by Zod here;
+// forwarding them to n8n is cleanWorkflowForUpdate's job, not this schema's.
 export const workflowSettingsSchema = z.object({
   executionOrder: z.enum(['v0', 'v1']).default('v1'),
   timezone: z.string().optional(),
@@ -71,8 +75,15 @@ export const workflowSettingsSchema = z.object({
   saveExecutionProgress: z.boolean().default(true),
   executionTimeout: z.number().optional(),
   errorWorkflow: z.string().optional(),
-  callerPolicy: z.enum(['any', 'workflowsFromSameOwner', 'workflowsFromAList']).optional(),
+  callerPolicy: z.enum(['any', 'none', 'workflowsFromSameOwner', 'workflowsFromAList']).optional(),
+  callerIds: z.string().optional(),
+  timeSavedMode: z.enum(['fixed', 'dynamic']).optional(),
+  timeSavedPerExecution: z.number().optional(),
+  redactionPolicy: z.enum(['none', 'non-manual', 'manual-only', 'all']).optional(),
   availableInMCP: z.boolean().optional(),
+  customTelemetryTags: z
+    .array(z.object({ key: z.string(), value: z.string() }))
+    .optional(),
 });
 
 // Default settings for workflow creation
@@ -135,6 +146,16 @@ export function cleanWorkflowForCreate(workflow: Partial<Workflow>): Partial<Wor
     ...cleanedWorkflow
   } = workflow;
 
+  // Drop the properties n8n derives itself. Creating from a workflow read off another instance
+  // would otherwise carry them into a payload the create schema rejects.
+  if (cleanedWorkflow.settings && typeof cleanedWorkflow.settings === 'object') {
+    cleanedWorkflow.settings = Object.fromEntries(
+      Object.entries(cleanedWorkflow.settings as Record<string, unknown>).filter(
+        ([key]) => !DERIVED_SETTINGS_PROPERTIES.has(key)
+      )
+    ) as Workflow['settings'];
+  }
+
   // Ensure settings are present with defaults
   // Treat empty settings object {} the same as missing settings
   if (!cleanedWorkflow.settings || Object.keys(cleanedWorkflow.settings).length === 0) {
@@ -160,15 +181,14 @@ export function cleanWorkflowForCreate(workflow: Partial<Workflow>): Partial<Wor
  * such echoed field that a denylist doesn't explicitly drop leaks into the payload and
  * triggers: "Invalid request: request/body must NOT have additional properties".
  *
- * We therefore use an ALLOWLIST rather than a denylist: only fields the write schema accepts
- * are forwarded. This is forward-compatible — new read-only fields n8n adds in future
- * versions can never break updates. Settings are filtered separately to their own writable
- * allowlist below.
+ * We therefore use an ALLOWLIST rather than a denylist for top-level fields: only fields the
+ * write schema accepts are forwarded. This is forward-compatible — new read-only fields n8n
+ * adds in future versions can never break updates.
  *
- * NOTE: This function filters settings to ALL known properties (12 total).
- * For version-specific filtering (compatibility with older n8n versions),
- * use N8nApiClient.updateWorkflow() which automatically detects the n8n version
- * and filters settings accordingly.
+ * The settings object inside it is the opposite: everything is forwarded except the properties
+ * n8n derives and ignores on write, because an allowlist there drops settings n8n added after
+ * we last looked. Version-appropriate filtering happens in N8nApiClient.updateWorkflow(), which
+ * detects the target version first.
  *
  * @param workflow - The workflow object to clean
  * @returns A cleaned partial workflow suitable for API updates
@@ -194,32 +214,13 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
   // never echo it, so it only appears here when a caller explicitly asked for a move.
   if (source.parentFolderId !== undefined) cleanedWorkflow.parentFolderId = source.parentFolderId;
 
-  // ALL known settings properties accepted by n8n Public API (as of n8n 1.119.0+)
-  // This list is the UNION of all properties ever accepted by any n8n version
-  // Version-specific filtering is handled by N8nApiClient.updateWorkflow()
-  const ALL_KNOWN_SETTINGS_PROPERTIES = new Set([
-    // Core properties (all versions)
-    'saveExecutionProgress',
-    'saveManualExecutions',
-    'saveDataErrorExecution',
-    'saveDataSuccessExecution',
-    'executionTimeout',
-    'errorWorkflow',
-    'timezone',
-    // Added in n8n 1.37.0
-    'executionOrder',
-    // Added in n8n 1.119.0
-    'callerPolicy',
-    'callerIds',
-    'timeSavedPerExecution',
-    'availableInMCP',
-  ]);
-
   if (cleanedWorkflow.settings && typeof cleanedWorkflow.settings === 'object') {
-    // Filter to only known properties (security + prevent garbage)
+    // Forward every property except the ones n8n derives and ignores on write. An allowlist
+    // here silently dropped each new n8n setting until someone noticed - version-appropriate
+    // filtering belongs in N8nApiClient.updateWorkflow(), which knows the target version.
     const filteredSettings: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(cleanedWorkflow.settings as Record<string, unknown>)) {
-      if (ALL_KNOWN_SETTINGS_PROPERTIES.has(key)) {
+      if (!DERIVED_SETTINGS_PROPERTIES.has(key)) {
         filteredSettings[key] = value;
       }
     }

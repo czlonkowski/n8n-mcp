@@ -59,6 +59,7 @@ import {
   fetchN8nVersion,
   cleanSettingsForVersion,
   getCachedVersion,
+  versionAtLeast,
 } from './n8n-version';
 import type { PinnedAgents } from '../utils/ssrf-protection';
 
@@ -654,22 +655,60 @@ export class N8nApiClient {
     }
   }
 
-  async activateWorkflow(id: string): Promise<Workflow> {
+  /**
+   * POST the publish-family route a workflow needs, preferring the name the target n8n uses.
+   *
+   * n8n 2.33 renamed `/activate` to `/publish` and `/deactivate` to `/unpublish`, and marked the
+   * old pair deprecated (2026-07-23). The deprecated routes are literal aliases of the new
+   * handlers — same service call, same result — so this is a rename, not a behaviour change.
+   * `/publish` additionally accepts an optional body naming a version to publish; we send none,
+   * which keeps the semantics identical to `/activate`.
+   *
+   * The fallback runs in one direction only. When the version is unknown we assume a modern
+   * instance and fall back to the legacy route if `/publish` turns out not to exist; when we
+   * positively detected a pre-2.33 instance there is nothing to fall back to, since the legacy
+   * routes still exist on every version that has the new ones.
+   */
+  private async postPublishRoute(
+    id: string,
+    modernPath: 'publish' | 'unpublish',
+    legacyPath: 'activate' | 'deactivate'
+  ): Promise<Workflow> {
+    const safeId = encodeApiPathSegment(id, 'workflowId');
+    const version = await this.getVersion();
+    const preferModern = !version || versionAtLeast(version, 2, 33, 0);
+    const primary = preferModern ? modernPath : legacyPath;
+
     try {
-      const response = await this.client.post(`/workflows/${encodeApiPathSegment(id, 'workflowId')}/activate`, {});
+      const response = await this.client.post(`/workflows/${safeId}/${primary}`, {});
       return response.data;
-    } catch (error) {
-      throw handleN8nApiError(error);
+    } catch (error: any) {
+      if (!preferModern || error.response?.status !== 404) {
+        throw handleN8nApiError(error);
+      }
+
+      // n8n answers 404 for a workflow that does not exist as well as for a route it does not
+      // have, so this retry also fires on a bad workflow ID. That costs one request and ends in
+      // the same error, which is why the 404 is logged as a route probe rather than a failure.
+      logger.debug(
+        `POST /workflows/{id}/${modernPath} returned 404 - retrying /${legacyPath} ` +
+          '(pre-2.33 n8n, or the workflow does not exist)'
+      );
+      try {
+        const response = await this.client.post(`/workflows/${safeId}/${legacyPath}`, {});
+        return response.data;
+      } catch (fallbackError) {
+        throw handleN8nApiError(fallbackError);
+      }
     }
   }
 
+  async activateWorkflow(id: string): Promise<Workflow> {
+    return this.postPublishRoute(id, 'publish', 'activate');
+  }
+
   async deactivateWorkflow(id: string): Promise<Workflow> {
-    try {
-      const response = await this.client.post(`/workflows/${encodeApiPathSegment(id, 'workflowId')}/deactivate`, {});
-      return response.data;
-    } catch (error) {
-      throw handleN8nApiError(error);
-    }
+    return this.postPublishRoute(id, 'unpublish', 'deactivate');
   }
 
   /**

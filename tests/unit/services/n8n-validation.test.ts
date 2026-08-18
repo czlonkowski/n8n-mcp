@@ -601,7 +601,7 @@ describe('n8n-validation', () => {
         expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
       });
 
-      it('should filter settings to safe properties to prevent API errors (Issue #248 - final fix)', () => {
+      it('should forward settings n8n added after this list was written (Issue #248 - final fix)', () => {
         const workflow = {
           name: 'Test Workflow',
           nodes: [],
@@ -609,22 +609,61 @@ describe('n8n-validation', () => {
           settings: {
             executionOrder: 'v1' as const,
             saveDataSuccessExecution: 'none' as const,
-            callerPolicy: 'workflowsFromSameOwner' as const, // Whitelisted (n8n 1.119+)
-            timeSavedPerExecution: 5, // Whitelisted (n8n 1.119+, PR #21297)
-            unknownProperty: 'should be filtered', // Unknown properties ARE filtered
+            callerPolicy: 'workflowsFromSameOwner' as const,
+            timeSavedPerExecution: 5,
+            // Whatever n8n ships next: forwarded, so the instance decides, not a stale list
+            settingFromANewerN8n: 'forwarded',
           },
         } as any;
 
         const cleaned = cleanWorkflowForUpdate(workflow);
 
-        // All 4 properties from n8n 1.119+ are whitelisted, unknown properties filtered
         expect(cleaned.settings).toEqual({
           executionOrder: 'v1',
           saveDataSuccessExecution: 'none',
           callerPolicy: 'workflowsFromSameOwner',
           timeSavedPerExecution: 5,
+          settingFromANewerN8n: 'forwarded',
         });
-        expect(cleaned.settings).not.toHaveProperty('unknownProperty');
+      });
+
+      it('should drop the settings n8n derives and ignores on write', () => {
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: {
+            executionOrder: 'v1' as const,
+            // Echoed by GET on n8n 2.33+, ignored on write, rejected outright by older n8n
+            binaryMode: 'combined',
+            credentialResolverId: 'resolver-1',
+          },
+        } as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
+      });
+
+      it('should keep redactionPolicy on a write (data redaction must not be dropped silently)', () => {
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: {
+            executionOrder: 'v1' as const,
+            redactionPolicy: 'all' as const,
+            customTelemetryTags: [{ key: 'team', value: 'platform' }],
+          },
+        } as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+
+        expect(cleaned.settings).toEqual({
+          executionOrder: 'v1',
+          redactionPolicy: 'all',
+          customTelemetryTags: [{ key: 'team', value: 'platform' }],
+        });
       });
 
       it('should preserve callerPolicy and availableInMCP (n8n 1.121+ settings)', () => {
@@ -699,45 +738,40 @@ describe('n8n-validation', () => {
         expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
       });
 
-      it('should return minimal defaults when only non-whitelisted properties exist (Issue #431)', () => {
+      it('should return minimal defaults when only derived properties exist (Issue #431)', () => {
         const workflow = {
           name: 'Test Workflow',
           nodes: [],
           connections: {},
           settings: {
-            timeSavedPerExecution: 5, // Whitelisted (n8n 1.119+)
-            someOtherProperty: 'value', // Filtered out (unknown)
+            binaryMode: 'combined', // Derived - dropped, leaving nothing behind
           },
         } as any;
 
         const cleaned = cleanWorkflowForUpdate(workflow);
-        // timeSavedPerExecution is now whitelisted, someOtherProperty is filtered out
-        // n8n API now accepts empty or partial settings {} - server preserves existing values
-        expect(cleaned.settings).toEqual({ timeSavedPerExecution: 5 });
-        expect(cleaned.settings).not.toHaveProperty('someOtherProperty');
+        // n8n rejects an empty settings object, so a minimal valid default takes its place
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
       });
 
-      it('should preserve whitelisted settings when mixed with non-whitelisted (Issue #431)', () => {
+      it('should preserve settings alongside dropped derived properties (Issue #431)', () => {
         const workflow = {
           name: 'Test Workflow',
           nodes: [],
           connections: {},
           settings: {
-            executionOrder: 'v1' as const, // Whitelisted
-            callerPolicy: 'workflowsFromSameOwner' as const, // Now whitelisted (n8n 1.121+)
-            timezone: 'America/New_York', // Whitelisted
-            someOtherProperty: 'value', // Filtered out
+            executionOrder: 'v1' as const,
+            callerPolicy: 'workflowsFromSameOwner' as const,
+            timezone: 'America/New_York',
+            credentialResolverId: 'resolver-1', // Derived - dropped
           },
         } as any;
 
         const cleaned = cleanWorkflowForUpdate(workflow);
-        // Should keep only whitelisted properties (callerPolicy now whitelisted)
         expect(cleaned.settings).toEqual({
           executionOrder: 'v1',
           callerPolicy: 'workflowsFromSameOwner',
           timezone: 'America/New_York'
         });
-        expect(cleaned.settings).not.toHaveProperty('someOtherProperty');
       });
 
       it('should inject webhookId on webhook nodes missing it', () => {

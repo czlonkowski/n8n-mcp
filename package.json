@@ -1,6 +1,6 @@
 {
   "name": "n8n-mcp",
-  "version": "2.69.2",
+  "version": "2.70.0",
   "description": "Integration between n8n workflow automation and Model Context Protocol (MCP)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -105,7 +105,8 @@
     "update:all": "./scripts/update-and-publish-prep.sh",
     "test:release-automation": "node scripts/test-release-automation.js",
     "prepare:release": "node scripts/prepare-release.js",
-    "prepare": "husky"
+    "prepare": "husky",
+    "check:settings-drift": "npx tsx scripts/check-settings-drift.ts"
   },
   "repository": {
     "type": "git",
