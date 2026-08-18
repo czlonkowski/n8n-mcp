@@ -101,6 +101,25 @@ describe('N8nApiClient', () => {
     vi.mocked(axios.create).mockReturnValue(mockAxiosInstance as any);
     vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { status: 'ok' } });
     
+    // Route a sequence of outcomes through the real response interceptor, so callers see the
+    // N8nApiError the interceptor produces rather than a raw axios error. Needed for fallbacks
+    // that branch on the status of the first failure.
+    mockAxiosInstance.simulateSequence = (method: string, outcomes: any[]) => {
+      let call = 0;
+      mockAxiosInstance[method].mockImplementation(async () => {
+        const outcome = outcomes[Math.min(call++, outcomes.length - 1)];
+        if (!outcome.error) return { data: outcome.data };
+        const axiosError = createAxiosError(outcome.error);
+        try {
+          return Promise.reject(
+            await mockAxiosInstance._responseInterceptor.onRejected(axiosError)
+          );
+        } catch (transformed) {
+          return Promise.reject(transformed);
+        }
+      });
+    };
+
     // Helper function to simulate axios error with interceptor
     mockAxiosInstance.simulateError = async (method: string, errorConfig: any) => {
       const axiosError = createAxiosError(errorConfig);
@@ -538,13 +557,30 @@ describe('N8nApiClient', () => {
       expect(result).toEqual(updatedWorkflow);
     });
 
+    it('should fallback to PATCH when the 405 arrives through the response interceptor', async () => {
+      // The interceptor rewrites every rejection into an N8nApiError, which carries statusCode
+      // and no response. A fallback reading error.response.status never fires in production.
+      const workflow = { name: 'Updated', nodes: [], connections: {} };
+      const updatedWorkflow = { ...workflow, id: '123' };
+
+      await mockAxiosInstance.simulateError('put', {
+        response: { status: 405, data: { message: 'Method Not Allowed' } }
+      });
+      mockAxiosInstance.patch.mockResolvedValue({ data: updatedWorkflow });
+
+      const result = await client.updateWorkflow('123', workflow);
+
+      expect(mockAxiosInstance.patch).toHaveBeenCalledWith('/workflows/123', workflow);
+      expect(result).toEqual(updatedWorkflow);
+    });
+
     it('should handle update error', async () => {
       const workflow = { name: 'Updated', nodes: [], connections: {} };
-      const error = { 
+      const error = {
         message: 'Request failed',
-        response: { status: 400, data: { message: 'Invalid update' } } 
+        response: { status: 400, data: { message: 'Invalid update' } }
       };
-      
+
       await mockAxiosInstance.simulateError('put', error);
       
       try {
@@ -960,11 +996,12 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
     it('should fall back to /activate when /publish 404s', async () => {
       vi.spyOn(client, 'getVersion').mockResolvedValue(null);
       const activated = { id: '123', active: true };
-      mockAxiosInstance.post
-        .mockRejectedValueOnce(
-          createAxiosError({ response: { status: 404, data: { message: 'Not Found' } } })
-        )
-        .mockResolvedValueOnce({ data: activated });
+      // Through the interceptor: it rejects with an N8nApiError carrying statusCode, not a
+      // raw axios error with .response - which is what the fallback has to read.
+      mockAxiosInstance.simulateSequence('post', [
+        { error: { response: { status: 404, data: { message: 'Not Found' } } } },
+        { data: activated },
+      ]);
 
       const result = await client.activateWorkflow('123');
 
@@ -975,9 +1012,9 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
 
     it('should not fall back when the instance is known to predate /publish', async () => {
       vi.spyOn(client, 'getVersion').mockResolvedValue(parseVersion('2.32.4'));
-      mockAxiosInstance.post.mockRejectedValue(
-        createAxiosError({ response: { status: 404, data: { message: 'Not Found' } } })
-      );
+      await mockAxiosInstance.simulateError('post', {
+        response: { status: 404, data: { message: 'Not Found' } }
+      });
 
       await expect(client.activateWorkflow('123')).rejects.toBeInstanceOf(N8nNotFoundError);
       expect(mockAxiosInstance.post).toHaveBeenCalledTimes(1);
@@ -985,11 +1022,9 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
 
     it('should surface a non-404 failure without probing the other route', async () => {
       vi.spyOn(client, 'getVersion').mockResolvedValue(parseVersion('2.34.4'));
-      mockAxiosInstance.post.mockRejectedValue(
-        createAxiosError({
-          response: { status: 400, data: { message: 'Workflow has no trigger node' } }
-        })
-      );
+      await mockAxiosInstance.simulateError('post', {
+        response: { status: 400, data: { message: 'Workflow has no trigger node' } }
+      });
 
       await expect(client.activateWorkflow('123')).rejects.toBeInstanceOf(N8nValidationError);
       expect(mockAxiosInstance.post).toHaveBeenCalledTimes(1);
@@ -1105,11 +1140,10 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
     it('should fall back to /deactivate when /unpublish 404s', async () => {
       vi.spyOn(client, 'getVersion').mockResolvedValue(null);
       const deactivated = { id: '123', active: false };
-      mockAxiosInstance.post
-        .mockRejectedValueOnce(
-          createAxiosError({ response: { status: 404, data: { message: 'Not Found' } } })
-        )
-        .mockResolvedValueOnce({ data: deactivated });
+      mockAxiosInstance.simulateSequence('post', [
+        { error: { response: { status: 404, data: { message: 'Not Found' } } } },
+        { data: deactivated },
+      ]);
 
       const result = await client.deactivateWorkflow('123');
 

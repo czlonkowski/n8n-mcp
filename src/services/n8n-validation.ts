@@ -66,6 +66,10 @@ export const workflowConnectionSchema = z.preprocess(normalizeMcpWorkflowConnect
 // Mirrors components.schemas.workflowSettings in n8n's Public API, minus the properties n8n
 // derives itself (see constants/workflow-settings.ts). Unknown keys are stripped by Zod here;
 // forwarding them to n8n is cleanWorkflowForUpdate's job, not this schema's.
+//
+// Hand-written rather than generated from that table, which does not model types or enum
+// values, and so NOT covered by `npm run check:settings-drift`. Keep it in step by hand when
+// the table gains a property.
 export const workflowSettingsSchema = z.object({
   executionOrder: z.enum(['v0', 'v1']).default('v1'),
   timezone: z.string().optional(),

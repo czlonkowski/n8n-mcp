@@ -45,7 +45,7 @@ import {
   FolderListResponse,
   ProjectSummary,
 } from '../types/n8n-api';
-import { handleN8nApiError, logN8nError, N8nValidationError } from '../utils/n8n-errors';
+import { handleN8nApiError, logN8nError, N8nApiError, N8nValidationError } from '../utils/n8n-errors';
 import { encodeApiPathSegment } from '../utils/validation-schemas';
 import { cleanWorkflowForCreate, cleanWorkflowForUpdate } from './n8n-validation';
 import {
@@ -80,6 +80,20 @@ const GROUPS_UNSUPPORTED_WARNING =
   'This n8n version does not support canvas groups (added in 2.28); the workflow was saved without them.';
 const GROUP_DESCRIPTIONS_UNSUPPORTED_WARNING =
   'This n8n version does not support canvas group descriptions (added in 2.32); the descriptions were not saved.';
+
+/**
+ * HTTP status of a failed request from this client.
+ *
+ * The response interceptor converts every rejection to an `N8nApiError`, which carries
+ * `statusCode` and no `response`. Reading `error.response.status` on a rejection from
+ * `this.client` therefore always yields undefined - which silently disables any fallback
+ * keyed on a specific status. The raw-axios branch is kept for callers that bypass the
+ * interceptor, such as tests.
+ */
+function failureStatus(error: unknown): number | undefined {
+  if (error instanceof N8nApiError) return error.statusCode;
+  return (error as any)?.response?.status;
+}
 
 /** The same write payload without `nodeGroups`, for instances whose schema has no such field. */
 function withoutNodeGroups(payload: Record<string, unknown>): Record<string, unknown> {
@@ -529,7 +543,7 @@ export class N8nApiClient {
       const response = await this.client.put(`/workflows/${safeId}`, body);
       return response.data;
     } catch (putError: any) {
-      if (putError.response?.status !== 405) throw putError;
+      if (failureStatus(putError) !== 405) throw putError;
       logger.debug('PUT method not supported, falling back to PATCH');
       const response = await this.client.patch(`/workflows/${safeId}`, body);
       return response.data;
@@ -683,7 +697,7 @@ export class N8nApiClient {
     try {
       return await post(preferModern ? modernPath : legacyPath);
     } catch (error: any) {
-      if (!preferModern || error.response?.status !== 404) {
+      if (!preferModern || failureStatus(error) !== 404) {
         throw handleN8nApiError(error);
       }
     }

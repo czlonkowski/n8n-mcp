@@ -2,12 +2,17 @@
  * The `workflowSettings` properties of the n8n Public API, and the n8n version that introduced
  * each one.
  *
- * This is the single source of truth for every place that reasons about workflow settings:
- * the Zod schema and the write cleaner in `services/n8n-validation.ts`, and the version-aware
- * filter in `services/n8n-version.ts`. Three hand-maintained copies drifted apart before this
- * file existed - `npm run check:settings-drift` now diffs it against the OpenAPI schema n8n
- * ships in its published package, so drift fails the n8n dependency update instead of going
- * unnoticed.
+ * This is the source of truth for the code that filters settings on a write: the cleaners in
+ * `services/n8n-validation.ts` and the version-aware filter in `services/n8n-version.ts`.
+ * Those copies had drifted apart before this file existed - `npm run check:settings-drift` now
+ * diffs it against the OpenAPI schema n8n ships in its published package, so drift fails the
+ * n8n dependency update instead of going unnoticed.
+ *
+ * `workflowSettingsSchema` in `services/n8n-validation.ts` is NOT generated from this table -
+ * it is hand-written, because it also carries each property's type and enum values, which this
+ * table does not model. It is not on any write path today, but it can still drift from n8n
+ * without the check noticing. Generating it from a typed version of this table would close
+ * that gap.
  *
  * Sourced from `dist/public-api/v1/openapi.yml` in the published `n8n` package
  * (`components.schemas.workflowSettings`). That schema is `additionalProperties: false`, which
