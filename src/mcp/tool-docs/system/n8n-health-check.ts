@@ -48,7 +48,8 @@ Health checks are crucial for:
     },
     returns: `Health status object containing:
 - status: Overall health status ('healthy', 'degraded', 'error')
-- n8nVersion: n8n instance version information
+- n8nVersion: n8n instance version, when the instance reports one. n8n stopped exposing its version to API clients in 1.119.0, so this is usually absent; n8nVersionNote then says so. Neither an error nor worth retrying - check capabilities by calling the API, not by comparing versions
+- n8nVersionNote: Present only when n8nVersion is absent, explaining why
 - instanceId: Unique identifier for the n8n instance
 - features: Object listing available features and their status
 - mcpVersion: Current n8n-mcp version

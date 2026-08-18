@@ -90,10 +90,11 @@ describe('Integration: handleHealthCheck', () => {
         expect(typeof data.supportedN8nVersion).toBe('string');
       }
 
-      // Should include version note for AI agents
-      if (data.versionNote) {
-        expect(typeof data.versionNote).toBe('string');
-        expect(data.versionNote).toContain('version');
+      // One of the two is always there: n8n has withheld its version from API clients since
+      // 1.119.0, and an instance that does not report one says so rather than staying silent.
+      expect(data.n8nVersion === undefined).toBe(data.n8nVersionNote !== undefined);
+      if (data.n8nVersionNote) {
+        expect(data.n8nVersionNote).toContain('version');
       }
     });
   });
@@ -118,7 +119,7 @@ describe('Integration: handleHealthCheck', () => {
       });
 
       // Optional fields that may be present
-      const optionalFields = ['instanceId', 'n8nVersion', 'features', 'supportedN8nVersion', 'versionNote'];
+      const optionalFields = ['instanceId', 'n8nVersion', 'features', 'supportedN8nVersion', 'n8nVersionNote'];
       optionalFields.forEach(field => {
         if (data[field] !== undefined) {
           expect(data[field]).not.toBeNull();

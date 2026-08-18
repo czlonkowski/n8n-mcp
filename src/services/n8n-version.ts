@@ -23,9 +23,18 @@ import {
   type SettingsVersion,
 } from '../constants/workflow-settings';
 
+/**
+ * What to tell a caller who asked for the instance version and got nothing. Reported instead of
+ * "unknown", which reads as a lookup that failed and invites a retry: no retry can succeed.
+ */
+export const N8N_VERSION_UNAVAILABLE_NOTE =
+  'Not reported. n8n stopped exposing its version to API clients in 1.119.0, so this is expected ' +
+  'and is not an error. Feature availability is detected from API responses instead.';
+
 // Cache version info per base URL with TTL to handle server upgrades
 interface CachedVersion {
-  info: N8nVersionInfo;
+  /** null when the instance answered but reported no version - see rememberProbe. */
+  info: N8nVersionInfo | null;
   fetchedAt: number;
 }
 
@@ -91,11 +100,18 @@ export function getSupportedSettingsProperties(version: N8nVersionInfo): Set<str
 }
 
 /**
- * Fetch n8n version from /rest/settings endpoint
+ * Fetch the n8n version from the instance's `/rest/settings` endpoint.
  *
- * This endpoint is available on all n8n instances and doesn't require authentication.
- * Note: There's a security concern about this being unauthenticated (see n8n community),
- * but it's the only reliable way to get version info.
+ * **This returns null against every n8n from 1.119.0 onward.** That endpoint is n8n's internal
+ * editor route, and since 1.119.0 it answers unauthenticated callers from a fixed allowlist that
+ * carries no version field; only a browser session gets the full settings. We authenticate with a
+ * Public API key, so the version is never in the response. The Public API itself exposes no
+ * version anywhere, so there is no route to switch to.
+ *
+ * Callers must treat null as "unknown", never as "old" - and new behaviour should be gated on
+ * what the API actually answers, not on a version number. A probe that reaches the instance and
+ * finds no version is cached like a successful one, so the request happens at most once per TTL
+ * rather than on every write.
  */
 export async function fetchN8nVersion(
   baseUrl: string,
@@ -106,7 +122,7 @@ export async function fetchN8nVersion(
   // because it is about to blame the instance version for a failure.
   const cached = forceRefresh ? undefined : versionCache.get(baseUrl);
   if (cached && Date.now() - cached.fetchedAt < VERSION_CACHE_TTL_MS) {
-    logger.debug(`Using cached n8n version for ${baseUrl}: ${cached.info.version}`);
+    logger.debug(`Using cached n8n version for ${baseUrl}: ${cached.info?.version ?? 'none reported'}`);
     return cached.info;
   }
 
@@ -127,38 +143,48 @@ export async function fetchN8nVersion(
       httpsAgent: pinnedAgents?.httpsAgent,
     });
 
-    if (response.status === 200 && response.data) {
-      // n8n wraps the settings in a "data" property
-      const settings = response.data.data;
-      if (!settings) {
-        logger.warn('No data in settings response');
-        return null;
-      }
+    // n8n wraps the settings in a "data" property
+    const settings = response.status === 200 ? response.data?.data : undefined;
 
-      // n8n can return version in different fields - validate type
-      const versionString = typeof settings.n8nVersion === 'string'
-        ? settings.n8nVersion
-        : typeof settings.versionCli === 'string'
-          ? settings.versionCli
-          : null;
+    // n8n can return version in different fields - validate type
+    const versionString = typeof settings?.n8nVersion === 'string'
+      ? settings.n8nVersion
+      : typeof settings?.versionCli === 'string'
+        ? settings.versionCli
+        : null;
+    const versionInfo = versionString ? parseVersion(versionString) : null;
 
-      if (versionString) {
-        const versionInfo = parseVersion(versionString);
-        if (versionInfo) {
-          // Cache the result with timestamp
-          versionCache.set(baseUrl, { info: versionInfo, fetchedAt: Date.now() });
-          logger.debug(`Detected n8n version: ${versionInfo.version}`);
-          return versionInfo;
-        }
-      }
-    }
-
-    logger.warn(`Could not determine n8n version from ${settingsUrl}`);
-    return null;
+    // A missing version is expected against any n8n >= 1.119.0, so it is not a warning - see the
+    // doc comment.
+    return rememberProbe(
+      baseUrl,
+      versionInfo,
+      versionInfo
+        ? `detected n8n version ${versionInfo.version}`
+        : `no version in the response from ${settingsUrl}`
+    );
   } catch (error) {
-    logger.warn(`Failed to fetch n8n version: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    // Deliberately not cached: a timeout or a refused connection says nothing about whether the
+    // instance reports its version, and caching it would suppress detection for the whole TTL.
+    logger.debug(`Failed to fetch n8n version: ${error instanceof Error ? error.message : 'Unknown error'}`);
     return null;
   }
+}
+
+/**
+ * Cache the outcome of a probe that reached the instance, and return it.
+ *
+ * A null outcome is cached too: it is the normal answer from every current n8n, and re-probing on
+ * every workflow write would cost a round trip per write to learn the same thing.
+ */
+function rememberProbe(
+  baseUrl: string,
+  info: N8nVersionInfo | null,
+  reason: string
+): N8nVersionInfo | null {
+  versionCache.set(baseUrl, { info, fetchedAt: Date.now() });
+  logger.debug(`n8n version probe for ${baseUrl}: ${reason}`);
+  return info;
 }
 
 /**
@@ -169,7 +195,8 @@ export function clearVersionCache(): void {
 }
 
 /**
- * Get cached version for a base URL (or null if not cached or expired)
+ * Get cached version for a base URL. Null when nothing is cached, the entry expired, or the
+ * instance was probed and reported no version.
  */
 export function getCachedVersion(baseUrl: string): N8nVersionInfo | null {
   const cached = versionCache.get(baseUrl);

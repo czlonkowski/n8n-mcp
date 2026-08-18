@@ -102,6 +102,25 @@ function failureStatus(error: unknown): number | undefined {
   return (error as any)?.response?.status;
 }
 
+/**
+ * Whether a response carries an RFC 9745 `Deprecation` header.
+ *
+ * n8n sets one on the legacy activate/deactivate routes (`Deprecation: @<epoch>`), from a
+ * middleware that runs before the permission checks. Its presence proves the instance knows those
+ * routes are superseded, and therefore serves the routes that replaced them. The value is not
+ * parsed: a deprecation date tells us nothing we act on, only the header's presence does.
+ *
+ * Absence proves nothing - an older n8n has no header, and a proxy may drop it - so this is only
+ * ever read as a positive signal.
+ */
+function hasDeprecationHeader(headers: unknown): boolean {
+  if (!headers || typeof headers !== 'object') return false;
+  // Axios lowercases response header names, but a mock or a raw response may not.
+  return Object.entries(headers as Record<string, unknown>).some(
+    ([name, value]) => name.toLowerCase() === 'deprecation' && value !== undefined && value !== ''
+  );
+}
+
 /** The same write payload without `nodeGroups`, for instances whose schema has no such field. */
 function withoutNodeGroups(payload: Record<string, unknown>): Record<string, unknown> {
   const { nodeGroups, ...rest } = payload;
@@ -138,6 +157,12 @@ export class N8nApiClient {
    * group would permanently disable groups for the instance. Per-client, which is per-instance.
    */
   private groupSupport = { groups: true, descriptions: true };
+  /**
+   * Whether this instance is known to serve the modern publish/unpublish routes. Positive-only,
+   * and per-client, which is per-instance: it is set when the instance proves the routes exist
+   * and never cleared, because no response proves the opposite. See postPublishRoute.
+   */
+  private modernPublishRoute = false;
 
   constructor(config: N8nApiClientConfig) {
     const { baseUrl, apiKey, timeout = 30000, maxRetries = 3, cfClientId, cfClientSecret } = config;
@@ -250,6 +275,16 @@ export class N8nApiClient {
   /**
    * Get the n8n version, fetching it if not already cached.
    * Uses promise-based locking to prevent concurrent requests.
+   *
+   * **Returns null against every n8n from 1.119.0 onward**, which in practice means every
+   * instance: the version is only reachable through an internal editor route that answers
+   * Public API clients without it, and the Public API exposes no version of its own. See
+   * {@link fetchN8nVersion}.
+   *
+   * So do not gate behaviour on this. Null means "unknown", never "old", and a feature gated on
+   * a minimum version here is a feature that is off for everyone. Probe the instance instead -
+   * `groupSupport` and {@link postPublishRoute} read what the API actually answers - and keep the
+   * unprobed path the one that works on every version.
    */
   async getVersion(): Promise<N8nVersionInfo | null> {
     // If we already have version info, return it
@@ -637,8 +672,9 @@ export class N8nApiClient {
           versionInfo
         );
       } else {
-        logger.warn('Could not determine n8n version, sending all known settings properties');
-        // Without version info, we send all known properties (might fail on old n8n)
+        // The normal case since n8n 1.119.0 (see getVersion). Settings are forwarded untouched;
+        // n8n rejects anything it does not accept, which reads better than dropping it silently.
+        logger.debug('n8n version unknown, forwarding workflow settings unfiltered');
       }
 
       const safeId = encodeApiPathSegment(id, 'workflowId');
@@ -686,12 +722,17 @@ export class N8nApiClient {
    * which keeps the semantics identical to `/activate`.
    *
    * The new route is used only when the instance is *confirmed* to have it. The legacy pair
-   * works on every supported version - on 2.33+ they are the same handler - so an instance
-   * whose version could not be read is served by the legacy route rather than probed. That
-   * matters because detection fails on real instances: `/rest/settings` does not always carry
-   * `n8nVersion`, and probing a pre-2.33 instance then wastes a request on every call.
+   * works on every supported version - on 2.33+ they are the same handler - so an unconfirmed
+   * instance is served by the legacy route rather than probed, which would waste a request per
+   * call on every pre-2.33 instance.
    *
-   * The fallback runs in both directions on a 404 or 405. A router with no route may report
+   * Confirmation comes from the instance, not from a version number, because version detection
+   * returns null on every n8n from 1.119.0 (see {@link getVersion}). Two things confirm it, both
+   * one-way: a `Deprecation` header on a legacy response, which only an n8n that has the
+   * replacement sends, and a fallback to the modern route that succeeds. A version reading is
+   * still honoured when one is somehow available.
+   *
+   * The fallback runs in both directions on a 404, 405 or 410. A router with no route may report
    * either, depending on whether it matches the path prefix before the method; n8n answers 405
    * here, so keying on 404 alone left the fallback dead in practice. Symmetry matters because
    * the legacy routes are deprecated (2026-07-23, no sunset announced): when n8n eventually
@@ -699,7 +740,9 @@ export class N8nApiClient {
    * entirely, rather than moving to the route that replaced it.
    *
    * The cost is one extra request on a workflow id that does not exist, since n8n answers 404
-   * for an absent workflow and an absent route alike. Both attempts end in the same error.
+   * for an absent workflow and an absent route alike. Both attempts end in the same error. That
+   * also costs the confirmation: the response interceptor keeps a failure's status but not its
+   * headers, so only a legacy call that succeeds can carry the deprecation signal.
    */
   private async postPublishRoute(
     id: string,
@@ -707,13 +750,23 @@ export class N8nApiClient {
     legacyPath: 'activate' | 'deactivate'
   ): Promise<Workflow> {
     const safeId = encodeApiPathSegment(id, 'workflowId');
-    const version = await this.getVersion();
-    const preferModern = version !== null && versionAtLeast(version, 2, 33, 0);
+    let preferModern = this.modernPublishRoute;
+    if (!preferModern) {
+      // Only read while the routes are unconfirmed: once they are, no version could change the
+      // choice, and asking costs a request every time the version cache has expired.
+      const version = await this.getVersion();
+      preferModern = version !== null && versionAtLeast(version, 2, 33, 0);
+    }
     const [primaryPath, fallbackPath] = preferModern
       ? [modernPath, legacyPath]
       : [legacyPath, modernPath];
-    const post = async (path: string): Promise<Workflow> =>
-      (await this.client.post(`/workflows/${safeId}/${path}`, {})).data;
+    const post = async (path: string): Promise<Workflow> => {
+      const response = await this.client.post(`/workflows/${safeId}/${path}`, {});
+      if (path === legacyPath && hasDeprecationHeader(response.headers)) {
+        this.confirmModernPublishRoute(`/${legacyPath} answered with a Deprecation header`);
+      }
+      return response.data;
+    };
     let status: number | undefined;
 
     let primaryError: unknown;
@@ -735,7 +788,11 @@ export class N8nApiClient {
         '(this n8n does not serve that route, or the workflow does not exist)'
     );
     try {
-      return await post(fallbackPath);
+      const workflow = await post(fallbackPath);
+      if (fallbackPath === modernPath) {
+        this.confirmModernPublishRoute(`/${legacyPath} is absent and /${modernPath} answered`);
+      }
+      return workflow;
     } catch (fallbackError) {
       // When the fallback fails the same way, neither route exists and the first attempt is the
       // more faithful account - a missing workflow should read as a missing workflow rather than
@@ -746,6 +803,21 @@ export class N8nApiClient {
         ROUTE_ABSENT_STATUSES.has(fallbackStatus as number) ? primaryError : fallbackError
       );
     }
+  }
+
+  /**
+   * Latch that this instance serves the modern publish routes, so later calls go there first.
+   * Only ever called from evidence that the routes exist; nothing clears it.
+   *
+   * Nothing clears it because no response proves the routes are absent - a 404 is equally a
+   * missing workflow. If some intermediary ever produced the evidence spuriously (a proxy that
+   * adds a Deprecation header while blocking `/publish`), the cost is one wasted request per
+   * call, not a failure: the fallback still lands on the legacy route.
+   */
+  private confirmModernPublishRoute(evidence: string): void {
+    if (this.modernPublishRoute) return;
+    this.modernPublishRoute = true;
+    logger.debug(`Using the publish/unpublish routes for this instance: ${evidence}`);
   }
 
   async activateWorkflow(id: string): Promise<Workflow> {

@@ -433,6 +433,42 @@ describe('n8n-version', () => {
       expect(cached).toEqual({ version: '1.119.0', major: 1, minor: 119, patch: 0 });
       expect(axios.get).toHaveBeenCalledTimes(1);
     });
+
+    it('caches an instance that answers without a version', async () => {
+      // The normal answer from every n8n >= 1.119.0. Re-probing would cost a round trip per
+      // workflow write to learn the same thing.
+      vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { data: { sso: {} } } });
+
+      expect(await fetchN8nVersion(baseUrl)).toBeNull();
+      expect(await fetchN8nVersion(baseUrl)).toBeNull();
+
+      expect(axios.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-probes after a request that never reached the instance', async () => {
+      // A timeout says nothing about whether the instance reports its version, so caching it
+      // would suppress detection for the whole TTL.
+      vi.mocked(axios.get).mockRejectedValueOnce(new Error('ETIMEDOUT'));
+      vi.mocked(axios.get).mockResolvedValue(settingsResponse);
+
+      expect(await fetchN8nVersion(baseUrl)).toBeNull();
+      expect(await fetchN8nVersion(baseUrl)).toEqual({
+        version: '1.119.0',
+        major: 1,
+        minor: 119,
+        patch: 0,
+      });
+      expect(axios.get).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not let a forced refresh keep reporting a version the instance stopped sending', async () => {
+      vi.mocked(axios.get).mockResolvedValueOnce(settingsResponse);
+      expect(await fetchN8nVersion(baseUrl)).not.toBeNull();
+
+      vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { data: {} } });
+      expect(await fetchN8nVersion(baseUrl, { forceRefresh: true })).toBeNull();
+      expect(await fetchN8nVersion(baseUrl)).toBeNull();
+    });
   });
 
   describe('VERSION_THRESHOLDS', () => {

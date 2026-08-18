@@ -108,7 +108,7 @@ describe('N8nApiClient', () => {
       let call = 0;
       mockAxiosInstance[method].mockImplementation(async () => {
         const outcome = outcomes[Math.min(call++, outcomes.length - 1)];
-        if (!outcome.error) return { data: outcome.data };
+        if (!outcome.error) return { data: outcome.data, headers: outcome.headers ?? {} };
         const axiosError = createAxiosError(outcome.error);
         try {
           return Promise.reject(
@@ -1070,6 +1070,66 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
 
       expect(mockAxiosInstance.post).toHaveBeenNthCalledWith(2, '/workflows/123/publish', {});
       expect(result).toEqual(activated);
+    });
+
+    it('should switch to /publish once a legacy response carries a Deprecation header', async () => {
+      // n8n sets `Deprecation: @<epoch>` on /activate from 2.33 on. Only an instance that has
+      // /publish sends it, so it is proof the modern route is there - without a version reading.
+      vi.spyOn(client, 'getVersion').mockResolvedValue(null);
+      mockAxiosInstance.simulateSequence('post', [
+        { data: { id: '123', active: true }, headers: { deprecation: '@1753228800' } },
+        { data: { id: '123', active: true } },
+      ]);
+
+      await client.activateWorkflow('123');
+      await client.activateWorkflow('123');
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledTimes(2);
+      expect(mockAxiosInstance.post).toHaveBeenNthCalledWith(1, '/workflows/123/activate', {});
+      expect(mockAxiosInstance.post).toHaveBeenNthCalledWith(2, '/workflows/123/publish', {});
+    });
+
+    it('should read the Deprecation header whatever its casing', async () => {
+      vi.spyOn(client, 'getVersion').mockResolvedValue(null);
+      mockAxiosInstance.simulateSequence('post', [
+        { data: { id: '123', active: true }, headers: { Deprecation: '@1753228800' } },
+        { data: { id: '123', active: true } },
+      ]);
+
+      await client.activateWorkflow('123');
+      await client.deactivateWorkflow('123');
+
+      expect(mockAxiosInstance.post).toHaveBeenNthCalledWith(2, '/workflows/123/unpublish', {});
+    });
+
+    it('should stay on the legacy route when no Deprecation header arrives', async () => {
+      // Absence proves nothing: an older n8n has no header, and a proxy may strip it. The legacy
+      // route works on every version, so an unconfirmed instance keeps using it.
+      vi.spyOn(client, 'getVersion').mockResolvedValue(null);
+      mockAxiosInstance.simulateSequence('post', [{ data: { id: '123', active: true } }]);
+
+      await client.activateWorkflow('123');
+      await client.activateWorkflow('123');
+
+      expect(mockAxiosInstance.post).toHaveBeenNthCalledWith(1, '/workflows/123/activate', {});
+      expect(mockAxiosInstance.post).toHaveBeenNthCalledWith(2, '/workflows/123/activate', {});
+    });
+
+    it('should switch to /publish once a fallback to it has succeeded', async () => {
+      // The legacy route being gone is the other proof that /publish is there. Latching it keeps
+      // the wasted probe to one request instead of one per call.
+      vi.spyOn(client, 'getVersion').mockResolvedValue(null);
+      mockAxiosInstance.simulateSequence('post', [
+        { error: { response: { status: 405, data: { message: 'POST method not allowed' } } } },
+        { data: { id: '123', active: true } },
+      ]);
+
+      await client.activateWorkflow('123');
+      expect(mockAxiosInstance.post).toHaveBeenCalledTimes(2);
+
+      await client.activateWorkflow('123');
+      expect(mockAxiosInstance.post).toHaveBeenCalledTimes(3);
+      expect(mockAxiosInstance.post).toHaveBeenNthCalledWith(3, '/workflows/123/publish', {});
     });
 
     it('should surface the fallback error when it is substantive, not a missing route', async () => {

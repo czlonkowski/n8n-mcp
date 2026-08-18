@@ -15,7 +15,7 @@ export interface HealthCheckResponse {
   apiUrl: string;
   mcpVersion: string;
   supportedN8nVersion?: string;
-  versionNote?: string;
+  n8nVersionNote?: string;
   [key: string]: any; // Allow dynamic property access for optional field checks
 }
 

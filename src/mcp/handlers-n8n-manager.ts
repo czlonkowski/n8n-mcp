@@ -22,7 +22,7 @@ import {
   getWebhookUrl
 } from '../services/n8n-validation';
 import { nodeGroupsField, parseNodeGroupsInput } from '../services/node-groups';
-import { versionAtLeast } from '../services/n8n-version';
+import { versionAtLeast, N8N_VERSION_UNAVAILABLE_NOTE } from '../services/n8n-version';
 import {
   N8nApiError,
   N8nNotFoundError,
@@ -70,6 +70,8 @@ interface HealthCheckResponseData {
   status: string;
   instanceId?: string;
   n8nVersion?: string;
+  /** Present only when the instance did not report a version - see N8N_VERSION_UNAVAILABLE_NOTE. */
+  n8nVersionNote?: string;
   features?: Record<string, unknown>;
   apiUrl?: string;
   mcpVersion: string;
@@ -2317,6 +2319,7 @@ export async function handleHealthCheck(context?: InstanceContext): Promise<McpT
       status: health.status,
       instanceId: health.instanceId,
       n8nVersion: health.n8nVersion,
+      ...(health.n8nVersion ? {} : { n8nVersionNote: N8N_VERSION_UNAVAILABLE_NOTE }),
       features: health.features,
       apiUrl: resolveN8nApiConfigForResponse(context)?.baseUrl,
       mcpVersion,
@@ -2615,7 +2618,7 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
     try {
       const health = await apiClient.healthCheck();
       apiStatus.connected = true;
-      apiStatus.version = health.n8nVersion || 'unknown';
+      apiStatus.version = health.n8nVersion || N8N_VERSION_UNAVAILABLE_NOTE;
     } catch (error) {
       apiStatus.error = error instanceof Error ? error.message : 'Unknown error';
     }

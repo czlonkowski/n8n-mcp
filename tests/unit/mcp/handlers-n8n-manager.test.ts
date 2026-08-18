@@ -1634,6 +1634,26 @@ describe('handlers-n8n-manager', () => {
       });
     });
 
+    it('should explain a missing version rather than leaving it blank', async () => {
+      // Every n8n from 1.119.0 withholds its version from API clients, so an empty field here is
+      // the norm and not a lookup worth retrying.
+      mockApiClient.healthCheck.mockResolvedValue({ status: 'ok', features: [] });
+
+      const result = await handlers.handleHealthCheck();
+
+      expect(result.success).toBe(true);
+      expect((result.data as any).n8nVersion).toBeUndefined();
+      expect((result.data as any).n8nVersionNote).toMatch(/1\.119\.0/);
+    });
+
+    it('should not annotate a version the instance did report', async () => {
+      mockApiClient.healthCheck.mockResolvedValue({ status: 'ok', n8nVersion: '1.100.0' });
+
+      const result = await handlers.handleHealthCheck();
+
+      expect((result.data as any).n8nVersionNote).toBeUndefined();
+    });
+
     it('should handle API errors', async () => {
       const apiError = new N8nServerError('Service unavailable');
       mockApiClient.healthCheck.mockRejectedValue(apiError);

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.70.1] - 2026-08-18
+
+### Changed
+
+- **Workflow activation now learns from the instance which route names it serves, instead of asking for a version it will not give.** v2.70.0 preferred n8n 2.33's `/publish` and `/unpublish` routes only when the detected version confirmed them — and the version is never detected (see below), so every instance stayed on the deprecated `/activate` and `/deactivate`. n8n sets an RFC 9745 `Deprecation` header on those legacy routes, from a middleware that runs ahead of the permission checks; only an instance that has the replacement sends it, so its presence is proof the modern route is there. A fallback to the modern route that succeeds is the same proof. Either one latches the choice for the rest of the client's life, so the switch costs no extra requests. The signal is read one way only: the header's absence proves nothing, since an older n8n does not send it and a proxy may strip it, and nothing clears the latch. A detected version is still honoured when one is somehow available.
+- **The version probe no longer runs on every workflow write.** `getVersion()` reads n8n's internal `/rest/settings` route, which has answered API-key clients from a fixed allowlist carrying no version field since n8n 1.119.0 — only a browser session gets the full settings, and the Public API exposes no version anywhere. Detection therefore fails on every current instance, and because only successful probes were cached, each workflow update and activation paid an extra HTTP round trip to fail the same way, and logged a warning for it. A probe that reaches the instance and finds no version is now cached like a successful one, for the same five-minute TTL. A probe that never reached the instance — a timeout, a refused connection — is still not cached, since it says nothing about what the instance would report.
+- **`n8n_health_check` says why the n8n version is missing rather than reporting it as unknown.** An absent version is the expected answer from every current n8n, not a lookup that failed, and "unknown" invites a retry that cannot succeed. The response carries `n8nVersionNote` explaining it when `n8nVersion` is absent.
+
 ## [2.70.0] - 2026-08-18
 
 ### Fixed
