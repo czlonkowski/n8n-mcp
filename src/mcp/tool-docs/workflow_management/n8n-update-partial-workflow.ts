@@ -37,7 +37,7 @@ export const n8nUpdatePartialWorkflowDoc: ToolDocumentation = {
 - **addNode**: Add a new node with name, type, and position (required)
 - **removeNode**: Remove a node by ID or name
 - **updateNode**: Update node properties using dot notation (e.g., 'parameters.url')
-- **patchNodeField**: Surgically edit string fields using find/replace patches. Strict mode: errors if find string not found, errors if multiple matches (ambiguity) unless replaceAll is set. Supports replaceAll and regex flags.
+- **patchNodeField**: Surgically edit string fields using find/replace patches. Strict mode: errors if find string not found, errors if multiple matches (ambiguity) unless replaceAll is set. Supports replaceAll and regex flags. In the default literal mode both find and replace are taken verbatim ($ has no special meaning); with regex: true the replace string supports JS replacement patterns ($1, $&, $$ etc.).
 - **moveNode**: Change node position [x, y]
 - **enableNode**: Enable a disabled node
 - **disableNode**: Disable an active node
@@ -462,6 +462,7 @@ n8n_update_partial_workflow({
       '**patchNodeField is strict**: it ERRORS if the find string is not found (unlike __patch_find_replace which only warns)',
       '**patchNodeField detects ambiguity**: if find matches multiple times, it ERRORS unless replaceAll: true is set',
       'When using regex: true in patchNodeField, escape special regex characters (., *, +, etc.) if you want literal matching',
+      'In patchNodeField literal mode (regex not set), replace is inserted verbatim — $ characters are safe. With regex: true, JS replacement patterns apply in replace: use $1 for capture groups and $$ for a literal $',
       'To remove a property, set it to null in the updates object',
       'When properties are mutually exclusive (e.g., continueOnFail and onError), setting only the new property will fail - you must remove the old one with null',
       'Removing a required property may cause validation errors - check node documentation first',

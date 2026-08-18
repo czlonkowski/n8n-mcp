@@ -475,6 +475,37 @@ describe('WorkflowDiffEngine', () => {
       expect(codeNode?.parameters.jsCode).toBe('const x = 1;\nreturn x + 3;');
     });
 
+    it('should insert __patch_find_replace replacement literally when it contains $ patterns (#1012)', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: { jsCode: '// anchor\nreturn items;' }
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeName: 'Code',
+          updates: {
+            'parameters.jsCode': {
+              __patch_find_replace: [
+                { find: '// anchor', replace: "const money = '$' + total;" }
+              ]
+            }
+          }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
+      expect(codeNode?.parameters.jsCode).toBe("const money = '$' + total;\nreturn items;");
+    });
+
     it('should apply multiple sequential __patch_find_replace patches', async () => {
       const workflow = JSON.parse(JSON.stringify(baseWorkflow));
       workflow.nodes.push({
@@ -876,6 +907,115 @@ describe('WorkflowDiffEngine', () => {
       expect(result.success).toBe(true);
       const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
       expect(codeNode?.parameters.jsCode).toBe('const a = 10;\nconst b = 20;\nreturn a + b;');
+    });
+
+    it('should insert replacement text literally when it contains $ patterns (#1012)', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: { jsCode: '// anchor\nconst rest = 1;\nreturn rest;' }
+      });
+
+      // "$'" is the dangerous case from #1012: a bare-string replacer would
+      // splice everything after the match into the insertion.
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'patchNodeField' as const,
+          nodeName: 'Code',
+          fieldPath: 'parameters.jsCode',
+          patches: [{ find: '// anchor', replace: "const money = '$' + amount.toFixed(2);" }]
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
+      expect(codeNode?.parameters.jsCode).toBe(
+        "const money = '$' + amount.toFixed(2);\nconst rest = 1;\nreturn rest;"
+      );
+    });
+
+    it('should keep every JS replacement pattern literal in literal mode', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: { jsCode: 'const x = PLACEHOLDER;' }
+      });
+
+      const replacement = "`$& $` $' $1 $$ $<name>`";
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'patchNodeField' as const,
+          nodeName: 'Code',
+          fieldPath: 'parameters.jsCode',
+          patches: [{ find: 'PLACEHOLDER', replace: replacement }]
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
+      expect(codeNode?.parameters.jsCode).toBe(`const x = ${replacement};`);
+    });
+
+    it('should keep $ literal in literal mode with replaceAll', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: { jsCode: 'const a = AMOUNT;\nconst b = AMOUNT;' }
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'patchNodeField' as const,
+          nodeName: 'Code',
+          fieldPath: 'parameters.jsCode',
+          patches: [{ find: 'AMOUNT', replace: "'$' + n", replaceAll: true }]
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
+      expect(codeNode?.parameters.jsCode).toBe("const a = '$' + n;\nconst b = '$' + n;");
+    });
+
+    it('should support capture group references in regex mode replacements', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: { jsCode: 'const limit = 42;' }
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'patchNodeField' as const,
+          nodeName: 'Code',
+          fieldPath: 'parameters.jsCode',
+          patches: [{ find: 'const limit = (\\d+)', replace: 'const limit = $1 * 2', regex: true }]
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
+      expect(codeNode?.parameters.jsCode).toBe('const limit = 42 * 2;');
     });
 
     it('should support regex pattern matching', async () => {
