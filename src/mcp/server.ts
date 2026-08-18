@@ -4790,20 +4790,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     };
 
     await this.server.connect(transport);
-    
-    // Force flush stdout for Docker environments
-    // Docker uses block buffering which can delay MCP responses
-    if (!process.stdout.isTTY || process.env.IS_DOCKER) {
-      // Override write to auto-flush
-      const originalWrite = process.stdout.write.bind(process.stdout);
-      process.stdout.write = function(chunk: any, encoding?: any, callback?: any) {
-        const result = originalWrite(chunk, encoding, callback);
-        // Force immediate flush
-        process.stdout.emit('drain');
-        return result;
-      };
-    }
-    
+
     logger.info('n8n Documentation MCP Server running on stdio transport');
     
     // Keep the process alive and listening

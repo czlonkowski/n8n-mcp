@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.70.2] - 2026-08-18
+
+### Fixed
+
+- **The stdio transport no longer emits a synthetic `'drain'` event after every stdout write.** A Docker workaround from June 2025 wrapped `process.stdout.write` and fired `emit('drain')` after each call, claiming to force a flush — which `'drain'` cannot do: it is the signal that the buffer has emptied, not a command to empty it. The emit was not merely useless. The MCP SDK's `send()` resolves on `'drain'` whenever a write reports backpressure, so under concurrent writes the synthetic event resolved an *earlier* send's promise while its bytes were still buffered — a caller could believe a response was written when it was not, and a process exiting at that moment could drop it. The wrapper is removed outright; the timeout the patch originally chased was fixed at the time by the initialize-request handler and the entrypoint's stdout-pollution cleanup, both of which remain. A guard test now fails if a stdout override or synthetic drain is reintroduced into `server.ts`. (#999)
+
 ## [2.70.1] - 2026-08-18
 
 ### Changed
