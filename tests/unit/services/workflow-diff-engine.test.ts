@@ -922,48 +922,20 @@ describe('WorkflowDiffEngine', () => {
 
       // "$'" is the dangerous case from #1012: a bare-string replacer would
       // splice everything after the match into the insertion.
+      const replacement = "const money = '$' + amount.toFixed(2); // $& $` $' $1 $$ $<name>";
       const result = await diffEngine.applyDiff(workflow, {
         id: 'test',
         operations: [{
           type: 'patchNodeField' as const,
           nodeName: 'Code',
           fieldPath: 'parameters.jsCode',
-          patches: [{ find: '// anchor', replace: "const money = '$' + amount.toFixed(2);" }]
+          patches: [{ find: '// anchor', replace: replacement }]
         }]
       });
 
       expect(result.success).toBe(true);
       const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
-      expect(codeNode?.parameters.jsCode).toBe(
-        "const money = '$' + amount.toFixed(2);\nconst rest = 1;\nreturn rest;"
-      );
-    });
-
-    it('should keep every JS replacement pattern literal in literal mode', async () => {
-      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
-      workflow.nodes.push({
-        id: 'code-1',
-        name: 'Code',
-        type: 'n8n-nodes-base.code',
-        typeVersion: 1,
-        position: [900, 300],
-        parameters: { jsCode: 'const x = PLACEHOLDER;' }
-      });
-
-      const replacement = "`$& $` $' $1 $$ $<name>`";
-      const result = await diffEngine.applyDiff(workflow, {
-        id: 'test',
-        operations: [{
-          type: 'patchNodeField' as const,
-          nodeName: 'Code',
-          fieldPath: 'parameters.jsCode',
-          patches: [{ find: 'PLACEHOLDER', replace: replacement }]
-        }]
-      });
-
-      expect(result.success).toBe(true);
-      const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
-      expect(codeNode?.parameters.jsCode).toBe(`const x = ${replacement};`);
+      expect(codeNode?.parameters.jsCode).toBe(`${replacement}\nconst rest = 1;\nreturn rest;`);
     });
 
     it('should keep $ literal in literal mode with replaceAll', async () => {
