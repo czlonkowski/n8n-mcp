@@ -82,6 +82,13 @@ const GROUP_DESCRIPTIONS_UNSUPPORTED_WARNING =
   'This n8n version does not support canvas group descriptions (added in 2.32); the descriptions were not saved.';
 
 /**
+ * Statuses that mean "this instance does not serve that route". A router without the route may
+ * answer 404 or 405 depending on whether it matches the path prefix before the method, and a
+ * politely retired alias may answer 410 rather than disappearing outright.
+ */
+const ROUTE_ABSENT_STATUSES = new Set([404, 405, 410]);
+
+/**
  * HTTP status of a failed request from this client.
  *
  * The response interceptor converts every rejection to an `N8nApiError`, which carries
@@ -684,9 +691,15 @@ export class N8nApiClient {
    * matters because detection fails on real instances: `/rest/settings` does not always carry
    * `n8nVersion`, and probing a pre-2.33 instance then wastes a request on every call.
    *
-   * The fallback remains for a stale or wrong detection, and accepts 404 or 405: a router with
-   * no `/publish` may report either, depending on whether it matches the path prefix before the
-   * method. n8n answers 405 here, so keying the fallback on 404 alone left it dead in practice.
+   * The fallback runs in both directions on a 404 or 405. A router with no route may report
+   * either, depending on whether it matches the path prefix before the method; n8n answers 405
+   * here, so keying on 404 alone left the fallback dead in practice. Symmetry matters because
+   * the legacy routes are deprecated (2026-07-23, no sunset announced): when n8n eventually
+   * removes them, an instance we could not version-detect would otherwise lose activation
+   * entirely, rather than moving to the route that replaced it.
+   *
+   * The cost is one extra request on a workflow id that does not exist, since n8n answers 404
+   * for an absent workflow and an absent route alike. Both attempts end in the same error.
    */
   private async postPublishRoute(
     id: string,
@@ -696,30 +709,42 @@ export class N8nApiClient {
     const safeId = encodeApiPathSegment(id, 'workflowId');
     const version = await this.getVersion();
     const preferModern = version !== null && versionAtLeast(version, 2, 33, 0);
+    const [primaryPath, fallbackPath] = preferModern
+      ? [modernPath, legacyPath]
+      : [legacyPath, modernPath];
     const post = async (path: string): Promise<Workflow> =>
       (await this.client.post(`/workflows/${safeId}/${path}`, {})).data;
     let status: number | undefined;
 
+    let primaryError: unknown;
     try {
-      return await post(preferModern ? modernPath : legacyPath);
+      return await post(primaryPath);
     } catch (error: any) {
       status = failureStatus(error);
-      if (!preferModern || (status !== 404 && status !== 405)) {
+      if (!ROUTE_ABSENT_STATUSES.has(status as number)) {
         throw handleN8nApiError(error);
       }
+      primaryError = error;
     }
 
     // n8n answers 404 for a workflow that does not exist as well as for a route it does not
     // have, so this retry also fires on a bad workflow ID. That costs one request and ends in
     // the same error, which is why the status is logged as a route probe, not a failure.
     logger.debug(
-      `POST /workflows/{id}/${modernPath} returned ${status} - retrying /${legacyPath} ` +
-        '(the detected version was wrong, or the workflow does not exist)'
+      `POST /workflows/{id}/${primaryPath} returned ${status} - retrying /${fallbackPath} ` +
+        '(this n8n does not serve that route, or the workflow does not exist)'
     );
     try {
-      return await post(legacyPath);
+      return await post(fallbackPath);
     } catch (fallbackError) {
-      throw handleN8nApiError(fallbackError);
+      // When the fallback fails the same way, neither route exists and the first attempt is the
+      // more faithful account - a missing workflow should read as a missing workflow rather than
+      // as confusion about the second route. A substantive failure (say a 400 naming a missing
+      // trigger) is the useful one, so that is surfaced instead.
+      const fallbackStatus = failureStatus(fallbackError);
+      throw handleN8nApiError(
+        ROUTE_ABSENT_STATUSES.has(fallbackStatus as number) ? primaryError : fallbackError
+      );
     }
   }
 
