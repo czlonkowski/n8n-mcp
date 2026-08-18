@@ -189,27 +189,42 @@ const JS_CODE_FIELD_NAMES = new Set(['jsCode', 'functionCode']);
 
 // Parses (never executes) code as an async function body, matching n8n's own
 // wrapping of Code-node JS — so top-level return/await are valid.
-const AsyncFunctionCtor = Object.getPrototypeOf(async function () {})
-  .constructor as new (...args: string[]) => unknown;
+const AsyncFunctionCtor = (async () => {}).constructor as new (...args: string[]) => unknown;
+
+function jsSyntaxErrorOf(code: string): SyntaxError | undefined {
+  try {
+    new AsyncFunctionCtor(code);
+  } catch (error) {
+    // A non-SyntaxError (e.g. a CSP EvalError) means we could not check,
+    // not that the code is broken.
+    if (error instanceof SyntaxError) return error;
+  }
+  return undefined;
+}
 
 /**
  * After a find/replace patch lands on a JavaScript code field, parse the result
  * so a patch that leaves broken code fails the operation instead of saving it
- * (#1012 expansion). Values starting with "=" are n8n expressions, not plain
- * JS, and are skipped. Returns the syntax error message, or null when the code
- * parses or cannot be checked here (a non-SyntaxError such as a CSP EvalError
- * must not block the operation).
+ * (#1012 expansion). Throws before the caller writes, keeping the operation
+ * atomic. Values starting with "=" are n8n expressions, not plain JS, and are
+ * skipped. Only regressions the patch introduced are blocked: when the field
+ * was already unparseable before patching, an incremental repair must be able
+ * to pass through still-broken states.
  */
-function getJsSyntaxError(fieldPath: string, code: string): string | null {
+function assertPatchedJsSyntax(operation: string, fieldPath: string, patched: string, original: string): void {
   const fieldName = fieldPath.split('.').pop() ?? '';
-  if (!JS_CODE_FIELD_NAMES.has(fieldName)) return null;
-  if (code.startsWith('=')) return null;
-  try {
-    new AsyncFunctionCtor(code);
-    return null;
-  } catch (error) {
-    return error instanceof SyntaxError ? error.message : null;
-  }
+  if (!JS_CODE_FIELD_NAMES.has(fieldName)) return;
+  if (patched.startsWith('=')) return;
+
+  const syntaxError = jsSyntaxErrorOf(patched);
+  if (!syntaxError) return;
+  if (jsSyntaxErrorOf(original) !== undefined) return;
+
+  throw new Error(
+    `${operation}: patches would leave "${fieldPath}" with invalid JavaScript (${syntaxError.message}). ` +
+    `The workflow was not modified. If several dependent edits pass through an invalid intermediate state, ` +
+    `apply them as one operation — only the final result of the patches array is checked.`
+  );
 }
 
 function operationReferencesAddedNode(
@@ -1104,7 +1119,8 @@ export class WorkflowDiffEngine {
       if (value !== null && typeof value === 'object' && !Array.isArray(value)
           && '__patch_find_replace' in value) {
         const patches = value.__patch_find_replace as Array<{ find: string; replace: string }>;
-        let current = this.getNestedProperty(draft, path) as string;
+        const original = this.getNestedProperty(draft, path) as string;
+        let current = original;
         for (const patch of patches) {
           if (!current.includes(patch.find)) {
             this.warnings.push({
@@ -1117,13 +1133,7 @@ export class WorkflowDiffEngine {
           // read "$&", "$'" etc. in it as JS replacement patterns (#1012).
           current = current.replace(patch.find, () => patch.replace);
         }
-        const syntaxError = getJsSyntaxError(path, current);
-        if (syntaxError) {
-          throw new Error(
-            `__patch_find_replace: patches would leave "${path}" with invalid JavaScript (${syntaxError}). ` +
-            `The workflow was not modified.`
-          );
-        }
+        assertPatchedJsSyntax('__patch_find_replace', path, current, original);
         this.setNestedProperty(draft, path, current);
       } else {
         this.setNestedProperty(draft, path, value);
@@ -1191,7 +1201,8 @@ export class WorkflowDiffEngine {
 
     this.modifiedNodeIds.add(node.id);
 
-    let current = this.getNestedProperty(node, operation.fieldPath) as string;
+    const original = this.getNestedProperty(node, operation.fieldPath) as string;
+    let current = original;
 
     for (let i = 0; i < operation.patches.length; i++) {
       const patch = operation.patches[i];
@@ -1241,15 +1252,7 @@ export class WorkflowDiffEngine {
       }
     }
 
-    const syntaxError = getJsSyntaxError(operation.fieldPath, current);
-    if (syntaxError) {
-      throw new Error(
-        `patchNodeField: patches would leave "${operation.fieldPath}" with invalid JavaScript (${syntaxError}). ` +
-        `The workflow was not modified. If several dependent edits pass through an invalid intermediate state, ` +
-        `apply them as one patchNodeField operation — only the final result of the patches array is checked.`
-      );
-    }
-
+    assertPatchedJsSyntax('patchNodeField', operation.fieldPath, current, original);
     this.setNestedProperty(node, operation.fieldPath, current);
 
     // Sanitize node after updates

@@ -1418,8 +1418,9 @@ describe('WorkflowDiffEngine', () => {
         return workflow;
       };
 
-      it('should reject a patch that leaves parameters.jsCode with a syntax error', async () => {
-        const workflow = codeWorkflow('const items = getItems();\nreturn items.filter(i => i.ok);');
+      it('should reject a patch that leaves parameters.jsCode with a syntax error, without touching the workflow', async () => {
+        const original = 'const items = getItems();\nreturn items.filter(i => i.ok);';
+        const workflow = codeWorkflow(original);
 
         const result = await diffEngine.applyDiff(workflow, {
           id: 'test',
@@ -1435,11 +1436,14 @@ describe('WorkflowDiffEngine', () => {
         expect(result.success).toBe(false);
         expect(result.errors?.[0]?.message).toContain('invalid JavaScript');
         expect(result.errors?.[0]?.message).toContain('parameters.jsCode');
+        const codeNode = workflow.nodes.find((n: any) => n.name === 'Code');
+        expect(codeNode?.parameters.jsCode).toBe(original);
       });
 
-      it('should leave the workflow unchanged when the syntax guard rejects a patch', async () => {
-        const original = 'const items = getItems();\nreturn items.filter(i => i.ok);';
-        const workflow = codeWorkflow(original);
+      it('should not block patches to a field that was already broken before patching', async () => {
+        // Incremental repair of pre-existing corruption (e.g. saved by the
+        // pre-2.71.1 bug) must not be blamed on the patch.
+        const workflow = codeWorkflow('const items = getItems(;\nreturn items.filter(i => i.ok);');
 
         const result = await diffEngine.applyDiff(workflow, {
           id: 'test',
@@ -1447,13 +1451,14 @@ describe('WorkflowDiffEngine', () => {
             type: 'patchNodeField' as const,
             nodeName: 'Code',
             fieldPath: 'parameters.jsCode',
-            patches: [{ find: 'i.ok);', replace: 'i.ok;' }]
+            // Fixes one problem while the code stays broken overall
+            patches: [{ find: 'i => i.ok);', replace: 'i => i.ok;' }]
           }]
         });
 
-        expect(result.success).toBe(false);
-        const codeNode = workflow.nodes.find((n: any) => n.name === 'Code');
-        expect(codeNode?.parameters.jsCode).toBe(original);
+        expect(result.success).toBe(true);
+        const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
+        expect(codeNode?.parameters.jsCode).toBe('const items = getItems(;\nreturn items.filter(i => i.ok;');
       });
 
       it('should accept patched code with top-level return and await', async () => {

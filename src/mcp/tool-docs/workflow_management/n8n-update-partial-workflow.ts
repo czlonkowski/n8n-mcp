@@ -463,7 +463,7 @@ n8n_update_partial_workflow({
       '**patchNodeField detects ambiguity**: if find matches multiple times, it ERRORS unless replaceAll: true is set',
       'When using regex: true in patchNodeField, escape special regex characters (., *, +, etc.) if you want literal matching',
       'patchNodeField literal mode (regex not set) inserts replace verbatim, so $ needs no escaping. With regex: true, replace supports JS replacement patterns: $1 for a capture group, $$ for a literal $',
-      'Patches to parameters.jsCode or functionCode are parsed as JavaScript after applying: a patch that leaves invalid syntax fails the operation. Only the final result of one operation\'s patches array is checked, so apply dependent edits in a single operation. Values starting with = (expressions) and pythonCode are not checked',
+      'Patches to parameters.jsCode or functionCode are parsed as JavaScript after applying: a patch that breaks previously-valid code fails the operation. Only the final result of one operation\'s patches array is checked, so apply dependent edits in a single operation. Fields that were already invalid before patching, values starting with = (expressions), and pythonCode are not checked',
       'To remove a property, set it to null in the updates object',
       'When properties are mutually exclusive (e.g., continueOnFail and onError), setting only the new property will fail - you must remove the old one with null',
       'Removing a required property may cause validation errors - check node documentation first',
