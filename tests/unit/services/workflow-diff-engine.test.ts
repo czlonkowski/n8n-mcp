@@ -1501,6 +1501,55 @@ describe('WorkflowDiffEngine', () => {
         );
       });
 
+      it('should guard functionCode fields on legacy Function nodes', async () => {
+        const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+        workflow.nodes.push({
+          id: 'fn-1',
+          name: 'Function',
+          type: 'n8n-nodes-base.function',
+          typeVersion: 1,
+          position: [900, 300],
+          parameters: { functionCode: 'items[0].json.done = true;\nreturn items;' }
+        });
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [{
+            type: 'patchNodeField' as const,
+            nodeName: 'Function',
+            fieldPath: 'parameters.functionCode',
+            // Leaves an unterminated member expression
+            patches: [{ find: 'json.done = true;', replace: 'json.done = ;' }]
+          }]
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errors?.[0]?.message).toContain('invalid JavaScript');
+      });
+
+      it('should let later operations proceed after a guard rejection in continueOnError mode', async () => {
+        const workflow = codeWorkflow('const x = 1;\nreturn x;');
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          continueOnError: true,
+          operations: [
+            {
+              type: 'patchNodeField' as const,
+              nodeName: 'Code',
+              fieldPath: 'parameters.jsCode',
+              patches: [{ find: 'return x;', replace: 'return x);' }]
+            },
+            { type: 'addTag' as const, tag: 'after-guard' }
+          ]
+        });
+
+        expect(result.failed).toContain(0);
+        expect(result.applied).toContain(1);
+        const codeNode = result.workflow!.nodes.find((n: any) => n.name === 'Code');
+        expect(codeNode?.parameters.jsCode).toBe('const x = 1;\nreturn x;');
+      });
+
       it('should not check jsCode values that are n8n expressions (leading =)', async () => {
         const workflow = codeWorkflow('={{ $json.dynamicCode }} broken (');
 
