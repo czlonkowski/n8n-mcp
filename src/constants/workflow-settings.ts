@@ -87,10 +87,3 @@ export const DERIVED_SETTINGS_PROPERTIES: ReadonlySet<string> = new Set(
     .filter(([, meta]) => meta.derived)
     .map(([name]) => name)
 );
-
-/** Every property n8n has ever accepted on a write, derived properties excluded. */
-export const WRITABLE_SETTINGS_PROPERTIES: ReadonlySet<string> = new Set(
-  Object.entries(WORKFLOW_SETTINGS_PROPERTIES)
-    .filter(([, meta]) => !meta.derived)
-    .map(([name]) => name)
-);

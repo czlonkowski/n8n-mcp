@@ -677,29 +677,28 @@ export class N8nApiClient {
     const safeId = encodeApiPathSegment(id, 'workflowId');
     const version = await this.getVersion();
     const preferModern = !version || versionAtLeast(version, 2, 33, 0);
-    const primary = preferModern ? modernPath : legacyPath;
+    const post = async (path: string): Promise<Workflow> =>
+      (await this.client.post(`/workflows/${safeId}/${path}`, {})).data;
 
     try {
-      const response = await this.client.post(`/workflows/${safeId}/${primary}`, {});
-      return response.data;
+      return await post(preferModern ? modernPath : legacyPath);
     } catch (error: any) {
       if (!preferModern || error.response?.status !== 404) {
         throw handleN8nApiError(error);
       }
+    }
 
-      // n8n answers 404 for a workflow that does not exist as well as for a route it does not
-      // have, so this retry also fires on a bad workflow ID. That costs one request and ends in
-      // the same error, which is why the 404 is logged as a route probe rather than a failure.
-      logger.debug(
-        `POST /workflows/{id}/${modernPath} returned 404 - retrying /${legacyPath} ` +
-          '(pre-2.33 n8n, or the workflow does not exist)'
-      );
-      try {
-        const response = await this.client.post(`/workflows/${safeId}/${legacyPath}`, {});
-        return response.data;
-      } catch (fallbackError) {
-        throw handleN8nApiError(fallbackError);
-      }
+    // n8n answers 404 for a workflow that does not exist as well as for a route it does not
+    // have, so this retry also fires on a bad workflow ID. That costs one request and ends in
+    // the same error, which is why the 404 is logged as a route probe rather than a failure.
+    logger.debug(
+      `POST /workflows/{id}/${modernPath} returned 404 - retrying /${legacyPath} ` +
+        '(pre-2.33 n8n, or the workflow does not exist)'
+    );
+    try {
+      return await post(legacyPath);
+    } catch (fallbackError) {
+      throw handleN8nApiError(fallbackError);
     }
   }
 

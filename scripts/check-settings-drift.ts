@@ -126,11 +126,13 @@ async function main(): Promise<void> {
   // one introduced in a later release is simply ahead of the pin, which is expected while the
   // pinned version trails n8n's newest.
   const target = parseVersion(version);
-  const absent = [...ours].filter(name => !schemaProperties.has(name));
-  const removed = absent.filter(
-    name => compareVersions(WORKFLOW_SETTINGS_PROPERTIES[name].since, target) <= 0
-  );
-  const ahead = absent.filter(name => !removed.includes(name));
+  const removed: string[] = [];
+  const ahead: string[] = [];
+  for (const name of ours) {
+    if (schemaProperties.has(name)) continue;
+    const introduced = WORKFLOW_SETTINGS_PROPERTIES[name].since;
+    (compareVersions(introduced, target) <= 0 ? removed : ahead).push(name);
+  }
 
   console.log(`   n8n schema: ${schemaProperties.size} properties`);
   console.log(`   ours:       ${ours.size} properties\n`);

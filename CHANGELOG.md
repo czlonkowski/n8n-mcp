@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`npm run check:settings-drift` compares that list against the OpenAPI schema n8n ships in its published package, and `npm run update:n8n` runs it before the database rebuild.** An n8n bump that changes the workflow settings schema now fails the update instead of quietly shipping a stale list.
+- **`npm run update:n8n` now carries along the exact peer dependencies the new n8n packages demand.** `n8n-workflow` pins `zod` to an exact version and moves it between releases. A mismatch installs cleanly here, because the repo's local `.npmrc` sets `legacy-peer-deps`, and fails only in the Dockerfile's builder stage, which installs into a scratch directory with no `.npmrc` and therefore enforces peers — a CI-only failure discovered well after the update looked successful. Only exactly-pinned peers the repo already declares are touched; ranges are left to npm.
 
 ## [2.69.2] - 2026-08-15
 

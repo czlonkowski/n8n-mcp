@@ -20,6 +20,7 @@ import {
   DERIVED_SETTINGS_PROPERTIES,
   SETTINGS_PASS_THROUGH_FLOOR,
   WORKFLOW_SETTINGS_PROPERTIES,
+  type SettingsVersion,
 } from '../constants/workflow-settings';
 
 // Cache version info per base URL with TTL to handle server upgrades
@@ -55,7 +56,7 @@ export function parseVersion(versionString: string): N8nVersionInfo | null {
 /**
  * Compare two versions: returns -1 if a < b, 0 if equal, 1 if a > b
  */
-export function compareVersions(a: N8nVersionInfo, b: N8nVersionInfo): number {
+export function compareVersions(a: SettingsVersion, b: SettingsVersion): number {
   if (a.major !== b.major) return a.major - b.major;
   if (a.minor !== b.minor) return a.minor - b.minor;
   return a.patch - b.patch;
@@ -65,8 +66,7 @@ export function compareVersions(a: N8nVersionInfo, b: N8nVersionInfo): number {
  * Check if version meets minimum requirement
  */
 export function versionAtLeast(version: N8nVersionInfo, major: number, minor: number, patch = 0): boolean {
-  const target = { version: '', major, minor, patch };
-  return compareVersions(version, target) >= 0;
+  return compareVersions(version, { major, minor, patch }) >= 0;
 }
 
 /**
@@ -82,7 +82,7 @@ export function getSupportedSettingsProperties(version: N8nVersionInfo): Set<str
 
   for (const [name, meta] of Object.entries(WORKFLOW_SETTINGS_PROPERTIES)) {
     if (meta.derived) continue;
-    if (versionAtLeast(version, meta.since.major, meta.since.minor, meta.since.patch)) {
+    if (compareVersions(version, meta.since) >= 0) {
       supported.add(name);
     }
   }
@@ -212,14 +212,7 @@ export function cleanSettingsForVersion(
     return {};
   }
 
-  const passThrough =
-    !version ||
-    versionAtLeast(
-      version,
-      SETTINGS_PASS_THROUGH_FLOOR.major,
-      SETTINGS_PASS_THROUGH_FLOOR.minor,
-      SETTINGS_PASS_THROUGH_FLOOR.patch
-    );
+  const passThrough = !version || compareVersions(version, SETTINGS_PASS_THROUGH_FLOOR) >= 0;
   const supportedProperties = passThrough ? null : getSupportedSettingsProperties(version);
   const target = version ? `n8n ${version.version}` : 'n8n version unknown';
 

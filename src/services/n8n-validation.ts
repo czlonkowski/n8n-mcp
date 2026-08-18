@@ -125,6 +125,17 @@ function ensureWebhookIds(nodes?: WorkflowNode[]): void {
 }
 
 /**
+ * Drop the settings properties n8n derives itself and ignores on write. GET echoes them back,
+ * and our writes merge over a GET, so they would otherwise ride along into a payload the write
+ * schema rejects. Everything else is forwarded - see cleanWorkflowForUpdate.
+ */
+function stripDerivedSettings(settings: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(settings).filter(([key]) => !DERIVED_SETTINGS_PROPERTIES.has(key))
+  );
+}
+
+/**
  * Clean workflow data for create operations.
  *
  * This is a DENYLIST (unlike cleanWorkflowForUpdate): anything not named here is forwarded, so
@@ -146,13 +157,11 @@ export function cleanWorkflowForCreate(workflow: Partial<Workflow>): Partial<Wor
     ...cleanedWorkflow
   } = workflow;
 
-  // Drop the properties n8n derives itself. Creating from a workflow read off another instance
-  // would otherwise carry them into a payload the create schema rejects.
+  // Creating from a workflow read off another instance would otherwise carry the derived
+  // properties into a payload the create schema rejects.
   if (cleanedWorkflow.settings && typeof cleanedWorkflow.settings === 'object') {
-    cleanedWorkflow.settings = Object.fromEntries(
-      Object.entries(cleanedWorkflow.settings as Record<string, unknown>).filter(
-        ([key]) => !DERIVED_SETTINGS_PROPERTIES.has(key)
-      )
+    cleanedWorkflow.settings = stripDerivedSettings(
+      cleanedWorkflow.settings as Record<string, unknown>
     ) as Workflow['settings'];
   }
 
@@ -215,15 +224,12 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
   if (source.parentFolderId !== undefined) cleanedWorkflow.parentFolderId = source.parentFolderId;
 
   if (cleanedWorkflow.settings && typeof cleanedWorkflow.settings === 'object') {
-    // Forward every property except the ones n8n derives and ignores on write. An allowlist
-    // here silently dropped each new n8n setting until someone noticed - version-appropriate
-    // filtering belongs in N8nApiClient.updateWorkflow(), which knows the target version.
-    const filteredSettings: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(cleanedWorkflow.settings as Record<string, unknown>)) {
-      if (!DERIVED_SETTINGS_PROPERTIES.has(key)) {
-        filteredSettings[key] = value;
-      }
-    }
+    // Everything else is forwarded. An allowlist here silently dropped each new n8n setting
+    // until someone noticed - version-appropriate filtering belongs in
+    // N8nApiClient.updateWorkflow(), which knows the target version.
+    const filteredSettings = stripDerivedSettings(
+      cleanedWorkflow.settings as Record<string, unknown>
+    );
     // If no valid properties remain after filtering, use minimal defaults
     // Issue #431: n8n API rejects empty settings objects
     if (Object.keys(filteredSettings).length > 0) {
