@@ -1533,6 +1533,97 @@ describe('WorkflowDiffEngine', () => {
         );
       });
 
+      it('should allow a patch that repairs previously broken code', async () => {
+        const workflow = codeWorkflow('const x = (;\nreturn x;');
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [{
+            type: 'patchNodeField' as const,
+            nodeName: 'Code',
+            fieldPath: 'parameters.jsCode',
+            patches: [{ find: 'const x = (;', replace: 'const x = 1;' }]
+          }]
+        });
+
+        expect(result.success).toBe(true);
+        const codeNode = result.workflow.nodes.find((n: any) => n.name === 'Code');
+        expect(codeNode?.parameters.jsCode).toBe('const x = 1;\nreturn x;');
+      });
+
+      it('should guard the result of regex-mode patches too', async () => {
+        const workflow = codeWorkflow('const limit = 10;\nreturn limit;');
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [{
+            type: 'patchNodeField' as const,
+            nodeName: 'Code',
+            fieldPath: 'parameters.jsCode',
+            patches: [{ find: 'const limit = (\\d+);', replace: 'const limit = $1)(', regex: true }]
+          }]
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errors?.[0]?.message).toContain('invalid JavaScript');
+      });
+
+      it('should never execute the checked code', async () => {
+        delete (globalThis as any).__syntaxGuardSentinel;
+        const workflow = codeWorkflow('return 1;');
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [{
+            type: 'patchNodeField' as const,
+            nodeName: 'Code',
+            fieldPath: 'parameters.jsCode',
+            patches: [{ find: 'return 1;', replace: 'globalThis.__syntaxGuardSentinel = true;\nreturn 1;' }]
+          }]
+        });
+
+        expect(result.success).toBe(true);
+        expect((globalThis as any).__syntaxGuardSentinel).toBeUndefined();
+      });
+
+      it('should step aside for code beyond the size ceiling instead of parsing it', async () => {
+        const workflow = codeWorkflow('return 1;');
+        const oversized = 'const x = (;\n' + '// filler\n'.repeat(120_000);
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [{
+            type: 'patchNodeField' as const,
+            nodeName: 'Code',
+            fieldPath: 'parameters.jsCode',
+            // Broken JS, but over 1MB — the guard must fail open, not spend
+            // seconds parsing attacker-sized input
+            patches: [{ find: 'return 1;', replace: oversized }]
+          }]
+        });
+
+        expect(result.success).toBe(true);
+      });
+
+      it('should fail open when the parser overflows on pathological nesting', async () => {
+        const workflow = codeWorkflow('return 1;');
+        const nested = 'return ' + '('.repeat(50_000) + '1' + ')'.repeat(50_000) + ';';
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [{
+            type: 'patchNodeField' as const,
+            nodeName: 'Code',
+            fieldPath: 'parameters.jsCode',
+            // Valid but too deep for V8's parser stack: RangeError, not
+            // SyntaxError — the guard treats that as "could not check"
+            patches: [{ find: 'return 1;', replace: nested }]
+          }]
+        });
+
+        expect(result.success).toBe(true);
+      });
+
       it('should reject a patch that strips an expression prefix leaving broken plain JS', async () => {
         // The original is an unchecked expression, not broken JS — converting
         // it to plain JS must not ride the incremental-repair gate.

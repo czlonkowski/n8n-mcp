@@ -191,12 +191,18 @@ const JS_CODE_FIELD_NAMES = new Set(['jsCode', 'functionCode']);
 // wrapping of Code-node JS — so top-level return/await are valid.
 const AsyncFunctionCtor = (async () => {}).constructor as new (...args: string[]) => unknown;
 
+// Parsing is synchronous on the event loop; a 60 MiB body costs ~1s. Real
+// Code-node sources are kilobytes — beyond this the guard steps aside rather
+// than become a DoS lever (Codex review on #1014).
+const MAX_SYNTAX_CHECKED_LENGTH = 1_000_000;
+
 function jsSyntaxErrorOf(code: string): SyntaxError | undefined {
+  if (code.length > MAX_SYNTAX_CHECKED_LENGTH) return undefined;
   try {
     new AsyncFunctionCtor(code);
   } catch (error) {
-    // A non-SyntaxError (e.g. a CSP EvalError) means we could not check,
-    // not that the code is broken.
+    // A non-SyntaxError (a CSP EvalError, a RangeError from pathological
+    // nesting) means we could not check, not that the code is broken.
     if (error instanceof SyntaxError) return error;
   }
   return undefined;
