@@ -208,26 +208,28 @@ function jsSyntaxErrorOf(code: string): SyntaxError | undefined {
   return undefined;
 }
 
+// jsCode/functionCode are noDataExpression fields: n8n strips one leading "="
+// before executing them (node-helpers), so an "=" value is NOT an expression
+// there — parse what will actually run (Codex review on #1014).
+function stripExpressionPrefix(value: string): string {
+  return value.startsWith('=') ? value.slice(1) : value;
+}
+
 /**
  * After a find/replace patch lands on a JavaScript code field, parse the result
  * so a patch that leaves broken code fails the operation instead of saving it
  * (#1012 expansion). Throws before the caller writes, keeping the operation
- * atomic. Values starting with "=" are n8n expressions, not plain JS, and are
- * skipped. Only regressions the patch introduced are blocked: when the field
+ * atomic. Only regressions the patch introduced are blocked: when the field
  * was already unparseable before patching, an incremental repair must be able
  * to pass through still-broken states.
  */
 function assertPatchedJsSyntax(operation: string, fieldPath: string, patched: string, original: string): void {
   const fieldName = fieldPath.split('.').pop() ?? '';
   if (!JS_CODE_FIELD_NAMES.has(fieldName)) return;
-  if (patched.startsWith('=')) return;
 
-  const syntaxError = jsSyntaxErrorOf(patched);
+  const syntaxError = jsSyntaxErrorOf(stripExpressionPrefix(patched));
   if (!syntaxError) return;
-  // An "=" original is an expression — unchecked but not broken JS. Only a
-  // plain-JS original that itself fails to parse opens the repair gate, so
-  // patching an expression into broken plain JS is still caught.
-  if (!original.startsWith('=') && jsSyntaxErrorOf(original) !== undefined) return;
+  if (jsSyntaxErrorOf(stripExpressionPrefix(original)) !== undefined) return;
 
   throw new Error(
     `${operation}: patches would leave "${fieldPath}" with invalid JavaScript (${syntaxError.message}). ` +

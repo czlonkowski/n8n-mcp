@@ -1625,8 +1625,8 @@ describe('WorkflowDiffEngine', () => {
       });
 
       it('should reject a patch that strips an expression prefix leaving broken plain JS', async () => {
-        // The original is an unchecked expression, not broken JS — converting
-        // it to plain JS must not ride the incremental-repair gate.
+        // The original runs as "{{ $json.code }}" after n8n's "=" strip —
+        // nested blocks, which parse — so the broken result is a regression.
         const workflow = codeWorkflow('={{ $json.code }}');
 
         const result = await diffEngine.applyDiff(workflow, {
@@ -1692,8 +1692,11 @@ describe('WorkflowDiffEngine', () => {
         expect(codeNode?.parameters.jsCode).toBe('const x = 1;\nreturn x;');
       });
 
-      it('should not check jsCode values that are n8n expressions (leading =)', async () => {
-        const workflow = codeWorkflow('={{ $json.dynamicCode }} broken (');
+      it('should strip a leading = like n8n does and reject broken code behind it', async () => {
+        // jsCode is a noDataExpression field: n8n strips one leading "=" and
+        // runs the rest as code, so "=return (" is broken code, not an
+        // expression — the guard must not treat "=" as an exemption.
+        const workflow = codeWorkflow('return 1;');
 
         const result = await diffEngine.applyDiff(workflow, {
           id: 'test',
@@ -1701,7 +1704,25 @@ describe('WorkflowDiffEngine', () => {
             type: 'patchNodeField' as const,
             nodeName: 'Code',
             fieldPath: 'parameters.jsCode',
-            patches: [{ find: 'dynamicCode', replace: 'otherCode' }]
+            patches: [{ find: 'return 1;', replace: '=return (' }]
+          }]
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errors?.[0]?.message).toContain('invalid JavaScript');
+      });
+
+      it('should accept a valid =-prefixed value the way n8n will run it', async () => {
+        const workflow = codeWorkflow('return 1;');
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [{
+            type: 'patchNodeField' as const,
+            nodeName: 'Code',
+            fieldPath: 'parameters.jsCode',
+            // n8n runs this as "return 2;" after stripping the "="
+            patches: [{ find: 'return 1;', replace: '=return 2;' }]
           }]
         });
 
