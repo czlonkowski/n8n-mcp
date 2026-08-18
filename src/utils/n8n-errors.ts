@@ -85,8 +85,13 @@ export function handleN8nApiError(error: unknown): N8nApiError {
           return new N8nApiError(message, status, 'API_ERROR', data);
       }
     } else if (axiosError.request) {
-      // Request was made but no response received
-      return new N8nApiError('No response from n8n server', undefined, 'NO_RESPONSE');
+      // Request was made but no response received. Name which address(es)
+      // failed so "no response" is diagnosable instead of opaque (#978/#989/#990).
+      const detail = describeConnectionFailure(axiosError);
+      const message = detail
+        ? `No response from n8n server (${detail})`
+        : 'No response from n8n server';
+      return new N8nApiError(message, undefined, 'NO_RESPONSE');
     } else {
       // Something happened in setting up the request
       return new N8nApiError(axiosError.message, undefined, 'REQUEST_ERROR');
@@ -135,6 +140,49 @@ function folderPlacementHint(error: N8nApiError): string {
   return ' Note: workflow folder placement (parentFolderId) requires n8n 2.32 or later - retry without parentFolderId, or upgrade the instance.';
 }
 
+/**
+ * Build a short "CODE address:port" detail string from a connection-level
+ * axios error, for the NO_RESPONSE message (#978/#989/#990). When the
+ * underlying failure is an AggregateError (`autoSelectFamily` trying
+ * multiple pinned addresses), lists each member deduped so a multi-address
+ * failure reads as e.g. "ECONNREFUSED 127.0.0.1:5678, ECONNREFUSED
+ * [::1]:5678" instead of the generic top-level message alone. Returns ''
+ * when no code-bearing detail is available.
+ */
+function describeConnectionFailure(axiosError: any): string {
+  const parts: string[] = [];
+  const seen = new Set<string>();
+
+  const addPart = (source: any) => {
+    if (!source || !source.code) return;
+    let part = String(source.code);
+    if (source.address) {
+      const host = String(source.address).includes(':') ? `[${source.address}]` : source.address;
+      part += source.port !== undefined ? ` ${host}:${source.port}` : ` ${host}`;
+    }
+    if (!seen.has(part)) {
+      seen.add(part);
+      parts.push(part);
+    }
+  };
+
+  const aggregateMembers = axiosError?.errors ?? axiosError?.cause?.errors;
+  if (Array.isArray(aggregateMembers) && aggregateMembers.length > 0) {
+    aggregateMembers.forEach(addPart);
+  }
+  // Fall back to the wrapper, then its cause: axios copies `code` onto the
+  // AxiosError but the syscall address/port may live only on the underlying
+  // error, and aggregate members without codes contribute nothing above.
+  if (parts.length === 0) {
+    addPart(axiosError);
+  }
+  if (parts.length === 0) {
+    addPart(axiosError?.cause);
+  }
+
+  return parts.join(', ');
+}
+
 function safeStringify(value: unknown): string {
   try {
     return JSON.stringify(value) ?? '';
@@ -154,8 +202,14 @@ export function getUserFriendlyErrorMessage(error: N8nApiError): string {
       return `Invalid request: ${error.message}${folderPlacementHint(error)}`;
     case 'RATE_LIMIT_ERROR':
       return 'Too many requests. Please wait a moment and try again.';
-    case 'NO_RESPONSE':
-      return 'Unable to connect to n8n. Please check the server URL and ensure n8n is running.';
+    case 'NO_RESPONSE': {
+      // #978/#989/#990: append the connection detail from the enriched
+      // message (e.g. "(ECONNREFUSED 127.0.0.1:5678)") when present, so the
+      // generic sentence doesn't hide which address actually failed.
+      const generic = 'Unable to connect to n8n. Please check the server URL and ensure n8n is running.';
+      const detailMatch = error.message.match(/\(([^)]+)\)\s*$/);
+      return detailMatch ? `${generic} (${detailMatch[1]})` : generic;
+    }
     case 'SERVER_ERROR':
       // For server errors, we should not show generic message
       // Callers should check for execution context and use formatExecutionError instead

@@ -149,6 +149,11 @@ export class N8nApiClient {
   private personalProjectId: string | null = null;
   // SECURITY (GHSA-cmrh-wvq6-wm9r): cached pinned transport agents.
   private pinnedAgentsPromise: Promise<PinnedAgents> | null = null;
+  // #978/#989/#990: when the cached agents were last (re-)resolved, so a
+  // long-lived client periodically re-validates DNS instead of pinning to
+  // one address (possibly a stale CDN/Cloudflare edge) for its whole life.
+  private pinnedAgentsResolvedAt = 0;
+  private static readonly PINNED_AGENTS_TTL_MS = 60_000;
   private cfClientId?: string;
   private cfClientSecret?: string;
   /**
@@ -230,14 +235,30 @@ export class N8nApiClient {
       }
     );
 
-    // Response interceptor for logging
+    // Response interceptor for logging + connection-failure retry
     this.client.interceptors.response.use(
       (response: any) => {
         logger.debug(`n8n API Response: ${response.status} ${response.config.url}`);
         return response;
       },
-      (error: unknown) => {
+      async (error: unknown) => {
+        // #978/#989/#990: retry connection-level failures (no response at
+        // all) before mapping to N8nApiError. Re-issuing goes back through
+        // this same interceptor pipeline, so a further failure is retried
+        // again automatically until maxRetries is exhausted.
+        const retryAttempt = this.tryRetry(error);
+        if (retryAttempt) {
+          return retryAttempt;
+        }
+
         const n8nError = handleN8nApiError(error);
+        if (n8nError.code === 'NO_RESPONSE') {
+          // SECURITY (GHSA-cmrh-wvq6-wm9r resilience): the pinned IP may be
+          // dead (CDN edge rotated, instance moved) - clear the cache so the
+          // *next* request re-resolves DNS instead of retrying the same bad
+          // address forever.
+          this.pinnedAgentsPromise = null;
+        }
         logN8nError(n8nError, 'n8n API Response');
         return Promise.reject(n8nError);
       }
@@ -245,13 +266,103 @@ export class N8nApiClient {
   }
 
   /**
+   * Retry a connection-level axios failure (no response received) when it
+   * looks safe to retry and attempts remain. Returns a promise for the
+   * retried request when a retry is attempted, or `undefined` when the
+   * caller should fall through to normal error mapping.
+   *
+   * @security GHSA-cmrh-wvq6-wm9r follow-up (#978/#989/#990) - the failure
+   * may mean the pinned IP has gone stale, so the pinned-agent cache is
+   * cleared before each retry to force fresh DNS resolution.
+   */
+  private tryRetry(error: unknown): Promise<any> | undefined {
+    const axiosError = error as any;
+    const config = axiosError?.config;
+    const noResponse = !!(axiosError && axiosError.request && !axiosError.response);
+    if (!noResponse || !config) {
+      return undefined;
+    }
+
+    const retryCount = (config as any).__retryCount || 0;
+    if (retryCount >= this.maxRetries) {
+      return undefined;
+    }
+
+    // Default to a non-idempotent classification when the method is missing:
+    // only pre-connection failures are then eligible for retry.
+    const method = String(config.method || '');
+    if (!this.isRetryableConnectionError(axiosError, method)) {
+      return undefined;
+    }
+
+    (config as any).__retryCount = retryCount + 1;
+    // Force fresh DNS on the retried attempt.
+    this.pinnedAgentsPromise = null;
+
+    const backoffMs = 250 * Math.pow(2, retryCount);
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        this.client.request(config).then(resolve, reject);
+      }, backoffMs);
+    });
+  }
+
+  /**
+   * Whether a connection-level axios error is safe to retry for the given
+   * HTTP method. Errors that occurred before any bytes reached the wire
+   * (connection refused/unreachable/DNS failure) are safe to retry
+   * regardless of method - the server never saw the request. Errors that may
+   * have interrupted an in-flight request (reset, timeout) are only retried
+   * for idempotent methods.
+   */
+  private isRetryableConnectionError(axiosError: any, method: string): boolean {
+    const codes = this.extractErrorCodes(axiosError);
+    if (codes.length === 0) return false;
+
+    const isIdempotent = method.toUpperCase() === 'GET' || method.toUpperCase() === 'HEAD';
+    const anyMethodCodes = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN']);
+    const idempotentOnlyCodes = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED']);
+
+    return codes.some(code => anyMethodCodes.has(code) || (isIdempotent && idempotentOnlyCodes.has(code)));
+  }
+
+  /**
+   * Collect every error `code` relevant to the retry decision: the error's
+   * own code, plus each member's code when the error is an AggregateError
+   * (e.g. from `autoSelectFamily` trying multiple pinned addresses).
+   */
+  private extractErrorCodes(error: any): string[] {
+    const codes: string[] = [];
+    if (error?.code) codes.push(error.code);
+
+    const aggregateMembers = error?.errors ?? error?.cause?.errors;
+    if (Array.isArray(aggregateMembers)) {
+      for (const member of aggregateMembers) {
+        if (member?.code) codes.push(member.code);
+      }
+    }
+    return codes;
+  }
+
+  /**
    * Resolve the configured baseUrl once and return HTTP/HTTPS agents that
-   * pin every connection to the validated IP.
+   * pin every connection to the validated address(es). Re-resolved when the
+   * cache is empty, has expired (TTL), or was invalidated after a
+   * connection failure — see {@link tryRetry} and the NO_RESPONSE branch of
+   * the response interceptor.
    *
    * @security GHSA-cmrh-wvq6-wm9r — without this, axios performs an
    * independent DNS lookup on every request, opening a TOCTOU window.
    */
   private getPinnedAgents(): Promise<PinnedAgents> {
+    const isExpired = this.pinnedAgentsPromise !== null &&
+      Date.now() - this.pinnedAgentsResolvedAt > N8nApiClient.PINNED_AGENTS_TTL_MS;
+    if (isExpired) {
+      // #978/#989/#990: don't stay pinned to a possibly-stale address (e.g.
+      // a rotated CDN/Cloudflare edge) for the whole process lifetime.
+      this.pinnedAgentsPromise = null;
+    }
+
     if (!this.pinnedAgentsPromise) {
       const promise = (async () => {
         const { SSRFProtection } = await import('../utils/ssrf-protection');
@@ -259,8 +370,21 @@ export class N8nApiClient {
         if (!validation.valid || !validation.address || !validation.family) {
           throw new Error(`SSRF protection: ${validation.reason || 'baseUrl rejected'}`);
         }
-        return SSRFProtection.createPinnedAgents(validation.address, validation.family);
+        return SSRFProtection.createPinnedAgents(
+          validation.addresses ?? [{ address: validation.address, family: validation.family }]
+        );
       })();
+      // Stamp at dispatch so concurrent callers during an in-flight
+      // re-resolution see a fresh TTL and don't each kick off their own
+      // lookup; refresh on fulfillment (only while still the current
+      // promise) so the window restarts from when the addresses actually
+      // became valid.
+      this.pinnedAgentsResolvedAt = Date.now();
+      promise.then(() => {
+        if (this.pinnedAgentsPromise === promise) {
+          this.pinnedAgentsResolvedAt = Date.now();
+        }
+      }, () => {});
       // Reset on rejection so transient DNS failures don't brick the client.
       promise.catch(() => {
         if (this.pinnedAgentsPromise === promise) {
@@ -1037,7 +1161,9 @@ export class N8nApiClient {
 
       // SECURITY (GHSA-cmrh-wvq6-wm9r): pin transport to validated IP.
       const pinned = validation.address && validation.family
-        ? SSRFProtection.createPinnedAgents(validation.address, validation.family)
+        ? SSRFProtection.createPinnedAgents(
+            validation.addresses ?? [{ address: validation.address, family: validation.family }]
+          )
         : undefined;
 
       // Create a new axios instance for webhook requests to avoid API interceptors

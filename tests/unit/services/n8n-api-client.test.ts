@@ -2680,6 +2680,197 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
     });
   });
 
+  // #978/#989/#990 — pinned-agent resilience follow-up to GHSA-cmrh-wvq6-wm9r:
+  // TTL expiry, invalidate-on-failure, and real connection-level retries.
+  describe('pinned agent resilience', () => {
+    let requestInterceptor: any;
+    let responseErrorInterceptor: any;
+
+    beforeEach(() => {
+      vi.mocked(mockAxiosInstance.interceptors.request.use).mockImplementation((onFulfilled: any) => {
+        requestInterceptor = onFulfilled;
+        return 0;
+      });
+      vi.mocked(mockAxiosInstance.interceptors.response.use).mockImplementation((onFulfilled: any, onRejected: any) => {
+        responseErrorInterceptor = onRejected;
+        return 0;
+      });
+      client = new N8nApiClient(defaultConfig);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Real n8n api client `config` objects carry `.method` and mutate
+    // `__retryCount` across retries; helper mirrors that shape.
+    const makeConnectionError = (code: string, config: any) => {
+      const error: any = new Error(code);
+      error.isAxiosError = true;
+      error.code = code;
+      error.request = {};
+      error.config = config;
+      return error;
+    };
+
+    it('caches pinned agents across requests within the TTL', async () => {
+      await requestInterceptor({ method: 'get', url: '/workflows' });
+      await requestInterceptor({ method: 'get', url: '/workflows' });
+
+      expect(vi.mocked(dns.lookup)).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-resolves pinned agents after the TTL expires', async () => {
+      vi.useFakeTimers();
+
+      await requestInterceptor({ method: 'get', url: '/workflows' });
+      expect(vi.mocked(dns.lookup)).toHaveBeenCalledTimes(1);
+
+      // Still within the 60s TTL: cache is reused.
+      await requestInterceptor({ method: 'get', url: '/workflows' });
+      expect(vi.mocked(dns.lookup)).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(60_001);
+
+      await requestInterceptor({ method: 'get', url: '/workflows' });
+      expect(vi.mocked(dns.lookup)).toHaveBeenCalledTimes(2);
+    });
+
+    it('invalidates the pinned agent cache after a NO_RESPONSE error', async () => {
+      await requestInterceptor({ method: 'get', url: '/workflows' });
+      expect(vi.mocked(dns.lookup)).toHaveBeenCalledTimes(1);
+
+      // No `.code` on the error: retry is ineligible, isolating the
+      // cache-invalidation behavior of the terminal NO_RESPONSE mapping.
+      const error: any = new Error('Network error');
+      error.isAxiosError = true;
+      error.request = {};
+      error.config = {};
+      await expect(responseErrorInterceptor(error)).rejects.toThrow();
+
+      await requestInterceptor({ method: 'get', url: '/workflows' });
+      expect(vi.mocked(dns.lookup)).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not stampede re-resolution when concurrent requests hit an expired TTL', async () => {
+      vi.useFakeTimers();
+
+      await requestInterceptor({ method: 'get', url: '/workflows' });
+      expect(vi.mocked(dns.lookup)).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(60_001);
+
+      // Both requests observe the expired cache; only the first may kick off
+      // a new resolution — the second must reuse the in-flight promise.
+      await Promise.all([
+        requestInterceptor({ method: 'get', url: '/workflows' }),
+        requestInterceptor({ method: 'get', url: '/workflows' }),
+      ]);
+      expect(vi.mocked(dns.lookup)).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-resolves DNS on the retried attempt after a connection failure', async () => {
+      vi.useFakeTimers();
+      const config: any = { method: 'get', url: '/workflows' };
+
+      // Populate the pinned-agent cache the way a real first attempt would.
+      await requestInterceptor(config);
+      expect(vi.mocked(dns.lookup)).toHaveBeenCalledTimes(1);
+
+      // Mimic real axios: a re-issued request runs the request interceptor
+      // (which attaches agents, resolving DNS if the cache was cleared)
+      // before hitting the (now healthy) adapter.
+      mockAxiosInstance.request.mockImplementation(async (cfg: any) => {
+        await requestInterceptor(cfg);
+        return { data: { ok: true }, headers: {} };
+      });
+
+      const resultPromise = responseErrorInterceptor(makeConnectionError('ECONNREFUSED', config));
+      const assertion = expect(resultPromise).resolves.toEqual({ data: { ok: true }, headers: {} });
+      await vi.runAllTimersAsync();
+      await assertion;
+
+      // tryRetry cleared the cache, so the retried attempt resolved afresh.
+      expect(vi.mocked(dns.lookup)).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries a GET on ETIMEDOUT up to maxRetries then rejects with NO_RESPONSE', async () => {
+      vi.useFakeTimers();
+      const config: any = { method: 'get', url: '/workflows' };
+
+      // Mimics real axios: re-issuing via client.request() re-enters the
+      // same response error interceptor, so retries recurse exactly as they
+      // do against a real client.
+      mockAxiosInstance.request.mockImplementation(async () =>
+        responseErrorInterceptor(makeConnectionError('ETIMEDOUT', config))
+      );
+
+      const resultPromise = responseErrorInterceptor(makeConnectionError('ETIMEDOUT', config));
+      const assertion = expect(resultPromise).rejects.toMatchObject({ code: 'NO_RESPONSE' });
+      await vi.runAllTimersAsync();
+      await assertion;
+
+      expect(mockAxiosInstance.request).toHaveBeenCalledTimes(defaultConfig.maxRetries!);
+    });
+
+    it('retries a POST on ECONNREFUSED and resolves on success', async () => {
+      vi.useFakeTimers();
+      const config: any = { method: 'post', url: '/workflows' };
+
+      mockAxiosInstance.request.mockResolvedValue({ data: { id: '123' }, headers: {} });
+
+      const resultPromise = responseErrorInterceptor(makeConnectionError('ECONNREFUSED', config));
+      const assertion = expect(resultPromise).resolves.toEqual({ data: { id: '123' }, headers: {} });
+      await vi.runAllTimersAsync();
+      await assertion;
+
+      expect(mockAxiosInstance.request).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry a POST on ECONNRESET (not idempotent-safe)', async () => {
+      const config: any = { method: 'post', url: '/workflows' };
+
+      await expect(
+        responseErrorInterceptor(makeConnectionError('ECONNRESET', config))
+      ).rejects.toMatchObject({ code: 'NO_RESPONSE' });
+
+      expect(mockAxiosInstance.request).not.toHaveBeenCalled();
+    });
+
+    it('does retry a GET on ECONNRESET (idempotent-safe)', async () => {
+      vi.useFakeTimers();
+      const config: any = { method: 'get', url: '/workflows' };
+
+      mockAxiosInstance.request.mockResolvedValue({ data: [], headers: {} });
+
+      const resultPromise = responseErrorInterceptor(makeConnectionError('ECONNRESET', config));
+      const assertion = expect(resultPromise).resolves.toEqual({ data: [], headers: {} });
+      await vi.runAllTimersAsync();
+      await assertion;
+
+      expect(mockAxiosInstance.request).toHaveBeenCalledTimes(1);
+    });
+
+    it('respects a custom maxRetries', async () => {
+      vi.useFakeTimers();
+      // Constructing a second client re-registers interceptors on the mock;
+      // `responseErrorInterceptor` now points at this client's handler.
+      new N8nApiClient({ ...defaultConfig, maxRetries: 1 });
+      const config: any = { method: 'get', url: '/workflows' };
+
+      mockAxiosInstance.request.mockImplementation(async () =>
+        responseErrorInterceptor(makeConnectionError('ETIMEDOUT', config))
+      );
+
+      const resultPromise = responseErrorInterceptor(makeConnectionError('ETIMEDOUT', config));
+      const assertion = expect(resultPromise).rejects.toMatchObject({ code: 'NO_RESPONSE' });
+      await vi.runAllTimersAsync();
+      await assertion;
+
+      expect(mockAxiosInstance.request).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // GHSA-4ggg-h7ph-26qr — defense-in-depth URL normalization in the constructor.
   describe('constructor URL normalization', () => {
     const getLastAxiosBaseURL = (): string => {

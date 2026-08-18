@@ -3,6 +3,7 @@ import {
   formatExecutionError,
   formatNoExecutionError,
   getUserFriendlyErrorMessage,
+  handleN8nApiError,
   N8nApiError,
   N8nAuthenticationError,
   N8nNotFoundError,
@@ -179,6 +180,97 @@ describe('getUserFriendlyErrorMessage', () => {
       // Circular details cannot be stringified - the hint just doesn't fire from details
       expect(() => getUserFriendlyErrorMessage(error)).not.toThrow();
     });
+  });
+});
+
+// #978/#989/#990 — say which address failed instead of an opaque "no response".
+describe('NO_RESPONSE connection detail', () => {
+  it('enriches the message with code and address:port from a plain connection error', () => {
+    const axiosError: any = new Error('connect ECONNREFUSED 127.0.0.1:5678');
+    axiosError.isAxiosError = true;
+    axiosError.code = 'ECONNREFUSED';
+    axiosError.address = '127.0.0.1';
+    axiosError.port = 5678;
+    axiosError.request = {};
+
+    const error = handleN8nApiError(axiosError);
+    expect(error.code).toBe('NO_RESPONSE');
+    expect(error.message).toBe('No response from n8n server (ECONNREFUSED 127.0.0.1:5678)');
+  });
+
+  it('brackets an IPv6 address in the detail', () => {
+    const axiosError: any = new Error('connect ECONNREFUSED ::1:5678');
+    axiosError.isAxiosError = true;
+    axiosError.code = 'ECONNREFUSED';
+    axiosError.address = '::1';
+    axiosError.port = 5678;
+    axiosError.request = {};
+
+    const error = handleN8nApiError(axiosError);
+    expect(error.message).toBe('No response from n8n server (ECONNREFUSED [::1]:5678)');
+  });
+
+  it('lists each deduped member of an AggregateError (autoSelectFamily)', () => {
+    const axiosError: any = new Error('connect failed');
+    axiosError.isAxiosError = true;
+    axiosError.request = {};
+    axiosError.errors = [
+      Object.assign(new Error('a'), { code: 'ECONNREFUSED', address: '127.0.0.1', port: 5678 }),
+      Object.assign(new Error('b'), { code: 'ECONNREFUSED', address: '::1', port: 5678 }),
+      Object.assign(new Error('c'), { code: 'ECONNREFUSED', address: '127.0.0.1', port: 5678 }),
+    ];
+
+    const error = handleN8nApiError(axiosError);
+    expect(error.message).toBe(
+      'No response from n8n server (ECONNREFUSED 127.0.0.1:5678, ECONNREFUSED [::1]:5678)'
+    );
+  });
+
+  it('reads the detail from error.cause when the wrapper carries only the code', () => {
+    // Real axios copies `code` onto the AxiosError but the syscall
+    // address/port can live only on the underlying cause.
+    const axiosError: any = new Error('connect ECONNREFUSED 127.0.0.1:5678');
+    axiosError.isAxiosError = true;
+    axiosError.request = {};
+    axiosError.cause = Object.assign(new Error('raw'), {
+      code: 'ECONNREFUSED',
+      address: '127.0.0.1',
+      port: 5678,
+    });
+
+    const error = handleN8nApiError(axiosError);
+    expect(error.message).toBe('No response from n8n server (ECONNREFUSED 127.0.0.1:5678)');
+  });
+
+  it('falls back to the top-level code when aggregate members carry none', () => {
+    const axiosError: any = new Error('connect failed');
+    axiosError.isAxiosError = true;
+    axiosError.code = 'ECONNREFUSED';
+    axiosError.request = {};
+    axiosError.errors = [new Error('memberless'), new Error('another')];
+
+    const error = handleN8nApiError(axiosError);
+    expect(error.message).toBe('No response from n8n server (ECONNREFUSED)');
+  });
+
+  it('falls back to the generic message when no code-bearing detail is available', () => {
+    const axiosError: any = new Error('Network error');
+    axiosError.isAxiosError = true;
+    axiosError.request = {};
+
+    const error = handleN8nApiError(axiosError);
+    expect(error.message).toBe('No response from n8n server');
+  });
+
+  it('getUserFriendlyErrorMessage appends the detail to the generic sentence', () => {
+    const error = new N8nApiError(
+      'No response from n8n server (ECONNREFUSED 127.0.0.1:5678)',
+      undefined,
+      'NO_RESPONSE'
+    );
+    expect(getUserFriendlyErrorMessage(error)).toBe(
+      'Unable to connect to n8n. Please check the server URL and ensure n8n is running. (ECONNREFUSED 127.0.0.1:5678)'
+    );
   });
 });
 

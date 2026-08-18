@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [Unreleased]
+
+## [2.71.0] - 2026-08-18
+
+### Fixed
+
+- **The SSRF-pinned transport now fails over across every validated address instead of hard-failing on the first DNS answer.** The DNS-pinning protection (GHSA-cmrh-wvq6-wm9r) resolved the API hostname with a single-answer lookup and pinned all connections to that one address for the life of the process. Two real-world casualties: on macOS, `localhost` answers `::1` first, so an n8n listening only on IPv4 loopback (the Docker Desktop default) failed every management tool with an unexplained `NO_RESPONSE` even though `curl` worked; and a CDN-fronted instance (Cloudflare) stayed nailed to whichever single edge answered first at startup, so one bad edge meant every call failed until the process restarted. The validator now resolves the full record set, validates **every** address against the SSRF policy — failing closed if any record is disallowed, which also closes the mixed-record variant of DNS rebinding and, deliberately, now applies to metadata addresses in any record position even in permissive mode — and the transport pins the whole validated set, letting the socket layer try each candidate in turn. The pinned agents are also re-resolved after a 60-second TTL and after any connection failure, so a rotated edge or moved instance heals on the next call. (#978, #989, #990)
+- **`N8N_API_MAX_RETRIES` does something now.** It was validated, documented, stored — and never read: no retry logic existed on the n8n API client at all. Connection-level failures are now retried up to that count with exponential backoff and a fresh DNS resolution per attempt. Failures that occur before the connection is established (refused, unreachable, DNS) retry for any method; failures that may have interrupted an in-flight request (reset, timeout) retry only for reads, so a create is never double-executed. DNS-resolution failures inside URL validation still fail fast — the cache resets, so the next call re-resolves.
+- **`NO_RESPONSE` errors say which address failed.** `Unable to connect to n8n…` now carries the failing code and address, e.g. `(ECONNREFUSED 127.0.0.1:5678, ECONNREFUSED [::1]:5678)`, naming each attempted candidate — the difference between a two-minute diagnosis and a dead end where n8n looks healthy and the MCP looks broken.
+
 ## [2.70.4] - 2026-08-18
 
 ### Fixed
