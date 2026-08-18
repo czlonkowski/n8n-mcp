@@ -275,6 +275,16 @@ describe('Database Integration Tests', () => {
           isAITool: i % 10 === 0
         }));
 
+      // This suite runs against a persistent file-backed database at a fixed path, so a run
+      // interrupted before the cleanup below leaves rows behind. Clear them first: otherwise
+      // the row-count assertion fails for reasons that have nothing to do with performance.
+      const clearFixtureRows = () =>
+        dbHelpers.executeSql(
+          testDb.adapter,
+          "DELETE FROM nodes WHERE node_type LIKE 'nodes-base.bulk%' OR node_type LIKE 'nodes-base.baseline%'"
+        );
+      clearFixtureRows();
+
       // Baseline on the same host, in the same run, so both measurements share its conditions
       const baselineCount = 100;
       const baselineDuration = await measureDatabaseOperation(
@@ -328,11 +338,7 @@ describe('Database Integration Tests', () => {
 
       expect(queryDuration).toBeLessThanOrEqual(insertDuration);
 
-      // Cleanup both data sets
-      dbHelpers.executeSql(
-        testDb.adapter,
-        "DELETE FROM nodes WHERE node_type LIKE 'nodes-base.bulk%' OR node_type LIKE 'nodes-base.baseline%'"
-      );
+      clearFixtureRows();
     });
   });
 });
