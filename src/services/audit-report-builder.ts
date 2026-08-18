@@ -307,7 +307,7 @@ function renderRemediationPlaybook(
 
     if (byCat['error_handling']?.length) {
       const wfCount = uniqueWorkflows(byCat['error_handling']);
-      lines.push(`**Error handling gaps** (${wfCount} workflow${wfCount !== 1 ? 's' : ''}): Add Error Trigger nodes or set continueOnFail on critical nodes.`);
+      lines.push(`**Error handling gaps** (${wfCount} workflow${wfCount !== 1 ? 's' : ''}): Assign a shared error workflow via settings.errorWorkflow, add Error Trigger nodes, or set continueOnFail on critical nodes.`);
     }
 
     if (piiFindings.length > 0) {
