@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`npm run check:settings-drift` compares that list against the OpenAPI schema n8n ships in its published package, and `npm run update:n8n` runs it before the database rebuild.** An n8n bump that changes the workflow settings schema now fails the update instead of quietly shipping a stale list.
 - **`npm run update:n8n` now carries along the exact peer dependencies the new n8n packages demand.** `n8n-workflow` pins `zod` to an exact version and moves it between releases. A mismatch installs cleanly here, because the repo's local `.npmrc` sets `legacy-peer-deps`, and fails only in the Dockerfile's builder stage, which installs into a scratch directory with no `.npmrc` and therefore enforces peers — a CI-only failure discovered well after the update looked successful. Only exactly-pinned peers the repo already declares are touched; ranges are left to npm.
 
+## [2.69.3] - 2026-08-18
+
+### Changed
+
+- **n8n dependencies updated to 2.34.x** — `n8n-nodes-base` 2.32.4 → 2.34.4, `n8n-core` 2.32.2 → 2.34.4, `n8n-workflow` 2.32.1 → 2.34.3, `@n8n/n8n-nodes-langchain` 2.32.4 → 2.34.4. The node database is rebuilt against them: 2,414 nodes (831 core, up from 829, plus 1,583 community nodes carried over unchanged). The two additions are `microsoftExcelSharePointTool` and `e2eTestPollingTrigger`, the latter one of n8n's own end-to-end test nodes, which are indexed the same way the existing `e2eTest` and `e2eTestTool` entries always have been.
+- Node-level changes users will see through this server include the Execute Workflow node deprecating its Local File and URL sources, the Cal.com Trigger migrating to Cal.com's API v2, a Simplified Custom Auth credential on the HTTP Request node, an `extraBody` option on the OpenAI Chat Model node, inference-profile models on the AWS Bedrock chat and embeddings nodes, and custom OAuth scopes on the remaining Google credentials and several Azure ones.
+- **`zod` aligned to 3.25.76, the exact peer `n8n-workflow` 2.34.3 requires.** The previous pin installed cleanly against the repo's local `.npmrc`, which sets `legacy-peer-deps`, and failed only in the Dockerfile builder stage, which installs into a scratch directory without it. Aligning the root pin also collapses the nine nested `zod` copies npm had placed under the `@n8n` packages into the hoisted one.
+
 ## [2.69.2] - 2026-08-15
 
 ### Changed
