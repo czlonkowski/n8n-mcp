@@ -5,17 +5,17 @@
 [![npm version](https://img.shields.io/npm/v/n8n-mcp.svg)](https://www.npmjs.com/package/n8n-mcp)
 [![codecov](https://codecov.io/gh/czlonkowski/n8n-mcp/graph/badge.svg?token=YOUR_TOKEN)](https://codecov.io/gh/czlonkowski/n8n-mcp)
 [![Tests](https://img.shields.io/badge/tests-5418%20passing-brightgreen.svg)](https://github.com/czlonkowski/n8n-mcp/actions)
-[![n8n version](https://img.shields.io/badge/n8n-2.32.7-orange.svg)](https://github.com/n8n-io/n8n)
+[![n8n version](https://img.shields.io/badge/n8n-2.34.4-orange.svg)](https://github.com/n8n-io/n8n)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fczlonkowski%2Fn8n--mcp-green.svg)](https://github.com/czlonkowski/n8n-mcp/pkgs/container/n8n-mcp)
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/n8n-mcp?referralCode=n8n-mcp)
 
-A Model Context Protocol (MCP) server that provides AI assistants with comprehensive access to n8n node documentation, properties, and operations. Deploy in minutes to give Claude and other AI assistants deep knowledge about n8n's 2,412 workflow automation nodes (829 core + 1,583 community).
+A Model Context Protocol (MCP) server that provides AI assistants with comprehensive access to n8n node documentation, properties, and operations. Deploy in minutes to give Claude and other AI assistants deep knowledge about n8n's 2,414 workflow automation nodes (831 core + 1,583 community).
 
 ## Overview
 
 n8n-MCP serves as a bridge between n8n's workflow automation platform and AI models, enabling them to understand and work with n8n nodes effectively. It provides structured access to:
 
-- **2,412 n8n nodes** - 829 core nodes + 1,583 community nodes (1,340 verified)
+- **2,414 n8n nodes** - 831 core nodes + 1,583 community nodes (1,340 verified)
 - **Node properties** - 99% coverage with detailed schemas
 - **Node operations** - 66.5% coverage of available actions
 - **Documentation** - 86% coverage from official n8n docs (including AI nodes)

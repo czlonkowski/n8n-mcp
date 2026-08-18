@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.69.3] - 2026-08-18
+
+### Changed
+
+- **n8n dependencies updated to 2.34.x** — `n8n-nodes-base` 2.32.4 → 2.34.4, `n8n-core` 2.32.2 → 2.34.4, `n8n-workflow` 2.32.1 → 2.34.3, `@n8n/n8n-nodes-langchain` 2.32.4 → 2.34.4. The node database is rebuilt against them: 2,414 nodes (831 core, up from 829, plus 1,583 community nodes carried over unchanged). The two additions are `microsoftExcelSharePointTool` and `e2eTestPollingTrigger`, the latter one of n8n's own end-to-end test nodes, which are indexed the same way the existing `e2eTest` and `e2eTestTool` entries always have been.
+- Node-level changes users will see through this server include the Execute Workflow node deprecating its Local File and URL sources, the Cal.com Trigger migrating to Cal.com's API v2, a Simplified Custom Auth credential on the HTTP Request node, an `extraBody` option on the OpenAI Chat Model node, inference-profile models on the AWS Bedrock chat and embeddings nodes, and custom OAuth scopes on the remaining Google credentials and several Azure ones.
+
 ## [2.69.2] - 2026-08-15
 
 ### Changed
