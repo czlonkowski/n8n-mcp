@@ -65,7 +65,7 @@ const indentOf = (line: string): number => line.length - line.trimStart().length
  * this cannot find throws, which is the point - a silently empty result would read as "no
  * drift".
  */
-function parseSchemaProperties(yaml: string): Set<string> {
+export function parseSchemaProperties(yaml: string): Set<string> {
   const lines = yaml.split('\n');
 
   const schemaIndex = lines.findIndex(line => new RegExp(`^\\s+${SCHEMA_NAME}:\\s*$`).test(line));
@@ -81,7 +81,9 @@ function parseSchemaProperties(yaml: string): Set<string> {
     const line = lines[i];
     if (line.trim() === '') continue;
     if (indentOf(line) <= schemaIndent) break; // left the schema without finding properties
-    if (indentOf(line) === schemaIndent + 2 && line.trim() === 'properties:') {
+    // Any depth below the schema, so the step size is not assumed. The schema's own
+    // `properties:` is the first one inside it; a nested one always comes later.
+    if (line.trim() === 'properties:') {
       propertiesIndex = i;
       break;
     }
@@ -167,7 +169,11 @@ async function main(): Promise<void> {
   process.exit(1);
 }
 
-main().catch(error => {
-  console.error(`❌ Settings drift check failed: ${error instanceof Error ? error.message : error}`);
-  process.exit(1);
-});
+// Only run when invoked directly, so the parser above can be imported by tests without the
+// script fetching anything or calling process.exit.
+if (require.main === module) {
+  main().catch(error => {
+    console.error(`❌ Settings drift check failed: ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  });
+}
