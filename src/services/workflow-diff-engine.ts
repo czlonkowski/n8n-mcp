@@ -183,6 +183,35 @@ function countOccurrences(str: string, search: string): number {
   return count;
 }
 
+// Fields that hold plain JavaScript: the Code node's jsCode and the legacy
+// Function/FunctionItem nodes' functionCode. Python lives in pythonCode.
+const JS_CODE_FIELD_NAMES = new Set(['jsCode', 'functionCode']);
+
+// Parses (never executes) code as an async function body, matching n8n's own
+// wrapping of Code-node JS — so top-level return/await are valid.
+const AsyncFunctionCtor = Object.getPrototypeOf(async function () {})
+  .constructor as new (...args: string[]) => unknown;
+
+/**
+ * After a find/replace patch lands on a JavaScript code field, parse the result
+ * so a patch that leaves broken code fails the operation instead of saving it
+ * (#1012 expansion). Values starting with "=" are n8n expressions, not plain
+ * JS, and are skipped. Returns the syntax error message, or null when the code
+ * parses or cannot be checked here (a non-SyntaxError such as a CSP EvalError
+ * must not block the operation).
+ */
+function getJsSyntaxError(fieldPath: string, code: string): string | null {
+  const fieldName = fieldPath.split('.').pop() ?? '';
+  if (!JS_CODE_FIELD_NAMES.has(fieldName)) return null;
+  if (code.startsWith('=')) return null;
+  try {
+    new AsyncFunctionCtor(code);
+    return null;
+  } catch (error) {
+    return error instanceof SyntaxError ? error.message : null;
+  }
+}
+
 function operationReferencesAddedNode(
   operation: WorkflowDiffOperation,
   addedNode: AddNodeOperation['node']
@@ -1088,6 +1117,13 @@ export class WorkflowDiffEngine {
           // read "$&", "$'" etc. in it as JS replacement patterns (#1012).
           current = current.replace(patch.find, () => patch.replace);
         }
+        const syntaxError = getJsSyntaxError(path, current);
+        if (syntaxError) {
+          throw new Error(
+            `__patch_find_replace: patches would leave "${path}" with invalid JavaScript (${syntaxError}). ` +
+            `The workflow was not modified.`
+          );
+        }
         this.setNestedProperty(draft, path, current);
       } else {
         this.setNestedProperty(draft, path, value);
@@ -1203,6 +1239,15 @@ export class WorkflowDiffEngine {
         // for the single-occurrence case too: the checks above leave exactly one.
         current = current.split(patch.find).join(patch.replace);
       }
+    }
+
+    const syntaxError = getJsSyntaxError(operation.fieldPath, current);
+    if (syntaxError) {
+      throw new Error(
+        `patchNodeField: patches would leave "${operation.fieldPath}" with invalid JavaScript (${syntaxError}). ` +
+        `The workflow was not modified. If several dependent edits pass through an invalid intermediate state, ` +
+        `apply them as one patchNodeField operation — only the final result of the patches array is checked.`
+      );
     }
 
     this.setNestedProperty(node, operation.fieldPath, current);
