@@ -164,8 +164,10 @@ export async function fetchN8nVersion(
         : `no version in the response from ${settingsUrl}`
     );
   } catch (error) {
-    // Deliberately not cached: a timeout or a refused connection says nothing about whether the
-    // instance reports its version, and caching it would suppress detection for the whole TTL.
+    // Everything that produced no usable response lands here: a timeout, a refused connection,
+    // and any status at or above 500, which `validateStatus` rejects. None of them says what the
+    // instance reports when it is healthy, so none is cached - that would suppress detection for
+    // the whole TTL over a blip.
     logger.debug(`Failed to fetch n8n version: ${error instanceof Error ? error.message : 'Unknown error'}`);
     return null;
   }

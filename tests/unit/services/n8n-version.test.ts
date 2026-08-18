@@ -445,12 +445,16 @@ describe('n8n-version', () => {
       expect(axios.get).toHaveBeenCalledTimes(1);
     });
 
-    it('re-probes after a request that never reached the instance', async () => {
-      // A timeout says nothing about whether the instance reports its version, so caching it
-      // would suppress detection for the whole TTL.
+    it('re-probes after a probe that produced no usable response', async () => {
+      // Neither a timeout nor a 5xx - which validateStatus rejects - says anything about what the
+      // instance reports when healthy, so caching either would suppress detection over a blip.
       vi.mocked(axios.get).mockRejectedValueOnce(new Error('ETIMEDOUT'));
+      vi.mocked(axios.get).mockRejectedValueOnce(
+        Object.assign(new Error('Bad Gateway'), { response: { status: 502 } })
+      );
       vi.mocked(axios.get).mockResolvedValue(settingsResponse);
 
+      expect(await fetchN8nVersion(baseUrl)).toBeNull();
       expect(await fetchN8nVersion(baseUrl)).toBeNull();
       expect(await fetchN8nVersion(baseUrl)).toEqual({
         version: '1.119.0',
@@ -458,7 +462,7 @@ describe('n8n-version', () => {
         minor: 119,
         patch: 0,
       });
-      expect(axios.get).toHaveBeenCalledTimes(2);
+      expect(axios.get).toHaveBeenCalledTimes(3);
     });
 
     it('does not let a forced refresh keep reporting a version the instance stopped sending', async () => {
