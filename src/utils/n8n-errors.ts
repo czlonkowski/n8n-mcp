@@ -207,8 +207,16 @@ export function getUserFriendlyErrorMessage(error: N8nApiError): string {
       // message (e.g. "(ECONNREFUSED 127.0.0.1:5678)") when present, so the
       // generic sentence doesn't hide which address actually failed.
       const generic = 'Unable to connect to n8n. Please check the server URL and ensure n8n is running.';
-      const detailMatch = error.message.match(/\(([^)]+)\)\s*$/);
-      return detailMatch ? `${generic} (${detailMatch[1]})` : generic;
+      // Plain string scan instead of a trailing-group regex (CodeQL
+      // js/polynomial-redos): take a non-empty parenthesized suffix that
+      // contains no nested parens, which is the only shape
+      // describeConnectionFailure produces.
+      const message = error.message.trimEnd();
+      const open = message.lastIndexOf('(');
+      const detail = message.endsWith(')') && open !== -1
+        ? message.slice(open + 1, -1)
+        : '';
+      return detail && !detail.includes(')') ? `${generic} (${detail})` : generic;
     }
     case 'SERVER_ERROR':
       // For server errors, we should not show generic message
