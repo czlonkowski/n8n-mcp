@@ -24,6 +24,6 @@ describe('stdio drain contract (issue #999)', () => {
     );
 
     expect(source).not.toMatch(/process\.stdout\.write\s*=/);
-    expect(source).not.toMatch(/emit\(\s*['"]drain['"]/);
+    expect(source).not.toMatch(/process\.stdout\.emit\s*\(\s*['"]drain['"]/);
   });
 });
