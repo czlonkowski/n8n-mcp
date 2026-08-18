@@ -218,7 +218,10 @@ function assertPatchedJsSyntax(operation: string, fieldPath: string, patched: st
 
   const syntaxError = jsSyntaxErrorOf(patched);
   if (!syntaxError) return;
-  if (jsSyntaxErrorOf(original) !== undefined) return;
+  // An "=" original is an expression — unchecked but not broken JS. Only a
+  // plain-JS original that itself fails to parse opens the repair gate, so
+  // patching an expression into broken plain JS is still caught.
+  if (!original.startsWith('=') && jsSyntaxErrorOf(original) !== undefined) return;
 
   throw new Error(
     `${operation}: patches would leave "${fieldPath}" with invalid JavaScript (${syntaxError.message}). ` +

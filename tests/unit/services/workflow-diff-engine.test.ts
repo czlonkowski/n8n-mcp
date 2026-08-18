@@ -627,6 +627,38 @@ describe('WorkflowDiffEngine', () => {
       expect(result.warnings!.some(w => w.message.includes('not found'))).toBe(true);
     });
 
+    it('should let __patch_find_replace edit a field that was already broken before patching', async () => {
+      const workflow = JSON.parse(JSON.stringify(baseWorkflow));
+      workflow.nodes.push({
+        id: 'code-1',
+        name: 'Code',
+        type: 'n8n-nodes-base.code',
+        typeVersion: 1,
+        position: [900, 300],
+        parameters: { jsCode: 'const x = (;\nreturn x;' }
+      });
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test',
+        operations: [{
+          type: 'updateNode' as const,
+          nodeName: 'Code',
+          updates: {
+            'parameters.jsCode': {
+              __patch_find_replace: [
+                // Still broken afterwards — allowed, the field was broken before
+                { find: 'return x;', replace: 'return x + 1;' }
+              ]
+            }
+          }
+        }]
+      });
+
+      expect(result.success).toBe(true);
+      const codeNode = result.workflow!.nodes.find((n: any) => n.name === 'Code');
+      expect(codeNode?.parameters.jsCode).toBe('const x = (;\nreturn x + 1;');
+    });
+
     it('should reject __patch_find_replace patches that leave jsCode with a syntax error', async () => {
       const original = 'const items = getItems();\nreturn items.filter(i => i.ok);';
       const workflow = JSON.parse(JSON.stringify(baseWorkflow));
@@ -1499,6 +1531,25 @@ describe('WorkflowDiffEngine', () => {
         expect(codeNode?.parameters.jsCode).toBe(
           'function pick(item) { return item.id ?? null; }\nreturn items.map(pick);'
         );
+      });
+
+      it('should reject a patch that strips an expression prefix leaving broken plain JS', async () => {
+        // The original is an unchecked expression, not broken JS — converting
+        // it to plain JS must not ride the incremental-repair gate.
+        const workflow = codeWorkflow('={{ $json.code }}');
+
+        const result = await diffEngine.applyDiff(workflow, {
+          id: 'test',
+          operations: [{
+            type: 'patchNodeField' as const,
+            nodeName: 'Code',
+            fieldPath: 'parameters.jsCode',
+            patches: [{ find: '={{ $json.code }}', replace: 'return items.filter(;' }]
+          }]
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.errors?.[0]?.message).toContain('invalid JavaScript');
       });
 
       it('should guard functionCode fields on legacy Function nodes', async () => {
