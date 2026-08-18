@@ -318,6 +318,37 @@ describe('n8n-validation', () => {
 
   describe('Workflow Cleaning Functions', () => {
     describe('cleanWorkflowForCreate', () => {
+      it('should drop derived settings carried over from another instance', () => {
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: {
+            executionOrder: 'v1' as const,
+            redactionPolicy: 'all' as const,
+            binaryMode: 'combined',
+            credentialResolverId: 'resolver-1',
+          },
+        };
+
+        const cleaned = cleanWorkflowForCreate(workflow as any);
+
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1', redactionPolicy: 'all' });
+      });
+
+      it('should fall back to defaults when only derived settings were given', () => {
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: { binaryMode: 'combined' },
+        };
+
+        const cleaned = cleanWorkflowForCreate(workflow as any);
+
+        expect(cleaned.settings).toEqual(defaultWorkflowSettings);
+      });
+
       it('should remove read-only fields', () => {
         const workflow = {
           id: 'should-be-removed',
