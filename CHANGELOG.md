@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.73.0] - 2026-08-19
+
+### Changed
+
+- **n8n dependencies updated to 2.35.x** — `n8n-nodes-base` 2.34.4 → 2.35.3, `n8n-core` 2.34.4 → 2.35.3, `n8n-workflow` 2.34.3 → 2.35.2, `@n8n/n8n-nodes-langchain` 2.34.4 → 2.35.3. The node database is rebuilt against them: 2,541 nodes (832 core, up from 831, plus 1,709 community nodes, up from 1,583). The single core addition is `nodes-base.confluence`, which n8n currently ships as a hidden shell — `hidden: true`, no properties, no operations, its actions landing in later releases. It is indexed the same way the other hidden `n8n-nodes-base` entries (Function, Cron, Item Lists, Read Binary File and the rest) always have been, so `get_node` returns it with an empty schema until n8n fills it in.
+- Node-level changes users will see through this server: the Slack node moves to typeVersion 2.7 and uses Slack's Real-time Search API for message search; the GitHub node gains a timeout option on Dispatch and Wait for Completion; the Salesforce Trigger gains OAuth2 JWT authentication; the Google Ads node migrates from the sunset v21 API to v25, including the renamed video-views metric; Microsoft Teams regains the `Group.ReadWrite.All` OAuth2 scope; the X (formerly Twitter) node's OAuth2 and API endpoints move to `x.com`; and the Merge node picks up "Append" and "Combine" search aliases, which `search_nodes` now matches. Eighteen core node schemas changed in total.
+- **The Kafka node now has a version 2** built on n8n's new Kafka library, with compression options. n8n keeps `defaultVersion: 1`, so `get_node` and validation still report version 1 — that is the typeVersion the editor instantiates. The database will follow when n8n flips the default.
+- Community nodes refreshed: 1,437 verified nodes from the n8n registry plus 141 node rows from 65 npm packages, with 6 rows dropped for packages that no longer declare them. 139 missing READMEs were fetched and 126 AI documentation summaries generated, bringing documentation coverage to 1,696 of 1,709 community nodes.
+
 ## [2.72.0] - 2026-08-18
 
 ### Added
