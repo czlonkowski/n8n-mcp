@@ -67,7 +67,7 @@ export const WORKFLOW_SETTINGS_PROPERTIES: Record<string, WorkflowSettingPropert
 
   // n8n 2.33.0
   binaryMode: { since: v(2, 33, 0), derived: true },
-  timeSavedMode: { since: v(2, 33, 0) },
+  timeSavedMode: { since: v(2, 33, 0), derived: true },
   credentialResolverId: { since: v(2, 33, 0), derived: true },
 };
 
