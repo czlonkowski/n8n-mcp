@@ -485,6 +485,19 @@ export interface McpToolResponse {
   executionId?: string;
   workflowId?: string;
   operationsApplied?: number;
+  // Official-MCP-backed tools (e.g. n8n_manage_agents) — the action that was
+  // requested, the official tool name it was dispatched to, a human-readable
+  // hint, the raw official error payload on failure, and whether the result
+  // was truncated to the size cap.
+  action?: string;
+  officialTool?: string;
+  hint?: string;
+  officialError?: unknown;
+  truncated?: boolean;
+  // Reserved for a later task's response envelope (e.g. distinguishing
+  // official-MCP-backed results from ones served by this server directly).
+  kind?: string;
+  backend?: string;
 }
 
 // Execution Filtering Types
