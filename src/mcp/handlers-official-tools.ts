@@ -13,6 +13,8 @@ import { getOfficialMcpClient, notConfiguredResponse, officialFailure, officialE
 import { OfficialMcpError } from '../services/n8n-official-mcp-client';
 import { MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS } from './agents-action-map';
 import { logger } from '../utils/logger';
+import { getN8nApiClient } from './handlers-n8n-manager';
+import { N8nApiError } from '../utils/n8n-errors';
 
 const exploreSchema = z.object({
   nodeType: z.string().min(1),
@@ -65,4 +67,92 @@ export async function handleExploreNodeResources(args: unknown, context?: Instan
   }
   const { timeoutMs, ...forwarded } = parsed.data;
   return callOfficialTool(context, EXPLORE_TOOLS, forwarded, timeoutMs ?? DEFAULT_TIMEOUT_MS, 'explore_node_resources');
+}
+
+const CATALOG_TOOLS = ['search_projects'];
+
+const catalogSchema = z.object({
+  kind: z.enum(['projects', 'tags']),
+  query: z.string().optional(),
+  limit: z.number().int().min(1).max(500).optional(),
+});
+
+interface CatalogItem {
+  id: string;
+  name: string;
+  type?: string;
+  personal?: boolean;
+}
+
+function filterItems(items: CatalogItem[], query?: string, limit?: number): CatalogItem[] {
+  const q = query?.trim().toLowerCase();
+  const filtered = q ? items.filter(i => i.name.toLowerCase().includes(q)) : items;
+  return limit ? filtered.slice(0, limit) : filtered;
+}
+
+/**
+ * Lists instance-level catalog entries needed as inputs elsewhere (projectId
+ * for agents/data tables, tag names for workflow filters). Public API first;
+ * `projects` only falls back to the official MCP server (or, when that isn't
+ * configured, the caller's own personal project) when the Public API refuses
+ * with a licence-shaped error (403/404) — team projects are Enterprise-only.
+ * `tags` never falls back: `list_workflow_tags` on the official server would
+ * add nothing the Public API doesn't already return.
+ */
+export async function handleListCatalog(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  const parsed = catalogSchema.safeParse(args);
+  if (!parsed.success) {
+    return { success: false, code: 'INVALID_ARGS', error: parsed.error.issues.map(i => `${i.path.join('.') || 'input'}: ${i.message}`).join('; ') };
+  }
+  const { kind, query, limit } = parsed.data;
+  const api = getN8nApiClient(context);
+  if (!api) return { success: false, code: 'NOT_CONFIGURED', error: 'n8n API not configured. Set N8N_API_URL and N8N_API_KEY.' };
+
+  if (kind === 'tags') {
+    try {
+      const tags = (await api.listTags({ limit: 250 })).data.map(t => ({ id: String(t.id), name: t.name }));
+      return { success: true, kind, backend: 'public-api', data: { items: filterItems(tags, query, limit) } } as McpToolResponse;
+    } catch (err) {
+      return { success: false, kind, code: 'API_ERROR', error: err instanceof Error ? err.message : String(err) } as McpToolResponse;
+    }
+  }
+
+  try {
+    const projects = (await api.listProjects()).map(p => ({ id: p.id, name: p.name, type: p.type, personal: p.type === 'personal' }));
+    return {
+      success: true,
+      kind,
+      backend: 'public-api',
+      data: { teamProjectsEnabled: projects.some(p => p.type !== 'personal'), items: filterItems(projects, query, limit) },
+    } as McpToolResponse;
+  } catch (err) {
+    const status = err instanceof N8nApiError ? err.statusCode : undefined;
+    if (status !== 403 && status !== 404) {
+      return { success: false, kind, code: 'API_ERROR', error: err instanceof Error ? err.message : String(err) } as McpToolResponse;
+    }
+  }
+
+  // Licence refusal (team projects are Enterprise-only): the official server
+  // lists projects regardless of the Public API's licence gate.
+  if (getOfficialMcpClient(context)) {
+    const official = await callOfficialTool(context, CATALOG_TOOLS, {}, DEFAULT_TIMEOUT_MS, 'list_catalog');
+    if (!official.success) return official;
+    // search_projects output schema (docs/local/official-agent-tools-2026-08-27/all-official-tools-2026-08-27.json): { data: [{id, name, type}], count, teamProjectsEnabled?, hint? }.
+    const raw = ((official.data as any)?.data ?? []) as any[];
+    const items: CatalogItem[] = raw.map(p => ({ id: String(p.id), name: String(p.name), type: p.type, personal: p.type === 'personal' }));
+    return {
+      success: true,
+      kind,
+      backend: 'official-mcp',
+      data: { teamProjectsEnabled: items.some(p => !p.personal), items: filterItems(items, query, limit) },
+    } as McpToolResponse;
+  }
+
+  const personalId = await api.resolvePersonalProjectId();
+  return {
+    success: true,
+    kind,
+    backend: 'public-api',
+    data: { teamProjectsEnabled: false, items: filterItems([{ id: personalId, name: 'Personal', type: 'personal', personal: true }], query, limit) },
+  } as McpToolResponse;
 }

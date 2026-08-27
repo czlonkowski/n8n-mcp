@@ -28,7 +28,8 @@ import {
   n8nManageDatatableDoc,
   n8nManageCredentialsDoc,
   n8nManageFoldersDoc,
-  n8nManageAgentsDoc
+  n8nManageAgentsDoc,
+  n8nListCatalogDoc
 } from './workflow_management';
 
 // Combine all tool documentations into a single object
@@ -73,7 +74,8 @@ export const toolsDocumentation: Record<string, ToolDocumentation> = {
   n8n_manage_datatable: n8nManageDatatableDoc,
   n8n_manage_credentials: n8nManageCredentialsDoc,
   n8n_manage_folders: n8nManageFoldersDoc,
-  n8n_manage_agents: n8nManageAgentsDoc
+  n8n_manage_agents: n8nManageAgentsDoc,
+  n8n_list_catalog: n8nListCatalogDoc
 };
 
 // Re-export types

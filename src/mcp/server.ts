@@ -36,7 +36,7 @@ import { WorkflowValidator } from '../services/workflow-validator';
 import { isN8nApiConfigured } from '../config/n8n-api';
 import * as n8nHandlers from './handlers-n8n-manager';
 import { handleManageAgents } from './handlers-agents';
-import { handleExploreNodeResources } from './handlers-official-tools';
+import { handleExploreNodeResources, handleListCatalog } from './handlers-official-tools';
 import { handleUpdatePartialWorkflow } from './handlers-workflow-diff';
 import { getToolDocumentation, getToolsOverview } from './tools-documentation';
 import { PROJECT_VERSION } from '../utils/version';
@@ -1983,6 +1983,10 @@ export class N8NDocumentationMCPServer {
 
       case 'n8n_explore_node_resources':
         return handleExploreNodeResources(args, this.instanceContext);
+
+      case 'n8n_list_catalog':
+        this.validateToolParams(name, args, ['kind']);
+        return handleListCatalog(args, this.instanceContext);
 
       case 'n8n_manage_credentials': {
         this.validateToolParams(name, args, ['action']);

@@ -44,6 +44,7 @@ import {
   FolderListParams,
   FolderListResponse,
   ProjectSummary,
+  Project,
 } from '../types/n8n-api';
 import { handleN8nApiError, logN8nError, N8nApiError, N8nValidationError } from '../utils/n8n-errors';
 import { encodeApiPathSegment } from '../utils/validation-schemas';
@@ -1576,6 +1577,20 @@ export class N8nApiClient {
         `/projects/${encodeApiPathSegment(projectId, 'projectId')}/folders/${encodeApiPathSegment(folderId, 'folderId')}`,
         { params: transferToFolderId ? { transferToFolderId } : {} }
       );
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  /**
+   * GET /projects. Team projects are a licensed feature: unlicensed instances answer
+   * 403 (older ones 404). Callers decide the fallback; this method only reports.
+   */
+  async listProjects(limit = 100): Promise<Project[]> {
+    try {
+      const response = await this.client.get('/projects', { params: { limit } });
+      const payload = response.data;
+      return Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
     } catch (error) {
       throw handleN8nApiError(error);
     }

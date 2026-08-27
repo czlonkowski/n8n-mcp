@@ -885,6 +885,20 @@ Old backups are also pruned automatically (10 most recent per workflow, plus an 
     },
     annotations: { title: 'Explore Node Resources', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
   },
+  {
+    name: 'n8n_list_catalog',
+    description: 'List instance-level catalog entries: projects (with the personal project marked, needed as projectId for agents and data tables) or tags. Reads the Public API first; when team projects are not licensed there, falls back to n8n\'s MCP server if N8N_MCP_ACCESS_TOKEN is set.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['projects', 'tags'] },
+        query: { type: 'string', description: 'Case-insensitive name filter' },
+        limit: { type: 'number', minimum: 1, maximum: 500 },
+      },
+      required: ['kind'],
+    },
+    annotations: { title: 'List Catalog', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+  },
 ];
 
 /**
@@ -898,6 +912,7 @@ export const TOOL_OPERATION_PARAM: Record<string, string> = {
   'n8n_manage_folders': 'action',
   'n8n_workflow_versions': 'mode',
   'n8n_manage_agents': 'action',
+  'n8n_list_catalog': 'kind',
 };
 
 /**

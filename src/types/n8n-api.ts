@@ -223,6 +223,15 @@ export interface ProjectSummary {
   type?: string;
 }
 
+/** Project shape returned by `listProjects()` (GET /projects). */
+export interface Project {
+  id: string;
+  name: string;
+  type?: 'personal' | 'team' | string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 // Variable Types
 export interface Variable {
   id?: string;

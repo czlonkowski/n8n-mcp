@@ -41,6 +41,6 @@ Credentials: on this n8n generation the agents runtime rejects azureOpenAiApi an
     errorHandling: 'STALE_CONFIG → get and retry with the new configHash. AGENT_NOT_RUNNABLE → validate and fix errors/missing. OFFICIAL_MCP_TIMEOUT on call → the turn continues in n8n; reuse sessionId instead of re-sending.',
     bestPractices: ['One mutate per resource, re-reading configHash between them', 'Validate before call and before publish', 'Name test agents "[TEST] …" and delete them afterwards', 'Never publish, delete or approve without the user saying so'],
     pitfalls: ['args are forwarded verbatim — a misspelled field is reported by n8n as INVALID_ARGS', 'timeoutMs belongs at the top level, not inside args', 'The MCP access token is separate from the Public API key'],
-    relatedTools: ['n8n_manage_credentials', 'n8n_manage_folders', 'n8n_executions', 'n8n_health_check'],
+    relatedTools: ['n8n_manage_credentials', 'n8n_list_catalog', 'n8n_executions', 'n8n_health_check'],
   },
 };
