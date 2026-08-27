@@ -1,4 +1,5 @@
 import { ToolDefinition } from '../types';
+import { AGENT_ACTIONS } from './agents-action-map';
 
 /**
  * n8n Management Tools
@@ -849,6 +850,20 @@ Old backups are also pruned automatically (10 most recent per workflow, plus an 
       openWorldHint: true,
     },
   },
+  {
+    name: 'n8n_manage_agents',
+    description: `Manage n8n Agents (persisted assistants with a model, instructions, tools, skills, tasks, memory and channels) through n8n's instance-level MCP server. Requires N8N_MCP_ACCESS_TOKEN (MCP API key from n8n Settings → Instance-level MCP) and n8n >= 2.34 with the agents module. Actions: reference, search, get, create, mutate, validate, call, publish, unpublish, revert, versions, delete, discover_assets, verify_mcp_server, update_integration. Start with action=reference (config shape and mutate operations), then discover_assets → create → mutate (one resource at a time, always with the latest configHash) → validate. publish only when the user explicitly asks. call runs the agent with real credentials and tools and may return approvals[] that need a human decision — never approve on the user's behalf. This is not the AI Agent workflow node; use get_node for that.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: AGENT_ACTIONS, description: 'Operation to perform' },
+        args: { type: 'object', description: 'Arguments for the action, forwarded to n8n verbatim. See tools_documentation("n8n_manage_agents", "full") for the per-action fields.' },
+        timeoutMs: { type: 'number', minimum: 5000, maximum: 600000, description: 'Request timeout in ms. Default 30000; 180000 for action=call. The agent run continues in n8n even if this expires.' },
+      },
+      required: ['action'],
+    },
+    annotations: { title: 'Manage n8n Agents', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  },
 ];
 
 /**
@@ -861,6 +876,7 @@ export const TOOL_OPERATION_PARAM: Record<string, string> = {
   'n8n_evaluations': 'action',
   'n8n_manage_folders': 'action',
   'n8n_workflow_versions': 'mode',
+  'n8n_manage_agents': 'action',
 };
 
 /**
@@ -877,4 +893,5 @@ export const DESTRUCTIVE_TOOL_OPERATIONS: Record<string, Set<string>> = {
   // transferToFolderId it archives the folder's workflows.
   'n8n_manage_folders': new Set(['create', 'rename', 'move', 'delete']),
   'n8n_workflow_versions': new Set(['delete', 'rollback', 'prune']),
+  'n8n_manage_agents': new Set(['publish', 'unpublish', 'revert', 'delete', 'update_integration']),
 };

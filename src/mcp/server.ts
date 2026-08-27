@@ -35,6 +35,7 @@ import { TemplateService } from '../templates/template-service';
 import { WorkflowValidator } from '../services/workflow-validator';
 import { isN8nApiConfigured } from '../config/n8n-api';
 import * as n8nHandlers from './handlers-n8n-manager';
+import { handleManageAgents } from './handlers-agents';
 import { handleUpdatePartialWorkflow } from './handlers-workflow-diff';
 import { getToolDocumentation, getToolsOverview } from './tools-documentation';
 import { PROJECT_VERSION } from '../utils/version';
@@ -1398,6 +1399,7 @@ export class N8NDocumentationMCPServer {
           : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
         break;
       case 'n8n_manage_folders':
+      case 'n8n_manage_agents':
         validationResult = args.action
           ? { valid: true, errors: [] }
           : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
@@ -1973,6 +1975,10 @@ export class N8NDocumentationMCPServer {
             throw new Error(`Unknown action: ${folderAction}. Valid actions: create, list, get, rename, move, delete`);
         }
       }
+
+      case 'n8n_manage_agents':
+        this.validateToolParams(name, args, ['action']);
+        return handleManageAgents(args, this.instanceContext);
 
       case 'n8n_manage_credentials': {
         this.validateToolParams(name, args, ['action']);
