@@ -35,4 +35,46 @@ describe('handleExploreNodeResources', () => {
     access.getOfficialMcpClient.mockReturnValue(fakeClient(['search_workflows']));
     expect(await handleExploreNodeResources(VALID)).toMatchObject({ success: false, code: 'OFFICIAL_MCP_TOOL_UNAVAILABLE' });
   });
+  it('maps an "Input validation error" text response to INVALID_ARGS', async () => {
+    const text = 'Input validation error: credentialId must be a string';
+    const client = {
+      capabilities: vi.fn().mockResolvedValue({ reachable: true, toolCount: 1, toolNames: ['explore_node_resources'], agentTools: false, checkedAt: Date.now() }),
+      callTool: vi.fn().mockResolvedValue({ isError: false, text, json: undefined, sizeBytes: text.length, truncated: false }),
+    };
+    access.getOfficialMcpClient.mockReturnValue(client);
+    expect(await handleExploreNodeResources(VALID)).toMatchObject({ success: false, code: 'INVALID_ARGS', error: text });
+  });
+  it('caps a long official error message at 2000 chars and keeps officialError', async () => {
+    const longMessage = 'x'.repeat(5000);
+    const result = { ok: false, message: longMessage };
+    const client = {
+      capabilities: vi.fn().mockResolvedValue({ reachable: true, toolCount: 1, toolNames: ['explore_node_resources'], agentTools: false, checkedAt: Date.now() }),
+      callTool: vi.fn().mockResolvedValue({ isError: true, text: JSON.stringify(result), json: result, sizeBytes: 10, truncated: false }),
+    };
+    access.getOfficialMcpClient.mockReturnValue(client);
+    const r: any = await handleExploreNodeResources(VALID);
+    expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_ERROR' });
+    expect(r.error).toHaveLength(2000);
+    expect(r.officialError).toEqual(result);
+  });
+  it('prefers a string error field over a non-string message field', async () => {
+    const result = { ok: false, message: { nested: true }, error: 'plain' };
+    const client = {
+      capabilities: vi.fn().mockResolvedValue({ reachable: true, toolCount: 1, toolNames: ['explore_node_resources'], agentTools: false, checkedAt: Date.now() }),
+      callTool: vi.fn().mockResolvedValue({ isError: false, text: JSON.stringify(result), json: result, sizeBytes: 10, truncated: false }),
+    };
+    access.getOfficialMcpClient.mockReturnValue(client);
+    const r: any = await handleExploreNodeResources(VALID);
+    expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_ERROR', error: 'plain' });
+  });
+  it('surfaces truncated:true from a successful truncated result', async () => {
+    const result = { ok: true, results: [{ name: '#general', value: 'C1' }] };
+    const client = {
+      capabilities: vi.fn().mockResolvedValue({ reachable: true, toolCount: 1, toolNames: ['explore_node_resources'], agentTools: false, checkedAt: Date.now() }),
+      callTool: vi.fn().mockResolvedValue({ isError: false, text: JSON.stringify(result), json: result, sizeBytes: 10, truncated: true }),
+    };
+    access.getOfficialMcpClient.mockReturnValue(client);
+    const r = await handleExploreNodeResources(VALID);
+    expect(r).toMatchObject({ success: true, truncated: true });
+  });
 });

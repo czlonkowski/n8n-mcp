@@ -107,6 +107,20 @@ export function notConfiguredResponse(context?: InstanceContext, action?: string
   };
 }
 
+/** Normalises an official error's message: only a string `message`/`error` field is trusted; everything else falls back, and the result is always capped at 2000 chars — n8n's error text is untrusted output. */
+export function officialErrorText(data: unknown, officialCode: string | undefined): string {
+  const obj = data as any;
+  const raw =
+    typeof obj?.message === 'string'
+      ? obj.message
+      : typeof obj?.error === 'string'
+        ? obj.error
+        : typeof data === 'string'
+          ? data
+          : `n8n returned ${officialCode ?? 'an error'}`;
+  return String(raw).slice(0, 2000);
+}
+
 /** Maps an `OfficialMcpError` (or any other thrown value) to the shared failure envelope. */
 export function officialFailure(err: unknown, action?: string): OfficialMcpFailure {
   const mapped = err instanceof OfficialMcpError ? err : mapOfficialTransportError(err);

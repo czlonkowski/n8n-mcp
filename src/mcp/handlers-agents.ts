@@ -11,7 +11,7 @@
 import { z } from 'zod';
 import { InstanceContext } from '../types/instance-context';
 import { McpToolResponse } from '../types/n8n-api';
-import { getOfficialMcpClient, notConfiguredResponse, officialFailure } from './official-mcp-access';
+import { getOfficialMcpClient, notConfiguredResponse, officialFailure, officialErrorText } from './official-mcp-access';
 import {
   AGENT_ACTION_MAP,
   AGENT_ACTIONS,
@@ -107,20 +107,6 @@ async function credentialTypeHint(args: Record<string, unknown>, data: unknown, 
   } catch {
     return undefined; // no credential scope, or not found: the official result stands on its own
   }
-}
-
-/** Normalises an official error's message: only a string `message`/`error` field is trusted; everything else falls back, and the result is always capped at 2000 chars — n8n's error text is untrusted output. */
-function officialErrorText(data: unknown, officialCode: string | undefined): string {
-  const obj = data as any;
-  const raw =
-    typeof obj?.message === 'string'
-      ? obj.message
-      : typeof obj?.error === 'string'
-        ? obj.error
-        : typeof data === 'string'
-          ? data
-          : `n8n returned ${officialCode ?? 'an error'}`;
-  return String(raw).slice(0, 2000);
 }
 
 export async function handleManageAgents(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
