@@ -16,8 +16,13 @@ COPY tsconfig*.json ./
 # compiles src against older type definitions (a range would resolve through the
 # `latest` dist-tag, which lags the release n8n ships), and a stale zod fails
 # `npm install` outright, because n8n-workflow declares an exact zod peer dependency.
+#
+# The overrides mirror package.json. isolated-vm is a native module pulled in through
+# n8n-workflow (@n8n/expression-runtime); it is never used here, and from 7.x it ships
+# no prebuilt binary for Node 22, so without the stub npm tries to compile it and fails
+# on this image (no Python or build tools).
 RUN --mount=type=cache,target=/root/.npm \
-    echo '{}' > package.json && \
+    echo '{"overrides":{"isolated-vm":"npm:empty-npm-package@1.0.0"}}' > package.json && \
     npm install --no-save typescript@^5.8.3 @types/node@^22.15.30 @types/express@^5.0.3 \
         @modelcontextprotocol/sdk@1.30.0 dotenv@^16.5.0 express@^5.1.0 axios@^1.18.1 \
         n8n-workflow@2.36.3 uuid@^11.1.1 @types/uuid@^10.0.0 \
