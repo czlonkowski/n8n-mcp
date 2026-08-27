@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.74.0] - 2026-08-27
+
+### Changed
+
+- **n8n dependencies updated to 2.36.x** — `n8n-nodes-base` 2.35.3 → 2.36.4, `n8n-core` 2.35.3 → 2.36.5, `n8n-workflow` 2.35.2 → 2.36.3, `@n8n/n8n-nodes-langchain` 2.35.3 → 2.36.4. The node database is rebuilt against them: 2,616 nodes (832 core, unchanged, plus 1,784 community nodes, up from 1,709). No core nodes were added or removed; 16 core node schemas changed, 5 of them with a new typeVersion.
+- Node-level changes users will see through this server: the Schedule Trigger moves to typeVersion 1.4 and gains an "If Execution Is Missed" policy (`misfirePolicy`: skip, coalesce, or coalesce per owner) with a per-node `misfireGraceSeconds`, so catch-up runs after downtime can be collapsed instead of firing once per missed slot; the MCP Server Trigger moves to typeVersion 2.1 with a server `instructions` field and an `includeUserInOutput` toggle; the Discord node's member resource gains ban, unban, kick and timeout operations with structured moderation reasons; the OpenRouter Chat Model gains provider routing options (`order`, `allowFallbacks`, `requireParameters`, `dataCollection`, `zdr`, `only`, `ignore`, `sort`); the MiniMax nodes move to typeVersion 1.1 with the M3 chat model and the H3 video model (duration and resolution controls) as new defaults; and the Jira node adds a user-management scope notice. `nodes-base.confluence`, still shipped hidden by n8n, now carries a real schema — a `page` resource with `create` and `get` (optionally with the full sub-tree) — so `get_node` no longer returns it empty.
+- Community nodes refreshed: 1,491 verified nodes from the n8n registry plus 140 node rows from 67 npm packages, with 3 rows dropped for packages that no longer declare them. READMEs were refreshed for 1,771 of 1,784 community nodes and 72 AI documentation summaries generated, bringing summary coverage to 1,771 of 1,784.
+
 ## [2.73.0] - 2026-08-19
 
 ### Changed
