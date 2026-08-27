@@ -13,11 +13,19 @@ export interface FakeOfficialMcp {
   close(): Promise<void>;
 }
 
+// Distinguishes a malformed request body (400) from anything else that goes wrong
+// while handling a request (500) in the top-level catch below.
+class BodyParseError extends Error {}
+
 function readBody(req: http.IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on('data', c => chunks.push(c));
-    req.on('end', () => { const text = Buffer.concat(chunks).toString('utf8'); try { resolve(text ? JSON.parse(text) : undefined); } catch (e) { reject(e); } });
+    req.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8');
+      try { resolve(text ? JSON.parse(text) : undefined); }
+      catch (e) { reject(new BodyParseError(e instanceof Error ? e.message : String(e))); }
+    });
     req.on('error', reject);
   });
 }
@@ -49,20 +57,41 @@ export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): P
 
   const server = http.createServer(async (req, res) => {
     requests.push({ method: req.method || '', authorization: req.headers.authorization });
-    if (raw) { res.statusCode = raw.status; res.setHeader('content-type', raw.contentType ?? 'text/html'); res.end(raw.body); return; }
-    if (opts.token !== undefined && req.headers.authorization !== `Bearer ${opts.token}`) {
-      res.statusCode = 401; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ message: 'Unauthorized' })); return;
+    if (req.method !== 'POST') {
+      // Nothing reads the request stream on these paths (raw/401/405 responses all
+      // return before readBody is called), so attach a no-op handler up front — an
+      // unconsumed request stream that errors would otherwise throw an unhandled
+      // 'error' event and crash the process.
+      req.on('error', () => {});
     }
-    if (req.method === 'GET') { res.statusCode = 405; res.end(); return; }
-    const body = req.method === 'POST' ? await readBody(req) : undefined;
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    currentTransport = transport;
     try {
-      await mcp.connect(transport);
-      await transport.handleRequest(req, res, body);
-    } finally {
-      await transport.close();
-      if (currentTransport === transport) currentTransport = undefined;
+      if (raw) { res.statusCode = raw.status; res.setHeader('content-type', raw.contentType ?? 'text/html'); res.end(raw.body); return; }
+      if (opts.token !== undefined && req.headers.authorization !== `Bearer ${opts.token}`) {
+        res.statusCode = 401; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ message: 'Unauthorized' })); return;
+      }
+      if (req.method === 'GET') { res.statusCode = 405; res.end(); return; }
+      const body = req.method === 'POST' ? await readBody(req) : undefined;
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      currentTransport = transport;
+      try {
+        await mcp.connect(transport);
+        await transport.handleRequest(req, res, body);
+      } finally {
+        await transport.close();
+        if (currentTransport === transport) currentTransport = undefined;
+      }
+    } catch (e) {
+      // Fail closed: whatever went wrong (a malformed body, a transport error, ...),
+      // always answer and end the response so the socket closes — an unanswered
+      // request here would hang server.close()/fake.close() forever, and an
+      // unhandled rejection from this listener is fatal in a bare vitest process.
+      if (!res.headersSent) {
+        res.statusCode = e instanceof BodyParseError ? 400 : 500;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ message: e instanceof Error ? e.message : 'Internal error' }));
+      } else if (!res.writableEnded) {
+        res.end();
+      }
     }
   });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
