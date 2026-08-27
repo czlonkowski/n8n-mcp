@@ -5,7 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 
 export interface FakeTool { name: string; handler?: (args: Record<string, unknown>) => unknown | Promise<unknown>; isError?: boolean }
-export interface FakeOfficialMcpOptions { tools?: FakeTool[]; token?: string; raw?: { status: number; body: string; contentType?: string } }
+export interface FakeOfficialMcpOptions { tools?: FakeTool[]; token?: string; raw?: { status: number; body: string; contentType?: string }; port?: number }
 export interface FakeOfficialMcp {
   url: string;
   requests: Array<{ method: string; authorization?: string }>;
@@ -33,27 +33,37 @@ function readBody(req: http.IncomingMessage): Promise<unknown> {
 export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): Promise<FakeOfficialMcp> {
   let raw = opts.raw;
   const requests: FakeOfficialMcp['requests'] = [];
-  const mcp = new McpServer({ name: 'fake-n8n', version: '0.0.0' });
-  for (const tool of opts.tools ?? []) {
-    // A raw-shape inputSchema turns into a strict zod object that strips any key not
-    // declared in the shape, which would silently drop the arguments callers pass in
-    // (e.g. { id: 'agent-42' }). Passing an already-built passthrough object schema
-    // keeps normalizeObjectSchema's "already an object schema" path and lets arbitrary
-    // arguments flow through untouched — good enough for a test fake with no real schema.
-    mcp.registerTool<any, any>(tool.name, { description: `fake ${tool.name}`, inputSchema: z.object({}).passthrough() as any }, async (args: any) => {
-      const typedArgs = args as Record<string, unknown>;
-      const value = tool.handler ? await tool.handler(typedArgs) : { ok: true, tool: tool.name, args: typedArgs };
-      return { content: [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value) }], isError: tool.isError === true };
-    });
+
+  // A fresh McpServer per request (see below) needs the same tools registered
+  // each time; factored out so registration logic lives in one place.
+  function createMcpServer(): McpServer {
+    const mcp = new McpServer({ name: 'fake-n8n', version: '0.0.0' });
+    for (const tool of opts.tools ?? []) {
+      // A raw-shape inputSchema turns into a strict zod object that strips any key not
+      // declared in the shape, which would silently drop the arguments callers pass in
+      // (e.g. { id: 'agent-42' }). Passing an already-built passthrough object schema
+      // keeps normalizeObjectSchema's "already an object schema" path and lets arbitrary
+      // arguments flow through untouched — good enough for a test fake with no real schema.
+      mcp.registerTool<any, any>(tool.name, { description: `fake ${tool.name}`, inputSchema: z.object({}).passthrough() as any }, async (args: any) => {
+        const typedArgs = args as Record<string, unknown>;
+        const value = tool.handler ? await tool.handler(typedArgs) : { ok: true, tool: tool.name, args: typedArgs };
+        return { content: [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value) }], isError: tool.isError === true };
+      });
+    }
+    return mcp;
   }
+
   // Stateless: no session id, plain JSON responses (no SSE) so tests stay simple.
   // SDK 1.30 stateless transports are single-use ("Stateless transport cannot be reused
-  // across requests") — each HTTP request gets its own transport connected to the same
-  // McpServer, then the transport is closed (which detaches it from the server) once the
-  // request completes. GET is rejected with 405 up front: the real official server doesn't
-  // offer a standalone SSE stream either, and the SDK client treats 405 on GET as "no
-  // stream" rather than an error, so this keeps the single-transport-at-a-time model simple.
-  let currentTransport: StreamableHTTPServerTransport | undefined;
+  // across requests"), and a single McpServer only supports one connected transport at a
+  // time (Server.connect() throws "Already connected to a transport" on a second call) —
+  // so each HTTP request gets its OWN McpServer + transport pair, closed once the request
+  // completes. This also lets genuinely concurrent requests (e.g. two overlapping tool
+  // calls from the same client) be served independently instead of racing on a shared
+  // McpServer.connect(). GET is rejected with 405 up front: the real official server
+  // doesn't offer a standalone SSE stream either, and the SDK client treats 405 on GET as
+  // "no stream" rather than an error, so this keeps the per-request model simple.
+  const activeTransports = new Set<StreamableHTTPServerTransport>();
 
   const server = http.createServer(async (req, res) => {
     requests.push({ method: req.method || '', authorization: req.headers.authorization });
@@ -72,13 +82,15 @@ export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): P
       if (req.method === 'GET') { res.statusCode = 405; res.end(); return; }
       const body = req.method === 'POST' ? await readBody(req) : undefined;
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-      currentTransport = transport;
+      const mcp = createMcpServer();
+      activeTransports.add(transport);
       try {
         await mcp.connect(transport);
         await transport.handleRequest(req, res, body);
       } finally {
+        activeTransports.delete(transport);
         await transport.close();
-        if (currentTransport === transport) currentTransport = undefined;
+        await mcp.close();
       }
     } catch (e) {
       // Fail closed: whatever went wrong (a malformed body, a transport error, ...),
@@ -94,12 +106,15 @@ export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): P
       }
     }
   });
-  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  await new Promise<void>(r => server.listen(opts.port ?? 0, '127.0.0.1', r));
   const port = (server.address() as AddressInfo).port;
   return {
     url: `http://127.0.0.1:${port}/mcp-server/http`,
     requests,
     setRaw: r => { raw = r; },
-    close: async () => { await currentTransport?.close(); await mcp.close(); await new Promise<void>(r => server.close(() => r())); },
+    close: async () => {
+      await Promise.all([...activeTransports].map(t => t.close().catch(() => undefined)));
+      await new Promise<void>(r => server.close(() => r()));
+    },
   };
 }

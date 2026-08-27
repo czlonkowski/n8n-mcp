@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { startFakeOfficialMcp, FakeOfficialMcp } from '../../helpers/fake-official-mcp-server';
 import { N8nOfficialMcpClient } from '@/services/n8n-official-mcp-client';
+import { SSRFProtection } from '@/utils/ssrf-protection';
 
 let savedMode: string | undefined;
 beforeAll(() => { savedMode = process.env.WEBHOOK_SECURITY_MODE; process.env.WEBHOOK_SECURITY_MODE = 'moderate'; });
@@ -114,6 +115,72 @@ describe('N8nOfficialMcpClient', () => {
     fake.setRaw(undefined);
     const result = await client.callTool('search_agents', {});   // fresh transport, no stale state
     expect(result.isError).toBe(false);
+    await client.close();
+  });
+
+  // Regression test for review round 1, issue 3: the retry gate used to read
+  // `this.caps?.reachable`, which stays null for a client that only ever
+  // calls callTool() (never capabilities()) — making the retry dead code for
+  // that usage pattern. This exercises a REAL second attempt end to end: the
+  // shared client/pinned pair created by the first successful call is made
+  // to fail exactly once with a genuine connection-level error (no HTTP
+  // status — the same shape a socket reset or DNS failure would produce),
+  // and a spy on SSRFProtection.createPinnedFetch proves a second transport
+  // was actually created and used within the same callTool() invocation
+  // (variant 2 from the review: a real dead keep-alive socket via port reuse
+  // was tried first and found non-deterministic on this machine — undici's
+  // pool silently opens a fresh connection instead of surfacing an error —
+  // so this test forces the failure directly instead).
+  it('retries once on a genuine connection failure, using a freshly created transport', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+
+    const originalCreatePinnedFetch = SSRFProtection.createPinnedFetch.bind(SSRFProtection);
+    let failNextFetch = false;
+    const spy = vi.spyOn(SSRFProtection, 'createPinnedFetch').mockImplementation((addresses) => {
+      const real = originalCreatePinnedFetch(addresses);
+      return {
+        fetch: (url, init) => {
+          if (failNextFetch) { failNextFetch = false; return Promise.reject(new Error('simulated socket reset')); }
+          return real.fetch(url, init);
+        },
+        close: () => real.close(),
+      };
+    });
+    try {
+      const first = await client.callTool('search_agents', {});
+      expect(first.isError).toBe(false);
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      failNextFetch = true;   // breaks the next request on the already-connected client
+      const requestsBeforeRetry = fake.requests.length;
+      const result = await client.callTool('search_agents', {});
+      expect(result.isError).toBe(false);
+      expect(spy).toHaveBeenCalledTimes(2);                       // a fresh transport was created for the retry
+      expect(fake.requests.length).toBeGreaterThan(requestsBeforeRetry); // the retry really hit the server again
+      await client.close();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // Regression test for review round 1, issue 4: a single failed call used
+  // to unconditionally reset the shared transport, which closes the whole
+  // MCP Client and rejects every other in-flight request on it. Two
+  // concurrent calls share one connection (connect() coalesces concurrent
+  // callers into a single handshake); call A's timeout must not abort call
+  // B, which is still waiting on the same transport.
+  it('does not let one concurrent call\'s timeout abort another call sharing the transport', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'sleepy', handler: () => new Promise(resolve => setTimeout(() => resolve({ ok: true }), 300)) }] });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    const [a, b] = await Promise.allSettled([
+      client.callTool('sleepy', {}, { timeoutMs: 50 }),
+      client.callTool('sleepy', {}),
+    ]);
+    expect(a.status).toBe('rejected');
+    if (a.status === 'rejected') expect(a.reason).toMatchObject({ code: 'OFFICIAL_MCP_TIMEOUT' });
+    expect(b.status).toBe('fulfilled');
+    if (b.status === 'fulfilled') { expect(b.value.isError).toBe(false); expect(b.value.json).toEqual({ ok: true }); }
     await client.close();
   });
 });
