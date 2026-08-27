@@ -67,20 +67,72 @@ describe('handleManageAgents', () => {
     const client = fakeClient(['search_workflows']); access.getOfficialMcpClient.mockReturnValue(client);
     expect(await handleManageAgents({ action: 'search', args: {} })).toMatchObject({ success: false, code: 'OFFICIAL_MCP_TOOL_UNAVAILABLE' });
   });
-  it('adds the credential-type hint for missing:["credential"] when the credential type is known-unsupported', async () => {
+  it('adds the credential-type hint for missing:["credential"] by looking up get_agent, not args.credential', async () => {
     // Matches docs/local/official-agent-tools-2026-08-27/spike-log-3-azure-incompatible.json:
     // validate_agent answers a "missing credential" outcome with ok:true, valid:false
-    // (isError stays false on the wire) — this is a validation *result*, not an official
-    // protocol-level error, so the fakeClient's `isError = r.ok === false` stays false here
-    // and the handler's success path (with the attached hint) is exercised, not the failure path.
-    const client = fakeClient(ALL, { validate_agent: { ok: true, valid: false, errors: [], missing: ['credential'] } });
+    // (isError stays false on the wire) — a validation *result*, not an official
+    // protocol-level error — so the success path (with the attached hint) is exercised.
+    // validate_agent's own schema is {agentId} with additionalProperties:false, so the
+    // credential id can only come from the official result: here that means one
+    // best-effort get_agent lookup keyed on args.agentId, reading config.credential
+    // (a sibling of config.model, not nested under it).
+    const client = fakeClient(ALL, {
+      validate_agent: { ok: true, valid: false, errors: [], missing: ['credential'] },
+      get_agent: { ok: true, agent: { id: 'a' }, config: { model: 'azure-openai/gpt-5.4-mini', credential: 'c1' } },
+    });
     access.getOfficialMcpClient.mockReturnValue(client);
     api.getN8nApiClient.mockReturnValue({ getCredential: vi.fn().mockResolvedValue({ id: 'c1', name: 'Azure', type: 'azureOpenAiApi' }) });
-    const r = await handleManageAgents({ action: 'validate', args: { agentId: 'a', credential: 'c1' } });
-    expect(r.success).toBe(true);  // validate returned ok:false but that is a validation *result*, not an official error
+    const r = await handleManageAgents({ action: 'validate', args: { agentId: 'a' } });
+    expect(r.success).toBe(true);
+    expect(client.callTool).toHaveBeenCalledWith('get_agent', { agentId: 'a' }, { timeoutMs: 30_000 });
     expect(r.hint).toContain('azureOpenAiApi'); expect(r.hint).toContain('openAiApi');
+  });
+  it('attaches the credential-type hint on the failure branch too (call_agent reports it as an error)', async () => {
+    // call_agent reports the same missing-credential condition as an official error
+    // (isError:true, code:agent_misconfigured), per spike-log-3. The hint must still
+    // attach, replacing the generic AGENT_NOT_RUNNABLE hint.
+    const client = fakeClient(ALL, {
+      call_agent: { ok: false, status: 'error', code: 'agent_misconfigured', message: "This agent isn't ready to run yet. Finish configuring it and try again.", missing: ['credential'] },
+      get_agent: { ok: true, agent: { id: 'a' }, config: { credential: 'c1' } },
+    });
+    access.getOfficialMcpClient.mockReturnValue(client);
+    api.getN8nApiClient.mockReturnValue({ getCredential: vi.fn().mockResolvedValue({ id: 'c1', name: 'Azure', type: 'azureOpenAiApi' }) });
+    const r = await handleManageAgents({ action: 'call', args: { agentId: 'a', request: { type: 'message', message: 'ping' } } });
+    expect(r).toMatchObject({ success: false, code: 'AGENT_NOT_RUNNABLE' });
+    expect(r.hint).toContain('azureOpenAiApi');
+  });
+  it('uses config.credential directly when the acted-on result already carries it, without an extra get_agent call', async () => {
+    const client = fakeClient(ALL, {
+      get_agent: { ok: true, agent: { id: 'a' }, config: { model: 'azure-openai/gpt-5.4-mini', credential: 'c1' }, missing: ['credential'] },
+    });
+    access.getOfficialMcpClient.mockReturnValue(client);
+    api.getN8nApiClient.mockReturnValue({ getCredential: vi.fn().mockResolvedValue({ id: 'c1', name: 'Azure', type: 'azureOpenAiApi' }) });
+    const r = await handleManageAgents({ action: 'get', args: { agentId: 'a' } });
+    expect(r.success).toBe(true);
+    expect(r.hint).toContain('azureOpenAiApi');
+    expect(client.callTool).toHaveBeenCalledTimes(1); // only the 'get' action's own call — no extra get_agent lookup
+  });
+  it('attaches no hint when the credential lookup itself fails', async () => {
+    const client = fakeClient(ALL, {
+      validate_agent: { ok: true, valid: false, errors: [], missing: ['credential'] },
+      get_agent: { ok: true, agent: { id: 'a' }, config: { credential: 'c1' } },
+    });
+    access.getOfficialMcpClient.mockReturnValue(client);
     api.getN8nApiClient.mockReturnValue({ getCredential: vi.fn().mockRejectedValue(new Error('403')) });
-    expect((await handleManageAgents({ action: 'validate', args: { agentId: 'a', credential: 'c1' } })).hint).toBeUndefined();
+    const r = await handleManageAgents({ action: 'validate', args: { agentId: 'a' } });
+    expect(r.success).toBe(true);
+    expect(r.hint).toBeUndefined();
+  });
+  it('caps error text at 2000 chars and only trusts message/error when they are strings', async () => {
+    const client = fakeClient(ALL);
+    access.getOfficialMcpClient.mockReturnValue(client);
+    client.callTool.mockResolvedValueOnce({ isError: true, text: '', json: { ok: false, code: 'weird', message: 'x'.repeat(5000) }, sizeBytes: 5000, truncated: false });
+    const long = await handleManageAgents({ action: 'get', args: { agentId: 'a' } });
+    expect(long.error?.length).toBe(2000);
+
+    client.callTool.mockResolvedValueOnce({ isError: true, text: '', json: { ok: false, code: 'weird', message: { nested: true }, error: 'plain error text' }, sizeBytes: 10, truncated: false });
+    const objectMessage = await handleManageAgents({ action: 'get', args: { agentId: 'a' } });
+    expect(objectMessage.error).toBe('plain error text');
   });
 });
 

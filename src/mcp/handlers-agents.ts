@@ -16,11 +16,12 @@ import {
   AGENT_ACTION_MAP,
   AGENT_ACTIONS,
   AgentAction,
+  DEFAULT_TIMEOUT_MS,
   MIN_TIMEOUT_MS,
   MAX_TIMEOUT_MS,
   resolveOfficialTool,
 } from './agents-action-map';
-import { OfficialMcpError, OFFICIAL_MCP_HINTS, OfficialToolResult } from '../services/n8n-official-mcp-client';
+import { N8nOfficialMcpClient, OfficialMcpError, OFFICIAL_MCP_HINTS, OfficialToolResult } from '../services/n8n-official-mcp-client';
 import { AGENT_SUPPORTED_CREDENTIAL_TYPES, AGENT_UNSUPPORTED_CREDENTIAL_TYPES } from '../constants/agent-model-providers';
 import { getN8nApiClient } from './handlers-n8n-manager';
 import { logger } from '../utils/logger';
@@ -52,23 +53,49 @@ function invalid(action: string | undefined, message: string): McpToolResponse {
 }
 
 /**
- * Attaches a hint when a `validate`/`call`/`mutate` result reports a missing
- * credential and that credential is a type the agents runtime is known not
- * to accept. Result-shape-based (looks at `missing`, not `isError`): n8n
- * reports this outcome as a normal result, not a protocol-level error (see
- * docs/local/official-agent-tools-2026-08-27/spike-log-3-azure-incompatible.json).
- * Never interpolates anything from the official result itself beyond the
- * credential id/type — both are opaque identifiers, not free text.
+ * Resolves the credential id implicated by a "missing credential" outcome,
+ * from the official result alone — `args` never carries a credential id for
+ * any agent tool (e.g. `validate_agent`'s schema is `{agentId}` with
+ * `additionalProperties:false`, so an `args.credential` would be rejected
+ * by n8n before ever reaching this code).
+ *
+ * Source (a): `data.config.credential` — present on `get_agent` results and
+ * on any other result that happens to echo the config back (`config.model`
+ * is the model string; `credential` is its sibling field, not nested under
+ * it — see docs/local/official-agent-tools-2026-08-27/spike-log-3-azure-incompatible.json
+ * `get_agent` result: `config:{model:"azure-openai/gpt-5.4-mini", credential:"fFdF…"}`).
+ * Source (b): when (a) is absent but the result reports `missing:["credential"]`
+ * and `args.agentId` is known, one best-effort `get_agent` lookup to read the
+ * same field from the agent's current config. Any failure here (including no
+ * `agentId`) means no hint — the original official result is returned as-is.
  */
-async function credentialTypeHint(args: Record<string, unknown>, data: unknown, context?: InstanceContext): Promise<string | undefined> {
+async function credentialIdFromResult(args: Record<string, unknown>, data: unknown, client: N8nOfficialMcpClient): Promise<string | undefined> {
+  const direct = (data as any)?.config?.credential;
+  if (typeof direct === 'string') return direct;
+  const agentId = args.agentId;
+  if (typeof agentId !== 'string') return undefined;
+  try {
+    const result = await client.callTool('get_agent', { agentId }, { timeoutMs: DEFAULT_TIMEOUT_MS });
+    const credential = (result.json as any)?.config?.credential;
+    return typeof credential === 'string' ? credential : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Attaches a hint when a result (success or failure alike — `call_agent`
+ * reports this same condition as `isError:true` with `code:"agent_misconfigured"`,
+ * per spike-log-3) reports a missing credential and that credential is a
+ * type the agents runtime is known not to accept. Result-shape-based (keys
+ * off `missing`, not `isError`). Never interpolates anything from the
+ * official result itself beyond the credential id/type — both are opaque
+ * identifiers, not free text.
+ */
+async function credentialTypeHint(args: Record<string, unknown>, data: unknown, client: N8nOfficialMcpClient, context?: InstanceContext): Promise<string | undefined> {
   const missing = (data as any)?.missing;
   if (!Array.isArray(missing) || !missing.includes('credential')) return undefined;
-  const credentialId =
-    typeof args.credential === 'string'
-      ? args.credential
-      : typeof (data as any)?.config?.model?.credential === 'string'
-        ? (data as any).config.model.credential
-        : undefined;
+  const credentialId = await credentialIdFromResult(args, data, client);
   if (!credentialId) return undefined;
   const api = getN8nApiClient(context);
   if (!api) return undefined;
@@ -80,6 +107,20 @@ async function credentialTypeHint(args: Record<string, unknown>, data: unknown, 
   } catch {
     return undefined; // no credential scope, or not found: the official result stands on its own
   }
+}
+
+/** Normalises an official error's message: only a string `message`/`error` field is trusted; everything else falls back, and the result is always capped at 2000 chars — n8n's error text is untrusted output. */
+function officialErrorText(data: unknown, officialCode: string | undefined): string {
+  const obj = data as any;
+  const raw =
+    typeof obj?.message === 'string'
+      ? obj.message
+      : typeof obj?.error === 'string'
+        ? obj.error
+        : typeof data === 'string'
+          ? data
+          : `n8n returned ${officialCode ?? 'an error'}`;
+  return String(raw).slice(0, 2000);
 }
 
 export async function handleManageAgents(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
@@ -123,19 +164,20 @@ export async function handleManageAgents(args: unknown, context?: InstanceContex
         action,
         officialTool: tool,
         code: mapped?.code ?? 'OFFICIAL_MCP_ERROR',
-        error:
-          (data as any)?.message ??
-          (data as any)?.error ??
-          (typeof data === 'string' ? data.slice(0, 2000) : `n8n returned ${officialCode ?? 'an error'}`),
+        error: officialErrorText(data, officialCode),
         officialError: data,
       };
-      if (mapped?.hint) response.hint = mapped.hint;
+      // A credential-type hint (derived from the result itself) takes
+      // precedence over the generic mapped hint when both apply.
+      const credHint = await credentialTypeHint(toolArgs, data, client, context);
+      const hint = credHint ?? mapped?.hint;
+      if (hint) response.hint = hint;
       return response;
     }
 
     const response: McpToolResponse = { success: true, action, officialTool: tool, data };
     if (result.truncated) response.truncated = true;
-    const hint = await credentialTypeHint(toolArgs, data, context);
+    const hint = await credentialTypeHint(toolArgs, data, client, context);
     if (hint) response.hint = hint;
     return response;
   } catch (err) {
