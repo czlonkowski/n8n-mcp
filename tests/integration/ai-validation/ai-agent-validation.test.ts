@@ -317,6 +317,7 @@ describe('Integration: AI Agent Validation', () => {
     });
 
     const memory2 = createMemoryNode({
+      id: 'memory-2', // the helper defaults to 'memory-1'; n8n 2.36 rejects duplicate node ids
       name: 'Memory 2'
     });
 
