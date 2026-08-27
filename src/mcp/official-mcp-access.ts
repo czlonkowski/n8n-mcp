@@ -34,16 +34,27 @@ const clientCache = createInstanceCache<N8nOfficialMcpClient>((client, key) => {
  * Resolve official-MCP config for this request.
  *
  * Precedence mirrors `getN8nApiClient` (handlers-n8n-manager.ts): when the
- * instance context carries both `n8nApiUrl` and `n8nApiKey`, it is
- * authoritative for that request — there is no environment fallback, even
- * if the context lacks a valid `n8nMcpAccessToken` (that context is simply
- * "not configured"). Environment variables are consulted only when there
- * is no such instance context at all. This keeps a multi-tenant deployment
- * from leaking a host-level token into a tenant's requests.
+ * instance context carries `n8nApiUrl` plus either `n8nApiKey` or a valid
+ * `n8nMcpAccessToken`, it is authoritative for that request — there is no
+ * environment fallback, even if the context's own token turns out to be
+ * missing or invalid (that context is simply "not configured", not a
+ * license to reach for the host's token). `getOfficialMcpConfigFromContext`
+ * only needs `{ n8nApiUrl, n8nMcpAccessToken }`, so a context that carries a
+ * token but no `n8nApiKey` is still context-authoritative.
+ *
+ * Only when there is no such instance context at all do environment
+ * variables come into play — and even then, multi-tenant mode
+ * (SECURITY, GHSA-jxx9-px88-pj69-style gate) refuses that fallback outright,
+ * since a missing/incomplete tenant context must never resolve to the
+ * operator's own token.
  */
 export function resolveOfficialMcpConfig(context?: InstanceContext): OfficialMcpConfig | null {
-  if (context?.n8nApiUrl && context?.n8nApiKey) {
+  if (context?.n8nApiUrl && (context?.n8nApiKey || context?.n8nMcpAccessToken)) {
     return getOfficialMcpConfigFromContext(context);
+  }
+  if (process.env.ENABLE_MULTI_TENANT === 'true') {
+    logger.warn('Refusing env-credential fallback for official MCP in multi-tenant mode');
+    return null;
   }
   return getOfficialMcpConfig();
 }
