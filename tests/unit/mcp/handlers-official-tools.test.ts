@@ -86,6 +86,11 @@ describe('handleListCatalog', () => {
     const r = await handleListCatalog({ kind: 'projects', query: 'team' });
     expect(r).toMatchObject({ success: true, kind: 'projects', backend: 'public-api', data: { teamProjectsEnabled: true, items: [{ id: 'p2', name: 'Team A' }] } });
   });
+  it('marks teamProjectsEnabled true from the Public API even when only the personal project is visible (the endpoint itself is the licence gate)', async () => {
+    api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockResolvedValue([{ id: 'p1', name: 'Personal', type: 'personal' }]) });
+    const r = await handleListCatalog({ kind: 'projects' });
+    expect(r).toMatchObject({ success: true, kind: 'projects', backend: 'public-api', data: { teamProjectsEnabled: true, items: [{ id: 'p1', personal: true }] } });
+  });
   it('falls back to official search_projects on 403 when configured', async () => {
     api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)) });
     // Real search_projects output schema (docs/local/official-agent-tools-2026-08-27/all-official-tools-2026-08-27.json) uses `data`, not `projects`.
@@ -93,12 +98,43 @@ describe('handleListCatalog', () => {
     access.getOfficialMcpClient.mockReturnValue(client);
     const r = await handleListCatalog({ kind: 'projects' });
     expect(client.callTool).toHaveBeenCalledWith('search_projects', {}, { timeoutMs: 30000 });
-    expect(r).toMatchObject({ success: true, backend: 'official-mcp', data: { items: [{ id: 'p1', personal: true }] } });
+    expect(r).toMatchObject({ success: true, backend: 'official-mcp', data: { teamProjectsEnabled: false, items: [{ id: 'p1', personal: true }] } });
+  });
+  it('uses the official teamProjectsEnabled flag when present, even with only a personal project returned', async () => {
+    api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)) });
+    const client = fakeClient(['search_projects'], { ok: true, data: [{ id: 'p1', name: 'Personal', type: 'personal' }], teamProjectsEnabled: true });
+    access.getOfficialMcpClient.mockReturnValue(client);
+    const r = await handleListCatalog({ kind: 'projects' });
+    expect(r).toMatchObject({ success: true, backend: 'official-mcp', data: { teamProjectsEnabled: true } });
+  });
+  it('derives teamProjectsEnabled from the item list when the official flag is absent and a team project is present', async () => {
+    api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)) });
+    const client = fakeClient(['search_projects'], { ok: true, data: [{ id: 'p1', name: 'Personal', type: 'personal' }, { id: 'p2', name: 'Team A', type: 'team' }] });
+    access.getOfficialMcpClient.mockReturnValue(client);
+    const r = await handleListCatalog({ kind: 'projects' });
+    expect(r).toMatchObject({ success: true, backend: 'official-mcp', data: { teamProjectsEnabled: true } });
+  });
+  it('derives teamProjectsEnabled false when the official flag is absent and only the personal project is present', async () => {
+    api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)) });
+    const client = fakeClient(['search_projects'], { ok: true, data: [{ id: 'p1', name: 'Personal', type: 'personal' }] });
+    access.getOfficialMcpClient.mockReturnValue(client);
+    const r = await handleListCatalog({ kind: 'projects' });
+    expect(r).toMatchObject({ success: true, backend: 'official-mcp', data: { teamProjectsEnabled: false } });
   });
   it('returns the personal project only when the fallback is not configured', async () => {
     api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)), resolvePersonalProjectId: vi.fn().mockResolvedValue('p1') });
     access.getOfficialMcpClient.mockReturnValue(null);
     expect(await handleListCatalog({ kind: 'projects' })).toMatchObject({ success: true, backend: 'public-api', data: { teamProjectsEnabled: false, items: [{ id: 'p1', personal: true }] } });
+  });
+  it('fails closed with an API_ERROR envelope when resolvePersonalProjectId rejects and the fallback is not configured', async () => {
+    api.getN8nApiClient.mockReturnValue({
+      listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)),
+      resolvePersonalProjectId: vi.fn().mockRejectedValue(new Error('This instance has more projects than one listing page')),
+    });
+    access.getOfficialMcpClient.mockReturnValue(null);
+    const r: any = await handleListCatalog({ kind: 'projects' });
+    expect(r).toMatchObject({ success: false, kind: 'projects', backend: 'public-api', code: 'API_ERROR', error: 'This instance has more projects than one listing page' });
+    expect(r.hint).toBeTruthy();
   });
   it('surfaces a non-403/404 project listing error without falling back', async () => {
     api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockRejectedValue(new N8nApiError('Server error', 500)) });

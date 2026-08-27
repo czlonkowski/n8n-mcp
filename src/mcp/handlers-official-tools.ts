@@ -119,11 +119,14 @@ export async function handleListCatalog(args: unknown, context?: InstanceContext
 
   try {
     const projects = (await api.listProjects()).map(p => ({ id: p.id, name: p.name, type: p.type, personal: p.type === 'personal' }));
+    // GET /projects is itself licence-gated (Community instances answer 403 before this
+    // point is reached), so a successful listing means team projects ARE licensed here —
+    // regardless of whether any happen to be visible to this API key.
     return {
       success: true,
       kind,
       backend: 'public-api',
-      data: { teamProjectsEnabled: projects.some(p => p.type !== 'personal'), items: filterItems(projects, query, limit) },
+      data: { teamProjectsEnabled: true, items: filterItems(projects, query, limit) },
     } as McpToolResponse;
   } catch (err) {
     const status = err instanceof N8nApiError ? err.statusCode : undefined;
@@ -138,21 +141,36 @@ export async function handleListCatalog(args: unknown, context?: InstanceContext
     const official = await callOfficialTool(context, CATALOG_TOOLS, {}, DEFAULT_TIMEOUT_MS, 'list_catalog');
     if (!official.success) return official;
     // search_projects output schema (docs/local/official-agent-tools-2026-08-27/all-official-tools-2026-08-27.json): { data: [{id, name, type}], count, teamProjectsEnabled?, hint? }.
-    const raw = ((official.data as any)?.data ?? []) as any[];
+    const officialData = official.data as any;
+    const raw = (officialData?.data ?? []) as any[];
     const items: CatalogItem[] = raw.map(p => ({ id: String(p.id), name: String(p.name), type: p.type, personal: p.type === 'personal' }));
+    const teamProjectsEnabled = typeof officialData?.teamProjectsEnabled === 'boolean'
+      ? officialData.teamProjectsEnabled
+      : items.some(p => !p.personal);
     return {
       success: true,
       kind,
       backend: 'official-mcp',
-      data: { teamProjectsEnabled: items.some(p => !p.personal), items: filterItems(items, query, limit) },
+      data: { teamProjectsEnabled, items: filterItems(items, query, limit) },
     } as McpToolResponse;
   }
 
-  const personalId = await api.resolvePersonalProjectId();
-  return {
-    success: true,
-    kind,
-    backend: 'public-api',
-    data: { teamProjectsEnabled: false, items: filterItems([{ id: personalId, name: 'Personal', type: 'personal', personal: true }], query, limit) },
-  } as McpToolResponse;
+  try {
+    const personalId = await api.resolvePersonalProjectId();
+    return {
+      success: true,
+      kind,
+      backend: 'public-api',
+      data: { teamProjectsEnabled: false, items: filterItems([{ id: personalId, name: 'Personal', type: 'personal', personal: true }], query, limit) },
+    } as McpToolResponse;
+  } catch (err) {
+    return {
+      success: false,
+      kind,
+      backend: 'public-api',
+      code: 'API_ERROR',
+      error: err instanceof Error ? err.message : String(err),
+      hint: 'Team projects are not available through the Public API on this instance and the personal project could not be resolved. Pass projectId explicitly, or configure N8N_MCP_ACCESS_TOKEN so projects can be listed through n8n\'s MCP server.',
+    } as McpToolResponse;
+  }
 }
