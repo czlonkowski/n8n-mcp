@@ -20,6 +20,13 @@ export interface InstanceContext {
   n8nApiMaxRetries?: number;
 
   /**
+   * MCP API key for n8n's instance-level MCP server (Settings → Instance-level MCP).
+   * Optional; enables the official-MCP-backed tools. Separate from n8nApiKey.
+   * The endpoint is derived from n8nApiUrl — there is no URL field for it.
+   */
+  n8nMcpAccessToken?: string;
+
+  /**
    * Instance identification
    * Used for session management and logging
    */
@@ -99,6 +106,18 @@ function isValidApiKey(key: string): boolean {
 }
 
 /**
+ * Validate an MCP access token: non-empty, no whitespace, bounded size, and
+ * not an obvious placeholder. The token is a secret — callers must never log
+ * or echo the value itself, only the validation result.
+ */
+function isValidMcpAccessTokenField(token: unknown): boolean {
+  if (typeof token !== 'string' || token.length === 0 || /\s/.test(token)) return false;
+  if (Buffer.byteLength(token, 'utf8') > 4096) return false;
+  const lowered = token.toLowerCase();
+  return !['placeholder', 'your_token_here', 'your-token-here', 'example', 'test-token'].includes(lowered);
+}
+
+/**
  * Type guard to check if an object is an InstanceContext
  */
 export function isInstanceContext(obj: any): obj is InstanceContext {
@@ -117,12 +136,16 @@ export function isInstanceContext(obj: any): obj is InstanceContext {
   const hasValidRetries = obj.n8nApiMaxRetries === undefined ||
     (typeof obj.n8nApiMaxRetries === 'number' && obj.n8nApiMaxRetries >= 0);
 
+  const hasValidMcpAccessToken = obj.n8nMcpAccessToken === undefined ||
+    isValidMcpAccessTokenField(obj.n8nMcpAccessToken);
+
   const hasValidInstanceId = obj.instanceId === undefined || typeof obj.instanceId === 'string';
   const hasValidSessionId = obj.sessionId === undefined || typeof obj.sessionId === 'string';
   const hasValidMetadata = obj.metadata === undefined ||
     (typeof obj.metadata === 'object' && obj.metadata !== null);
 
   return hasValidUrl && hasValidKey && hasValidTimeout && hasValidRetries &&
+         hasValidMcpAccessToken &&
          hasValidInstanceId && hasValidSessionId && hasValidMetadata;
 }
 
@@ -175,6 +198,12 @@ export function validateInstanceContext(context: InstanceContext): {
         errors.push(`Invalid n8nApiKey: format validation failed - Ensure key is valid`);
       }
     }
+  }
+
+  // Validate MCP access token if provided
+  if (context.n8nMcpAccessToken !== undefined && !isValidMcpAccessTokenField(context.n8nMcpAccessToken)) {
+    // Never include the value: it is a secret.
+    errors.push('Invalid n8nMcpAccessToken: must be a non-empty string without whitespace (max 4 KB)');
   }
 
   // Validate timeout
