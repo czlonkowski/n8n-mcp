@@ -864,6 +864,27 @@ Old backups are also pruned automatically (10 most recent per workflow, plus an 
     },
     annotations: { title: 'Manage n8n Agents', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   },
+  {
+    name: 'n8n_explore_node_resources',
+    description: 'Resolve the real options behind a node\'s dynamic dropdown (loadOptions) or resource-locator search (listSearch) using one of the instance\'s credentials — Slack channels, Google Sheets tabs, model lists — so workflow configs use existing IDs instead of invented ones. Requires N8N_MCP_ACCESS_TOKEN. Find methodName/methodType in get_node output (dynamicOptions on a property) and the credentialId with n8n_manage_credentials list.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeType: { type: 'string', description: 'Full node type, e.g. n8n-nodes-base.slack' },
+        version: { type: 'number', description: 'Node typeVersion' },
+        methodName: { type: 'string', description: 'loadOptionsMethod or searchListMethod name from the property definition' },
+        methodType: { type: 'string', enum: ['listSearch', 'loadOptions'] },
+        credentialType: { type: 'string', description: 'Credential type the node uses, e.g. slackApi' },
+        credentialId: { type: 'string', description: 'ID of an existing credential of that type' },
+        filter: { type: 'string', description: 'Search text (listSearch only)' },
+        paginationToken: { type: 'string', description: 'Token from a previous page (listSearch only)' },
+        currentNodeParameters: { type: 'object', description: 'Parameters the method depends on (loadOptionsDependsOn), e.g. {documentId: {...}}' },
+        timeoutMs: { type: 'number', minimum: 5000, maximum: 600000, description: 'Request timeout in ms (default 30000)' },
+      },
+      required: ['nodeType', 'version', 'methodName', 'methodType', 'credentialType', 'credentialId'],
+    },
+    annotations: { title: 'Explore Node Resources', readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+  },
 ];
 
 /**

@@ -1,7 +1,7 @@
 import { ToolDocumentation } from './types';
 
 // Import all tool documentations
-import { searchNodesDoc } from './discovery';
+import { searchNodesDoc, n8nExploreNodeResourcesDoc } from './discovery';
 import { getNodeDoc } from './configuration';
 import { validateNodeDoc, validateWorkflowDoc } from './validation';
 import { getTemplateDoc, searchTemplatesDoc } from './templates';
@@ -43,6 +43,7 @@ export const toolsDocumentation: Record<string, ToolDocumentation> = {
 
   // Discovery tools
   search_nodes: searchNodesDoc,
+  n8n_explore_node_resources: n8nExploreNodeResourcesDoc,
 
   // Configuration tools
   get_node: getNodeDoc,
