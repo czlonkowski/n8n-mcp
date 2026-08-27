@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.74.1] - 2026-08-27
+
+### Fixed
+
+- **`n8n_create_workflow` silently dropped workflow settings outside its own list** (#1026). The create input schema was a closed object with eight settings keys, so `availableInMCP`, `callerPolicy`, `callerIds`, `timeSavedPerExecution`, `customTelemetryTags`, `redactionPolicy` and `timeSavedMode` were stripped before the payload reached the API client. A workflow created with `settings.availableInMCP: true` therefore never appeared in n8n's instance-level MCP server, while the same key set through `updateSettings` worked. The typed keys are still validated; every other key is now forwarded, as on the update path; the create cleaner still drops the derived properties n8n ignores on write. The tool schema and documentation now mention `availableInMCP`.
+
 ## [2.74.0] - 2026-08-27
 
 ### Changed

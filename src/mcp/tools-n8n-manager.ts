@@ -52,7 +52,7 @@ export const n8nManagementTools: ToolDefinition[] = [
         },
         settings: {
           type: 'object',
-          description: 'Optional workflow settings (execution order, timezone, error handling)',
+          description: 'Optional workflow settings (execution order, timezone, error handling). Any other key the n8n Public API accepts is forwarded as well, e.g. availableInMCP (expose the workflow to n8n\'s instance-level MCP server), callerPolicy, callerIds.',
           properties: {
             executionOrder: { type: 'string', enum: ['v0', 'v1'] },
             timezone: { type: 'string' },
@@ -61,7 +61,8 @@ export const n8nManagementTools: ToolDefinition[] = [
             saveManualExecutions: { type: 'boolean' },
             saveExecutionProgress: { type: 'boolean' },
             executionTimeout: { type: 'number' },
-            errorWorkflow: { type: 'string' }
+            errorWorkflow: { type: 'string' },
+            availableInMCP: { type: 'boolean', description: 'Expose the workflow to n8n\'s instance-level MCP server (n8n 1.119+)' }
           }
         },
         nodeGroups: {

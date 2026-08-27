@@ -21,7 +21,7 @@ export const n8nCreateWorkflowDoc: ToolDocumentation = {
       name: { type: 'string', required: true, description: 'Workflow name' },
       nodes: { type: 'array', required: true, description: 'Array of nodes with id, name, type, typeVersion, position, parameters' },
       connections: { type: 'object', required: true, description: 'Node connections. Keys are source node names (not IDs)' },
-      settings: { type: 'object', description: 'Optional workflow settings (timezone, error handling, etc.)' },
+      settings: { type: 'object', description: 'Optional workflow settings (timezone, error handling, etc.). Every key the n8n Public API accepts is forwarded, including availableInMCP, which exposes the workflow to n8n\'s instance-level MCP server.' },
       nodeGroups: { type: 'array', description: 'Optional canvas groups (n8n 2.28+): [{name, nodeIds, description?}]. Members are node IDs from nodes[] and must form a connected run with no trigger among them. Dropped with a warning on n8n older than 2.28.' },
       projectId: { type: 'string', description: 'Optional project to create the workflow in (enterprise feature). Defaults to the personal project.' },
       parentFolderId: { type: 'string', description: 'Optional folder to place the workflow in (n8n 2.32+; rejected with a 400 on older instances). Omit for the project root. Manage folders with n8n_manage_folders.' }
@@ -72,7 +72,8 @@ n8n_create_workflow({
     timezone: "America/New_York",
     errorWorkflow: "error_handler_workflow_id",
     saveDataSuccessExecution: "all",
-    saveDataErrorExecution: "all"
+    saveDataErrorExecution: "all",
+    availableInMCP: true  // expose to n8n's instance-level MCP server
   }
 })`
     ],

@@ -443,6 +443,9 @@ const createWorkflowSchema = z.object({
   // Two-arg z.record(keySchema, valueSchema) — see services/n8n-validation.ts for the
   // Zod 3/4 compatibility rationale (#744).
   connections: z.preprocess(normalizeMcpWorkflowConnections, z.record(z.string(), z.any())),
+  // The typed keys are validated; every other key is forwarded, as on the update path.
+  // A closed object here silently dropped `availableInMCP`, `callerPolicy` and the other
+  // settings added since n8n 1.119 before they reached the cleaner (issue #1026).
   settings: z.preprocess(normalizeMcpJsonValue, z.object({
     executionOrder: z.enum(['v0', 'v1']).optional(),
     timezone: z.string().optional(),
@@ -452,7 +455,7 @@ const createWorkflowSchema = z.object({
     saveExecutionProgress: z.boolean().optional(),
     executionTimeout: z.number().optional(),
     errorWorkflow: z.string().optional(),
-  })).optional(),
+  }).passthrough()).optional(),
   // Validated by parseNodeGroupsInput() — see services/node-groups.ts
   nodeGroups: z.any().optional(),
   projectId: z.string().optional(),

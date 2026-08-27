@@ -50,7 +50,7 @@ export const n8nUpdatePartialWorkflowDoc: ToolDocumentation = {
 - **replaceConnections**: Replace entire connections object
 
 ### Metadata Operations (5 types):
-- **updateSettings**: Modify workflow settings
+- **updateSettings**: Modify workflow settings (merged over the current ones). Any key the n8n Public API accepts is forwarded, e.g. \`availableInMCP: true\` exposes the workflow to n8n's instance-level MCP server.
 - **updateName**: Rename the workflow
 - **setNodeGroups**: Replace the workflow's canvas groups (n8n 2.28+). Full replacement — pass every group to keep, or \`[]\` to ungroup everything. Each group takes \`name\` plus either \`nodeNames\` or \`nodeIds\`, and an optional \`description\` (max 155 chars, n8n 2.32+; dropped automatically on older instances). Group members must form a connected run with no trigger among them; n8n validates that on save and its message is returned unchanged if a group you asked for is rejected.
 - **addTag**: Add a workflow tag
