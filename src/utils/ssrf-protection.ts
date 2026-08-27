@@ -4,11 +4,17 @@ import net, { isIPv4, isIPv6 } from 'net';
 import http from 'http';
 import https from 'https';
 import ipaddr from 'ipaddr.js';
+import { Agent as UndiciAgent, fetch as undiciFetch } from 'undici';
 import { logger } from './logger';
 
 export interface PinnedAgents {
   httpAgent: http.Agent;
   httpsAgent: https.Agent;
+}
+
+export interface PinnedFetch {
+  fetch: (url: string | URL, init?: RequestInit) => Promise<Response>;
+  close(): Promise<void>;
 }
 
 export interface WebhookUrlValidationResult {
@@ -444,6 +450,26 @@ export class SSRFProtection {
   }
 
   /**
+   * Build a dns lookup callback that always resolves to the given, already
+   * validated addresses, regardless of hostname. Shared by
+   * {@link createPinnedAgents} (axios/http.Agent callers) and
+   * {@link createPinnedFetch} (undici/fetch callers).
+   */
+  private static buildPinnedLookup(addresses: Array<{ address: string; family: 4 | 6 }>) {
+    return (_hostname: string, options: any, callback: any): void => {
+      // Node's lookup contract: when options.all is true, callback receives
+      // an array of {address, family}; otherwise (address, family) for the
+      // first candidate. validateWebhookUrl resolved and validated the full
+      // set — return all of it for `all`, and the first for the scalar shape.
+      if (options && options.all) {
+        callback(null, addresses.map(a => ({ address: a.address, family: a.family })));
+      } else {
+        callback(null, addresses[0].address, addresses[0].family);
+      }
+    };
+  }
+
+  /**
    * Build a pair of HTTP/HTTPS agents that resolve every hostname to a fixed
    * set of validated addresses via a custom dns lookup callback. Pair with
    * {@link validateWebhookUrl} so the transport only ever connects to
@@ -464,21 +490,7 @@ export class SSRFProtection {
       throw new Error('createPinnedAgents requires at least one validated address');
     }
 
-    const pinnedLookup = (
-      _hostname: string,
-      options: any,
-      callback: any
-    ): void => {
-      // Node's lookup contract: when options.all is true, callback receives
-      // an array of {address, family}; otherwise (address, family) for the
-      // first candidate. validateWebhookUrl resolved and validated the full
-      // set — return all of it for `all`, and the first for the scalar shape.
-      if (options && options.all) {
-        callback(null, addresses.map(a => ({ address: a.address, family: a.family })));
-      } else {
-        callback(null, addresses[0].address, addresses[0].family);
-      }
-    };
+    const pinnedLookup = SSRFProtection.buildPinnedLookup(addresses);
 
     const httpAgent = new http.Agent({ keepAlive: false });
     const httpsAgent = new https.Agent({ keepAlive: false });
@@ -509,6 +521,31 @@ export class SSRFProtection {
     return {
       httpAgent: wrap(httpAgent),
       httpsAgent: wrap(httpsAgent),
+    };
+  }
+
+  /**
+   * A fetch implementation whose sockets only ever connect to the given
+   * validated addresses. For callers that speak fetch (the MCP SDK's
+   * Streamable HTTP transport) rather than axios — see createPinnedAgents.
+   * TLS still verifies against the URL hostname; only name resolution is pinned.
+   *
+   * @security GHSA-cmrh-wvq6-wm9r
+   */
+  static createPinnedFetch(addresses: Array<{ address: string; family: 4 | 6 }>): PinnedFetch {
+    if (!addresses || addresses.length === 0) {
+      throw new Error('createPinnedFetch requires at least one validated address');
+    }
+    const lookup = SSRFProtection.buildPinnedLookup(addresses);
+    const dispatcher = new UndiciAgent({
+      // `connect` options are spread into net.connect/tls.connect by undici.
+      connect: { lookup, autoSelectFamily: supportsAutoSelectFamily, autoSelectFamilyAttemptTimeout: 250 } as any,
+      keepAliveTimeout: 1_000,
+    });
+    return {
+      fetch: (url, init) =>
+        undiciFetch(url as any, { ...(init as any), dispatcher }) as unknown as Promise<Response>,
+      close: () => dispatcher.close(),
     };
   }
 
