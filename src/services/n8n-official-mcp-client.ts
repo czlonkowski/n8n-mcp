@@ -111,17 +111,37 @@ export function mapOfficialTransportError(err: unknown): OfficialMcpError {
   return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'Request to n8n MCP server failed');
 }
 
+/** Serialized size of a structured payload; an unserializable value (a cycle) counts as over the cap. */
+function structuredSize(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value) ?? '', 'utf8');
+  } catch {
+    return OFFICIAL_RESULT_MAX_BYTES + 1;
+  }
+}
+
 function parseResult(raw: { content?: Array<{ type: string; text?: string }>; isError?: boolean; structuredContent?: unknown }): OfficialToolResult {
   let text = (raw.content ?? []).filter(c => c.type === 'text' && typeof c.text === 'string').map(c => c.text as string).join('\n');
-  const sizeBytes = Buffer.byteLength(text, 'utf8');
-  const truncated = sizeBytes > OFFICIAL_RESULT_MAX_BYTES;
+  const textBytes = Buffer.byteLength(text, 'utf8');
+  let truncated = textBytes > OFFICIAL_RESULT_MAX_BYTES;
   if (truncated) text = Buffer.from(text, 'utf8').subarray(0, OFFICIAL_RESULT_MAX_BYTES).toString('utf8') + '\n…[truncated]';
+  // `structuredContent` is a second, independent payload: capping only the
+  // text would let an oversized structured result through untouched and into
+  // the caller's context.
   let json: unknown = raw.structuredContent;
+  let structuredBytes = 0;
+  if (json !== undefined) {
+    structuredBytes = structuredSize(json);
+    if (structuredBytes > OFFICIAL_RESULT_MAX_BYTES) {
+      json = undefined;
+      truncated = true;
+    }
+  }
   if (json === undefined && !truncated) {
     const trimmed = text.trim();
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) { try { json = JSON.parse(trimmed); } catch { /* keep text */ } }
   }
-  return { isError: raw.isError === true, text, json, sizeBytes, truncated };
+  return { isError: raw.isError === true, text, json, sizeBytes: Math.max(textBytes, structuredBytes), truncated };
 }
 
 interface Connected { client: Client; generation: number }
@@ -172,6 +192,14 @@ export class N8nOfficialMcpClient {
     this.connecting = (async () => {
       const validation = await SSRFProtection.validateWebhookUrl(this.endpoint);
       if (!validation.valid) throw new OfficialMcpError('OFFICIAL_MCP_URL_REJECTED', validation.reason || 'Endpoint rejected');
+      // DNS validation is the first await in this handshake, and close() can
+      // run while it is pending. Check before anything is created: the
+      // post-handshake check below can only tear down a transport that was
+      // already opened, which still sends a request to an instance the owner
+      // has stopped talking to.
+      if (this.closed || this.generation !== myGeneration) {
+        throw new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'Client was closed while connecting');
+      }
       const addresses = validation.addresses ?? (validation.address ? [{ address: validation.address, family: validation.family as 4 | 6 }] : []);
       const pinned = SSRFProtection.createPinnedFetch(addresses);
       const transport = new StreamableHTTPClientTransport(new URL(this.endpoint), {
@@ -304,10 +332,14 @@ export class N8nOfficialMcpClient {
    * refused) would otherwise keep serving that failure as if it were the
    * guide for the next ten minutes. It throws instead, so the caller maps it
    * like any other failed action.
+   *
+   * `tool` is the name resolved against the connected instance's tool list by
+   * the caller; the default only serves the probe and the tests, so an
+   * instance that renames or aliases the tool still reaches it.
    */
-  async reference(): Promise<AgentBuilderReference> {
+  async reference(tool: string = 'get_agent_builder_reference'): Promise<AgentBuilderReference> {
     if (this.ref && Date.now() - this.ref.at < OFFICIAL_MCP_CACHE_TTL_MS) return this.ref.value;
-    const result = await this.callTool('get_agent_builder_reference', {}, { idempotent: true });
+    const result = await this.callTool(tool, {}, { idempotent: true });
     const value = (result.json && typeof result.json === 'object' ? result.json : { guide: result.text }) as AgentBuilderReference;
     if (result.isError || value.ok === false) {
       throw new OfficialMcpError('OFFICIAL_MCP_TOOL_UNAVAILABLE', 'n8n did not return the agent builder reference');

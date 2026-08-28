@@ -75,6 +75,57 @@ describe('N8nOfficialMcpClient', () => {
     await client.close();
   });
 
+  // structuredContent is a second payload alongside the text; capping only
+  // the text would let an oversized structured result through untouched.
+  it('drops structuredContent that exceeds the size cap', async () => {
+    fake = await startFakeOfficialMcp({
+      tools: [{ name: 'big_structured', handler: () => 'small text', structured: { blob: 'y'.repeat(300 * 1024) } }],
+    });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    const result = await client.callTool('big_structured', {});
+    expect(result.json).toBeUndefined();
+    expect(result.truncated).toBe(true);
+    expect(result.text).toBe('small text');
+    expect(result.sizeBytes).toBeGreaterThan(256 * 1024);
+    await client.close();
+  });
+
+  it('keeps structuredContent that fits the size cap', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'small_structured', handler: () => 'text', structured: { ok: true } }] });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    const result = await client.callTool('small_structured', {});
+    expect(result.json).toEqual({ ok: true });
+    expect(result.truncated).toBe(false);
+    await client.close();
+  });
+
+  // close() must be able to stop a connect() that is still inside DNS
+  // validation: otherwise the handshake goes on to open a transport and send
+  // a request to an instance the owner has already stopped talking to.
+  it('stops a connect that loses the race with close() during DNS validation', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const real = SSRFProtection.validateWebhookUrl.bind(SSRFProtection);
+    const spy = vi.spyOn(SSRFProtection, 'validateWebhookUrl').mockImplementation(async (url: string) => {
+      const result = await real(url);
+      await gate;
+      return result;
+    });
+    try {
+      const failure = client.callTool('search_agents', {}).catch(e => e);
+      const closing = client.close();   // marks the client closed synchronously, then waits for the handshake
+      release!();
+      await closing;
+      expect(await failure).toMatchObject({ code: 'OFFICIAL_MCP_TRANSPORT_ERROR' });
+      expect(fake.requests).toHaveLength(0);   // nothing was ever sent
+    } finally {
+      spy.mockRestore();
+      await client.close();
+    }
+  });
+
   it('maps 401 to OFFICIAL_MCP_AUTH_FAILED', async () => {
     fake = await startFakeOfficialMcp({ token: 'right', tools: [{ name: 'search_agents' }] });
     const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'wrong' });

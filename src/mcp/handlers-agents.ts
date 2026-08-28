@@ -142,7 +142,7 @@ export async function handleManageAgents(args: unknown, context?: InstanceContex
     // not a transport error), then through the client's own cache of the
     // guide, which is large and static.
     if (action === 'reference') {
-      return { success: true, action, officialTool: tool, data: await client.reference() };
+      return { success: true, action, officialTool: tool, data: await client.reference(tool) };
     }
 
     const result: OfficialToolResult = await client.callTool(tool, toolArgs, { timeoutMs: timeoutMs ?? spec.defaultTimeoutMs, idempotent: spec.idempotent });

@@ -4,7 +4,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 
-export interface FakeTool { name: string; handler?: (args: Record<string, unknown>) => unknown | Promise<unknown>; isError?: boolean }
+/**
+ * `structured` makes the tool answer with `structuredContent` as well as text.
+ * It requires an `outputSchema` on the registration (the SDK only emits
+ * structuredContent for tools that declare one), so the tool is registered
+ * with a passthrough object schema when it is set.
+ */
+export interface FakeTool { name: string; handler?: (args: Record<string, unknown>) => unknown | Promise<unknown>; isError?: boolean; structured?: Record<string, unknown> }
 /**
  * A JSON-RPC error to answer one method with, instead of dispatching it to the
  * McpServer. Needed because `McpServer` converts every failure inside a tool
@@ -58,10 +64,16 @@ export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): P
       // (e.g. { id: 'agent-42' }). Passing an already-built passthrough object schema
       // keeps normalizeObjectSchema's "already an object schema" path and lets arbitrary
       // arguments flow through untouched — good enough for a test fake with no real schema.
-      mcp.registerTool<any, any>(tool.name, { description: `fake ${tool.name}`, inputSchema: z.object({}).passthrough() as any }, async (args: any) => {
+      const config: any = { description: `fake ${tool.name}`, inputSchema: z.object({}).passthrough() as any };
+      if (tool.structured) config.outputSchema = z.object({}).passthrough() as any;
+      mcp.registerTool<any, any>(tool.name, config, async (args: any) => {
         const typedArgs = args as Record<string, unknown>;
         const value = tool.handler ? await tool.handler(typedArgs) : { ok: true, tool: tool.name, args: typedArgs };
-        return { content: [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value) }], isError: tool.isError === true };
+        return {
+          content: [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value) }],
+          ...(tool.structured ? { structuredContent: tool.structured } : {}),
+          isError: tool.isError === true,
+        };
       });
     }
     return mcp;
