@@ -14,17 +14,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Three tools that talk to n8n's instance-level MCP server**, using a new optional `N8N_MCP_ACCESS_TOKEN` setting (separate from `N8N_API_KEY`, derived endpoint from `N8N_API_URL`): `n8n_manage_agents` manages n8n Agents (the persisted assistant artifact — model, instructions, tools, skills, tasks, memory, channels) and `n8n_explore_node_resources` resolves a node's dynamic dropdown (`loadOptions`) or resource-locator search (`listSearch`) values (Slack channels, Google Sheets tabs, model lists) using a real credential — both require the token and return `NOT_CONFIGURED` without it. `n8n_list_catalog` lists instance-level projects or tags and works without the token; when it's configured, `n8n_list_catalog` additionally falls back to n8n's MCP server for team projects on instances where the Public API's licence gate refuses them. See `docs/OFFICIAL_MCP_SETUP.md` for the setup walkthrough.
 - **`n8n_health_check` reports an `officialMcp` block** (`configured`, `reachable`, `toolCount`, `agentTools`, and an error code/hint when something's wrong) so you can check the connection to n8n's MCP server without calling one of the tools above. `mode: "diagnostic"` forces a live probe instead of returning the cached result.
 - **`get_node`'s `standard` detail level now flags dynamic properties** with a `dynamicOptions` field (`methodName`, `methodType`, `dependsOn`) on any property backed by a `loadOptions` method or a resource-locator `listSearch` mode, so a config step can tell which fields need `n8n_explore_node_resources` before a value can be filled in confidently.
-- `N8N_MCP_ACCESS_TOKEN` environment variable / instance-context field, documented alongside `N8N_API_URL` and `N8N_API_KEY`.
+- `N8N_MCP_ACCESS_TOKEN` environment variable / instance-context field, documented alongside `N8N_API_URL` and `N8N_API_KEY`. In HTTP mode it can also travel per request in the `x-n8n-mcp-token` header, next to `x-n8n-url` and `x-n8n-key`; a request whose headers carry the URL plus either credential is authoritative and never falls back to the server's own environment variables. The header is redacted from logs like the other two.
 
 ### Changed
 
 - `undici` moves from a transitive dependency to a direct one — it backs the SSRF-pinned fetch used by the new MCP client transport.
+- A call to n8n's MCP server is retried after a connection-level failure only when it is a read (`reference`, `search`, `get`, `versions`, `validate`, `discover_assets`, `verify_mcp_server`, plus `n8n_explore_node_resources` and the project listing). A dead socket does not prove the request never arrived, so a `create`, `mutate`, `call`, `publish`, `unpublish`, `revert`, `delete` or `update_integration` is surfaced instead of being sent twice.
+- An unreachable result from the capability probe is cached for 30 seconds instead of the ten minutes a success gets, so a corrected token or a restarted instance is picked up on the next call rather than at the end of the TTL.
+- `DISABLED_TOOL_OPERATIONS` now treats every write action of `n8n_manage_agents` as destructive — `create`, `mutate` and `call` join `publish`, `unpublish`, `revert`, `delete` and `update_integration`, since a create persists a draft and a call runs the agent's real tools. Deployments that block the destructive actions by name should update their list.
+- The error code for n8n's `agent_tool_error` is `AGENT_TOOL_ERROR`, not `AGENT_TOOL_COMPILE_ERROR`: n8n reports it for an unknown `agentId` as well as for a custom tool that fails to compile, and the hint now names both.
+- `action: "reference"` resolves its tool against the instance's tool list like every other action, so an instance without the agents module answers `OFFICIAL_MCP_TOOL_UNAVAILABLE` instead of a transport error, and a failed reference lookup is no longer cached as if it were the guide.
 
 ### Security
 
 - The endpoint for n8n's instance-level MCP server is derived from the already SSRF-validated `N8N_API_URL`, not taken from user input.
 - The MCP client transport pins DNS resolution to the addresses validated at connection time, the same protection already applied to webhook and API calls.
-- The MCP access token is never written to logs.
+- **The pinned fetch does not follow redirects.** Address pinning constrains the URL that was validated; following a 3xx would let the server choose the next request's host, port and path, and that URL would be re-resolved through the same pinned lookup — reaching another port on a validated address, or a URL that never went through validation. A redirect now surfaces as a plain transport error saying redirects are not followed.
+- The MCP access token is never written to logs, in either its environment or its header form.
 
 ### Fixed
 
