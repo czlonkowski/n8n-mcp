@@ -136,7 +136,10 @@ Run `n8n_health_check` - the response includes an `officialMcp` block:
 
 - `officialMcp.configured` - `true` once `N8N_MCP_ACCESS_TOKEN` is set.
 - `officialMcp.reachable` - whether the last check reached n8n's MCP server.
-- `officialMcp.toolCount` - how many tools n8n's MCP server reported.
+- `officialMcp.toolCount` - how many tools n8n's own MCP server advertises. This is
+  n8n's list, not n8n-mcp's: it depends on the n8n version and the modules enabled
+  on the instance (for example, 54 on n8n 2.36 with the agents module, 39 without
+  it). n8n-mcp uses that list to decide which official tools it can route to.
 - `officialMcp.agentTools` - whether the agents module's tools are present (needs
   n8n 2.34+ with the agents module).
 

@@ -67,7 +67,7 @@ CRITICAL: Execute tools without commentary. Only respond AFTER all tools complet
 ### 2. Parallel Execution
 When operations are independent, execute them in parallel for maximum performance.
 
-✅ GOOD: Call search_nodes, list_nodes, and search_templates simultaneously
+✅ GOOD: Call search_nodes, get_node, and search_templates simultaneously
 ❌ BAD: Sequential tool calls (await each one before the next)
 
 ### 3. Templates First
@@ -126,16 +126,14 @@ ALWAYS explicitly configure ALL parameters that control node behavior.
    - Build in artifact (unless deploying to n8n instance)
 
 7. **Workflow Validation** (before deployment)
-   - `validate_workflow(workflow)` - Complete validation
-   - `validate_workflow_connections(workflow)` - Structure check
-   - `validate_workflow_expressions(workflow)` - Expression validation
+   - `validate_workflow(workflow)` - Complete validation: structure, connections, expressions, AI tools
    - Fix ALL issues before deployment
 
 8. **Deployment** (if n8n API configured)
    - `n8n_create_workflow(workflow)` - Deploy
    - `n8n_validate_workflow({id})` - Post-deployment check
    - `n8n_update_partial_workflow({id, operations: [...]})` - Batch updates
-   - `n8n_trigger_webhook_workflow()` - Test webhooks
+   - `n8n_test_workflow()` - Test/trigger the workflow (webhook, form, chat)
 
 ## Critical Warnings
 
