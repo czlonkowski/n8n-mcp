@@ -16,6 +16,7 @@ import { logger } from '../utils/logger';
 import {
   n8nManagementTools,
   TOOL_OPERATION_PARAM,
+  TOOL_OPERATION_DEFAULT,
   DESTRUCTIVE_TOOL_OPERATIONS,
 } from './tools-n8n-manager';
 
@@ -176,6 +177,29 @@ export function getDisabledToolOperations(): Map<string, Set<string>> {
 /** The disabled operations for one tool (lowercased); empty when none. */
 export function getDisabledOperations(toolName: string): Set<string> {
   return getDisabledToolOperations().get(toolName) ?? new Set<string>();
+}
+
+/**
+ * The operation a call will actually run, as the policy gate must see it.
+ *
+ * The handlers' operation parameters are `optionalEmptyAware`, so a blank or
+ * whitespace-only value from a lossy MCP client is mapped to `undefined` by Zod
+ * and then resolved to the tool's default. The policy gate runs before Zod, so
+ * it has to apply the same normalisation — otherwise `method: ''` would present
+ * itself as "no operation named" to the gate and run as the default operation
+ * in the handler, sidestepping a rule that names that default.
+ *
+ * Returns `undefined` when no operation can be determined (no value and no
+ * default), which the gate treats as "nothing to check".
+ */
+export function resolveRequestedOperation(toolName: string, args: any): unknown {
+  const paramName = TOOL_OPERATION_PARAM[toolName];
+  if (!paramName) return undefined;
+
+  const raw = args?.[paramName];
+  if (raw === undefined || raw === null) return TOOL_OPERATION_DEFAULT[toolName];
+  if (typeof raw === 'string' && raw.trim() === '') return TOOL_OPERATION_DEFAULT[toolName];
+  return raw;
 }
 
 /** Whether one operation of a tool is disabled by server policy. */

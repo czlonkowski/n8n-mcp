@@ -21,6 +21,16 @@ class TestableN8NMCPServer extends N8NDocumentationMCPServer {
   public async testExecuteTool(name: string, args: any): Promise<any> {
     return (this as any).executeTool(name, args);
   }
+
+  /**
+   * Drives the real CallTool request handler, which is where the policy gate
+   * that clients hit lives — `executeTool` only carries the defence-in-depth
+   * copy of it, and the two normalise their arguments differently.
+   */
+  public async testCallTool(name: string, args: any): Promise<any> {
+    const handler = (this as any).server._requestHandlers.get('tools/call');
+    return handler({ method: 'tools/call', params: { name, arguments: args } }, {});
+  }
 }
 
 describe('Disabled Tool Operations Feature (Issue #714)', () => {
@@ -529,6 +539,35 @@ describe('Disabled Tool Operations Feature (Issue #714)', () => {
       await expect(
         server.testExecuteTool('n8n_test_workflow', { workflowId: 'w' })
       ).rejects.toThrow("Operation 'auto' on tool 'n8n_test_workflow' is disabled by server policy");
+    });
+
+    it('should treat a blank method as auto', async () => {
+      // Lossy MCP clients send '' for an unset optional string. The handler's
+      // schema maps that to the default operation, so the gate must too —
+      // otherwise a rule naming `auto` is sidestepped by a blank parameter.
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:auto';
+      server = new TestableN8NMCPServer();
+
+      await expect(
+        server.testExecuteTool('n8n_test_workflow', { workflowId: 'w', method: '' })
+      ).rejects.toThrow("Operation 'auto' on tool 'n8n_test_workflow' is disabled by server policy");
+
+      await expect(
+        server.testExecuteTool('n8n_test_workflow', { workflowId: 'w', method: '   ' })
+      ).rejects.toThrow("Operation 'auto' on tool 'n8n_test_workflow' is disabled by server policy");
+    });
+
+    it('should refuse a blank method through the CallTool gate without executing', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:auto';
+      server = new TestableN8NMCPServer();
+      const executeSpy = vi.spyOn(server as any, 'executeTool');
+
+      const result = await server.testCallTool('n8n_test_workflow', { workflowId: 'w', method: '' });
+
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(result.content[0].text);
+      expect(payload).toMatchObject({ error: 'OPERATION_DISABLED', tool: 'n8n_test_workflow', operation: 'auto' });
+      expect(executeSpy).not.toHaveBeenCalled();
     });
 
     it('should block an explicit trigger method', async () => {

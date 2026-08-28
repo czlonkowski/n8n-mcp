@@ -15,11 +15,12 @@ import path from 'path';
 import { n8nDocumentationToolsFinal } from './tools';
 import { UIAppRegistry } from './ui';
 import { SkillResourceRegistry } from './skills';
-import { n8nManagementTools, TOOL_OPERATION_PARAM, TOOL_OPERATION_DEFAULT, DESTRUCTIVE_TOOL_OPERATIONS } from './tools-n8n-manager';
+import { n8nManagementTools, TOOL_OPERATION_PARAM, DESTRUCTIVE_TOOL_OPERATIONS } from './tools-n8n-manager';
 import {
   getDisabledTools as getDisabledToolsPolicy,
   getDisabledToolOperations as getDisabledToolOperationsPolicy,
   getValidOperations,
+  resolveRequestedOperation,
 } from './tool-policy';
 import { makeToolsN8nFriendly } from './tools-n8n-friendly';
 import { getWorkflowExampleString } from './workflow-examples';
@@ -662,13 +663,16 @@ export class N8NDocumentationMCPServer {
 
       // Operations still reachable after filtering, counted over the schema enum
       // UNION the destructive set so virtual operations (destructive values that
-      // are not selectable enum values, e.g. `expose`) are not overlooked.
+      // are not selectable enum values, e.g. `expose`) are not overlooked. Used
+      // only for the read-only annotation recompute below — a virtual operation
+      // is a write path that survives, but it is never something a caller can
+      // select, so it must not keep the "nothing left to call" warning quiet.
       const remaining = [...getValidOperations(toolName)].filter(v => !ops.has(v));
 
       const param = cloned.inputSchema?.properties?.[paramName];
       if (param?.enum) {
         param.enum = (param.enum as string[]).filter(v => !ops.has(v.toLowerCase()));
-        if (remaining.length === 0) {
+        if (param.enum.length === 0) {
           logger.warn(
             `DISABLED_TOOL_OPERATIONS: all operations for '${toolName}' are disabled ` +
             `but the tool still appears in ListTools. ` +
@@ -940,9 +944,10 @@ export class N8NDocumentationMCPServer {
       if (disabledOpsForTool && disabledOpsForTool.size > 0) {
         const paramName = TOOL_OPERATION_PARAM[name];
         if (paramName) {
-          // An omitted operation is checked as the tool's default (this check
-          // runs before Zod applies it), so a rule naming that default holds.
-          const requestedOp = processedArgs?.[paramName] ?? TOOL_OPERATION_DEFAULT[name];
+          // An omitted OR blank operation is checked as the tool's default
+          // (this check runs before Zod applies it), so a rule naming that
+          // default holds for both shapes.
+          const requestedOp = resolveRequestedOperation(name, processedArgs);
           if (requestedOp && disabledOpsForTool.has(String(requestedOp).toLowerCase())) {
             logger.warn(`Attempted to call disabled operation: ${name}.${requestedOp}`);
             return {
@@ -1586,7 +1591,7 @@ export class N8NDocumentationMCPServer {
     if (disabledOpsForTool && disabledOpsForTool.size > 0) {
       const paramName = TOOL_OPERATION_PARAM[name];
       if (paramName) {
-        const requestedOp = args[paramName] ?? TOOL_OPERATION_DEFAULT[name];
+        const requestedOp = resolveRequestedOperation(name, args);
         if (requestedOp && disabledOpsForTool.has(String(requestedOp).toLowerCase())) {
           throw new Error(`Operation '${requestedOp}' on tool '${name}' is disabled by server policy`);
         }

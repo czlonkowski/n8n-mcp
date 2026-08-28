@@ -153,14 +153,33 @@ describe('virtual operations (enum union destructive set)', () => {
     expect(filtered.annotations.destructiveHint).toBe(true);
   });
 
-  it('does not advise moving the tool to DISABLED_TOOLS while an operation is still reachable', () => {
+  it('advises moving the tool to DISABLED_TOOLS once no selectable operation is left', () => {
     const server = new TestableN8NMCPServer();
-    // Every enum value gone, but the virtual `expose` operation is still enabled.
-    server.testBuildFilteredToolDefinitions(
+    // Every enum value gone; only the virtual `expose` operation survives. It
+    // keeps the tool destructive, but it is not a value a caller can pass, so
+    // the tool is published with an empty enum and the operator needs to hear
+    // it — the warning counts callable operations, not the union.
+    const cache = server.testBuildFilteredToolDefinitions(
       new Map([['n8n_probe_tool', new Set(['auto', 'trigger', 'pinned', 'direct'])]])
     );
+    expect(cache.get('n8n_probe_tool').inputSchema.properties.method.enum).toEqual([]);
+    expect(cache.get('n8n_probe_tool').annotations.readOnlyHint).toBe(false);
     const warnings = vi.mocked(logger.warn).mock.calls.map(c => String(c[0]));
-    expect(warnings.some(w => w.includes("all operations for 'n8n_probe_tool' are disabled"))).toBe(false);
+    expect(warnings.some(w => w.includes("all operations for 'n8n_probe_tool' are disabled"))).toBe(true);
+  });
+
+  it('warns for a real tool whose every method is disabled while expose keeps it destructive', () => {
+    const server = new TestableN8NMCPServer();
+    const cache = server.testBuildFilteredToolDefinitions(
+      new Map([['n8n_test_workflow', new Set(['auto', 'trigger', 'prepare', 'pinned', 'direct'])]])
+    );
+    const filtered = cache.get('n8n_test_workflow');
+    expect(filtered.inputSchema.properties.method.enum).toEqual([]);
+    // `expose` is still enabled, so the tool is not read-only.
+    expect(filtered.annotations.readOnlyHint).toBe(false);
+    expect(filtered.annotations.destructiveHint).toBe(true);
+    const warnings = vi.mocked(logger.warn).mock.calls.map(c => String(c[0]));
+    expect(warnings.some(w => w.includes("all operations for 'n8n_test_workflow' are disabled"))).toBe(true);
   });
 
   it('advises moving the tool to DISABLED_TOOLS once nothing is reachable', () => {
