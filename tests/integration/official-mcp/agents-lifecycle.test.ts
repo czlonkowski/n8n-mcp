@@ -18,10 +18,14 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { handleManageAgents } from '@/mcp/handlers-agents';
 import { handleListCatalog } from '@/mcp/handlers-official-tools';
+import { clearOfficialMcpClientCache } from '@/mcp/official-mcp-access';
 
 const enabled = !!(process.env.N8N_API_URL && process.env.N8N_API_KEY && process.env.N8N_MCP_ACCESS_TOKEN);
 const LIVE_TIMEOUT_MS = 60_000;
-const TEST_AGENT_NAME = '[TEST] n8n-mcp lifecycle';
+// Unique per run: a leftover agent from an interrupted earlier run must not
+// make this run's post-delete check fail, and two runs against the same
+// instance must not collide.
+const TEST_AGENT_NAME = `[TEST] n8n-mcp lifecycle ${Date.now().toString(36)}`;
 
 describe.skipIf(!enabled)('official MCP: agent lifecycle (live)', () => {
   let agentId: string | undefined;
@@ -40,13 +44,19 @@ describe.skipIf(!enabled)('official MCP: agent lifecycle (live)', () => {
         // ignore - the post-condition search below is the real check
       }
     }
-    // Confirm the instance is left clean: no "[TEST] n8n-mcp lifecycle"
-    // agent remains, regardless of whether the delete call above reported
+    // Confirm the instance is left clean: no agent with THIS run's unique
+    // name remains, regardless of whether the delete call above reported
     // success. A failure here means real cleanup did not happen.
-    const searched = await handleManageAgents({ action: 'search', args: { query: '[TEST]' } });
-    expect(searched.success).toBe(true);
-    const remaining = ((searched.data as any).data ?? []) as Array<{ name: string }>;
-    expect(remaining.some(a => a.name === TEST_AGENT_NAME)).toBe(false);
+    try {
+      const searched = await handleManageAgents({ action: 'search', args: { query: '[TEST]' } });
+      expect(searched.success).toBe(true);
+      const remaining = ((searched.data as any).data ?? []) as Array<{ name: string }>;
+      expect(remaining.some(a => a.name === TEST_AGENT_NAME)).toBe(false);
+    } finally {
+      // Close the cached client so its transport and pinned undici dispatcher
+      // do not keep the vitest worker alive after the suite finishes.
+      await clearOfficialMcpClientCache();
+    }
   }, LIVE_TIMEOUT_MS);
 
   it('reads the builder reference', async () => {

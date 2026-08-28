@@ -177,7 +177,12 @@ describe('health check officialMcp block', () => {
     expect(r.data).toMatchObject({ officialMcp: { reachable: true, toolCount: 54 } });
   });
 
-  it('never includes the token in the officialMcp block', async () => {
+  // buildOfficialMcpHealth is mocked here, so this proves only that the health
+  // handler passes its block through and adds nothing of its own — no
+  // credential field ever appears alongside it. That the block itself is
+  // token-free is asserted against the real implementation in
+  // official-mcp-access.test.ts.
+  it('passes the officialMcp block through without adding any credential field', async () => {
     mockApiClient.healthCheck.mockResolvedValue({ status: 'ok', features: [] });
     access.buildOfficialMcpHealth.mockResolvedValue({
       configured: true,
