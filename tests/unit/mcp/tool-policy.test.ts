@@ -182,3 +182,19 @@ describe('virtual operations (enum union destructive set)', () => {
     expect(filtered.annotations.destructiveHint).toBe(false);
   });
 });
+
+describe('n8n_test_workflow policy registration', () => {
+  it('accepts the real tool\'s virtual expose operation without a "no effect" warning', () => {
+    process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:expose';
+    expect(isOperationDisabled('n8n_test_workflow', 'expose')).toBe(true);
+    const warnings = vi.mocked(logger.warn).mock.calls.map(c => String(c[0]));
+    expect(warnings.some(w => w.includes('is not a valid'))).toBe(false);
+    expect(warnings.some(w => w.includes("unknown tool 'n8n_test_workflow'"))).toBe(false);
+  });
+
+  it('treats every run method of n8n_test_workflow as destructive and prepare as the read path', () => {
+    expect(getValidOperations('n8n_test_workflow')).toEqual(
+      new Set(['auto', 'trigger', 'prepare', 'pinned', 'direct', 'expose'])
+    );
+  });
+});

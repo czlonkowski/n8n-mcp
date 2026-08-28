@@ -59,6 +59,15 @@ import {
   normalizeMcpWorkflowNodes,
 } from '../utils/mcp-input-normalizer';
 import { buildOfficialMcpHealth, OfficialMcpHealth } from './official-mcp-access';
+import { callOfficialTool } from './handlers-official-tools';
+import { withMcpExposure } from '../services/mcp-exposure';
+import { isOperationDisabled } from './tool-policy';
+import {
+  DEFAULT_TIMEOUT_MS,
+  MIN_TIMEOUT_MS,
+  MAX_TIMEOUT_MS,
+  PINNED_TIMEOUT_MS,
+} from './agents-action-map';
 
 // ========================================================================
 // TypeScript Interfaces for Type Safety
@@ -529,6 +538,7 @@ const autofixWorkflowSchema = z.object({
 // Schema for n8n_test_workflow tool
 const testWorkflowSchema = z.object({
   workflowId: z.string(),
+  method: optionalEmptyAware(z.enum(['auto', 'trigger', 'prepare', 'pinned', 'direct'])),
   triggerType: optionalEmptyAware(z.enum(['webhook', 'form', 'chat'])),
   httpMethod: optionalEmptyAware(z.enum(['GET', 'POST', 'PUT', 'DELETE'])),
   webhookPath: optionalEmptyAware(z.string()),
@@ -538,6 +548,12 @@ const testWorkflowSchema = z.object({
   headers: z.record(z.string()).optional(),
   timeout: z.number().optional(),
   waitForResponse: z.boolean().optional(),
+  // Official-MCP methods only.
+  exposeToMcp: z.boolean().optional(),
+  timeoutMs: z.number().int().min(MIN_TIMEOUT_MS).max(MAX_TIMEOUT_MS).optional(),
+  pinData: z.record(z.array(z.unknown())).optional(),
+  triggerNodeName: optionalEmptyAware(z.string()),
+  executionMode: optionalEmptyAware(z.enum(['manual', 'production'])),
 });
 
 const listExecutionsSchema = z.object({
@@ -1655,34 +1671,196 @@ export async function handleAutofixWorkflow(
 
 // Execution Management Handlers
 
+/** The action label every official call from n8n_test_workflow reports. */
+const OFFICIAL_TEST_ACTION = 'test_workflow';
+
+/**
+ * Statuses `test_workflow` reports for a run that STARTED but did not end
+ * well. The call itself succeeded, so `callOfficialTool` returns a success and
+ * this handler is the one that turns the run's outcome into a failure.
+ */
+const FAILED_RUN_STATUSES = new Set(['error', 'crashed', 'canceled']);
+
 /**
  * Handler for n8n_test_workflow tool
- * Triggers workflow execution via auto-detected or specified trigger type
+ *
+ * `method` picks the backend:
+ * - `trigger` (and `auto` when the workflow has a webhook/form/chat trigger)
+ *   runs the existing Public-API HTTP path.
+ * - `prepare` / `pinned` / `direct` go through n8n's instance-level MCP server,
+ *   behind the "Available in MCP" consent flow.
+ *
+ * `auto` never executes anything through the official server: without a
+ * detected trigger it returns the same error it always has, naming the two
+ * official methods in its hint so the caller chooses one deliberately.
  */
 export async function handleTestWorkflow(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
   try {
     const client = ensureApiConfigured(context);
     const input = testWorkflowSchema.parse(args);
+    const method = input.method ?? 'auto';
 
     // Import trigger system (lazy to avoid circular deps)
     const {
       detectTriggerFromWorkflow,
+      classifyTriggerNode,
       ensureRegistryInitialized,
       TriggerRegistry,
     } = await import('../triggers');
 
-    // Ensure registry is initialized
-    await ensureRegistryInitialized();
+    // Reads default to 30 s; a run gets the longer deadline.
+    const officialTimeoutMs = input.timeoutMs ?? (method === 'prepare' ? DEFAULT_TIMEOUT_MS : PINNED_TIMEOUT_MS);
+    const routeOfficial = async (
+      aliases: string[],
+      officialArgs: Record<string, unknown>,
+      idempotent: boolean,
+      resolvedMethod: 'prepare' | 'pinned' | 'direct'
+    ): Promise<McpToolResponse> => {
+      // withMcpExposure returns the envelope undecorated (and may already carry
+      // warnings from the consent write) — spread first, then label it.
+      const response = await withMcpExposure(
+        {
+          apiClient: client,
+          workflowId: input.workflowId,
+          exposeToMcp: input.exposeToMcp,
+          action: OFFICIAL_TEST_ACTION,
+          toolName: 'n8n_test_workflow',
+        },
+        () => callOfficialTool(context, aliases, officialArgs, officialTimeoutMs, OFFICIAL_TEST_ACTION, idempotent)
+      );
+      return { ...response, method: resolvedMethod, backend: 'official-mcp' };
+    };
+
+    // prepare only needs the workflow id — no trigger analysis, no workflow GET.
+    if (method === 'prepare') {
+      return routeOfficial(['prepare_workflow_pin_data'], { workflowId: input.workflowId }, true, 'prepare');
+    }
+
+    if (method === 'pinned' && !input.pinData) {
+      return {
+        success: false,
+        code: 'INVALID_ARGS',
+        method: 'pinned',
+        error: 'pinData is required for method: pinned (keys are node names, values are arrays of items). Run method: prepare first to see which nodes need pinned data.',
+      };
+    }
+
+    // The effective operation of `auto` is `trigger`: it is the only thing auto
+    // ever executes. Disabling `trigger` therefore stops `auto` as well.
+    if ((method === 'auto' || method === 'trigger') && isOperationDisabled('n8n_test_workflow', 'trigger')) {
+      return {
+        success: false,
+        code: 'OPERATION_DISABLED',
+        method: 'trigger',
+        backend: 'public-api',
+        error: "Operation 'trigger' on tool 'n8n_test_workflow' is disabled by server policy.",
+        details: { requestedMethod: method },
+      };
+    }
 
     // Fetch the workflow to analyze its trigger
     const workflow = await client.getWorkflow(input.workflowId);
 
+    // Auto-detect from workflow
+    const detection = detectTriggerFromWorkflow(workflow);
+    const detectedNodeName = detection.trigger?.node.name;
+
+    if (method === 'pinned') {
+      const pinnedTriggerNode = input.triggerNodeName ?? detectedNodeName;
+      const response = await routeOfficial(
+        ['test_workflow'],
+        {
+          workflowId: input.workflowId,
+          pinData: input.pinData,
+          ...(pinnedTriggerNode ? { triggerNodeName: pinnedTriggerNode } : {}),
+          // Keep n8n's own deadline inside ours, so a slow run is reported by
+          // n8n rather than cut short by the client's timeout.
+          timeout: Math.max(1, Math.floor(officialTimeoutMs / 1000) - 5),
+        },
+        false,
+        'pinned'
+      );
+      if (!response.success) return response;
+
+      const run = (response.data ?? {}) as { executionId?: unknown; status?: unknown; error?: unknown };
+      const executionId = typeof run.executionId === 'string' ? run.executionId : undefined;
+      const status = typeof run.status === 'string' ? run.status : undefined;
+      if (status && FAILED_RUN_STATUSES.has(status)) {
+        return {
+          ...response,
+          success: false,
+          code: 'EXECUTION_FAILED',
+          error: typeof run.error === 'string' ? run.error : `Run finished with status ${status}`,
+          ...(executionId ? { executionId } : {}),
+        };
+      }
+      return { ...response, ...(executionId ? { executionId } : {}) };
+    }
+
+    if (method === 'direct') {
+      // An explicitly named trigger node decides the payload shape; only
+      // without one does the workflow's first detected trigger decide it.
+      const namedNode = input.triggerNodeName
+        ? (workflow.nodes ?? []).find(node => node.name === input.triggerNodeName)
+        : undefined;
+      const triggerKind: TriggerType | null = input.triggerNodeName
+        ? (namedNode ? classifyTriggerNode(namedNode) : null)
+        : (detection.trigger?.type ?? null);
+
+      let inputs: Record<string, unknown> | undefined;
+      if (input.message !== undefined) {
+        inputs = { chatInput: input.message };
+      } else if (input.data && triggerKind === 'form') {
+        inputs = { formData: input.data };
+      } else if (input.data || input.headers || input.httpMethod) {
+        inputs = {
+          webhookData: {
+            method: input.httpMethod ?? 'POST',
+            ...(input.data ? { body: input.data } : {}),
+            ...(input.headers ? { headers: input.headers } : {}),
+          },
+        };
+      }
+
+      // n8n requires triggerNodeName whenever inputs are given.
+      const directTriggerNode = input.triggerNodeName ?? (inputs ? detectedNodeName : undefined);
+      if (inputs && !directTriggerNode) {
+        return {
+          success: false,
+          code: 'INVALID_ARGS',
+          method: 'direct',
+          error: 'triggerNodeName is required when inputs are given and no trigger node could be detected',
+          details: { workflowId: input.workflowId, reason: detection.reason },
+        };
+      }
+
+      const response = await routeOfficial(
+        ['execute_workflow'],
+        {
+          workflowId: input.workflowId,
+          executionMode: input.executionMode ?? 'manual',
+          ...(directTriggerNode ? { triggerNodeName: directTriggerNode } : {}),
+          ...(inputs ? { inputs } : {}),
+        },
+        false,
+        'direct'
+      );
+      if (!response.success) return response;
+
+      const executionId = (response.data as { executionId?: unknown } | undefined)?.executionId;
+      return {
+        ...response,
+        ...(typeof executionId === 'string' ? { executionId } : {}),
+        hint: 'execute_workflow returns as soon as the run starts; poll n8n_executions with the executionId for the result.',
+      };
+    }
+
+    // Ensure registry is initialized
+    await ensureRegistryInitialized();
+
     // Determine trigger type
     let triggerType: TriggerType | undefined = input.triggerType as TriggerType | undefined;
     let triggerInfo;
-
-    // Auto-detect from workflow
-    const detection = detectTriggerFromWorkflow(workflow);
 
     if (!triggerType) {
       if (detection.detected && detection.trigger) {
@@ -1693,10 +1871,13 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
         return {
           success: false,
           error: 'Workflow cannot be triggered externally',
+          method,
+          backend: 'public-api',
           details: {
             workflowId: input.workflowId,
             reason: detection.reason,
-            hint: 'Only workflows with webhook, form, or chat triggers can be executed via the API. Add one of these trigger nodes to your workflow.',
+            hint: 'Only workflows with webhook, form, or chat triggers can be executed via the API. Add one of these trigger nodes to your workflow.'
+              + ' To run it anyway through n8n\'s MCP server, call again with method: direct (executionMode manual) or method: pinned with pinData from method: prepare — both need N8N_MCP_ACCESS_TOKEN.',
           },
         };
       }
@@ -1708,6 +1889,8 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
         return {
           success: false,
           error: `Workflow does not have a ${triggerType} trigger`,
+          method: 'trigger',
+          backend: 'public-api',
           details: {
             workflowId: input.workflowId,
             requestedTrigger: triggerType,
@@ -1726,6 +1909,8 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       return {
         success: false,
         error: `No handler registered for trigger type: ${triggerType}`,
+        method: 'trigger',
+        backend: 'public-api',
         details: {
           supportedTypes: TriggerRegistry.getRegisteredTypes(),
         },
@@ -1737,6 +1922,8 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       return {
         success: false,
         error: 'Workflow must be active to trigger via this method',
+        method: 'trigger',
+        backend: 'public-api',
         details: {
           workflowId: input.workflowId,
           triggerType,
@@ -1750,6 +1937,8 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       return {
         success: false,
         error: 'Chat trigger requires a message parameter',
+        method: 'trigger',
+        backend: 'public-api',
         details: {
           hint: 'Provide message="your message" for chat triggers',
         },
@@ -1782,6 +1971,8 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
         : response.error,
       executionId: response.executionId,
       workflowId: input.workflowId,
+      method: 'trigger',
+      backend: 'public-api',
       details: {
         triggerType,
         metadata: response.metadata,

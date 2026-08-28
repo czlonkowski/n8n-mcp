@@ -91,6 +91,29 @@ export function detectTriggerFromWorkflow(workflow: Workflow): TriggerDetectionR
 }
 
 /**
+ * Classify ONE node the way `detectTriggerFromWorkflow` classifies a workflow.
+ *
+ * Returns the externally-triggerable kind of the node, or `null` when the node
+ * is not a trigger at all (`n8n-nodes-base.set`), is a regular node whose name
+ * merely looks trigger-like (`n8n-nodes-base.form`, the Form page node), or is
+ * a trigger that cannot be driven from outside (`scheduleTrigger`).
+ *
+ * Used when the caller names a specific trigger node: the node it names — not
+ * the workflow's first detected trigger — decides the shape of the input
+ * payload. Unlike the workflow-level detector this does not skip disabled
+ * nodes: naming a node explicitly is a deliberate choice, and refusing it here
+ * would replace a clear error from n8n with a silently different payload shape.
+ */
+export function classifyTriggerNode(node: WorkflowNode): TriggerType | null {
+  if (!isTriggerNodeType(node.type)) return null;
+  // Same priority order as detectTriggerFromWorkflow.
+  if (detectWebhookTrigger(node)) return 'webhook';
+  if (detectChatTrigger(node)) return 'chat';
+  if (detectFormTrigger(node)) return 'form';
+  return null;
+}
+
+/**
  * Check if a node type is a trigger
  */
 function isTriggerNodeType(nodeType: string): boolean {

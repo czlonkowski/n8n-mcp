@@ -383,13 +383,18 @@ export const n8nManagementTools: ToolDefinition[] = [
   // Execution Management Tools
   {
     name: 'n8n_test_workflow',
-    description: `Test/trigger workflow execution. Auto-detects trigger type (webhook/form/chat). Supports: webhook (HTTP), form (fields), chat (message). Note: Only workflows with these trigger types can be executed externally.`,
+    description: `Run a workflow. method=auto (default) triggers it over HTTP through its webhook/form/chat trigger. Workflows without such a trigger need n8n's MCP server: method=prepare lists the nodes that need pinned data, method=pinned runs the workflow with that data, method=direct starts a run with optional inputs. The official methods need N8N_MCP_ACCESS_TOKEN and the workflow's "Available in MCP" setting (exposeToMcp: true enables it after you confirm with the user).`,
     inputSchema: {
       type: 'object',
       properties: {
         workflowId: {
           type: 'string',
           description: 'Workflow ID to execute (required)'
+        },
+        method: {
+          type: 'string',
+          enum: ['auto', 'trigger', 'prepare', 'pinned', 'direct'],
+          description: 'How to run it. auto (default): trigger over HTTP when the workflow has a webhook/form/chat trigger, otherwise report that it cannot be triggered - auto never runs through n8n\'s MCP server. trigger: force the HTTP path. prepare: list the nodes needing pinned data (read-only). pinned: run with pinData through n8n\'s MCP server. direct: start a run through n8n\'s MCP server, with optional inputs.'
         },
         triggerType: {
           type: 'string',
@@ -431,6 +436,29 @@ export const n8nManagementTools: ToolDefinition[] = [
         waitForResponse: {
           type: 'boolean',
           description: 'Wait for workflow completion (default: true)'
+        },
+        pinData: {
+          type: 'object',
+          description: 'For method=pinned (required): pinned trigger data, keyed by node name, each value an array of items. Get the node list from method=prepare.'
+        },
+        triggerNodeName: {
+          type: 'string',
+          description: 'For method=pinned/direct: which trigger node to start from. Defaults to the detected trigger node. Required by n8n when inputs are given.'
+        },
+        executionMode: {
+          type: 'string',
+          enum: ['manual', 'production'],
+          description: 'For method=direct: manual (default) runs it as a manual execution; production runs it as a live one, with real side effects. Never chosen implicitly.'
+        },
+        exposeToMcp: {
+          type: 'boolean',
+          description: 'For the official methods: enable the workflow\'s persistent "Available in MCP" setting when n8n refuses the call. Confirm with the user first.'
+        },
+        timeoutMs: {
+          type: 'integer',
+          minimum: 5000,
+          maximum: 600000,
+          description: 'Client-side deadline for the official call (default: 30000 for prepare, 300000 for pinned/direct)'
         }
       },
       required: ['workflowId']
@@ -438,7 +466,9 @@ export const n8nManagementTools: ToolDefinition[] = [
     annotations: {
       title: 'Test Workflow',
       readOnlyHint: false,
-      destructiveHint: false,
+      // Running a workflow has the workflow's own side effects; n8n marks its
+      // execute_workflow / test_workflow tools destructive for the same reason.
+      destructiveHint: true,
       openWorldHint: true,
     },
   },
@@ -908,11 +938,23 @@ Old backups are also pruned automatically (10 most recent per workflow, plus an 
  */
 export const TOOL_OPERATION_PARAM: Record<string, string> = {
   'n8n_executions': 'action',
+  'n8n_test_workflow': 'method',
   'n8n_evaluations': 'action',
   'n8n_manage_folders': 'action',
   'n8n_workflow_versions': 'mode',
   'n8n_manage_agents': 'action',
   'n8n_list_catalog': 'kind',
+};
+
+/**
+ * The operation a call is checked as when its operation parameter is omitted.
+ *
+ * The call-time policy check reads the raw arguments, before Zod applies the
+ * schema default, so a tool whose operation parameter has a default needs that
+ * default here — otherwise an omitted value would slip past a rule naming it.
+ */
+export const TOOL_OPERATION_DEFAULT: Record<string, string> = {
+  'n8n_test_workflow': 'auto',
 };
 
 /**
@@ -924,6 +966,10 @@ export const TOOL_OPERATION_PARAM: Record<string, string> = {
  */
 export const DESTRUCTIVE_TOOL_OPERATIONS: Record<string, Set<string>> = {
   'n8n_executions': new Set(['delete']),
+  // Every method that runs the workflow; prepare is the read path. `auto`
+  // resolves to `trigger`, so it runs the workflow too. `expose` is virtual: it
+  // is not a `method` value but the consent write behind `exposeToMcp: true`.
+  'n8n_test_workflow': new Set(['auto', 'trigger', 'pinned', 'direct', 'expose']),
   'n8n_evaluations': new Set(['run', 'cancel']),
   // Every write action; list/get are the read paths. delete is the sharpest — without
   // transferToFolderId it archives the folder's workflows.

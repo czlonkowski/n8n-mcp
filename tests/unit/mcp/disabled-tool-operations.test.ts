@@ -501,4 +501,40 @@ describe('Disabled Tool Operations Feature (Issue #714)', () => {
       expect(result).toContain('prune');
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Dispatch enforcement — n8n_test_workflow, whose operation parameter has a
+  // per-tool default: an omitted `method` is the `auto` operation.
+  // ---------------------------------------------------------------------------
+
+  describe('executeTool() - Dispatch Enforcement for n8n_test_workflow', () => {
+    it('should treat an omitted method as auto', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:auto,trigger';
+      server = new TestableN8NMCPServer();
+
+      await expect(
+        server.testExecuteTool('n8n_test_workflow', { workflowId: 'w' })
+      ).rejects.toThrow("Operation 'auto' on tool 'n8n_test_workflow' is disabled by server policy");
+    });
+
+    it('should block an explicit trigger method', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:auto,trigger';
+      server = new TestableN8NMCPServer();
+
+      await expect(
+        server.testExecuteTool('n8n_test_workflow', { workflowId: 'w', method: 'trigger' })
+      ).rejects.toThrow("Operation 'trigger' on tool 'n8n_test_workflow' is disabled by server policy");
+    });
+
+    it('should not block prepare when the run methods are disabled', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:auto,trigger';
+      server = new TestableN8NMCPServer();
+
+      try {
+        await server.testExecuteTool('n8n_test_workflow', { workflowId: 'w', method: 'prepare' });
+      } catch (error: any) {
+        expect(error.message).not.toContain('disabled by server policy');
+      }
+    });
+  });
 });

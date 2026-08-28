@@ -4,33 +4,59 @@ export const n8nTestWorkflowDoc: ToolDocumentation = {
   name: 'n8n_test_workflow',
   category: 'workflow_management',
   essentials: {
-    description: 'Test/trigger workflow execution. Auto-detects trigger type (webhook/form/chat). Only workflows with these triggers can be executed externally.',
-    keyParameters: ['workflowId', 'triggerType', 'data', 'message'],
+    description: 'Run a workflow. method=auto (default) triggers it over HTTP via its webhook/form/chat trigger; method=prepare/pinned/direct run it through n8n\'s own MCP server.',
+    keyParameters: ['workflowId', 'method', 'data', 'message', 'pinData'],
     example: 'n8n_test_workflow({workflowId: "123"}) - auto-detect trigger',
     performance: 'Immediate trigger, response time depends on workflow complexity',
     tips: [
       'Auto-detects trigger type from workflow if not specified',
-      'Workflow must have a webhook, form, or chat trigger to be executable',
+      'Workflows without a webhook/form/chat trigger need method=direct or method=pinned',
+      'method=prepare first, then method=pinned with the pinData you built from it',
       'For chat triggers, message is required',
-      'All trigger types require the workflow to be ACTIVE'
+      'HTTP trigger types require the workflow to be ACTIVE'
     ]
   },
   full: {
-    description: `Test and trigger n8n workflows through HTTP-based methods. This unified tool supports multiple trigger types:
+    description: `Run an n8n workflow, either over HTTP through its own trigger or through n8n's instance-level MCP server.
 
-**Trigger Types:**
+**Methods (\`method\` parameter):**
+
+| method | backend | What it does |
+|---|---|---|
+| \`auto\` (default) | Public API | Detects a webhook/form/chat trigger and triggers it over HTTP. Without such a trigger it reports that the workflow cannot be triggered externally and names the official methods. It never runs anything through n8n's MCP server. |
+| \`trigger\` | Public API | The HTTP path above, without auto-detection fallback wording. |
+| \`prepare\` | n8n MCP server | Read-only: lists the nodes that need pinned data and the schemas n8n can generate for them. Build \`pinData\` from this. |
+| \`pinned\` | n8n MCP server | Runs the workflow with \`pinData\` standing in for the trigger's output, and waits for the run to finish. |
+| \`direct\` | n8n MCP server | Starts a run with optional \`inputs\` and returns as soon as it has started. |
+
+**Trigger types (HTTP path):**
 - **webhook**: HTTP-based triggers (GET/POST/PUT/DELETE)
 - **form**: Form submission triggers
 - **chat**: AI chat triggers with conversation support
 
-**Important:** n8n's public API does not support direct workflow execution. Only workflows with webhook, form, or chat triggers can be executed externally. Workflows with schedule, manual, or other trigger types cannot be triggered via this API.
+n8n's public API does not support direct workflow execution, which is why \`prepare\`/\`pinned\`/\`direct\` go through n8n's own MCP server instead. Those three need \`N8N_MCP_ACCESS_TOKEN\` (n8n 2.34+).
 
-The tool auto-detects the appropriate trigger type by analyzing the workflow's trigger node. You can override this with the triggerType parameter.`,
+**Consent: "Available in MCP".** n8n refuses MCP calls for a workflow whose "Available in MCP" setting is off, and this tool returns \`WORKFLOW_NOT_EXPOSED\` rather than changing it. Re-run with \`exposeToMcp: true\` to enable it — a visible, persistent setting on the workflow, so confirm with the user first. The setting is never turned off again, and a response that enabled it carries \`exposedToMcp: true\`.
+
+**executionMode: production.** \`method: direct\` runs as a manual execution unless you explicitly pass \`executionMode: 'production'\`. A production run behaves like a live one — real side effects, production execution data. It is never chosen for you.
+
+**Typical sequence for a workflow with no external trigger:**
+1. \`{workflowId, method: 'prepare'}\` — see which nodes need pinned data.
+2. Build sample items per node name (\`{"Webhook": [{"json": {...}}]}\`).
+3. \`{workflowId, method: 'pinned', pinData}\` — run it and read the result.
+
+Every response states \`method\` and \`backend\` ('public-api' or 'official-mcp').`,
     parameters: {
       workflowId: {
         type: 'string',
         required: true,
         description: 'Workflow ID to execute'
+      },
+      method: {
+        type: 'string',
+        required: false,
+        enum: ['auto', 'trigger', 'prepare', 'pinned', 'direct'],
+        description: 'How to run the workflow (default: auto). See the methods table above.'
       },
       triggerType: {
         type: 'string',
@@ -78,25 +104,60 @@ The tool auto-detects the appropriate trigger type by analyzing the workflow's t
         type: 'boolean',
         required: false,
         description: 'Wait for workflow completion (default: true)'
+      },
+      pinData: {
+        type: 'object',
+        required: false,
+        description: 'For method=pinned (required): pinned trigger data keyed by node name, each value an array of items. Build it from method=prepare.'
+      },
+      triggerNodeName: {
+        type: 'string',
+        required: false,
+        description: 'For method=pinned/direct: which trigger node to start from. Defaults to the detected trigger node; n8n requires it whenever inputs are given.'
+      },
+      executionMode: {
+        type: 'string',
+        required: false,
+        enum: ['manual', 'production'],
+        description: 'For method=direct: manual (default) or production. Production runs have real side effects and are never chosen implicitly.'
+      },
+      exposeToMcp: {
+        type: 'boolean',
+        required: false,
+        description: 'For the official methods: enable the workflow\'s persistent "Available in MCP" setting when n8n refuses the call. Confirm with the user first.'
+      },
+      timeoutMs: {
+        type: 'number',
+        required: false,
+        description: 'Client-side deadline for the official call, 5000-600000 (default: 30000 for prepare, 300000 for pinned/direct)'
       }
     },
     returns: `Execution response including:
 - success: boolean
-- data: workflow output data
+- method: which method ran ('trigger', 'prepare', 'pinned', 'direct')
+- backend: 'public-api' or 'official-mcp'
+- data: workflow output data (or the official tool's payload)
 - executionId: for tracking/debugging
-- triggerType: detected or specified trigger type
-- metadata: timing and request details`,
+- triggerType: detected or specified trigger type (HTTP path)
+- metadata: timing and request details
+- exposedToMcp: true when the call enabled "Available in MCP" on the workflow`,
     examples: [
       'n8n_test_workflow({workflowId: "123"}) - Auto-detect and trigger',
       'n8n_test_workflow({workflowId: "123", triggerType: "webhook", data: {name: "John"}}) - Webhook with data',
       'n8n_test_workflow({workflowId: "123", triggerType: "chat", message: "Hello AI"}) - Chat trigger',
-      'n8n_test_workflow({workflowId: "123", triggerType: "form", data: {email: "test@example.com"}}) - Form submission'
+      'n8n_test_workflow({workflowId: "123", triggerType: "form", data: {email: "test@example.com"}}) - Form submission',
+      'n8n_test_workflow({workflowId: "123", method: "prepare"}) - Which nodes need pinned data',
+      'n8n_test_workflow({workflowId: "123", method: "pinned", pinData: {Webhook: [{json: {name: "John"}}]}}) - Run with pinned trigger data',
+      'n8n_test_workflow({workflowId: "123", method: "direct", message: "Hello"}) - Start a manual run through n8n\'s MCP server',
+      'n8n_test_workflow({workflowId: "123", method: "prepare", exposeToMcp: true}) - Enable "Available in MCP" first (confirm with the user)'
     ],
     useCases: [
       'Test workflows during development',
       'Trigger AI chat workflows with messages',
       'Submit form data to form-triggered workflows',
-      'Integrate n8n workflows with external systems via webhooks'
+      'Integrate n8n workflows with external systems via webhooks',
+      'Run a workflow that has no webhook/form/chat trigger (schedule, manual, sub-workflow)',
+      'Exercise a workflow with pinned trigger data instead of a live request'
     ],
     performance: `Performance varies based on workflow complexity and waitForResponse setting:
 - Webhook: Immediate trigger, depends on workflow
@@ -115,7 +176,11 @@ When execution fails, the response includes guidance for debugging:
 **Common Errors:**
 - "Workflow not found" - Check workflow ID exists
 - "Workflow not active" - Activate workflow (required for all trigger types)
-- "Workflow cannot be triggered externally" - Workflow has no webhook/form/chat trigger
+- "Workflow cannot be triggered externally" - Workflow has no webhook/form/chat trigger; use method=direct or method=pinned
+- WORKFLOW_NOT_EXPOSED - The workflow's "Available in MCP" setting is off; re-run with exposeToMcp: true after confirming with the user
+- EXECUTION_FAILED - method=pinned started the run and it ended in error/crashed/canceled; the executionId is on the response
+- OFFICIAL_MCP_TOOL_UNAVAILABLE - This n8n version does not expose the tool (the message names the minimum version)
+- NOT_CONFIGURED - The official methods need N8N_MCP_ACCESS_TOKEN
 - "Chat message required" - Provide message parameter for chat triggers
 - "SSRF protection" - URL validation failed`,
     bestPractices: [
@@ -124,10 +189,16 @@ When execution fails, the response includes guidance for debugging:
       'For chat workflows, provide sessionId for multi-turn conversations',
       'Use mode="preview" with n8n_executions for efficient debugging',
       'Test with small data payloads first',
-      'Activate workflows before testing (use n8n_update_partial_workflow with activateWorkflow)'
+      'Activate workflows before testing (use n8n_update_partial_workflow with activateWorkflow)',
+      'Run method=prepare before method=pinned so pinData matches the nodes n8n expects',
+      'Keep method=direct on executionMode manual unless a production run is genuinely wanted',
+      'Confirm with the user before passing exposeToMcp: true - it changes a visible workflow setting'
     ],
     pitfalls: [
-      'All trigger types require the workflow to be ACTIVE',
+      'method=auto never runs a workflow through n8n\'s MCP server - it reports the workflow cannot be triggered instead',
+      'method=direct returns as soon as the run starts; poll n8n_executions with the executionId for the outcome',
+      'executionMode: production runs the workflow for real',
+      'All HTTP trigger types require the workflow to be ACTIVE',
       'Workflows without webhook/form/chat triggers cannot be executed externally',
       'Chat trigger requires message parameter',
       'Form data must match expected form fields',

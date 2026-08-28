@@ -2,7 +2,7 @@
  * Unit tests for trigger detection
  */
 import { describe, it, expect } from 'vitest';
-import { detectTriggerFromWorkflow, buildTriggerUrl, describeTrigger } from '../../../src/triggers/trigger-detector';
+import { detectTriggerFromWorkflow, buildTriggerUrl, describeTrigger, classifyTriggerNode } from '../../../src/triggers/trigger-detector';
 import type { Workflow } from '../../../src/types/n8n-api';
 
 // Helper to create a workflow with a specific trigger node
@@ -328,4 +328,38 @@ describe('Trigger Detector', () => {
     });
 
   });
+
+  describe('classifyTriggerNode', () => {
+    const node = (type: string, name = 'Trigger') => ({
+      id: 'node-1',
+      name,
+      type,
+      typeVersion: 1,
+      position: [0, 0] as [number, number],
+      parameters: {},
+    });
+
+    it('classifies webhook trigger nodes', () => {
+      expect(classifyTriggerNode(node('n8n-nodes-base.webhook'))).toBe('webhook');
+    });
+
+    it('classifies chat trigger nodes', () => {
+      expect(classifyTriggerNode(node('@n8n/n8n-nodes-langchain.chatTrigger'))).toBe('chat');
+    });
+
+    it('classifies form trigger nodes', () => {
+      expect(classifyTriggerNode(node('n8n-nodes-base.formTrigger'))).toBe('form');
+    });
+
+    it('returns null for a node that is not a trigger', () => {
+      expect(classifyTriggerNode(node('n8n-nodes-base.set'))).toBeNull();
+      // The Form page node is a regular node, not the form trigger.
+      expect(classifyTriggerNode(node('n8n-nodes-base.form'))).toBeNull();
+    });
+
+    it('returns null for a trigger that cannot be driven externally', () => {
+      expect(classifyTriggerNode(node('n8n-nodes-base.scheduleTrigger'))).toBeNull();
+    });
+  });
+
 });

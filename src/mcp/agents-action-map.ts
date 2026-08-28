@@ -47,6 +47,12 @@ export const DEFAULT_TIMEOUT_MS = 30_000;
 export const CALL_TIMEOUT_MS = 180_000;
 export const MIN_TIMEOUT_MS = 5_000;
 export const MAX_TIMEOUT_MS = 600_000;
+/**
+ * Client-side deadline for the official calls that run a workflow
+ * (`test_workflow`, `execute_workflow`). Runs routinely outlast the 30 s
+ * default that read calls use.
+ */
+export const PINNED_TIMEOUT_MS = 300_000;
 
 export const AGENT_ACTION_MAP: Record<AgentAction, AgentActionSpec> = {
   reference: { tools: ['get_agent_builder_reference'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },

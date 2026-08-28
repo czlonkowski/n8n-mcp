@@ -15,7 +15,7 @@ import path from 'path';
 import { n8nDocumentationToolsFinal } from './tools';
 import { UIAppRegistry } from './ui';
 import { SkillResourceRegistry } from './skills';
-import { n8nManagementTools, TOOL_OPERATION_PARAM, DESTRUCTIVE_TOOL_OPERATIONS } from './tools-n8n-manager';
+import { n8nManagementTools, TOOL_OPERATION_PARAM, TOOL_OPERATION_DEFAULT, DESTRUCTIVE_TOOL_OPERATIONS } from './tools-n8n-manager';
 import {
   getDisabledTools as getDisabledToolsPolicy,
   getDisabledToolOperations as getDisabledToolOperationsPolicy,
@@ -940,7 +940,9 @@ export class N8NDocumentationMCPServer {
       if (disabledOpsForTool && disabledOpsForTool.size > 0) {
         const paramName = TOOL_OPERATION_PARAM[name];
         if (paramName) {
-          const requestedOp = processedArgs?.[paramName];
+          // An omitted operation is checked as the tool's default (this check
+          // runs before Zod applies it), so a rule naming that default holds.
+          const requestedOp = processedArgs?.[paramName] ?? TOOL_OPERATION_DEFAULT[name];
           if (requestedOp && disabledOpsForTool.has(String(requestedOp).toLowerCase())) {
             logger.warn(`Attempted to call disabled operation: ${name}.${requestedOp}`);
             return {
@@ -1584,7 +1586,7 @@ export class N8NDocumentationMCPServer {
     if (disabledOpsForTool && disabledOpsForTool.size > 0) {
       const paramName = TOOL_OPERATION_PARAM[name];
       if (paramName) {
-        const requestedOp = args[paramName];
+        const requestedOp = args[paramName] ?? TOOL_OPERATION_DEFAULT[name];
         if (requestedOp && disabledOpsForTool.has(String(requestedOp).toLowerCase())) {
           throw new Error(`Operation '${requestedOp}' on tool '${name}' is disabled by server policy`);
         }
