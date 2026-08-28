@@ -16,6 +16,8 @@ COPY tsconfig*.json ./
 # compiles src against older type definitions (a range would resolve through the
 # `latest` dist-tag, which lags the release n8n ships), and a stale zod fails
 # `npm install` outright, because n8n-workflow declares an exact zod peer dependency.
+# Any new direct runtime dependency imported by src/ (e.g. undici) must also be added
+# here, or tsc fails with TS2307 because the scratch package.json never installed it.
 #
 # The overrides mirror package.json. isolated-vm is a native module pulled in through
 # n8n-workflow (@n8n/expression-runtime); it is never used here, and from 7.x it ships
@@ -26,7 +28,8 @@ RUN --mount=type=cache,target=/root/.npm \
     npm install --no-save typescript@^5.8.3 @types/node@^22.15.30 @types/express@^5.0.3 \
         @modelcontextprotocol/sdk@1.30.0 dotenv@^16.5.0 express@^5.1.0 axios@^1.18.1 \
         n8n-workflow@2.36.3 uuid@^11.1.1 @types/uuid@^10.0.0 \
-        openai@^4.77.0 zod@3.25.76 lru-cache@^11.2.1 @supabase/supabase-js@^2.57.4
+        openai@^4.77.0 zod@3.25.76 lru-cache@^11.2.1 @supabase/supabase-js@^2.57.4 \
+        undici@^6.28.0
 
 # Copy source and build
 COPY src ./src
