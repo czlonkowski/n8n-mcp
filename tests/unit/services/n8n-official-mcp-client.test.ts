@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { McpError } from '@modelcontextprotocol/sdk/types.js';
 import { startFakeOfficialMcp, FakeOfficialMcp } from '../../helpers/fake-official-mcp-server';
-import { N8nOfficialMcpClient, probeOfficialMcp, OFFICIAL_MCP_FAILURE_TTL_MS } from '@/services/n8n-official-mcp-client';
+import { N8nOfficialMcpClient, probeOfficialMcp, mapOfficialTransportError, OFFICIAL_MCP_FAILURE_TTL_MS } from '@/services/n8n-official-mcp-client';
 import { SSRFProtection } from '@/utils/ssrf-protection';
 
 let savedMode: string | undefined;
@@ -116,6 +117,52 @@ describe('N8nOfficialMcpClient', () => {
     await client.close();
   });
 
+  // SECURITY: SDK 1.30 builds an McpError's message from the server's own
+  // JSON-RPC error.message, so a buggy instance or an intermediary proxy can
+  // echo the request — including the Authorization header — into it. The
+  // mapped failure must carry a fixed message instead.
+  it('never copies a server-controlled protocol error message', () => {
+    const mapped = mapOfficialTransportError(new McpError(-32603, 'Authorization: Bearer eyJsecret'));
+    expect(mapped.code).toBe('OFFICIAL_MCP_TRANSPORT_ERROR');
+    expect(mapped.retryable).toBe(false);
+    expect(mapped.message).toBe('n8n MCP server returned a protocol error (JSON-RPC code -32603)');
+    expect(JSON.stringify({ code: mapped.code, error: mapped.message, hint: mapped.hint })).not.toContain('eyJsecret');
+  });
+
+  it('keeps the -32602 case readable and marks only connection failures retryable', () => {
+    expect(mapOfficialTransportError(new McpError(-32602, 'Authorization: Bearer eyJsecret')).message)
+      .toBe("Result did not match the tool's output schema or the request was rejected (JSON-RPC -32602)");
+    expect(mapOfficialTransportError(new Error('fetch failed'))).toMatchObject({ retryable: true, message: 'fetch failed' });
+    expect(mapOfficialTransportError('a thrown string')).toMatchObject({ retryable: false, message: 'Request to n8n MCP server failed' });
+  });
+
+  // A JSON-RPC error means n8n answered: the connection is healthy and the
+  // request already reached the instance, so the shared transport must be
+  // left in place and the call must not be re-sent.
+  it('does not reset the transport or retry when n8n answers with a protocol error', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    const { spy } = spyOnPinnedFetch();
+    try {
+      await client.callTool('search_agents', {}, { idempotent: true });
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      fake.setJsonRpcError({ method: 'tools/call', code: -32603, message: 'Authorization: Bearer eyJsecret' });
+      const postsBefore = fake.requests.filter(r => r.method === 'POST').length;
+      const failure: any = await client.callTool('search_agents', {}, { idempotent: true }).catch(e => e);
+      expect(failure).toMatchObject({ code: 'OFFICIAL_MCP_TRANSPORT_ERROR' });
+      expect(JSON.stringify({ error: failure.message, hint: failure.hint })).not.toContain('eyJsecret');
+      expect(fake.requests.filter(r => r.method === 'POST').length).toBe(postsBefore + 1);   // exactly one attempt
+
+      fake.setJsonRpcError(undefined);
+      expect((await client.callTool('search_agents', {}, { idempotent: true })).isError).toBe(false);
+      expect(spy).toHaveBeenCalledTimes(1);   // still the first transport: nothing was reset
+    } finally {
+      spy.mockRestore();
+      await client.close();
+    }
+  });
+
   it('rejects a private endpoint before any request (strict mode)', async () => {
     process.env.WEBHOOK_SECURITY_MODE = 'strict';
     try {
@@ -180,14 +227,16 @@ describe('N8nOfficialMcpClient', () => {
     }
   });
 
-  it('reconnects once after the transport drops', async () => {
+  // An HTTP error leaves the connection itself intact, so the next call goes
+  // through on the same transport once the instance answers normally again.
+  it('serves the next call normally after n8n answers one request with an HTTP error', async () => {
     fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
     const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
     await client.callTool('search_agents', {});
     fake.setRaw({ status: 503, body: 'restarting', contentType: 'text/plain' });
-    await expect(client.callTool('search_agents', {})).rejects.toMatchObject({ code: 'OFFICIAL_MCP_TRANSPORT_ERROR' });
+    await expect(client.callTool('search_agents', {})).rejects.toMatchObject({ code: 'OFFICIAL_MCP_TRANSPORT_ERROR', status: 503 });
     fake.setRaw(undefined);
-    const result = await client.callTool('search_agents', {});   // fresh transport, no stale state
+    const result = await client.callTool('search_agents', {});
     expect(result.isError).toBe(false);
     await client.close();
   });

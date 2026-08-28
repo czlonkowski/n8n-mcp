@@ -5,11 +5,24 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 
 export interface FakeTool { name: string; handler?: (args: Record<string, unknown>) => unknown | Promise<unknown>; isError?: boolean }
-export interface FakeOfficialMcpOptions { tools?: FakeTool[]; token?: string; raw?: { status: number; body: string; contentType?: string } }
+/**
+ * A JSON-RPC error to answer one method with, instead of dispatching it to the
+ * McpServer. Needed because `McpServer` converts every failure inside a tool
+ * callback into an `isError` result, so a fake tool can never produce a real
+ * protocol-level error on the wire.
+ */
+export interface FakeJsonRpcError { method: string; code: number; message: string }
+export interface FakeOfficialMcpOptions {
+  tools?: FakeTool[];
+  token?: string;
+  raw?: { status: number; body: string; contentType?: string };
+  jsonRpcError?: FakeJsonRpcError;
+}
 export interface FakeOfficialMcp {
   url: string;
   requests: Array<{ method: string; authorization?: string }>;
   setRaw(raw: FakeOfficialMcpOptions['raw'] | undefined): void;
+  setJsonRpcError(err: FakeJsonRpcError | undefined): void;
   close(): Promise<void>;
 }
 
@@ -32,6 +45,7 @@ function readBody(req: http.IncomingMessage): Promise<unknown> {
 
 export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): Promise<FakeOfficialMcp> {
   let raw = opts.raw;
+  let jsonRpcError = opts.jsonRpcError;
   const requests: FakeOfficialMcp['requests'] = [];
 
   // A fresh McpServer per request (see below) needs the same tools registered
@@ -81,6 +95,13 @@ export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): P
       }
       if (req.method === 'GET') { res.statusCode = 405; res.end(); return; }
       const body = req.method === 'POST' ? await readBody(req) : undefined;
+      const rpc = body as { id?: unknown; method?: string } | undefined;
+      if (jsonRpcError && rpc?.method === jsonRpcError.method) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code: jsonRpcError.code, message: jsonRpcError.message } }));
+        return;
+      }
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       const mcp = createMcpServer();
       activeTransports.add(transport);
@@ -112,6 +133,7 @@ export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): P
     url: `http://127.0.0.1:${port}/mcp-server/http`,
     requests,
     setRaw: r => { raw = r; },
+    setJsonRpcError: e => { jsonRpcError = e; },
     close: async () => {
       await Promise.all([...activeTransports].map(t => t.close().catch(() => undefined)));
       await new Promise<void>(r => server.close(() => r()));

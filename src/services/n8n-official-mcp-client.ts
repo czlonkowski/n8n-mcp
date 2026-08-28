@@ -22,7 +22,20 @@ export const OFFICIAL_MCP_HINTS: Record<OfficialMcpErrorCode, string> = {
 };
 
 export class OfficialMcpError extends Error {
-  constructor(public readonly code: OfficialMcpErrorCode, message: string, public readonly status?: number) {
+  /**
+   * `retryable` marks a connection-level failure: the request never got an
+   * HTTP status and never got a JSON-RPC reply, so the transport itself is
+   * suspect (socket reset, DNS failure, "fetch failed"). Only such a failure
+   * justifies discarding the shared transport and re-sending an idempotent
+   * call. Anything the server answered — an HTTP status or a JSON-RPC error —
+   * proves the request reached n8n, so it is surfaced instead.
+   */
+  constructor(
+    public readonly code: OfficialMcpErrorCode,
+    message: string,
+    public readonly status?: number,
+    public readonly retryable: boolean = false,
+  ) {
     super(message);
     this.name = 'OfficialMcpError';
   }
@@ -66,19 +79,36 @@ export function mapOfficialTransportError(err: unknown): OfficialMcpError {
     }
     return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', `n8n MCP server returned HTTP ${status}`, status ?? undefined);
   }
-  if (err instanceof McpError && err.code === ErrorCode.RequestTimeout) {
-    return new OfficialMcpError('OFFICIAL_MCP_TIMEOUT', 'Request to n8n MCP server timed out');
+  // SECURITY: an `McpError`'s message is built by the SDK from the server's
+  // own JSON-RPC `error.message`, so it is attacker-controlled text — a buggy
+  // instance or an intermediary proxy can echo the request (including the
+  // `Authorization: Bearer …` header) back into it. Never copy it: every
+  // generic protocol error gets a fixed message naming only the numeric
+  // JSON-RPC code.
+  if (err instanceof McpError) {
+    if (err.code === ErrorCode.RequestTimeout) {
+      return new OfficialMcpError('OFFICIAL_MCP_TIMEOUT', 'Request to n8n MCP server timed out');
+    }
+    // InvalidParams reaches here from two places, both worth naming: the SDK
+    // validating a tool's `structuredContent` against the output schema the
+    // server advertised for it (n8n's schema and payload drifting apart), and
+    // n8n itself rejecting the request's arguments.
+    if (err.code === ErrorCode.InvalidParams) {
+      return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', "Result did not match the tool's output schema or the request was rejected (JSON-RPC -32602)");
+    }
+    const code = typeof err.code === 'number' ? err.code : 'unknown';
+    return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', `n8n MCP server returned a protocol error (JSON-RPC code ${code})`);
   }
-  // callTool validates a tool's `structuredContent` against the output schema
-  // the server advertised for it; when n8n's schema and payload drift apart
-  // the SDK raises InvalidParams from inside the client, not from the wire.
-  // Map it to a transport error with a message that names the cause.
-  if (err instanceof McpError && err.code === ErrorCode.InvalidParams) {
-    return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', "Result did not match the tool's output schema");
+  if (err instanceof Error) {
+    // No HTTP status and no JSON-RPC reply: a connection-level failure whose
+    // message comes from the local fetch/socket stack, not from the remote
+    // server, so it is safe to surface (still capped — never include response
+    // bodies or stacks: proxies echo request details into error pages).
+    return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', err.message.slice(0, 200), undefined, true);
   }
-  const message = err instanceof Error ? err.message : String(err);
-  // Never include response bodies or stacks: proxies echo request details into error pages.
-  return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', message.slice(0, 200));
+  // A thrown non-Error cannot be attributed to the connection, so it is not
+  // retried, and its stringification is not surfaced either.
+  return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'Request to n8n MCP server failed');
 }
 
 function parseResult(raw: { content?: Array<{ type: string; text?: string }>; isError?: boolean; structuredContent?: unknown }): OfficialToolResult {
@@ -191,9 +221,11 @@ export class N8nOfficialMcpClient {
       this.caps = { reachable: true, toolCount: toolNames.length, toolNames, agentTools: toolNames.some(n => (AGENT_TOOL_NAMES as readonly string[]).includes(n)), checkedAt: Date.now() };
     } catch (err) {
       const mapped = mapOfficialTransportError(err);
+      // Only a connection-level failure means the transport itself is broken.
       // A request timeout is local to that one request (see the comment in
-      // callTool) and never indicates the transport itself is broken.
-      if (mapped.code !== 'OFFICIAL_MCP_TIMEOUT' && generation !== undefined) await this.resetTransport(generation);
+      // callTool), and a protocol error means n8n answered — in both cases
+      // the transport is still usable and may be shared with other calls.
+      if (mapped.retryable && generation !== undefined) await this.resetTransport(generation);
       this.caps = { reachable: false, toolCount: 0, toolNames: [], agentTools: false, checkedAt: Date.now(), error: mapped.code };
     }
     return this.caps;
@@ -227,22 +259,23 @@ export class N8nOfficialMcpClient {
       return await attempt();
     } catch (err) {
       const mapped = mapOfficialTransportError(err);
-      // A request timeout only rejects that one request's own promise —
-      // the SDK's Protocol tracks timeouts per message id and never tears
-      // down the transport for one (see shared/protocol.js: `cancel()`
-      // rejects a single response handler; `_onclose()`, which rejects
-      // every pending request, only runs when the transport itself
-      // closes). Resetting here would abort any other call still in
-      // flight on the same shared transport, so a plain timeout is never
-      // retried and never triggers a reset.
-      if (mapped.code === 'OFFICIAL_MCP_TIMEOUT') throw mapped;
+      // Reset and retry only for a genuine connection-level failure (see
+      // `OfficialMcpError.retryable`). Everything else leaves the shared
+      // transport alone:
+      //  - A request timeout only rejects that one request's own promise —
+      //    the SDK's Protocol tracks timeouts per message id and never tears
+      //    down the transport for one (see shared/protocol.js: `cancel()`
+      //    rejects a single response handler; `_onclose()`, which rejects
+      //    every pending request, only runs when the transport itself
+      //    closes). Resetting here would abort any other call still in
+      //    flight on the same connection.
+      //  - An HTTP status (401/404/429/500/503/…) or a JSON-RPC error means
+      //    the request reached n8n and may have already mutated state;
+      //    retrying it would risk duplicating that side effect, and the
+      //    connection it arrived on is still healthy.
+      if (!mapped.retryable) throw mapped;
       if (state.generation !== undefined) await this.resetTransport(state.generation);
-      // Retry only a genuine connection-level failure — no HTTP status at
-      // all (a socket error, DNS failure, or "fetch failed"). An HTTP
-      // status (401/404/429/500/503/…) means the request reached n8n and
-      // may have already mutated state; retrying it here would risk
-      // duplicating that side effect, so it is surfaced instead. Also
-      // require that this client has connected successfully before, so a
+      // Require that this client has connected successfully before, so a
       // first-ever call against an unreachable endpoint fails fast instead
       // of doubling the wait.
       //
@@ -251,13 +284,12 @@ export class N8nOfficialMcpClient {
       // request reached n8n": a socket that dies while the response is being
       // read leaves a create_agent/publish_agent/call_agent that already ran
       // on the instance, and a blind retry would run it twice.
-      const isConnectionFailure = mapped.code === 'OFFICIAL_MCP_TRANSPORT_ERROR' && mapped.status === undefined;
-      if (!isConnectionFailure || !this.hasConnectedSuccessfully || opts.idempotent !== true) throw mapped;
+      if (!this.hasConnectedSuccessfully || opts.idempotent !== true) throw mapped;
       try {
         return await attempt();
       } catch (again) {
         const mappedAgain = mapOfficialTransportError(again);
-        if (mappedAgain.code !== 'OFFICIAL_MCP_TIMEOUT' && state.generation !== undefined) {
+        if (mappedAgain.retryable && state.generation !== undefined) {
           await this.resetTransport(state.generation);
         }
         throw mappedAgain;
