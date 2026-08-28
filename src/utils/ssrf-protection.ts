@@ -530,6 +530,14 @@ export class SSRFProtection {
    * Streamable HTTP transport) rather than axios — see createPinnedAgents.
    * TLS still verifies against the URL hostname; only name resolution is pinned.
    *
+   * Redirects are never followed (`redirect: 'manual'`). Pinning constrains
+   * the addresses of the URL the caller asked for; a 3xx would hand the
+   * choice of the next request's host, port and path to the server, and
+   * undici would re-resolve it through the same pinned lookup — reaching a
+   * different port on a validated address, or a URL that never went through
+   * validateWebhookUrl at all. The 3xx is returned to the caller as an
+   * ordinary non-ok response instead.
+   *
    * @security GHSA-cmrh-wvq6-wm9r
    */
   static createPinnedFetch(addresses: Array<{ address: string; family: 4 | 6 }>): PinnedFetch {
@@ -544,7 +552,7 @@ export class SSRFProtection {
     });
     return {
       fetch: (url, init) =>
-        undiciFetch(url as any, { ...(init as any), dispatcher }) as unknown as Promise<Response>,
+        undiciFetch(url as any, { ...(init as any), dispatcher, redirect: 'manual' }) as unknown as Promise<Response>,
       close: () => dispatcher.close(),
     };
   }

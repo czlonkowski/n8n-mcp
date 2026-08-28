@@ -77,6 +77,20 @@ describe('N8nOfficialMcpClient', () => {
     await client.close();
   });
 
+  // The pinned fetch never follows redirects, so a 3xx reaches the SDK as a
+  // non-ok response. The message has to explain that, or "HTTP 302" reads as
+  // an unexplained protocol failure.
+  it('surfaces a redirect as a transport error that says redirects are not followed', async () => {
+    fake = await startFakeOfficialMcp({ raw: { status: 302, body: '', contentType: 'text/plain' } });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    await expect(client.callTool('search_agents', {})).rejects.toMatchObject({
+      code: 'OFFICIAL_MCP_TRANSPORT_ERROR',
+      status: 302,
+      message: expect.stringContaining('redirects are not followed'),
+    });
+    await client.close();
+  });
+
   it('maps a request timeout to OFFICIAL_MCP_TIMEOUT', async () => {
     fake = await startFakeOfficialMcp({ tools: [{ name: 'call_agent', handler: () => new Promise(r => setTimeout(() => r({ ok: true }), 400)) }] });
     const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });

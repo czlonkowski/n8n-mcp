@@ -51,10 +51,23 @@ export function mapOfficialTransportError(err: unknown): OfficialMcpError {
     if (status === 401 || status === 403) return new OfficialMcpError('OFFICIAL_MCP_AUTH_FAILED', 'n8n rejected the MCP access token', status);
     if (status === 404 || status === -1) return new OfficialMcpError('OFFICIAL_MCP_NOT_ENABLED', 'No MCP server at the derived endpoint', status === -1 ? undefined : status);
     if (status === 429) return new OfficialMcpError('OFFICIAL_MCP_RATE_LIMITED', 'n8n MCP server rate limit reached', status);
+    // The pinned fetch never follows redirects (see createPinnedFetch), so a
+    // 3xx arrives here as an ordinary non-ok response. Say so, otherwise
+    // "returned HTTP 302" reads as an unexplained protocol failure.
+    if (status !== undefined && status >= 300 && status < 400) {
+      return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', `n8n MCP server returned HTTP ${status}; redirects are not followed`, status);
+    }
     return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', `n8n MCP server returned HTTP ${status}`, status ?? undefined);
   }
   if (err instanceof McpError && err.code === ErrorCode.RequestTimeout) {
     return new OfficialMcpError('OFFICIAL_MCP_TIMEOUT', 'Request to n8n MCP server timed out');
+  }
+  // callTool validates a tool's `structuredContent` against the output schema
+  // the server advertised for it; when n8n's schema and payload drift apart
+  // the SDK raises InvalidParams from inside the client, not from the wire.
+  // Map it to a transport error with a message that names the cause.
+  if (err instanceof McpError && err.code === ErrorCode.InvalidParams) {
+    return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', "Result did not match the tool's output schema");
   }
   const message = err instanceof Error ? err.message : String(err);
   // Never include response bodies or stacks: proxies echo request details into error pages.
