@@ -198,3 +198,18 @@ describe('n8n_test_workflow policy registration', () => {
     );
   });
 });
+
+describe('n8n_workflow_versions policy registration', () => {
+  it('accepts the real tool\'s virtual expose operation without a "no effect" warning', () => {
+    process.env.DISABLED_TOOL_OPERATIONS = 'n8n_workflow_versions:expose';
+    expect(isOperationDisabled('n8n_workflow_versions', 'expose')).toBe(true);
+    const warnings = vi.mocked(logger.warn).mock.calls.map(c => String(c[0]));
+    expect(warnings.some(w => w.includes('is not a valid'))).toBe(false);
+  });
+
+  it('counts diff as a read mode and expose as the virtual write', () => {
+    expect(getValidOperations('n8n_workflow_versions')).toEqual(
+      new Set(['list', 'get', 'rollback', 'delete', 'prune', 'diff', 'expose'])
+    );
+  });
+});

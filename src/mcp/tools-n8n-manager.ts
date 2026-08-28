@@ -631,38 +631,58 @@ export const n8nManagementTools: ToolDefinition[] = [
   },
   {
     name: 'n8n_workflow_versions',
-    description: `Manage workflow version history, rollback, and cleanup. Versions are scoped to your n8n instance. Five modes:
+    description: `Manage workflow version history, rollback, comparison, and cleanup. Six modes:
 - list: Show version history for a workflow
-- get: Get details of specific version
-- rollback: Restore workflow to previous version (creates backup first)
+- get: Get details of a specific version
+- rollback: Restore workflow to a previous version (creates backup first)
+- diff: Compare two versions
 - delete: Delete specific version or all versions for a workflow
 - prune: Manually trigger pruning to keep N most recent versions
-Old backups are also pruned automatically (10 most recent per workflow, plus an age-based retention window).`,
+
+Two sources:
+- source: 'local' (default) - snapshots n8n-mcp takes before it changes a workflow. Scoped to your n8n instance, works on any n8n version, and covers only changes made through n8n-mcp. Old backups are pruned automatically (10 most recent per workflow, plus an age-based retention window).
+- source: 'native' - n8n's own workflow history, the same list the n8n UI shows, including edits made by people in the UI. Needs an n8n MCP access token and the workflow's "Available in MCP" setting; supports list, get, rollback and diff only. Native rollback is not pre-validated.`,
     inputSchema: {
       type: 'object',
       properties: {
         mode: {
           type: 'string',
-          enum: ['list', 'get', 'rollback', 'delete', 'prune'],
+          enum: ['list', 'get', 'rollback', 'delete', 'prune', 'diff'],
           description: 'Operation mode'
+        },
+        source: {
+          type: 'string',
+          enum: ['local', 'native'],
+          default: 'local',
+          description: "Which history to read: 'local' (n8n-mcp snapshots, default) or 'native' (n8n's own version history). delete and prune are local-only."
         },
         workflowId: {
           type: 'string',
-          description: 'Workflow ID (required for list, rollback, delete, prune)'
+          description: 'Workflow ID (required for list, rollback, delete, prune, diff; required for every native mode)'
         },
+        // No JSON-Schema `type`: local ids are integers and native ids are
+        // strings, and the server's argument coercion only touches properties
+        // that declare a scalar type.
         versionId: {
-          type: 'number',
-          description: 'Version ID (required for get mode and single version delete, optional for rollback)'
+          description: "Version ID. local: the numeric snapshot id as a string or number; native: n8n's version id. Required for get and diff, for a single-version delete, and for native rollback; optional for local rollback."
+        },
+        toVersionId: {
+          description: 'The second version to compare against in diff mode (same id format as versionId)'
         },
         limit: {
           type: 'number',
           default: 10,
-          description: 'Max versions to return in list mode'
+          description: 'Max versions to return in list mode (native: capped at 50)'
+        },
+        offset: {
+          type: 'number',
+          minimum: 0,
+          description: 'Skip this many versions in native list mode'
         },
         validateBefore: {
           type: 'boolean',
           default: true,
-          description: 'Validate workflow structure before rollback'
+          description: 'Validate workflow structure before rollback (local only; accepted and ignored for native)'
         },
         deleteAll: {
           type: 'boolean',
@@ -673,6 +693,16 @@ Old backups are also pruned automatically (10 most recent per workflow, plus an 
           type: 'number',
           default: 10,
           description: 'Keep N most recent versions (prune mode only)'
+        },
+        exposeToMcp: {
+          type: 'boolean',
+          description: 'Native only. When n8n refuses the workflow because it is not available in MCP, enable that setting on the workflow and retry once. This is a visible, persistent workflow setting - confirm with the user first.'
+        },
+        timeoutMs: {
+          type: 'number',
+          minimum: 5000,
+          maximum: 600000,
+          description: 'Client deadline for the native call (default 30000)'
         }
       },
       required: ['mode']
@@ -974,7 +1004,9 @@ export const DESTRUCTIVE_TOOL_OPERATIONS: Record<string, Set<string>> = {
   // Every write action; list/get are the read paths. delete is the sharpest — without
   // transferToFolderId it archives the folder's workflows.
   'n8n_manage_folders': new Set(['create', 'rename', 'move', 'delete']),
-  'n8n_workflow_versions': new Set(['delete', 'rollback', 'prune']),
+  // `expose` is virtual: it is not a `mode` value but the consent write behind
+  // `exposeToMcp: true` on the native modes.
+  'n8n_workflow_versions': new Set(['delete', 'rollback', 'prune', 'expose']),
   // Derived from AGENT_ACTION_MAP: create/mutate persist a draft and call runs
   // the agent's real tools, so the write set is wider than the publish/delete pair.
   'n8n_manage_agents': new Set(DESTRUCTIVE_AGENT_ACTIONS),

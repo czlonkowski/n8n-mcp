@@ -509,7 +509,7 @@ describe('WorkflowVersioningService', () => {
         .mockReturnValueOnce(v1)
         .mockReturnValueOnce(v2);
 
-      const result = await service.compareVersions(1, 2);
+      const result = await service.compareVersions(1, 2, 'workflow-1');
 
       expect(result.addedNodes).toEqual(['node-2']);
       expect(result.removedNodes).toEqual([]);
@@ -530,7 +530,7 @@ describe('WorkflowVersioningService', () => {
         .mockReturnValueOnce(v1)
         .mockReturnValueOnce(v2);
 
-      const result = await service.compareVersions(1, 2);
+      const result = await service.compareVersions(1, 2, 'workflow-1');
 
       expect(result.removedNodes).toEqual(['node-2']);
       expect(result.addedNodes).toEqual([]);
@@ -547,7 +547,7 @@ describe('WorkflowVersioningService', () => {
         .mockReturnValueOnce(v1)
         .mockReturnValueOnce(v2);
 
-      const result = await service.compareVersions(1, 2);
+      const result = await service.compareVersions(1, 2, 'workflow-1');
 
       expect(result.modifiedNodes).toEqual(['node-1']);
     });
@@ -563,7 +563,7 @@ describe('WorkflowVersioningService', () => {
         .mockReturnValueOnce(v1)
         .mockReturnValueOnce(v2);
 
-      const result = await service.compareVersions(1, 2);
+      const result = await service.compareVersions(1, 2, 'workflow-1');
 
       expect(result.connectionChanges).toBe(1);
     });
@@ -579,7 +579,7 @@ describe('WorkflowVersioningService', () => {
         .mockReturnValueOnce(v1)
         .mockReturnValueOnce(v2);
 
-      const result = await service.compareVersions(1, 2);
+      const result = await service.compareVersions(1, 2, 'workflow-1');
 
       expect(result.settingChanges).toHaveProperty('executionOrder');
       expect(result.settingChanges.executionOrder.before).toBe('v0');
@@ -589,7 +589,35 @@ describe('WorkflowVersioningService', () => {
     it('should throw error if version not found', async () => {
       vi.spyOn(mockRepository, 'getWorkflowVersion').mockReturnValue(null);
 
-      await expect(service.compareVersions(1, 2)).rejects.toThrow('One or both versions not found');
+      await expect(service.compareVersions(1, 2, 'workflow-1')).rejects.toThrow('One or both versions not found');
+    });
+
+    it('should refuse a version that belongs to another workflow', async () => {
+      const v1 = createMockVersion(1);
+      const v2 = createMockVersion(2);
+      v2.workflowId = 'workflow-2';
+
+      vi.spyOn(mockRepository, 'getWorkflowVersion')
+        .mockReturnValueOnce(v1)
+        .mockReturnValueOnce(v2);
+
+      await expect(service.compareVersions(1, 2, 'workflow-1')).rejects.toThrow(
+        'Version 2 does not belong to workflow workflow-1'
+      );
+    });
+
+    it('should compare versions that both belong to the requested workflow', async () => {
+      const v1 = createMockVersion(1);
+      const v2 = createMockVersion(2);
+
+      vi.spyOn(mockRepository, 'getWorkflowVersion')
+        .mockReturnValueOnce(v1)
+        .mockReturnValueOnce(v2);
+
+      const result = await service.compareVersions(1, 2, 'workflow-1');
+
+      expect(result.versionId1).toBe(1);
+      expect(result.versionId2).toBe(2);
     });
   });
 

@@ -369,14 +369,24 @@ export class WorkflowVersioningService {
   }
 
   /**
-   * Compare two versions
+   * Compare two versions of one workflow.
+   *
+   * `workflowId` is required: version ids are global to the instance scope, so
+   * without it a caller could diff two unrelated workflows' snapshots against
+   * each other and read a workflow it never named.
    */
-  async compareVersions(versionId1: number, versionId2: number): Promise<VersionDiff> {
+  async compareVersions(versionId1: number, versionId2: number, workflowId: string): Promise<VersionDiff> {
     const v1 = this.nodeRepository.getWorkflowVersion(versionId1, this.instanceId);
     const v2 = this.nodeRepository.getWorkflowVersion(versionId2, this.instanceId);
 
     if (!v1 || !v2) {
       throw new Error(`One or both versions not found: ${versionId1}, ${versionId2}`);
+    }
+
+    for (const version of [v1, v2]) {
+      if (version.workflowId !== workflowId) {
+        throw new Error(`Version ${version.id} does not belong to workflow ${workflowId}`);
+      }
     }
 
     // Compare nodes

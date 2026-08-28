@@ -598,14 +598,28 @@ const cancelTestRunSchema = z.object({
   runId: testRunPathId,
 });
 
+/**
+ * A version id from either store. Local snapshots are numbered integers; n8n's
+ * own history uses opaque string ids. The MCP inputSchema deliberately leaves
+ * these two properties untyped so the server's argument coercion
+ * (`coerceStringifiedJsonParams`, which only touches properties declaring a
+ * scalar `type`) lets both shapes through to this union.
+ */
+const versionIdValue = z.union([z.number().int(), z.string().min(1)]);
+
 const workflowVersionsSchema = z.object({
-  mode: z.enum(['list', 'get', 'rollback', 'delete', 'prune']),
+  mode: z.enum(['list', 'get', 'rollback', 'delete', 'prune', 'diff']),
+  source: z.enum(['local', 'native']).optional(),
   workflowId: z.string().optional(),
-  versionId: z.number().optional(),
+  versionId: versionIdValue.optional(),
+  toVersionId: versionIdValue.optional(),
   limit: z.number().default(10).optional(),
+  offset: z.number().int().min(0).optional(),
   validateBefore: z.boolean().default(true).optional(),
   deleteAll: z.boolean().default(false).optional(),
   maxVersions: z.number().default(10).optional(),
+  exposeToMcp: z.boolean().optional(),
+  timeoutMs: z.number().int().min(5000).max(600000).optional(),
 });
 
 // Workflow Management Handlers
@@ -3048,6 +3062,363 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
   };
 }
 
+const VERSIONS_ACTION = 'workflow_versions';
+const VERSIONS_TIMEOUT_MS = 30000;
+/** n8n's `get_workflow_history` refuses anything above 50. */
+const NATIVE_VERSIONS_LIMIT_CAP = 50;
+/**
+ * Why native rollback never pre-validates: the official `get_workflow_version`
+ * payload lists only `name`/`type`/`credentials` per node, without `position`,
+ * `typeVersion` or `parameters`, so the workflow validator has nothing to check.
+ */
+const NATIVE_VALIDATION_NOTE = 'not available for native versions';
+
+type WorkflowVersionsInput = z.infer<typeof workflowVersionsSchema>;
+
+/**
+ * Tags a `data` payload with the diff dialect it is written in. `format` is set
+ * last so an official payload that happens to carry the key cannot shadow it.
+ */
+function withDiffFormat(data: unknown, format: 'n8n' | 'n8n-mcp'): Record<string, unknown> {
+  return data && typeof data === 'object' && !Array.isArray(data)
+    ? { ...(data as Record<string, unknown>), format }
+    : { diff: data, format };
+}
+
+/**
+ * Coerce a version id for the local store, which numbers its snapshots.
+ * A numeric string is accepted; anything that is not a whole number is refused
+ * by name rather than silently becoming NaN.
+ */
+function parseLocalVersionId(
+  value: number | string | undefined,
+  field: string
+): { ok: true; value?: number } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (typeof value === 'string' && value.trim() === '') {
+    return { ok: false, error: `${field} must be an integer version id for source: local` };
+  }
+  const parsed = typeof value === 'number' ? value : Number(value.trim());
+  if (!Number.isInteger(parsed)) {
+    return {
+      ok: false,
+      error: `${field} must be an integer version id for source: local (got ${JSON.stringify(value)}). n8n's own string version ids need source: native.`,
+    };
+  }
+  return { ok: true, value: parsed };
+}
+
+/**
+ * `source: native` — n8n's own workflow history, the same list the n8n UI
+ * shows, read through the instance's MCP server. It covers edits made in the
+ * UI, unlike the local store, and n8n owns its retention: `delete` and `prune`
+ * have no counterpart there.
+ */
+async function handleNativeWorkflowVersions(
+  input: WorkflowVersionsInput,
+  context?: InstanceContext
+): Promise<McpToolResponse> {
+  const mode = input.mode;
+  const label = (response: McpToolResponse): McpToolResponse => ({
+    ...response,
+    mode,
+    source: 'native',
+    backend: 'official-mcp',
+  });
+  const invalid = (error: string): McpToolResponse =>
+    label({ success: false, action: VERSIONS_ACTION, code: 'INVALID_ARGS', error });
+
+  if (mode === 'delete' || mode === 'prune') {
+    return label({
+      success: false,
+      action: VERSIONS_ACTION,
+      code: 'MODE_NOT_SUPPORTED_FOR_SOURCE',
+      error: `n8n's own version history cannot be ${mode === 'delete' ? 'deleted' : 'pruned'} through MCP; use source: local for n8n-mcp snapshots`,
+    });
+  }
+
+  const workflowId = input.workflowId;
+  if (!workflowId) {
+    return invalid(`workflowId is required for source: native (mode: ${mode})`);
+  }
+  if (mode !== 'list' && input.versionId === undefined) {
+    return invalid(`versionId is required for mode: ${mode}`);
+  }
+  if (mode === 'diff' && input.toVersionId === undefined) {
+    return invalid('toVersionId is required for mode: diff');
+  }
+
+  // n8n's version ids are strings; a caller who passed a number gets it
+  // stringified rather than an argument-validation error from n8n.
+  const versionId = input.versionId === undefined ? undefined : String(input.versionId);
+  const toVersionId = input.toVersionId === undefined ? undefined : String(input.toVersionId);
+
+  let aliases: string[];
+  let officialArgs: Record<string, unknown>;
+  let idempotent = true;
+
+  switch (mode) {
+    case 'list':
+      aliases = ['get_workflow_history'];
+      officialArgs = {
+        workflowId,
+        limit: Math.min(input.limit ?? 10, NATIVE_VERSIONS_LIMIT_CAP),
+        offset: input.offset ?? 0,
+      };
+      break;
+    case 'get':
+      aliases = ['get_workflow_version'];
+      officialArgs = { workflowId, versionId };
+      break;
+    case 'diff':
+      aliases = ['get_workflow_versions_diff'];
+      officialArgs = { workflowId, fromVersionId: versionId, toVersionId };
+      break;
+    case 'rollback':
+      aliases = ['restore_workflow_version'];
+      officialArgs = { workflowId, versionId };
+      // A restore writes the workflow, so a retry after a connection failure
+      // could land twice.
+      idempotent = false;
+      break;
+    default:
+      return invalid(`Unknown mode: ${mode}`);
+  }
+
+  // withMcpExposure returns the envelope undecorated (and may already carry
+  // warnings from the consent write) — spread first, then label it.
+  const response = await withMcpExposure(
+    {
+      apiClient: getN8nApiClient(context),
+      workflowId,
+      exposeToMcp: input.exposeToMcp,
+      action: VERSIONS_ACTION,
+      toolName: 'n8n_workflow_versions',
+    },
+    () =>
+      callOfficialTool(
+        context,
+        aliases,
+        officialArgs,
+        input.timeoutMs ?? VERSIONS_TIMEOUT_MS,
+        VERSIONS_ACTION,
+        idempotent
+      )
+  );
+
+  const labelled = label(response);
+  if (mode === 'diff' && labelled.success) {
+    labelled.data = withDiffFormat(labelled.data, 'n8n');
+  }
+  if (mode === 'rollback') {
+    labelled.validation = NATIVE_VALIDATION_NOTE;
+  }
+  return labelled;
+}
+
+/**
+ * `source: local` — the snapshots n8n-mcp takes before it changes a workflow.
+ * Numbered per workflow, scoped to the instance, and independent of the n8n
+ * version in use.
+ */
+async function handleLocalWorkflowVersions(
+  input: WorkflowVersionsInput,
+  versionId: number | undefined,
+  toVersionId: number | undefined,
+  repository: NodeRepository,
+  context?: InstanceContext
+): Promise<McpToolResponse> {
+  // Resolve the client the same way every other tool does. Gating on `context` skipped
+  // getN8nApiClient's environment-variable fallback, so on a plain N8N_API_URL setup — no
+  // instance context — `rollback` always answered "n8n API not configured" while `list`/`get`
+  // worked, because they read the local version store instead. Multi-tenant isolation is
+  // enforced inside getN8nApiClient and by the scope check above, not by this ternary.
+  const client = getN8nApiClient(context);
+  const versioningService = new WorkflowVersioningService(repository, client || undefined, getInstanceScopeId(context));
+
+  switch (input.mode) {
+    case 'list': {
+      if (!input.workflowId) {
+        return {
+          success: false,
+          error: 'workflowId is required for list mode'
+        };
+      }
+
+      const versions = await versioningService.getVersionHistory(input.workflowId, input.limit);
+
+      return {
+        success: true,
+        data: {
+          workflowId: input.workflowId,
+          versions,
+          count: versions.length,
+          message: `Found ${versions.length} version(s) for workflow ${input.workflowId}`
+        }
+      };
+    }
+
+    case 'get': {
+      if (!versionId) {
+        return {
+          success: false,
+          error: 'versionId is required for get mode'
+        };
+      }
+
+      const version = await versioningService.getVersion(versionId);
+
+      if (!version) {
+        return {
+          success: false,
+          error: `Version ${versionId} not found`
+        };
+      }
+
+      return {
+        success: true,
+        data: version
+      };
+    }
+
+    case 'rollback': {
+      if (!input.workflowId) {
+        return {
+          success: false,
+          error: 'workflowId is required for rollback mode'
+        };
+      }
+
+      if (!client) {
+        return {
+          success: false,
+          error: 'n8n API not configured. Cannot perform rollback without API access.'
+        };
+      }
+
+      const result = await versioningService.restoreVersion(
+        input.workflowId,
+        versionId,
+        input.validateBefore
+      );
+
+      return {
+        success: result.success,
+        data: result.success ? result : undefined,
+        error: result.success ? undefined : result.message,
+        details: result.success ? undefined : {
+          validationErrors: result.validationErrors
+        }
+      };
+    }
+
+    case 'delete': {
+      if (input.deleteAll) {
+        if (!input.workflowId) {
+          return {
+            success: false,
+            error: 'workflowId is required for deleteAll mode'
+          };
+        }
+
+        const result = await versioningService.deleteAllVersions(input.workflowId);
+
+        return {
+          success: true,
+          data: {
+            workflowId: input.workflowId,
+            deleted: result.deleted,
+            message: result.message
+          }
+        };
+      } else {
+        if (!versionId) {
+          return {
+            success: false,
+            error: 'versionId is required for single version delete'
+          };
+        }
+
+        const result = await versioningService.deleteVersion(versionId);
+
+        return {
+          success: result.success,
+          data: result.success ? { message: result.message } : undefined,
+          error: result.success ? undefined : result.message
+        };
+      }
+    }
+
+    case 'prune': {
+      if (!input.workflowId) {
+        return {
+          success: false,
+          error: 'workflowId is required for prune mode'
+        };
+      }
+
+      const result = await versioningService.pruneVersions(
+        input.workflowId,
+        input.maxVersions || 10
+      );
+
+      return {
+        success: true,
+        data: {
+          workflowId: input.workflowId,
+          pruned: result.pruned,
+          remaining: result.remaining,
+          message: `Pruned ${result.pruned} old version(s), ${result.remaining} version(s) remaining`
+        }
+      };
+    }
+
+    case 'diff': {
+      if (!input.workflowId) {
+        return {
+          success: false,
+          error: 'workflowId is required for diff mode'
+        };
+      }
+
+      if (versionId === undefined || toVersionId === undefined) {
+        return {
+          success: false,
+          code: 'INVALID_ARGS',
+          error: 'versionId and toVersionId are both required for diff mode'
+        };
+      }
+
+      try {
+        const diff = await versioningService.compareVersions(versionId, toVersionId, input.workflowId);
+
+        return {
+          success: true,
+          data: withDiffFormat(diff, 'n8n-mcp')
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // The service refuses a snapshot belonging to another workflow; that is
+        // a caller mistake, not a failure of the comparison.
+        if (message.includes('does not belong to workflow')) {
+          return {
+            success: false,
+            code: 'INVALID_ARGS',
+            error: message
+          };
+        }
+        throw error;
+      }
+    }
+
+    default:
+      return {
+        success: false,
+        error: `Unknown mode: ${input.mode}`
+      };
+  }
+}
+
 export async function handleWorkflowVersions(
   args: unknown,
   repository: NodeRepository,
@@ -3061,165 +3432,60 @@ export async function handleWorkflowVersions(
     if (process.env.ENABLE_MULTI_TENANT === 'true' && getInstanceScopeId(context) === '') {
       return {
         success: false,
+        mode: input.mode,
+        source: input.source ?? 'local',
         error: 'Workflow version storage is not available for this tenant context'
       };
     }
 
-    // Resolve the client the same way every other tool does. Gating on `context` skipped
-    // getN8nApiClient's environment-variable fallback, so on a plain N8N_API_URL setup — no
-    // instance context — `rollback` always answered "n8n API not configured" while `list`/`get`
-    // worked, because they read the local version store instead. Multi-tenant isolation is
-    // enforced inside getN8nApiClient and by the scope check above, not by this ternary.
-    const client = getN8nApiClient(context);
-    const versioningService = new WorkflowVersioningService(repository, client || undefined, getInstanceScopeId(context));
-
-    switch (input.mode) {
-      case 'list': {
-        if (!input.workflowId) {
-          return {
-            success: false,
-            error: 'workflowId is required for list mode'
-          };
-        }
-
-        const versions = await versioningService.getVersionHistory(input.workflowId, input.limit);
-
-        return {
-          success: true,
-          data: {
-            workflowId: input.workflowId,
-            versions,
-            count: versions.length,
-            message: `Found ${versions.length} version(s) for workflow ${input.workflowId}`
-          }
-        };
-      }
-
-      case 'get': {
-        if (!input.versionId) {
-          return {
-            success: false,
-            error: 'versionId is required for get mode'
-          };
-        }
-
-        const version = await versioningService.getVersion(input.versionId);
-
-        if (!version) {
-          return {
-            success: false,
-            error: `Version ${input.versionId} not found`
-          };
-        }
-
-        return {
-          success: true,
-          data: version
-        };
-      }
-
-      case 'rollback': {
-        if (!input.workflowId) {
-          return {
-            success: false,
-            error: 'workflowId is required for rollback mode'
-          };
-        }
-
-        if (!client) {
-          return {
-            success: false,
-            error: 'n8n API not configured. Cannot perform rollback without API access.'
-          };
-        }
-
-        const result = await versioningService.restoreVersion(
-          input.workflowId,
-          input.versionId,
-          input.validateBefore
-        );
-
-        return {
-          success: result.success,
-          data: result.success ? result : undefined,
-          error: result.success ? undefined : result.message,
-          details: result.success ? undefined : {
-            validationErrors: result.validationErrors
-          }
-        };
-      }
-
-      case 'delete': {
-        if (input.deleteAll) {
-          if (!input.workflowId) {
-            return {
-              success: false,
-              error: 'workflowId is required for deleteAll mode'
-            };
-          }
-
-          const result = await versioningService.deleteAllVersions(input.workflowId);
-
-          return {
-            success: true,
-            data: {
-              workflowId: input.workflowId,
-              deleted: result.deleted,
-              message: result.message
-            }
-          };
-        } else {
-          if (!input.versionId) {
-            return {
-              success: false,
-              error: 'versionId is required for single version delete'
-            };
-          }
-
-          const result = await versioningService.deleteVersion(input.versionId);
-
-          return {
-            success: result.success,
-            data: result.success ? { message: result.message } : undefined,
-            error: result.success ? undefined : result.message
-          };
-        }
-      }
-
-      case 'prune': {
-        if (!input.workflowId) {
-          return {
-            success: false,
-            error: 'workflowId is required for prune mode'
-          };
-        }
-
-        const result = await versioningService.pruneVersions(
-          input.workflowId,
-          input.maxVersions || 10
-        );
-
-        return {
-          success: true,
-          data: {
-            workflowId: input.workflowId,
-            pruned: result.pruned,
-            remaining: result.remaining,
-            message: `Pruned ${result.pruned} old version(s), ${result.remaining} version(s) remaining`
-          }
-        };
-      }
-
-      default:
-        return {
-          success: false,
-          error: `Unknown mode: ${input.mode}`
-        };
+    if ((input.source ?? 'local') === 'native') {
+      return handleNativeWorkflowVersions(input, context);
     }
+
+    // Local snapshots are numbered; coerce both ids up front so every mode
+    // below works with numbers.
+    const parsedVersionId = parseLocalVersionId(input.versionId, 'versionId');
+    if (!parsedVersionId.ok) {
+      return {
+        success: false,
+        mode: input.mode,
+        source: 'local',
+        backend: 'n8n-mcp',
+        code: 'INVALID_ARGS',
+        error: parsedVersionId.error,
+      };
+    }
+    const parsedToVersionId = parseLocalVersionId(input.toVersionId, 'toVersionId');
+    if (!parsedToVersionId.ok) {
+      return {
+        success: false,
+        mode: input.mode,
+        source: 'local',
+        backend: 'n8n-mcp',
+        code: 'INVALID_ARGS',
+        error: parsedToVersionId.error,
+      };
+    }
+    const versionId = parsedVersionId.value;
+    const toVersionId = parsedToVersionId.value;
+
+    const localResult = await handleLocalWorkflowVersions(input, versionId, toVersionId, repository, context);
+    return { ...localResult, mode: input.mode, source: 'local', backend: 'n8n-mcp' };
   } catch (error) {
+    // A schema failure happens before `input` exists, so the labels come from
+    // the raw arguments here.
+    const raw = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const source = raw.source === 'native' ? 'native' : 'local';
+    const label = {
+      ...(typeof raw.mode === 'string' ? { mode: raw.mode } : {}),
+      source,
+      backend: source === 'native' ? 'official-mcp' : 'n8n-mcp',
+    };
+
     if (error instanceof z.ZodError) {
       return {
         success: false,
+        ...label,
         error: 'Invalid input',
         details: { errors: error.errors }
       };
@@ -3227,6 +3493,7 @@ export async function handleWorkflowVersions(
 
     return {
       success: false,
+      ...label,
       error: error instanceof Error ? error.message : 'Unknown error occurred'
     };
   }
