@@ -4,9 +4,11 @@ import * as dns from 'dns/promises';
 import {
   NOT_EXPOSED_PREFIX,
   WORKFLOW_NOT_EXPOSED_HINT,
+  PUBLIC_API_CONTEXT_HINT,
   isNotExposedResponse,
   enableWorkflowMcpExposure,
   withMcpExposure,
+  publicApiMatchesContext,
 } from '@/services/mcp-exposure';
 import { N8nApiClient } from '@/services/n8n-api-client';
 import { clearVersionCache } from '@/services/n8n-version';
@@ -70,8 +72,44 @@ describe('isNotExposedResponse', () => {
   });
 });
 
+describe('publicApiMatchesContext', () => {
+  it('matches with no context', () => {
+    expect(publicApiMatchesContext(undefined)).toBe(true);
+    expect(publicApiMatchesContext(null)).toBe(true);
+  });
+
+  it('matches with url and key both set', () => {
+    expect(publicApiMatchesContext({ n8nApiUrl: 'https://a.example', n8nApiKey: 'k' })).toBe(true);
+  });
+
+  it('matches with only a key (no url)', () => {
+    expect(publicApiMatchesContext({ n8nApiKey: 'k' })).toBe(true);
+  });
+
+  it('does not match with only a url (no key)', () => {
+    expect(publicApiMatchesContext({ n8nApiUrl: 'https://a.example' })).toBe(false);
+  });
+
+  it('does not match with url and an MCP token but no key', () => {
+    expect(publicApiMatchesContext({ n8nApiUrl: 'https://a.example', n8nMcpAccessToken: 't' })).toBe(false);
+  });
+});
+
 describe('withMcpExposure', () => {
   const base = { workflowId: 'w', action: 'x', toolName: 'n8n_test_workflow' as const };
+
+  it('refuses NOT_CONFIGURED, before any write, when context names an instance via url + token but no key', async () => {
+    const api = { getWorkflow: vi.fn(), updateWorkflow: vi.fn() };
+    const call = vi.fn().mockResolvedValue(refused);
+    const r = await withMcpExposure(
+      { ...base, apiClient: api as any, exposeToMcp: true, context: { n8nApiUrl: 'https://a.example', n8nMcpAccessToken: 't' } },
+      call
+    );
+    expect(r).toMatchObject({ success: false, code: 'NOT_CONFIGURED', error: PUBLIC_API_CONTEXT_HINT });
+    expect(api.getWorkflow).not.toHaveBeenCalled();
+    expect(api.updateWorkflow).not.toHaveBeenCalled();
+    expect(call).toHaveBeenCalledTimes(1);
+  });
 
   it('passes a success through untouched and calls once', async () => {
     const call = vi.fn().mockResolvedValue(ok);

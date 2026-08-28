@@ -132,7 +132,10 @@ incomplete tenant header set. `x-n8n-mcp-token` without `x-n8n-url` is rejected 
 mode: the MCP endpoint is derived from the URL. `N8N_MCP_ACCESS_TOKEN` in the
 environment is never used for a header-driven request — a request whose headers carry
 the URL plus a credential is authoritative and never falls back to the server's own
-environment variables. All three headers are redacted from logs.
+environment variables. All three headers are redacted from logs. This also applies in
+single-tenant mode: `n8n_test_workflow`'s `exposeToMcp` and its `pinned`/`direct`
+methods need `x-n8n-key` alongside `x-n8n-url` for the same instance — without it they
+return `NOT_CONFIGURED` rather than risk writing to or reading from a different instance.
 
 See [HTTP Deployment](./HTTP_DEPLOYMENT.md) for the rest of the HTTP-mode setup.
 

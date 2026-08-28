@@ -11,6 +11,7 @@
 import { N8nApiClient } from './n8n-api-client';
 import { McpToolResponse, Workflow } from '../types/n8n-api';
 import { getDisabledTools, isOperationDisabled } from '../mcp/tool-policy';
+import { InstanceContext } from '../types/instance-context';
 import { logger } from '../utils/logger';
 
 /**
@@ -29,6 +30,34 @@ export const WORKFLOW_NOT_EXPOSED_HINT =
   'This workflow is not exposed to n8n\'s MCP server ("Available in MCP" in workflow settings). ' +
   'Re-run with exposeToMcp: true to enable it — this is a visible, persistent setting on the workflow; ' +
   'confirm with the user first.';
+
+/**
+ * Fixed hint returned when a request names an n8n instance via context but
+ * cannot be matched to it on the Public API side (url without key).
+ */
+export const PUBLIC_API_CONTEXT_HINT =
+  'This request names an n8n instance (x-n8n-url) without its Public API key (x-n8n-key). ' +
+  'Enabling "Available in MCP" and the pinned/direct trigger lookup need the Public API ' +
+  'credentials of the same instance — add x-n8n-key alongside x-n8n-url.';
+
+/**
+ * Whether the Public API client resolved for this request (`getN8nApiClient`)
+ * addresses the same n8n instance as the official-MCP client
+ * (`resolveOfficialMcpConfig`).
+ *
+ * `getN8nApiClient` only builds an instance-specific client when both
+ * `n8nApiUrl` and `n8nApiKey` are set on the context; otherwise it falls back
+ * to the environment's Public API client. `resolveOfficialMcpConfig` accepts
+ * `n8nApiUrl` with either `n8nApiKey` or `n8nMcpAccessToken`. A context that
+ * names a url with a token but no key is therefore official-MCP-authoritative
+ * while the Public API client silently falls back to the operator's own
+ * instance — false only in that one case.
+ */
+export function publicApiMatchesContext(context?: InstanceContext | null): boolean {
+  const hasUrl = typeof context?.n8nApiUrl === 'string' && context.n8nApiUrl.length > 0;
+  const hasKey = typeof context?.n8nApiKey === 'string' && context.n8nApiKey.length > 0;
+  return !(hasUrl && !hasKey);
+}
 
 /**
  * The tool whose policy governs the consent write. Enabling "Available in MCP"
@@ -107,6 +136,12 @@ export interface ExposureOptions {
   exposeToMcp?: boolean;
   action: string;
   toolName: 'n8n_test_workflow' | 'n8n_workflow_versions';
+  /**
+   * The instance context this call was made under, for the
+   * `publicApiMatchesContext` check. Absent (or `null`) is treated as
+   * matching — there is no instance-scoped mismatch without a context.
+   */
+  context?: InstanceContext | null;
 }
 
 /**
@@ -150,6 +185,20 @@ export async function withMcpExposure(
   if (!isNotExposedResponse(first)) return first;
 
   if (opts.exposeToMcp !== true) return notExposedFailure(opts, first);
+
+  // Refuse before the policy gate and before any write: a context that names
+  // an instance via url but has no Public API key for it is authoritative
+  // for the official call, but getN8nApiClient falls back to the operator's
+  // environment client for `opts.apiClient` — writing through it would touch
+  // a different instance's workflow.
+  if (!publicApiMatchesContext(opts.context)) {
+    return {
+      success: false,
+      action: opts.action,
+      code: 'NOT_CONFIGURED',
+      error: PUBLIC_API_CONTEXT_HINT,
+    };
+  }
 
   const refusal = consentWriteRefusal(opts.toolName);
   if (refusal) {

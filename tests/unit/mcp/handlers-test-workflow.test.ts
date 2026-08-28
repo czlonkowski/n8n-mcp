@@ -305,6 +305,22 @@ describe('n8n_test_workflow method routing', () => {
     });
   });
 
+  it('warns when the legacy timeout is passed alongside an official method', async () => {
+    officialMock.override = async () => ({ success: true, data: { executionId: 'e1', status: 'success' } });
+
+    const r = await handlers.handleTestWorkflow({
+      workflowId: 'w',
+      method: 'pinned',
+      pinData: { Webhook: [] },
+      timeout: 600000,
+    });
+
+    expect(r).toMatchObject({ success: true, method: 'pinned' });
+    expect(r.warnings).toContain(
+      'timeout applies to the HTTP trigger path only; use timeoutMs for method prepare/pinned/direct'
+    );
+  });
+
   it('describes a bad run status when the official result carries no error text', async () => {
     officialMock.override = async () => ({
       success: true,
@@ -405,6 +421,20 @@ describe('n8n_test_workflow method routing', () => {
     expect(officialMock.spy).not.toHaveBeenCalled();
   });
 
+  it('direct refuses an explicit triggerNodeName that matches no node in the workflow', async () => {
+    useWorkflow([webhookNode, setNode]);
+
+    const r = await handlers.handleTestWorkflow({
+      workflowId: 'w',
+      method: 'direct',
+      triggerNodeName: 'Nope',
+    });
+
+    expect(r).toMatchObject({ success: false, code: 'INVALID_ARGS', method: 'direct', backend: 'official-mcp' });
+    expect(r.error).toContain('triggerNodeName "Nope" is not a node of workflow w');
+    expect(officialMock.spy).not.toHaveBeenCalled();
+  });
+
   it('direct without inputs sends no inputs and no auto-filled trigger node', async () => {
     officialMock.override = async () => ({ success: true, data: { executionId: 'e6', status: 'started' } });
 
@@ -448,6 +478,31 @@ describe('n8n_test_workflow method routing', () => {
       { n8nApiUrl: 'https://n8n.test.com', n8nMcpAccessToken: 'tok' }
     );
     expect(withClient).toMatchObject({ success: false, error: 'Workflow cannot be triggered externally' });
+    expect(officialMock.spy).not.toHaveBeenCalled();
+  });
+
+  // ------------------------------------------------- context/instance mismatch
+
+  it('refuses pinned with NOT_CONFIGURED when context names an instance via url + token but no key', async () => {
+    const context = { n8nApiUrl: 'https://other-instance.test.com', n8nMcpAccessToken: 'tok' };
+
+    const r = await handlers.handleTestWorkflow(
+      { workflowId: 'w', method: 'pinned', pinData: { Webhook: [{ json: {} }] } },
+      context
+    );
+
+    expect(r).toMatchObject({ success: false, code: 'NOT_CONFIGURED', method: 'pinned', backend: 'official-mcp' });
+    expect(mockApiClient.getWorkflow).not.toHaveBeenCalled();
+    expect(officialMock.spy).not.toHaveBeenCalled();
+  });
+
+  it('refuses direct with NOT_CONFIGURED when context names an instance via url + token but no key', async () => {
+    const context = { n8nApiUrl: 'https://other-instance.test.com', n8nMcpAccessToken: 'tok' };
+
+    const r = await handlers.handleTestWorkflow({ workflowId: 'w', method: 'direct' }, context);
+
+    expect(r).toMatchObject({ success: false, code: 'NOT_CONFIGURED', method: 'direct', backend: 'official-mcp' });
+    expect(mockApiClient.getWorkflow).not.toHaveBeenCalled();
     expect(officialMock.spy).not.toHaveBeenCalled();
   });
 
@@ -532,7 +587,12 @@ describe('n8n_test_workflow over the wire', () => {
 
   beforeAll(() => {
     savedMode = process.env.WEBHOOK_SECURITY_MODE;
-    process.env.WEBHOOK_SECURITY_MODE = 'moderate';
+    // 'permissive': the official-MCP client's own endpoint check (async
+    // validateWebhookUrl) treats a resolved 127.x address as localhost and
+    // allows it under 'moderate' too, but validateInstanceContext's sync URL
+    // check (used once contexts below carry n8nApiKey, for I-1 coverage)
+    // only skips the private-IP-range check in 'permissive' mode.
+    process.env.WEBHOOK_SECURITY_MODE = 'permissive';
   });
   afterAll(() => {
     if (savedMode === undefined) delete process.env.WEBHOOK_SECURITY_MODE;
@@ -565,13 +625,16 @@ describe('n8n_test_workflow over the wire', () => {
   });
 
   /**
-   * The context carries no `n8nApiKey`, so `getN8nApiClient` keeps using the
-   * (mocked) environment client while `getOfficialMcpClient` builds a real
-   * client against the fake server's origin.
+   * `n8nApiKey` is included so `publicApiMatchesContext` matches and the
+   * consent write / pinned / direct trigger-detection read run against the
+   * same (mocked) instance the official call targets — `getN8nApiClient`
+   * builds an instance-specific client here, but `N8nApiClient` is
+   * class-mocked to `mockApiClient` regardless of construction args, and
+   * `validateInstanceContext` accepts the fake server's 127.0.0.1 origin.
    */
   async function contextFor(tools: FakeTool[]) {
     fake = await startFakeOfficialMcp({ tools });
-    return { n8nApiUrl: new URL(fake.url).origin, n8nMcpAccessToken: 'tok' };
+    return { n8nApiUrl: new URL(fake.url).origin, n8nApiKey: 'test-key', n8nMcpAccessToken: 'tok' };
   }
 
   it('turns n8n\'s refusal into WORKFLOW_NOT_EXPOSED', async () => {
@@ -666,7 +729,6 @@ describe('n8n_test_workflow over the wire', () => {
       { workflowId: 'w', method: 'pinned', pinData: { Webhook: [{ json: {} }] } },
       context
     );
-
     expect(r).toMatchObject({
       success: true,
       method: 'pinned',

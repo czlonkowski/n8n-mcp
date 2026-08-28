@@ -431,7 +431,7 @@ export const n8nManagementTools: ToolDefinition[] = [
         },
         timeout: {
           type: 'number',
-          description: 'Timeout in ms (default: 120000)'
+          description: 'Timeout in ms (default: 120000). HTTP trigger path only (method auto/trigger) — the official methods (prepare/pinned/direct) use timeoutMs instead.'
         },
         waitForResponse: {
           type: 'boolean',

@@ -1529,9 +1529,16 @@ export class SingleSessionHTTPServer {
 
         if (hasUrl || hasKey || hasMcpToken) {
           // Create context with proper type handling. A context carrying
-          // n8nApiUrl plus either credential is authoritative for this
-          // request — resolveOfficialMcpConfig and getN8nApiClient never fall
-          // back to the environment for it.
+          // n8nApiUrl plus either credential is authoritative for official-MCP
+          // calls (resolveOfficialMcpConfig never falls back to the
+          // environment for it). getN8nApiClient (the Public API client) is
+          // stricter: without n8nApiKey it falls back to the environment
+          // client in single-tenant mode, so a url+token-only context routes
+          // official calls to the header instance while Public API calls
+          // (the consent write behind exposeToMcp, and the pinned/direct
+          // trigger-detection read) resolve to the operator's own instance —
+          // mcp-exposure.ts refuses those with NOT_CONFIGURED rather than
+          // letting them proceed against the wrong instance.
           const candidate: InstanceContext = {
             n8nApiUrl: hasUrl || undefined,
             n8nApiKey: hasKey || undefined,

@@ -60,7 +60,7 @@ import {
 } from '../utils/mcp-input-normalizer';
 import { buildOfficialMcpHealth, OfficialMcpHealth } from './official-mcp-access';
 import { callOfficialTool, resolveProjectChoices } from './handlers-official-tools';
-import { withMcpExposure } from '../services/mcp-exposure';
+import { withMcpExposure, publicApiMatchesContext, PUBLIC_API_CONTEXT_HINT } from '../services/mcp-exposure';
 import { isOperationDisabled } from './tool-policy';
 import {
   DEFAULT_TIMEOUT_MS,
@@ -1696,6 +1696,15 @@ const OFFICIAL_TEST_ACTION = 'test_workflow';
 const FAILED_RUN_STATUSES = new Set(['error', 'crashed', 'canceled']);
 
 /**
+ * `timeout` only ever governs the HTTP trigger path (method auto/trigger);
+ * the official methods use `timeoutMs`. A caller who passes both on a
+ * prepare/pinned/direct call gets this note rather than a silently ignored
+ * `timeout`.
+ */
+const LEGACY_TIMEOUT_SCOPE_WARNING =
+  'timeout applies to the HTTP trigger path only; use timeoutMs for method prepare/pinned/direct';
+
+/**
  * Handler for n8n_test_workflow tool
  *
  * `method` picks the backend:
@@ -1739,10 +1748,15 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
           exposeToMcp: input.exposeToMcp,
           action: OFFICIAL_TEST_ACTION,
           toolName: 'n8n_test_workflow',
+          context,
         },
         () => callOfficialTool(context, aliases, officialArgs, officialTimeoutMs, OFFICIAL_TEST_ACTION, idempotent)
       );
-      return { ...response, method: resolvedMethod, backend: 'official-mcp' };
+      const decorated = { ...response, method: resolvedMethod, backend: 'official-mcp' };
+      if (input.timeout !== undefined && decorated.success) {
+        decorated.warnings = [...(decorated.warnings ?? []), LEGACY_TIMEOUT_SCOPE_WARNING];
+      }
+      return decorated;
     };
 
     // prepare only needs the workflow id — no trigger analysis, no workflow GET.
@@ -1772,6 +1786,21 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
         backend: 'public-api',
         error: "Operation 'trigger' on tool 'n8n_test_workflow' is disabled by server policy.",
         details: { requestedMethod: method },
+      };
+    }
+
+    // pinned/direct route the workflow through the official-MCP client, which
+    // is context-authoritative on a url+token context; `client` (used for the
+    // read below) falls back to the environment's Public API client in that
+    // same case. Refuse before reading, so trigger detection is never run
+    // against — and forwarded from — the wrong instance's workflow.
+    if ((method === 'pinned' || method === 'direct') && !publicApiMatchesContext(context)) {
+      return {
+        success: false,
+        code: 'NOT_CONFIGURED',
+        method,
+        backend: 'official-mcp',
+        error: PUBLIC_API_CONTEXT_HINT,
       };
     }
 
@@ -1820,6 +1849,15 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       const namedNode = input.triggerNodeName
         ? (workflow.nodes ?? []).find(node => node.name === input.triggerNodeName)
         : undefined;
+      if (input.triggerNodeName && !namedNode) {
+        return {
+          success: false,
+          code: 'INVALID_ARGS',
+          method: 'direct',
+          backend: 'official-mcp',
+          error: `triggerNodeName "${input.triggerNodeName}" is not a node of workflow ${input.workflowId}`,
+        };
+      }
       const triggerKind: TriggerType | null = input.triggerNodeName
         ? (namedNode ? classifyTriggerNode(namedNode) : null)
         : (detection.trigger?.type ?? null);
@@ -3197,6 +3235,7 @@ async function handleNativeWorkflowVersions(
       exposeToMcp: input.exposeToMcp,
       action: VERSIONS_ACTION,
       toolName: 'n8n_workflow_versions',
+      context,
     },
     () =>
       callOfficialTool(
@@ -4265,7 +4304,6 @@ export async function handleRenameColumn(args: unknown, context?: InstanceContex
     context
   );
 }
-
 
 // ========================================================================
 // Credential Management Handlers

@@ -36,7 +36,7 @@ export const n8nTestWorkflowDoc: ToolDocumentation = {
 
 n8n's public API does not support direct workflow execution, which is why \`prepare\`/\`pinned\`/\`direct\` go through n8n's own MCP server instead. Those three need \`N8N_MCP_ACCESS_TOKEN\` (n8n 2.34+).
 
-**Consent: "Available in MCP".** n8n refuses MCP calls for a workflow whose "Available in MCP" setting is off, and this tool returns \`WORKFLOW_NOT_EXPOSED\` rather than changing it. Re-run with \`exposeToMcp: true\` to enable it — a visible, persistent setting on the workflow, so confirm with the user first. This flow only ever turns the setting on - disabling it again is a deliberate \`updateSettings\` write (\`availableInMCP: false\`) or a change in the n8n UI. A response that enabled it carries \`exposedToMcp: true\`.
+**Consent: "Available in MCP".** n8n refuses MCP calls for a workflow whose "Available in MCP" setting is off, and this tool returns \`WORKFLOW_NOT_EXPOSED\` rather than changing it. Re-run with \`exposeToMcp: true\` to enable it — a visible, persistent setting on the workflow, so confirm with the user first. This flow only ever turns the setting on - disabling it again is a deliberate \`updateSettings\` write (\`availableInMCP: false\`) or a change in the n8n UI. A response that enabled it carries \`exposedToMcp: true\`. In a per-request (multi-tenant or header-driven) deployment, \`exposeToMcp\` and the \`pinned\`/\`direct\` methods need the Public API key (\`x-n8n-key\`) for the same instance as \`x-n8n-url\` — without it they return \`NOT_CONFIGURED\` rather than acting against a different instance.
 
 **executionMode: production.** \`method: direct\` runs as a manual execution unless you explicitly pass \`executionMode: 'production'\`. A production run behaves like a live one — real side effects, production execution data. It is never chosen for you.
 
@@ -98,7 +98,7 @@ Every response states \`method\` and \`backend\` ('public-api' or 'official-mcp'
       timeout: {
         type: 'number',
         required: false,
-        description: 'Timeout in ms (default: 120000)'
+        description: 'Timeout in ms (default: 120000). HTTP trigger path only (method auto/trigger) — the official methods (prepare/pinned/direct) use timeoutMs instead.'
       },
       waitForResponse: {
         type: 'boolean',
@@ -175,7 +175,7 @@ When execution fails, the response includes guidance for debugging:
 
 **Common Errors:**
 - "Workflow not found" - Check workflow ID exists
-- "Workflow not active" - Activate workflow (required for all trigger types)
+- "Workflow not active" - Activate workflow (HTTP trigger path only; pinned/direct run inactive workflows)
 - "Workflow cannot be triggered externally" - Workflow has no webhook/form/chat trigger; use method=direct or method=pinned
 - WORKFLOW_NOT_EXPOSED - The workflow's "Available in MCP" setting is off; re-run with exposeToMcp: true after confirming with the user
 - EXECUTION_FAILED - method=pinned started the run and it ended in error/crashed/canceled; the executionId is on the response
