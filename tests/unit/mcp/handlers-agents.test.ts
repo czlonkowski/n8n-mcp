@@ -32,6 +32,13 @@ describe('handleManageAgents', () => {
     expect(await handleManageAgents({ action: 'get', args: { agentId: 'a' }, timeoutMs: 10 })).toMatchObject({ success: false, code: 'INVALID_ARGS' });
     expect(client.callTool).not.toHaveBeenCalled();
   });
+  it('rejects an unknown top-level key and names it', async () => {
+    const client = fakeClient(ALL); access.getOfficialMcpClient.mockReturnValue(client);
+    const r = await handleManageAgents({ action: 'get', arg: { agentId: 'a' } });
+    expect(r).toMatchObject({ success: false, code: 'INVALID_ARGS', action: 'get' });
+    expect(r.error).toContain('arg');
+    expect(client.callTool).not.toHaveBeenCalled();
+  });
   it('forwards args verbatim to the mapped tool with the default timeout', async () => {
     const client = fakeClient(ALL, { get_agent: { ok: true, agent: { id: 'a1' } } }); access.getOfficialMcpClient.mockReturnValue(client);
     const r = await handleManageAgents({ action: 'get', args: { agentId: 'a1', versionId: 'v9' } });

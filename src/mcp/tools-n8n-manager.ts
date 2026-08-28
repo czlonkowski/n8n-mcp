@@ -858,7 +858,7 @@ Old backups are also pruned automatically (10 most recent per workflow, plus an 
       properties: {
         action: { type: 'string', enum: AGENT_ACTIONS, description: 'Operation to perform' },
         args: { type: 'object', description: 'Arguments for the action, forwarded to n8n verbatim. See tools_documentation("n8n_manage_agents", "full") for the per-action fields.' },
-        timeoutMs: { type: 'number', minimum: 5000, maximum: 600000, description: 'Request timeout in ms. Default 30000; 180000 for action=call. The agent run continues in n8n even if this expires.' },
+        timeoutMs: { type: 'integer', minimum: 5000, maximum: 600000, description: 'Request timeout in ms. Default 30000; 180000 for action=call. The agent run continues in n8n even if this expires.' },
       },
       required: ['action'],
     },
@@ -879,7 +879,7 @@ Old backups are also pruned automatically (10 most recent per workflow, plus an 
         filter: { type: 'string', description: 'Search text (listSearch only)' },
         paginationToken: { type: 'string', description: 'Token from a previous page (listSearch only)' },
         currentNodeParameters: { type: 'object', description: 'Parameters the method depends on (loadOptionsDependsOn), e.g. {documentId: {...}}' },
-        timeoutMs: { type: 'number', minimum: 5000, maximum: 600000, description: 'Request timeout in ms (default 30000)' },
+        timeoutMs: { type: 'integer', minimum: 5000, maximum: 600000, description: 'Request timeout in ms (default 30000)' },
       },
       required: ['nodeType', 'version', 'methodName', 'methodType', 'credentialType', 'credentialId'],
     },
@@ -893,7 +893,7 @@ Old backups are also pruned automatically (10 most recent per workflow, plus an 
       properties: {
         kind: { type: 'string', enum: ['projects', 'tags'] },
         query: { type: 'string', description: 'Case-insensitive name filter' },
-        limit: { type: 'number', minimum: 1, maximum: 500 },
+        limit: { type: 'integer', minimum: 1, maximum: 500 },
       },
       required: ['kind'],
     },

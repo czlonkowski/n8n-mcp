@@ -86,6 +86,19 @@ describe('buildOfficialMcpHealth', () => {
     expect(health).toEqual({ configured: false, hint: expect.stringContaining('N8N_MCP_ACCESS_TOKEN') });
   });
 
+  // Same hint logic as notConfiguredResponse: an embedder's own hint wins,
+  // stripped to text and capped.
+  it('prefers the embedder setup hint when there is no config', async () => {
+    const health = await buildOfficialMcpHealth(
+      { metadata: { officialMcpSetupHint: '<b>Open</b> the setup page ' + 'x'.repeat(600) } },
+      false,
+    );
+    expect(health.configured).toBe(false);
+    expect(health.hint).toContain('Open the setup page');
+    expect(health.hint).not.toContain('<b>');
+    expect(health.hint!.length).toBeLessThanOrEqual(500);
+  });
+
   it('reports the endpoint alone when configured but never probed and live is false', async () => {
     fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
     const health = await buildOfficialMcpHealth(contextFor(fake.url), false);

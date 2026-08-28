@@ -26,6 +26,13 @@ describe('handleExploreNodeResources', () => {
     expect(await handleExploreNodeResources({ ...VALID, methodType: 'magic' })).toMatchObject({ success: false, code: 'INVALID_ARGS' });
     expect(client.callTool).not.toHaveBeenCalled();
   });
+  it('rejects an unknown top-level key and names it', async () => {
+    const client = fakeClient(['explore_node_resources']); access.getOfficialMcpClient.mockReturnValue(client);
+    const r: any = await handleExploreNodeResources({ ...VALID, currentNodeParameter: {} });
+    expect(r).toMatchObject({ success: false, code: 'INVALID_ARGS' });
+    expect(r.error).toContain('currentNodeParameter');
+    expect(client.callTool).not.toHaveBeenCalled();
+  });
   it('forwards the validated args and returns data verbatim', async () => {
     const client = fakeClient(['explore_node_resources']); access.getOfficialMcpClient.mockReturnValue(client);
     const r = await handleExploreNodeResources({ ...VALID, filter: 'gen', timeoutMs: 60000 });
@@ -81,6 +88,14 @@ describe('handleExploreNodeResources', () => {
 });
 
 describe('handleListCatalog', () => {
+  it('rejects an unknown top-level key and names it, before touching the API', async () => {
+    const listProjects = vi.fn();
+    api.getN8nApiClient.mockReturnValue({ listProjects });
+    const r: any = await handleListCatalog({ kind: 'projects', limits: 5 });
+    expect(r).toMatchObject({ success: false, code: 'INVALID_ARGS' });
+    expect(r.error).toContain('limits');
+    expect(listProjects).not.toHaveBeenCalled();
+  });
   it('lists projects from the Public API and marks the personal one', async () => {
     api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockResolvedValue([{ id: 'p1', name: 'Personal', type: 'personal' }, { id: 'p2', name: 'Team A', type: 'team' }]) });
     const r = await handleListCatalog({ kind: 'projects', query: 'team' });

@@ -16,6 +16,8 @@ import { logger } from '../utils/logger';
 import { getN8nApiClient } from './handlers-n8n-manager';
 import { N8nApiError } from '../utils/n8n-errors';
 
+// Strict: a misspelled key (`currentNodeParameter`, `timeOutMs`) is reported
+// as INVALID_ARGS naming the key rather than silently dropped.
 const exploreSchema = z.object({
   nodeType: z.string().min(1),
   version: z.number(),
@@ -27,7 +29,7 @@ const exploreSchema = z.object({
   paginationToken: z.string().optional(),
   currentNodeParameters: z.record(z.string(), z.unknown()).optional(),
   timeoutMs: z.number().int().min(MIN_TIMEOUT_MS).max(MAX_TIMEOUT_MS).optional(),
-});
+}).strict();
 
 const EXPLORE_TOOLS = ['explore_node_resources'];
 
@@ -53,6 +55,11 @@ export async function callOfficialTool(
     if (!tool) return officialFailure(new OfficialMcpError('OFFICIAL_MCP_TOOL_UNAVAILABLE', `This instance does not expose ${toolAliases.join(' / ')}`), label) as McpToolResponse;
     const result = await client.callTool(tool, args, { timeoutMs, idempotent });
     const data = result.json ?? result.text;
+    // "Input validation error" is the literal prefix n8n's MCP server puts on
+    // an arguments-rejected response (observed on n8n 2.36.7 — see the spike
+    // logs under docs/local/official-agent-tools-2026-08-27/). If n8n changes
+    // that wording, invalid args stop mapping to INVALID_ARGS and degrade to
+    // OFFICIAL_MCP_ERROR; nothing else breaks.
     if (result.text.startsWith('Input validation error')) return { success: false, action: label, code: 'INVALID_ARGS', error: result.text.slice(0, 2000) };
     if (result.isError || (data as any)?.ok === false) {
       return { success: false, action: label, officialTool: tool, code: 'OFFICIAL_MCP_ERROR', error: officialErrorText(data, undefined), officialError: data };
@@ -81,7 +88,7 @@ const catalogSchema = z.object({
   kind: z.enum(['projects', 'tags']),
   query: z.string().optional(),
   limit: z.number().int().min(1).max(500).optional(),
-});
+}).strict();
 
 interface CatalogItem {
   id: string;

@@ -161,7 +161,9 @@ export interface OfficialMcpHealth {
  */
 export async function buildOfficialMcpHealth(context: InstanceContext | undefined, live: boolean): Promise<OfficialMcpHealth> {
   const config = resolveOfficialMcpConfig(context);
-  if (!config) return { configured: false, hint: 'Set N8N_MCP_ACCESS_TOKEN to enable n8n_manage_agents' };
+  // Same hint logic as notConfiguredResponse: an embedder's own setup hint
+  // wins over the environment one, stripped to text and capped.
+  if (!config) return { configured: false, hint: embedderSetupHint(context) ?? OFFICIAL_MCP_HINTS.NOT_CONFIGURED };
 
   const client = getOfficialMcpClient(context)!;
   const caps = live ? await client.capabilities(true) : client.cachedCapabilities();

@@ -26,11 +26,15 @@ import { AGENT_SUPPORTED_CREDENTIAL_TYPES, AGENT_UNSUPPORTED_CREDENTIAL_TYPES } 
 import { getN8nApiClient } from './handlers-n8n-manager';
 import { logger } from '../utils/logger';
 
+// Strict at the top level so a misspelled envelope key (`arg`, `timeOutMs`)
+// is reported as INVALID_ARGS naming the key, instead of being dropped and
+// producing a confusing failure from n8n. `args` itself stays an opaque
+// record — its contents belong to n8n's own tool schemas.
 const inputSchema = z.object({
   action: z.enum(AGENT_ACTIONS as [AgentAction, ...AgentAction[]]),
   args: z.record(z.string(), z.unknown()).optional().default({}),
   timeoutMs: z.number().int().min(MIN_TIMEOUT_MS).max(MAX_TIMEOUT_MS).optional(),
-});
+}).strict();
 
 /** Official `{ok:false, code}` → this server's error code and a fixed, non-interpolated hint. */
 const OFFICIAL_CODE_MAP: Record<string, { code: string; hint: string }> = {
@@ -148,6 +152,11 @@ export async function handleManageAgents(args: unknown, context?: InstanceContex
     const result: OfficialToolResult = await client.callTool(tool, toolArgs, { timeoutMs: timeoutMs ?? spec.defaultTimeoutMs, idempotent: spec.idempotent });
     const data = result.json ?? result.text;
 
+    // "Input validation error" is the literal prefix n8n's MCP server puts on
+    // an arguments-rejected response (observed on n8n 2.36.7 — see the spike
+    // logs under docs/local/official-agent-tools-2026-08-27/). If n8n changes
+    // that wording, invalid args stop mapping to INVALID_ARGS and degrade to
+    // OFFICIAL_MCP_ERROR; nothing else breaks.
     // Error text is capped at 2000 chars — n8n's error text is untrusted output.
     if (result.text.startsWith('Input validation error')) return invalid(action, result.text.slice(0, 2000));
 

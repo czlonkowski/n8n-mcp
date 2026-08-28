@@ -9,7 +9,9 @@ describe('n8n_manage_agents tool definition', () => {
     expect(tool).toBeDefined();
     expect(tool.inputSchema.properties.action.enum).toEqual(AGENT_ACTIONS);
     expect(tool.inputSchema.properties.args.type).toBe('object');
-    expect(tool.inputSchema.properties.timeoutMs).toMatchObject({ type: 'number', minimum: 5000, maximum: 600000 });
+    // 'integer', not 'number': the Zod schema the handler validates against
+    // requires an integer, so the advertised schema has to say the same.
+    expect(tool.inputSchema.properties.timeoutMs).toMatchObject({ type: 'integer', minimum: 5000, maximum: 600000 });
     expect(tool.inputSchema.required).toEqual(['action']);
     expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: true });
   });
@@ -19,6 +21,12 @@ describe('n8n_manage_agents tool definition', () => {
     // persist a draft, and call runs the agent's real tools.
     expect([...DESTRUCTIVE_TOOL_OPERATIONS['n8n_manage_agents']].sort())
       .toEqual(['call', 'create', 'delete', 'mutate', 'publish', 'revert', 'unpublish', 'update_integration']);
+  });
+  it('advertises integer bounds on the two other official-MCP tools', () => {
+    const explore = n8nManagementTools.find(t => t.name === 'n8n_explore_node_resources')!;
+    expect(explore.inputSchema.properties.timeoutMs).toMatchObject({ type: 'integer', minimum: 5000, maximum: 600000 });
+    const catalog = n8nManagementTools.find(t => t.name === 'n8n_list_catalog')!;
+    expect(catalog.inputSchema.properties.limit).toMatchObject({ type: 'integer', minimum: 1, maximum: 500 });
   });
   it('has documentation', () => {
     expect(toolsDocumentation['n8n_manage_agents']).toBeDefined();
