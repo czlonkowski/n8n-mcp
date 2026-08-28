@@ -101,7 +101,7 @@ export class PropertyFilter {
     // Slack - Messaging
     'nodes-base.slack': {
       required: [],
-      common: ['resource', 'operation', 'channel', 'text', 'attachments', 'blocks'],
+      common: ['resource', 'operation', 'channelId', 'text', 'attachments', 'blocksUi'],
       categoryPriority: ['basic', 'message', 'formatting', 'advanced']
     },
     

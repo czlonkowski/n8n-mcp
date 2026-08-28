@@ -76,6 +76,14 @@ If your n8n instance sits behind Cloudflare Access (Zero Trust), provide your se
 
 When set, these are sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers on n8n API requests, version/health probes, and webhook executions. The token is confined to the `N8N_API_URL` origin — webhook calls to a different host (e.g. a split `WEBHOOK_URL` origin) do not receive it, to avoid leaking the token.
 
+### n8n Agents and Instance-Level MCP (Optional)
+
+To use `n8n_manage_agents`, `n8n_explore_node_resources`, and the project fallback in `n8n_list_catalog`, set:
+
+- `N8N_MCP_ACCESS_TOKEN` - MCP API key from n8n Settings → Instance-level MCP → Enable MCP access. This is a separate secret from `N8N_API_KEY` and should be stored the same way. The MCP endpoint is derived from `N8N_API_URL`; instances that serve MCP from a split host (`N8N_MCP_BASE_URL`) are not supported.
+
+See [Connecting n8n-mcp to n8n's instance-level MCP server](./docs/OFFICIAL_MCP_SETUP.md) for the full setup walkthrough, including how to get the token from the n8n UI, prerequisites, and troubleshooting.
+
 ## Connect your IDE
 
 n8n-MCP works with multiple AI-powered IDEs and tools:
@@ -370,7 +378,7 @@ Save these instructions in your Claude Project for optimal n8n workflow assistan
   - `searchMode: 'by_metadata'` - Filter by `complexity`, `requiredService`, `targetAudience`
 - **`get_template`** - Get complete workflow JSON (modes: nodes_only, structure, full)
 
-### n8n Management Tools (16 tools - Requires API Configuration)
+### n8n Management Tools (21 tools - Requires API Configuration)
 These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
 
 #### Workflow Management
@@ -384,6 +392,9 @@ These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
 - **`n8n_autofix_workflow`** - Automatically fix common workflow errors
 - **`n8n_workflow_versions`** - Manage version history and rollback
 - **`n8n_deploy_template`** - Deploy templates from n8n.io directly to your instance with auto-fix
+
+#### Node Resource Discovery
+- **`n8n_explore_node_resources`** - Resolve a node's dynamic dropdown (loadOptions) or resource-locator search (listSearch) values — Slack channels, Google Sheets tabs, model lists — using a real credential, so workflow configs use existing IDs instead of invented ones. Requires `N8N_MCP_ACCESS_TOKEN` (see [Official MCP Setup](./docs/OFFICIAL_MCP_SETUP.md))
 
 #### Execution Management
 - **`n8n_test_workflow`** - Test/trigger workflow execution (webhook, form, chat)
@@ -402,8 +413,12 @@ These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
 #### Security & Audit
 - **`n8n_audit_instance`** - Security audit combining n8n's built-in audit API with deep workflow scanning
 
+#### Agents
+- **`n8n_manage_agents`** - Manage n8n Agents (persisted assistants with a model, instructions, tools, skills, tasks, memory and channels) through n8n's instance-level MCP server. Requires `N8N_MCP_ACCESS_TOKEN` and n8n 2.34+ with the agents module (see [Official MCP Setup](./docs/OFFICIAL_MCP_SETUP.md)). This is not the AI Agent workflow node — use `get_node` for that
+
 #### System Tools
-- **`n8n_health_check`** - Check n8n API connectivity and features
+- **`n8n_health_check`** - Check n8n API connectivity and features, including `officialMcp` status when `N8N_MCP_ACCESS_TOKEN` is configured
+- **`n8n_list_catalog`** - List instance-level projects or tags; falls back to n8n's instance-level MCP server for team projects when the Public API doesn't expose them
 
 ### Read-Only Deployment
 
@@ -416,7 +431,7 @@ DISABLED_TOOLS=n8n_create_workflow,n8n_update_full_workflow,n8n_update_partial_w
 For tools that bundle read and write operations under one name, block only the destructive operations while keeping `list` and `get`:
 
 ```bash
-DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete
+DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_manage_agents:publish,delete
 ```
 
 Combine with a read-only n8n API key (Settings → API in your n8n instance) for defence in depth. See [Read-Only Deployment Recipe](./docs/HTTP_DEPLOYMENT.md#read-only-deployment-recipe) for the full setup guide.
@@ -430,6 +445,7 @@ Combine with a read-only n8n API key (Settings → API in your n8n instance) for
 - [Privacy & Telemetry](./PRIVACY.md) - What we collect and how to opt out
 - [Workflow Diff Operations](./docs/workflow-diff-examples.md) - Token-efficient workflow updates
 - [HTTP Deployment](./docs/HTTP_DEPLOYMENT.md) - Remote server setup
+- [Official MCP Setup](./docs/OFFICIAL_MCP_SETUP.md) - Connect n8n-mcp to n8n's instance-level MCP server for Agents and node resource discovery
 - [Change Log](./CHANGELOG.md) - Complete version history
 
 ## License

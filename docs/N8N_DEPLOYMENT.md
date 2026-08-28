@@ -443,12 +443,7 @@ Once connected, you can use these MCP tools in n8n:
 - `validate_workflow` - Validate workflow configurations
 - `get_node_documentation` - Get human-readable docs
 
-**Management Tools** (Requires n8n API key):
-- `n8n_create_workflow` - Create new workflows
-- `n8n_update_workflow` - Update existing workflows
-- `n8n_get_workflow` - Retrieve workflow details
-- `n8n_list_workflows` - List all workflows
-- `n8n_trigger_webhook_workflow` - Trigger webhook workflows
+**Management Tools** (Requires n8n API key): see the [README's tool table](../README.md#n8n-management-tools-21-tools---requires-api-configuration) for the current, complete list.
 
 ### Using with AI Agents
 

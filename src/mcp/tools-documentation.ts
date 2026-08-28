@@ -121,7 +121,7 @@ When working with Code nodes, always start by calling the relevant guide:
    - validate_node({nodeType: "nodes-base.slack", config: {...}}) - Full validation with errors/warnings/suggestions
    - validate_workflow({workflow: {...}}) - Validate entire workflow
 
-## Tool Categories (24 Tools Total)
+## Tool Categories (27 Tools Total)
 
 **Discovery Tools** (1 tool)
 - search_nodes - Full-text search across all nodes (supports OR, AND, FUZZY modes)
@@ -146,7 +146,7 @@ When working with Code nodes, always start by calling the relevant guide:
   - searchMode='by_metadata': Filter by complexity/services
   - searchMode='patterns': Workflow pattern summaries from 2,700+ templates
 
-**n8n API Tools** (18 tools, requires N8N_API_URL configuration)
+**n8n API Tools** (21 tools, requires N8N_API_URL configuration)
 - n8n_create_workflow - Create new workflows
 - n8n_get_workflow - Get workflow with mode='full' (draft) / 'details' / 'active' (published graph) / 'structure' / 'minimal'
 - n8n_update_full_workflow - Full workflow replacement
@@ -165,6 +165,9 @@ When working with Code nodes, always start by calling the relevant guide:
 - n8n_manage_credentials - Manage credentials (action='list'/'get'/'create'/'update'/'delete'/'getSchema')
 - n8n_manage_folders - Manage workflow folders (action='create'/'list'/'get'/'rename'/'move'/'delete', n8n 2.19+; workflow placement via parentFolderId/moveToFolder needs 2.32+)
 - n8n_audit_instance - Security audit of the n8n instance
+- n8n_manage_agents - Manage n8n Agents through n8n's instance-level MCP server (requires N8N_MCP_ACCESS_TOKEN, n8n 2.34+)
+- n8n_explore_node_resources - Resolve dynamic dropdown/resource-locator options (Slack channels, Google Sheets tabs, etc.) using a real credential (requires N8N_MCP_ACCESS_TOKEN)
+- n8n_list_catalog - List instance-level projects or tags, with an official-MCP fallback when team projects need it
 
 ## Performance Characteristics
 - Instant (<10ms): search_nodes, get_node (minimal/standard)

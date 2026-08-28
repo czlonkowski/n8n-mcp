@@ -9,7 +9,7 @@ n8n-MCP HTTP mode enables:
 - 🌐 Remote access from any Claude Desktop /Windsurf / other MCP Client 
 - 🔒 Token-based authentication
 - ⚡ Production-ready performance (~12ms response time)
-- 🚀 Optional n8n management tools (16 additional tools when configured)
+- 🚀 Optional n8n management tools (21 additional tools when configured)
 - ❌ Does not work with n8n MCP Tool
 
 ## 📐 Deployment Scenarios
@@ -72,6 +72,9 @@ PORT=3000
 # Optional: Enable n8n management tools
 # N8N_API_URL=https://your-n8n-instance.com
 # N8N_API_KEY=your-api-key-here
+# Optional: Enable n8n_manage_agents, n8n_explore_node_resources, and the
+# team-project fallback in n8n_list_catalog — see docs/OFFICIAL_MCP_SETUP.md
+# N8N_MCP_ACCESS_TOKEN=your-mcp-access-token-here
 # Security Configuration (v2.16.3+)
 # Rate limiting (default: 20 attempts per 15 minutes)
 AUTH_RATE_LIMIT_WINDOW=900000
@@ -160,7 +163,7 @@ Skip HTTP entirely and use stdio mode directly:
 
 ### n8n Management Tools (Optional)
 
-Enable 16 additional tools for managing n8n workflows by configuring API access:
+Enable 21 additional tools for managing n8n workflows by configuring API access:
 
 ⚠️ **Requires v2.7.1+** - Earlier versions had an issue with tool registration in Docker environments.
 
@@ -170,30 +173,13 @@ Enable 16 additional tools for managing n8n workflows by configuring API access:
 | `N8N_API_KEY` | n8n API key (from Settings > API) | `n8n_api_key_xxx` |
 | `N8N_API_TIMEOUT` | Request timeout (ms) | `30000` |
 | `N8N_API_MAX_RETRIES` | Max retry attempts | `3` |
+| `N8N_MCP_ACCESS_TOKEN` | MCP API key from n8n Settings → Instance-level MCP → Enable MCP access (optional; separate from `N8N_API_KEY`) | `n8n_mcp_xxx` |
 
 #### What This Enables
 
-When configured, you get **16 additional tools** (total: 39 tools):
+When configured, you get **21 additional tools** (total: 28 tools). See the [README's tool table](../README.md#n8n-management-tools-21-tools---requires-api-configuration) for the full, current list grouped by category (workflow, execution, folder, data table, credential, security/audit, agents, and system tools).
 
-**Workflow Management (11 tools):**
-- `n8n_create_workflow` - Create new workflows
-- `n8n_get_workflow` - Get workflow by ID
-- `n8n_update_full_workflow` - Update entire workflow
-- `n8n_update_partial_workflow` - Update using diff operations (v2.7.0+)
-- `n8n_delete_workflow` - Delete workflows
-- `n8n_list_workflows` - List all workflows
-- And more workflow detail/structure tools
-
-**Execution Management (4 tools):**
-- `n8n_trigger_webhook_workflow` - Execute via webhooks
-- `n8n_get_execution` - Get execution details
-- `n8n_list_executions` - List workflow runs
-- `n8n_delete_execution` - Delete execution records
-
-**System Tools:**
-- `n8n_health_check` - Check n8n connectivity
-- `n8n_diagnostic` - System diagnostics
-- `n8n_validate_workflow` - Validate from n8n instance
+`N8N_MCP_ACCESS_TOKEN` additionally unlocks `n8n_manage_agents`, `n8n_explore_node_resources`, and the team-project fallback in `n8n_list_catalog` — see [Connecting n8n-mcp to n8n's instance-level MCP server](./OFFICIAL_MCP_SETUP.md). The MCP endpoint is derived from `N8N_API_URL`; instances that serve MCP from a split host (`N8N_MCP_BASE_URL`) are not supported.
 
 #### Getting Your n8n API Key
 

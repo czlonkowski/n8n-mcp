@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.75.0] - 2026-08-28
+
+### Added
+
+- **Three tools that talk to n8n's instance-level MCP server**, gated behind a new optional `N8N_MCP_ACCESS_TOKEN` setting (separate from `N8N_API_KEY`, derived endpoint from `N8N_API_URL`): `n8n_manage_agents` manages n8n Agents (the persisted assistant artifact — model, instructions, tools, skills, tasks, memory, channels), `n8n_explore_node_resources` resolves a node's dynamic dropdown (`loadOptions`) or resource-locator search (`listSearch`) values (Slack channels, Google Sheets tabs, model lists) using a real credential, and `n8n_list_catalog` lists instance-level projects or tags, falling back to n8n's MCP server for team projects when the Public API doesn't expose them. See `docs/OFFICIAL_MCP_SETUP.md` for the setup walkthrough.
+- **`n8n_health_check` reports an `officialMcp` block** (`configured`, `reachable`, `toolCount`, `agentTools`, and an error code/hint when something's wrong) so you can check the connection to n8n's MCP server without calling one of the tools above. `mode: "diagnostic"` forces a live probe instead of returning the cached result.
+- **`get_node`'s `standard` detail level now flags dynamic properties** with a `dynamicOptions` field (`methodName`, `methodType`, `dependsOn`) on any property backed by a `loadOptions` method or a resource-locator `listSearch` mode, so a config step can tell which fields need `n8n_explore_node_resources` before a value can be filled in confidently.
+- `N8N_MCP_ACCESS_TOKEN` environment variable / instance-context field, documented alongside `N8N_API_URL` and `N8N_API_KEY`.
+
+### Changed
+
+- `undici` moves from a transitive dependency to a direct one — it backs the SSRF-pinned fetch used by the new MCP client transport.
+
+### Security
+
+- The endpoint for n8n's instance-level MCP server is derived from the already SSRF-validated `N8N_API_URL`, not taken from user input.
+- The MCP client transport pins DNS resolution to the addresses validated at connection time, the same protection already applied to webhook and API calls.
+- The MCP access token is never written to logs.
+
+### Fixed
+
+- **`ESSENTIAL_PROPERTIES` for the Slack node named a `channel` field that doesn't exist** — the node's actual property is `channelId` (a resource-locator, not a plain string), and its blocks field is `blocksUi`, not `blocks`. `get_node`'s `standard` detail level therefore never surfaced the channel picker or the blocks builder as essential fields for Slack. Both names are corrected.
+
 ## [2.74.1] - 2026-08-27
 
 ### Fixed
