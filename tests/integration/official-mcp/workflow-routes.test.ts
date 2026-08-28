@@ -39,8 +39,7 @@ import {
 import { handleUpdatePartialWorkflow } from '@/mcp/handlers-workflow-diff';
 import { clearOfficialMcpClientCache } from '@/mcp/official-mcp-access';
 import { NodeRepository } from '@/database/node-repository';
-import { createDatabaseAdapter } from '@/database/database-adapter';
-import * as path from 'path';
+import { getNodeRepository, closeNodeRepository } from '../n8n-api/utils/node-repository';
 
 const enabled = !!(process.env.N8N_API_URL && process.env.N8N_API_KEY && process.env.N8N_MCP_ACCESS_TOKEN);
 const LIVE_TIMEOUT_MS = 60_000;
@@ -48,6 +47,13 @@ const LIVE_TIMEOUT_MS = 60_000;
 // must not collide with this run's names.
 const RUN_ID = Date.now().toString(36);
 const TEST_WORKFLOW_NAME = `[TEST] routes ${RUN_ID}`;
+
+interface NativeVersion { versionId: string; createdAt?: string; updatedAt?: string }
+
+/** Epoch ms for a native version entry, or NaN when n8n sent no usable timestamp. */
+function versionTimestamp(version: NativeVersion): number {
+  return Date.parse(version.createdAt ?? version.updatedAt ?? '');
+}
 const TEST_TABLE_NAME = `[TEST] routes table ${RUN_ID}`;
 
 /** Execution statuses that mean the run has finished, one way or another. */
@@ -81,7 +87,7 @@ describe.skipIf(!enabled)('official MCP: routed workflow operations (live)', () 
   let repository: NodeRepository;
 
   beforeAll(async () => {
-    repository = await getRepository();
+    repository = await getNodeRepository();
   }, LIVE_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -115,8 +121,10 @@ describe.skipIf(!enabled)('official MCP: routed workflow operations (live)', () 
       }
     } finally {
       // Close the cached client so its transport and pinned undici dispatcher
-      // do not keep the vitest worker alive after the suite finishes.
+      // do not keep the vitest worker alive after the suite finishes, and the
+      // shared nodes.db handle for the same reason.
       await clearOfficialMcpClientCache();
+      await closeNodeRepository();
     }
   }, LIVE_TIMEOUT_MS);
 
@@ -183,7 +191,8 @@ describe.skipIf(!enabled)('official MCP: routed workflow operations (live)', () 
     expect(r).toMatchObject({ success: true, method: 'pinned', backend: 'official-mcp' });
     expect(typeof r.executionId).toBe('string');
     const status = (r.data as any)?.status;
-    expect(['success', 'error', 'waiting', 'crashed', 'canceled', 'started', 'running']).toContain(status);
+    // test_workflow's own declared status enum.
+    expect(['success', 'error', 'running', 'waiting', 'canceled', 'crashed', 'new', 'unknown']).toContain(status);
   }, LIVE_TIMEOUT_MS);
 
   it('runs a direct execution and polls it to a final status', async () => {
@@ -198,7 +207,7 @@ describe.skipIf(!enabled)('official MCP: routed workflow operations (live)', () 
   it('lists, gets, diffs and rolls back native versions', async () => {
     const list = await handleWorkflowVersions({ mode: 'list', source: 'native', workflowId }, repository);
     expect(list).toMatchObject({ success: true, mode: 'list', source: 'native', backend: 'official-mcp' });
-    const versions = (list.data as any).versions as Array<{ versionId: string }>;
+    const versions = (list.data as any).versions as NativeVersion[];
     expect(Array.isArray(versions)).toBe(true);
     expect(versions.length).toBeGreaterThanOrEqual(1);
 
@@ -211,7 +220,18 @@ describe.skipIf(!enabled)('official MCP: routed workflow operations (live)', () 
     );
     expect(got).toMatchObject({ success: true, mode: 'get', source: 'native', backend: 'official-mcp' });
 
+    // The diff's from -> to direction, and the rollback target when there is
+    // more than one version, both assume n8n returns the history newest-first.
+    // get_workflow_history documents that, but the envelope does not restate
+    // it, so prove it from the timestamps before relying on it. With a single
+    // version there is no direction to check and no diff to take.
     if (versions.length >= 2) {
+      const newestAt = versionTimestamp(newest);
+      const oldestAt = versionTimestamp(oldest);
+      expect(Number.isFinite(newestAt)).toBe(true);
+      expect(Number.isFinite(oldestAt)).toBe(true);
+      expect(newestAt).toBeGreaterThanOrEqual(oldestAt);
+
       const secondNewest = versions[1];
       const diff = await handleWorkflowVersions(
         {
@@ -227,6 +247,11 @@ describe.skipIf(!enabled)('official MCP: routed workflow operations (live)', () 
       expect((diff.data as any).format).toBe('n8n');
     }
 
+    // Unconditional: with one version `oldest` is `newest`, so the target
+    // involves no ordering assumption, and with more the check above has
+    // already proved the list is newest-first. A freshly created workflow
+    // usually has exactly one native version, so gating this too would leave
+    // restore_workflow_version with no live coverage at all.
     const rollback = await handleWorkflowVersions(
       { mode: 'rollback', source: 'native', workflowId, versionId: oldest.versionId },
       repository
@@ -288,9 +313,3 @@ describe.skipIf(!enabled)('official MCP: routed workflow operations (live)', () 
     expect(deletedColumn).toMatchObject({ success: true, action: 'deleteColumn', backend: 'official-mcp' });
   }, LIVE_TIMEOUT_MS);
 });
-
-async function getRepository(): Promise<NodeRepository> {
-  const dbPath = path.join(process.cwd(), 'data', 'nodes.db');
-  const db = await createDatabaseAdapter(dbPath);
-  return new NodeRepository(db);
-}

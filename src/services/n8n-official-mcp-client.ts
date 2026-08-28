@@ -17,7 +17,14 @@ import { logger } from '../utils/logger';
  * callers need to read into an opaque transport error.
  *
  * Results are untrusted data that we forward and size-cap regardless of what
- * the schema claims, so client-side enforcement buys nothing. Opt out of it.
+ * the schema claims, so client-side enforcement buys nothing. This validator
+ * accepts everything, which disables that comparison.
+ *
+ * It does NOT disable every client-side output check: the SDK still throws
+ * `McpError(InvalidRequest, -32600)` when a tool that declares an outputSchema
+ * answers `isError: false` with no `structuredContent` at all
+ * (`client/index.js:487-489` — the guard is gated on a validator existing, and
+ * this one does exist). `mapOfficialTransportError` names that case.
  */
 const PERMISSIVE_JSON_SCHEMA_VALIDATOR: jsonSchemaValidator = {
   getValidator: <T>() => (input: unknown): JsonSchemaValidatorResult<T> => ({ valid: true, data: input as T, errorMessage: undefined }),
@@ -109,9 +116,16 @@ export function mapOfficialTransportError(err: unknown): OfficialMcpError {
     }
     // InvalidParams now only reaches here from n8n itself rejecting the
     // request's arguments (JSON-RPC -32602): the client opts out of the SDK's
-    // client-side output-schema check (see PERMISSIVE_JSON_SCHEMA_VALIDATOR).
+    // client-side output-schema comparison (see PERMISSIVE_JSON_SCHEMA_VALIDATOR).
     if (err.code === ErrorCode.InvalidParams) {
       return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'n8n MCP server rejected the request arguments (JSON-RPC -32602)');
+    }
+    // The opt-out does not cover this one: the SDK raises InvalidRequest itself
+    // when a tool that declares an outputSchema answers a non-error result with
+    // no structuredContent at all. n8n answering -32600 on the wire lands here
+    // too, which the fixed message stays true for.
+    if (err.code === ErrorCode.InvalidRequest) {
+      return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'n8n returned a result without structured content for a tool that declares an output schema (JSON-RPC -32600)');
     }
     const code = typeof err.code === 'number' ? err.code : 'unknown';
     return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', `n8n MCP server returned a protocol error (JSON-RPC code ${code})`);
@@ -287,7 +301,10 @@ export class N8nOfficialMcpClient {
    *
    * Results are returned as n8n sent them — including `isError` refusals whose
    * payload does not match the tool's advertised `outputSchema` (see
-   * PERMISSIVE_JSON_SCHEMA_VALIDATOR); callers decide what a refusal means.
+   * PERMISSIVE_JSON_SCHEMA_VALIDATOR); callers decide what a refusal means. The
+   * one client-side shape check the SDK still applies is the -32600 case below:
+   * a non-error result with no `structuredContent` on a tool that declares an
+   * output schema.
    */
   async callTool(name: string, args: Record<string, unknown>, opts: { timeoutMs?: number; idempotent?: boolean } = {}): Promise<OfficialToolResult> {
     const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;

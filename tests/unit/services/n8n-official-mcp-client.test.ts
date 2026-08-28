@@ -211,6 +211,10 @@ describe('N8nOfficialMcpClient', () => {
   it('keeps the -32602 case readable and marks only connection failures retryable', () => {
     expect(mapOfficialTransportError(new McpError(-32602, 'Authorization: Bearer eyJsecret')).message)
       .toBe('n8n MCP server rejected the request arguments (JSON-RPC -32602)');
+    // The permissive validator disables the schema comparison but not this
+    // check, which the SDK still raises itself.
+    expect(mapOfficialTransportError(new McpError(-32600, 'Authorization: Bearer eyJsecret')).message)
+      .toBe('n8n returned a result without structured content for a tool that declares an output schema (JSON-RPC -32600)');
     expect(mapOfficialTransportError(new Error('fetch failed'))).toMatchObject({ retryable: true, message: 'fetch failed' });
     expect(mapOfficialTransportError('a thrown string')).toMatchObject({ retryable: false, message: 'Request to n8n MCP server failed' });
   });

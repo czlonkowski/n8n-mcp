@@ -616,6 +616,47 @@ describe('n8n_test_workflow over the wire', () => {
     expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
   });
 
+  // The end-to-end consent flip: n8n refuses, n8n-mcp writes availableInMCP
+  // through the REST API, then re-sends the same tool call. Everything but the
+  // REST write happens over the wire against the fake server, so this covers
+  // the refusal parsing, the retry, and the fact that the retry is a second
+  // real tools/call rather than a replayed local result.
+  it('flips Available in MCP and re-sends the call over the wire when exposeToMcp is set', async () => {
+    let prepareCalls = 0;
+    const context = await contextFor([
+      {
+        name: 'prepare_workflow_pin_data',
+        outputSchema: { nodeSchemasToGenerate: z.object({}).passthrough() },
+        // isError/structured are evaluated per call, so the tool can refuse
+        // once and then succeed - matching what n8n does after the flip.
+        isError: () => prepareCalls === 1,
+        handler: () => (++prepareCalls === 1 ? REFUSAL : 'prepared'),
+        structured: () =>
+          prepareCalls === 1
+            ? { error: REFUSAL }
+            : { nodeSchemasToGenerate: {}, coverage: { total: 1 } },
+      },
+    ]);
+
+    const r = await handlers.handleTestWorkflow(
+      { workflowId: 'w', method: 'prepare', exposeToMcp: true },
+      context
+    );
+
+    expect(r).toMatchObject({
+      success: true,
+      exposedToMcp: true,
+      method: 'prepare',
+      backend: 'official-mcp',
+    });
+    // Exactly one consent write, carrying availableInMCP without dropping the
+    // workflow's existing settings.
+    expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockApiClient.updateWorkflow.mock.calls[0][1].settings).toMatchObject({ availableInMCP: true });
+    // Two tools/call POSTs reached the fake: the refused one and the retry.
+    expect(fake!.toolCalls).toEqual(['prepare_workflow_pin_data', 'prepare_workflow_pin_data']);
+  });
+
   it('lifts the executionId out of a successful pinned run', async () => {
     const context = await contextFor([
       { name: 'test_workflow', handler: () => ({ executionId: 'e1', status: 'success' }) },
