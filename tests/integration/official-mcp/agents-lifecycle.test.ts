@@ -32,6 +32,9 @@ describe.skipIf(!enabled)('official MCP: agent lifecycle (live)', () => {
     // hooks after a failed test in the same describe block.
     if (agentId) {
       try {
+        // Cleanup is verified by the post-delete search below, not by this
+        // call's own `success` field - a delete that reports success but
+        // doesn't actually remove the agent would otherwise pass silently.
         await handleManageAgents({ action: 'delete', args: { agentId } });
       } catch {
         // ignore - the post-condition search below is the real check
@@ -68,6 +71,7 @@ describe.skipIf(!enabled)('official MCP: agent lifecycle (live)', () => {
     });
     expect(created.success).toBe(true);
     agentId = (created.data as any).agent.id;
+    expect(typeof agentId).toBe('string');
     configHash = (created.data as any).configHash;
 
     // skill.upsert shape confirmed against docs/local/official-agent-tools-2026-08-27/
@@ -109,7 +113,27 @@ describe.skipIf(!enabled)('official MCP: agent lifecycle (live)', () => {
     const validated = await handleManageAgents({ action: 'validate', args: { agentId } });
     expect(validated.success).toBe(true); // valid may be false (no credential) - that is data, not an error
 
+    // list_agent_versions is n8n's *publish history*, not a draft-revision log
+    // (its own description: "List the publish history of an Agent, newest
+    // first" - agent-tools-schemas.json). Live payload shape, confirmed by a
+    // direct probe against the test instance and matching
+    // spike-log-2-mutate-validate-delete.json's own "list_agent_versions"
+    // step: { ok: true, data: [], count: 0 } - a top-level `data` array plus
+    // `count`. Since this test creates the agent and mutates it but, per the
+    // "never publish" constraint, never calls `publish`, that publish history
+    // is legitimately empty for the whole lifecycle - a never-published draft
+    // has no versions to list. Asserting non-empty (or correlating an id from
+    // `create`, which returns a *draft* versionId, not a published-version
+    // id) would be asserting behaviour the API does not have. Instead this
+    // asserts the mapping's actual shape and internal consistency, which
+    // would fail on a broken mapping (e.g. `data: undefined` while
+    // `success:true`, or `count` desynced from the array) without assuming a
+    // publish that this test must not perform.
     const versions = await handleManageAgents({ action: 'versions', args: { agentId } });
     expect(versions.success).toBe(true);
+    const versionList = (versions.data as any)?.data;
+    expect(Array.isArray(versionList)).toBe(true);
+    expect((versions.data as any).count).toBe(versionList.length);
+    expect(versionList.length).toBe(0); // never published in this test - see comment above
   }, LIVE_TIMEOUT_MS);
 });
