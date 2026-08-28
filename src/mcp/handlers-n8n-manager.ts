@@ -58,6 +58,7 @@ import {
   normalizeMcpWorkflowConnections,
   normalizeMcpWorkflowNodes,
 } from '../utils/mcp-input-normalizer';
+import { buildOfficialMcpHealth, OfficialMcpHealth } from './official-mcp-access';
 
 // ========================================================================
 // TypeScript Interfaces for Type Safety
@@ -88,6 +89,7 @@ interface HealthCheckResponseData {
     cacheHitRate: string;
     cachedInstances: number;
   };
+  officialMcp?: OfficialMcpHealth;
   nextSteps?: string[];
   updateWarning?: string;
 }
@@ -211,6 +213,7 @@ interface DiagnosticResponseData {
     cacheHitRate: string;
     cachedInstances: number;
   };
+  officialMcp?: OfficialMcpHealth;
   modeSpecificDebug: Record<string, unknown>;
   dockerDebug?: Record<string, unknown>;
   cloudPlatformDebug?: CloudPlatformGuide;
@@ -2343,6 +2346,10 @@ export async function handleHealthCheck(context?: InstanceContext): Promise<McpT
       }
     };
 
+    // Official n8n MCP (n8n_manage_agents) reachability — status mode reports
+    // whatever the cached client already knows, without a live network probe.
+    responseData.officialMcp = await buildOfficialMcpHealth(context, false);
+
     // Add next steps guidance based on telemetry insights
     responseData.nextSteps = [
       '• Create workflow: n8n_create_workflow',
@@ -2683,6 +2690,10 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
     },
     modeSpecificDebug: getModeSpecificDebug(mcpMode)
   };
+
+  // Official n8n MCP (n8n_manage_agents) reachability — diagnostic mode
+  // always forces a live probe, unlike the status-mode health check.
+  diagnostic.officialMcp = await buildOfficialMcpHealth(context, true);
 
   // Enhanced guidance based on telemetry insights
   if (apiConfigured && apiStatus.connected) {

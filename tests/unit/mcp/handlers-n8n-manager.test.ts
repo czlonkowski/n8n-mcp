@@ -29,7 +29,12 @@ vi.mock('@/services/workflow-versioning-service', () => ({
   })),
 }));
 vi.mock('@/config/n8n-api', () => ({
-  getN8nApiConfig: vi.fn()
+  getN8nApiConfig: vi.fn(),
+  // Official MCP is not under test here; keep it "not configured" so
+  // buildOfficialMcpHealth (called by handleHealthCheck/handleDiagnostic)
+  // resolves without a network probe.
+  getOfficialMcpConfig: vi.fn().mockReturnValue(null),
+  getOfficialMcpConfigFromContext: vi.fn().mockReturnValue(null),
 }));
 vi.mock('@/services/n8n-validation', () => ({
   validateWorkflowStructure: vi.fn(),

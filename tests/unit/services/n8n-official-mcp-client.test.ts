@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { startFakeOfficialMcp, FakeOfficialMcp } from '../../helpers/fake-official-mcp-server';
-import { N8nOfficialMcpClient } from '@/services/n8n-official-mcp-client';
+import { N8nOfficialMcpClient, probeOfficialMcp } from '@/services/n8n-official-mcp-client';
 import { SSRFProtection } from '@/utils/ssrf-protection';
 
 let savedMode: string | undefined;
@@ -182,5 +182,13 @@ describe('N8nOfficialMcpClient', () => {
     expect(b.status).toBe('fulfilled');
     if (b.status === 'fulfilled') { expect(b.value.isError).toBe(false); expect(b.value.json).toEqual({ ok: true }); }
     await client.close();
+  });
+
+  it('probeOfficialMcp returns capabilities from a throwaway client', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
+    const caps = await probeOfficialMcp({ endpoint: fake.url, token: 'tok' });
+    expect(caps).toMatchObject({ reachable: true, toolCount: 1, agentTools: true });
+    fake.setRaw({ status: 401, body: '{}', contentType: 'application/json' });
+    expect(await probeOfficialMcp({ endpoint: fake.url, token: 'tok' })).toMatchObject({ reachable: false, error: 'OFFICIAL_MCP_AUTH_FAILED' });
   });
 });

@@ -229,6 +229,11 @@ export class N8nOfficialMcpClient {
     return value;
   }
 
+  /** Last probed capabilities, or null if this client has never probed (or was just closed). Never triggers a network call. */
+  cachedCapabilities(): OfficialMcpCapabilities | null {
+    return this.caps;
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     this.generation++; // invalidates any in-flight connect(); it tears itself down instead of storing
@@ -238,5 +243,21 @@ export class N8nOfficialMcpClient {
     await client?.close().catch(() => undefined);
     await pinned?.close().catch(() => undefined);
     this.caps = null; this.ref = null;
+  }
+}
+
+/**
+ * One-off capability probe against an endpoint/token pair that isn't backed
+ * by a cached client (e.g. health-check diagnostics for a config that may
+ * not even be the resolved instance client). Always closes the throwaway
+ * client, and — like `capabilities()` — never throws for a reachability
+ * failure; it resolves with `{ reachable: false, error }` instead.
+ */
+export async function probeOfficialMcp(opts: { endpoint: string; token: string }): Promise<OfficialMcpCapabilities> {
+  const client = new N8nOfficialMcpClient(opts);
+  try {
+    return await client.capabilities(true);
+  } finally {
+    await client.close();
   }
 }

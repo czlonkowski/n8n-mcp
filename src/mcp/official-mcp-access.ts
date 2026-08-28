@@ -9,7 +9,13 @@
  */
 import { InstanceContext } from '../types/instance-context';
 import { getOfficialMcpConfig, getOfficialMcpConfigFromContext, OfficialMcpConfig } from '../config/n8n-api';
-import { N8nOfficialMcpClient, OfficialMcpError, OFFICIAL_MCP_HINTS, mapOfficialTransportError } from '../services/n8n-official-mcp-client';
+import {
+  N8nOfficialMcpClient,
+  OfficialMcpError,
+  OfficialMcpErrorCode,
+  OFFICIAL_MCP_HINTS,
+  mapOfficialTransportError,
+} from '../services/n8n-official-mcp-client';
 import { createCacheKey, createInstanceCache, cacheMetrics } from '../utils/cache-utils';
 import { logger } from '../utils/logger';
 
@@ -131,6 +137,44 @@ export function officialFailure(err: unknown, action?: string): OfficialMcpFailu
     error: mapped.message,
     hint: mapped.hint,
     ...(mapped.status !== undefined ? { details: { status: mapped.status } } : {}),
+  };
+}
+
+export interface OfficialMcpHealth {
+  configured: boolean;
+  endpoint?: string;
+  reachable?: boolean;
+  toolCount?: number;
+  agentTools?: boolean;
+  checkedAt?: string;
+  error?: OfficialMcpErrorCode;
+  hint?: string;
+}
+
+/**
+ * Builds the `officialMcp` block reported by `n8n_health_check`.
+ *
+ * `live: false` (health-check `status` mode) never touches the network: it
+ * reports the cached client's last-known capabilities, if any. `live: true`
+ * (`diagnostic` mode) forces a fresh probe via `capabilities(true)`. Never
+ * includes the access token — only the derived endpoint URL.
+ */
+export async function buildOfficialMcpHealth(context: InstanceContext | undefined, live: boolean): Promise<OfficialMcpHealth> {
+  const config = resolveOfficialMcpConfig(context);
+  if (!config) return { configured: false, hint: 'Set N8N_MCP_ACCESS_TOKEN to enable n8n_manage_agents' };
+
+  const client = getOfficialMcpClient(context)!;
+  const caps = live ? await client.capabilities(true) : client.cachedCapabilities();
+  if (!caps) return { configured: true, endpoint: config.endpoint };
+
+  return {
+    configured: true,
+    endpoint: config.endpoint,
+    reachable: caps.reachable,
+    toolCount: caps.toolCount,
+    agentTools: caps.agentTools,
+    checkedAt: new Date(caps.checkedAt).toISOString(),
+    ...(caps.error ? { error: caps.error, hint: OFFICIAL_MCP_HINTS[caps.error] } : {}),
   };
 }
 
