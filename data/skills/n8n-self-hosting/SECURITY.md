@@ -77,6 +77,7 @@ toggles to apply based on the user's needs.
 | OS firewall: only 22/80/443 | apply in step 5 | `ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw enable` |
 | Owner account + 2FA | hand-off | Whoever completes the owner-setup form first claims the instance — do it before sharing the URL. Enable 2FA (per-user 2FA is free; org-wide *enforcement* via `N8N_MFA_ENFORCED_ENABLED` needs a paid plan). Automated deploys can pre-provision the owner by env (n8n ≥ 2.17: `N8N_INSTANCE_OWNER_MANAGED_BY_ENV` + email + bcrypt password hash): <https://docs.n8n.io/deploy/host-n8n/configure-n8n/user-management> |
 | SMTP (`N8N_EMAIL_MODE=smtp` + `N8N_SMTP_*`) | multi-user | Without SMTP, invite links must be copied manually and users **cannot self-serve password resets**: <https://docs.n8n.io/deploy/host-n8n/configure-n8n/basic-configuration/use-environment-variables/user-management-and-2fa> |
+| `CREDENTIALS_OVERWRITE_ENDPOINT_AUTH_TOKEN` set (if using overwrites) | `CREDENTIAL_OVERWRITES.md` | Only if you enable `CREDENTIALS_OVERWRITE_ENDPOINT`. With an empty token n8n installs no auth middleware and the route accepts the **first** POST from anyone, then latches — whoever gets there first owns the OAuth app your users consent to. |
 | Keep host + image updated | `DAY2.md` | Patch the OS; update the n8n image deliberately |
 
 ## Don't-leak rules (client safety)

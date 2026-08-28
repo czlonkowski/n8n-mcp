@@ -52,6 +52,9 @@ services:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
       - N8N_RUNNERS_ENABLED=true
       - N8N_DEFAULT_BINARY_DATA_MODE=filesystem
+      # --- optional backend modules (opt-in; off unless listed) ---
+      # e.g. `agents` for the Agents feature. Uncomment to enable.
+      # - N8N_ENABLED_MODULES=agents
       # --- keep the DB/disk from growing forever ---
       - EXECUTIONS_DATA_PRUNE=true
       - EXECUTIONS_DATA_MAX_AGE=336

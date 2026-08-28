@@ -37,6 +37,65 @@ The **main** additionally gets the public-URL vars (`N8N_HOST`, `WEBHOOK_URL`,
 `N8N_EDITOR_BASE_URL`, `N8N_PROTOCOL=https`, `N8N_PROXY_HOPS=1`, `N8N_SECURE_COOKIE=true`) —
 workers don't serve the UI so they don't need them.
 
+## Env parity: the rule for every var you add later
+
+Those public-URL vars are the *only* legitimate difference between the main and a worker.
+Everything else is behavioural — which database, which queue, which encryption key, which
+optional modules, how binary data is stored — and a worker that disagrees with the main about
+behaviour is a worker that executes your workflows wrongly.
+
+That is why the template declares the common environment once, in the `x-n8n-env` anchor, and
+has the main merge it (`<<: *n8n-env`) before adding its public-URL vars. **Add new behavioural
+vars to the anchor, not to the main's own `environment:` block.**
+
+This failure mode is nastier than it sounds, because the main is what you look at. The editor
+UI, the REST API and every node's dropdown are served by the main, so a feature enabled only
+there *looks* configured — it's the execution, on a worker, that fails. And with
+`OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true` even a manual "Test workflow" run lands on a
+worker, so there is no local sanity check that would catch it.
+
+Check parity whenever you change the environment:
+
+```bash
+diff <(docker compose exec -T n8n env | sort) \
+     <(docker compose exec -T --index 1 n8n-worker env | sort)
+```
+
+Only the public-URL/proxy vars above (plus per-container noise like `HOSTNAME`) should differ.
+Anything else in that diff is a bug you just introduced.
+
+## Optional modules
+
+Some n8n features ship as backend **modules** that are off unless you list them in
+`N8N_ENABLED_MODULES` (comma-separated). The Agents feature is the current example:
+`N8N_ENABLED_MODULES=agents`. The template carries it commented out in the `x-n8n-env` anchor —
+uncomment it there and it reaches main and workers together.
+
+Enabling a module on the main only produces a characteristic failure: the module's REST routes
+answer (so the UI populates), but the workers never registered the module's database entities,
+so any node that touches it dies at runtime with a TypeORM error like
+`EntityMetadataNotFoundError: No metadata for "Agent" was found`. If you see an error of that
+shape after enabling a feature, check env parity first — it is almost always this.
+
+**On Agents specifically, be straight with the user.** The docs say *"Queue mode isn't supported
+for agents yet, and connecting channels (such as Telegram) can fail"* and recommend regular mode.
+That sentence is broader than what the code actually gates: the leader/multi-main checks apply to
+agent *schedules and chat channels*, while the `Message an Agent` node just runs the agent inline
+in whichever process executes the workflow — so it does work on a worker once the module is
+enabled there. Treat that as unsupported territory rather than a supported configuration: it can
+break on any upgrade, and the agent knowledge base additionally needs the sandbox vars
+(`N8N_AGENTS_AI_SANDBOX_*`, `DAYTONA_*`) on the workers too. If the user's main use of n8n is
+agents, single/regular mode is the honest recommendation.
+
+## Instance-wide OAuth apps (credential overwrites)
+
+If you register a shared OAuth app with `CREDENTIALS_OVERWRITE_*`, only the **main** serves the
+registration endpoint, but `CREDENTIALS_OVERWRITE_PERSISTENCE=true` belongs on the workers too:
+a save is broadcast over pubsub so running workers reload immediately, yet a worker that
+**cold-starts** without the flag never reads the stored row and silently loses the overwrite.
+That is the classic parity failure from the section above — fine in the editor, broken in
+execution. See `CREDENTIAL_OVERWRITES.md`.
+
 ## Scaling the workers
 
 - Each worker runs `worker --concurrency=5` (5 simultaneous executions per worker; the flag's
@@ -101,6 +160,9 @@ docker compose ps     # postgres & redis healthy, then n8n (main) + workers Up
 docker compose logs caddy | grep -i 'certificate obtained'
 curl -fsS --retry 5 --retry-delay 10 https://<fqdn>/healthz
 docker compose logs n8n-worker | grep -iE 'ready|listening|jobs'   # worker is up + listening
+
+# main and workers must agree on everything except the public-URL vars
+diff <(docker compose exec -T n8n env | sort) <(docker compose exec -T --index 1 n8n-worker env | sort)
 ```
 
 A real test: run a workflow from the editor and confirm a worker logs that it executed it.
