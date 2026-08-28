@@ -96,6 +96,12 @@ function parseResult(raw: { content?: Array<{ type: string; text?: string }>; is
 
 interface Connected { client: Client; generation: number }
 
+/** Closes a client/pinned-fetch pair, swallowing any error from either close(). */
+async function closeTransport(client: Client | null, pinned: PinnedFetch | null): Promise<void> {
+  await client?.close().catch(() => undefined);
+  await pinned?.close().catch(() => undefined);
+}
+
 export class N8nOfficialMcpClient {
   readonly endpoint: string;
   private readonly token: string;
@@ -154,8 +160,7 @@ export class N8nOfficialMcpClient {
         // flight. Nothing else references this client/pinned pair, so it
         // must be torn down here — otherwise the transport and its pinned
         // undici dispatcher leak.
-        await client.close().catch(() => undefined);
-        await pinned.close().catch(() => undefined);
+        await closeTransport(client, pinned);
         throw new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'Client was closed while connecting');
       }
       this.client = client; this.pinned = pinned; this.hasConnectedSuccessfully = true;
@@ -171,8 +176,7 @@ export class N8nOfficialMcpClient {
     const client = this.client; const pinned = this.pinned;
     this.client = null; this.pinned = null;
     this.generation++;
-    await client?.close().catch(() => undefined);
-    await pinned?.close().catch(() => undefined);
+    await closeTransport(client, pinned);
   }
 
   async capabilities(force = false): Promise<OfficialMcpCapabilities> {
@@ -291,8 +295,7 @@ export class N8nOfficialMcpClient {
     if (this.connecting) await this.connecting.catch(() => undefined);
     const client = this.client; const pinned = this.pinned;
     this.client = null; this.pinned = null;
-    await client?.close().catch(() => undefined);
-    await pinned?.close().catch(() => undefined);
+    await closeTransport(client, pinned);
     this.caps = null; this.ref = null;
   }
 }
