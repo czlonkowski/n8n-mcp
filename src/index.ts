@@ -6,6 +6,10 @@
 
 // Engine exports for service integration
 export { N8NMCPEngine, EngineHealth, EngineOptions } from './mcp-engine';
+// Probe n8n's instance-level MCP server (same codes as n8n_health_check's officialMcp block);
+// the package's exports map publishes only ".", so embedders need it re-exported here.
+export { probeOfficialMcp } from './services/n8n-official-mcp-client';
+export type { OfficialMcpCapabilities, OfficialMcpErrorCode } from './services/n8n-official-mcp-client';
 export { SingleSessionHTTPServer } from './http-server-single-session';
 export { ConsoleManager } from './utils/console-manager';
 export { N8NDocumentationMCPServer } from './mcp/server';

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.75.1] - 2026-08-28
+
+### Fixed
+
+- `probeOfficialMcp` (and the `OfficialMcpCapabilities` / `OfficialMcpErrorCode` types) are now re-exported from the package root. They were exported from `mcp-engine` only, but the package's `exports` map publishes just `.`, so `import { probeOfficialMcp } from 'n8n-mcp'` failed with `ERR_PACKAGE_PATH_NOT_EXPORTED` and embedders had to resolve the compiled file by path.
+
 ## [2.75.0] - 2026-08-28
 
 ### Added
