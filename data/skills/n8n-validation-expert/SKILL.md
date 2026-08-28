@@ -469,7 +469,7 @@ n8n_autofix_workflow({
 
 **`method: "auto"` never runs a workflow through n8n's MCP server.** On a workflow with no external trigger it reports that fact and names `prepare`/`pinned`/`direct`; the routed methods only run when you ask for them by name.
 
-**Consent before the first routed run.** n8n refuses these calls for a workflow whose "Available in MCP" setting is off, which comes back as `WORKFLOW_NOT_EXPOSED`. Re-running with `exposeToMcp: true` turns that setting on and retries once. It is a visible, persistent setting on the workflow (and enabling it is a workflow update, so a concurrent UI edit can be overwritten) — **ask the user before passing it**, and note that nothing ever turns it back off; that is done in the n8n UI.
+**Consent before the first routed run.** n8n refuses these calls for a workflow whose "Available in MCP" setting is off, which comes back as `WORKFLOW_NOT_EXPOSED`. Re-running with `exposeToMcp: true` turns that setting on and retries once. It is a visible, persistent setting on the workflow (and enabling it is a workflow update, so a concurrent UI edit can be overwritten) — **ask the user before passing it**. The consent flow only ever enables the setting; nothing disables it implicitly. Turning it off again is a deliberate act: `n8n_update_partial_workflow({id: workflowId, operations: [{type: "updateSettings", settings: {availableInMCP: false}}]})`, or the toggle in the n8n UI.
 
 **Reading the result:** a run that started and then failed comes back as `EXECUTION_FAILED` with the `executionId` — inspect it with `n8n_executions({action: "get", id, mode: "error"})` and fix from the node that threw, then validate and run again.
 

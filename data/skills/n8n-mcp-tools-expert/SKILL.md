@@ -262,7 +262,7 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for full search/get/deploy exampl
 | `auto` (default) | Public API | Detects a webhook/form/chat trigger and fires it over HTTP. No such trigger → it reports that the workflow cannot be triggered and names the methods below. **`auto` never runs anything through n8n's MCP server.** |
 | `trigger` | Public API | Same HTTP path, requested explicitly. |
 | `prepare` | n8n's MCP server | Read-only: lists the nodes that need pinned data. |
-| `pinned` | n8n's MCP server | Runs the workflow with `pinData` standing in for the trigger output, and waits. |
+| `pinned` | n8n's MCP server | Runs the workflow with `pinData` standing in for the trigger output, and waits. A run that finishes in `error`/`crashed`/`canceled` comes back as `EXECUTION_FAILED` with the `executionId`. |
 | `direct` | n8n's MCP server | Starts a run and returns once it has started; `message` or `data`/`headers` are forwarded to the trigger as input. |
 
 - The last three need `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+) and the workflow's "Available in MCP" setting.
@@ -270,9 +270,9 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for full search/get/deploy exampl
 - `triggerNodeName` picks the trigger node to start from (defaults to the detected one; n8n requires it whenever inputs are given).
 - `executionMode` applies to `direct`: `manual` (default) or `production`. A production run has real side effects — only pass it when the user asked for one.
 - `timeoutMs` is the client deadline for the official call (5000-600000; default 30000 for `prepare`, 300000 for `pinned`/`direct`).
-- `direct` returns as soon as the run starts — poll `n8n_executions({action: "get", id: executionId})` for the outcome. A run that started and ended badly comes back as `EXECUTION_FAILED` with the `executionId`.
+- `direct` returns as soon as the run starts, so it reports success with an `executionId` regardless of how the run ends — poll `n8n_executions({action: "get", id: executionId})` for the outcome. A dispatch n8n refuses outright comes back as `OFFICIAL_MCP_ERROR`, not `EXECUTION_FAILED`.
 
-Every response states `method` and `backend` (`public-api` or `official-mcp`).
+Successful and routed responses state `method` and `backend` (`public-api` or `official-mcp`); an envelope rejected on argument validation may carry neither.
 
 ---
 
@@ -281,7 +281,7 @@ Every response states `method` and `backend` (`public-api` or `official-mcp`).
 `n8n_workflow_versions` reads two independent histories, selected with `source`:
 
 - `source: "local"` (default) — the snapshots n8n-mcp takes before it changes a workflow. Any n8n version, no token, ids are numbers. Blind to edits made in the n8n UI. The only source that supports `delete` and `prune`.
-- `source: "native"` — n8n's own workflow history, the same list the UI shows, including edits made by people. Needs `N8N_MCP_ACCESS_TOKEN` and the workflow's "Available in MCP" setting; ids are opaque strings; `list` is capped at 50 with an `offset`; `delete` and `prune` are refused with `MODE_NOT_SUPPORTED_FOR_SOURCE` (n8n owns that retention). Native rollback is not pre-validated — `validateBefore` is accepted and ignored.
+- `source: "native"` — n8n's own workflow history, the same list the UI shows, including edits made by people. Needs `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+; the native `diff` needs 2.36, where `get_workflow_versions_diff` shipped) and the workflow's "Available in MCP" setting; ids are opaque strings; `list` is capped at 50 with an `offset`; `delete` and `prune` are refused with `MODE_NOT_SUPPORTED_FOR_SOURCE` (n8n owns that retention). Native rollback is not pre-validated — `validateBefore` is accepted and ignored.
 
 `mode: "diff"` compares two versions (`versionId` + `toVersionId`, both from the same source and workflow). A local diff (`data.format: "n8n-mcp"`) reports added/removed/modified nodes as node **IDs**; a native diff (`data.format: "n8n"`) is n8n's own payload with field-level before/after values.
 
@@ -291,7 +291,7 @@ Every response states `method` and `backend` (`public-api` or `official-mcp`).
 
 `n8n_manage_datatable` is the MCP tool for managing data tables and rows from *outside* a workflow (table actions `createTable`/`listTables`/`getTable`/`updateTable`/`deleteTable`; row actions `getRows`/`insertRows`/`updateRows`/`upsertRows`/`deleteRows`, with filtering, pagination, and `dryRun`). Don't confuse it with the in-workflow `nodes-base.dataTable` node, which reads/writes rows *during execution* (see [n8n-node-configuration → OPERATION_PATTERNS.md](../n8n-node-configuration/OPERATION_PATTERNS.md#data-table-nodes-basedatatable)). Rule of thumb: MCP tool to set up a table once, workflow node to read/write on every execution. `deleteRows` requires a filter; use `dryRun: true` before bulk changes.
 
-**Column actions** — `addColumn`, `deleteColumn`, `renameColumn` — change an existing table's columns, which the Public API cannot do; they run through n8n's MCP server and need `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+). `addColumn` takes `column: {name, type}` (name starts with a letter, letters/digits/underscores only, at most 63 chars); `deleteColumn`/`renameColumn` take the `columnId` from `getTable`. They address the table by project: `projectId` is resolved automatically when exactly one project is accessible, otherwise the call returns `PROJECT_REQUIRED` and lists the candidates — pass `projectId` (from `n8n_list_catalog({kind: "projects"})`) to skip resolution. Renaming the *table* is not a column action: use `updateTable` on the Public API.
+**Column actions** — `addColumn`, `deleteColumn`, `renameColumn` — change an existing table's columns, which the Public API cannot do; they run through n8n's MCP server and need `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+). `addColumn` takes `column: {name, type}` (name starts with a letter, letters/digits/underscores only, at most 63 chars); `deleteColumn`/`renameColumn` take the `columnId` from `getTable`, and `renameColumn` puts the new column name in `name`. They address the table by project: `projectId` is resolved automatically when exactly one project is accessible, otherwise the call returns `PROJECT_REQUIRED` and lists the candidates — pass `projectId` (from `n8n_list_catalog({kind: "projects"})`) to skip resolution. Renaming the *table* is not a column action: use `updateTable` on the Public API.
 
 See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for all actions, filter conditions, and examples.
 
