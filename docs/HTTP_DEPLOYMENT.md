@@ -189,11 +189,17 @@ In multi-tenant HTTP mode (`ENABLE_MULTI_TENANT=true`) each request carries its 
 |--------|-------------|----------|
 | `x-n8n-url` | The tenant's n8n instance URL (validated by the SSRF gate) | Yes |
 | `x-n8n-key` | The tenant's n8n Public API key | Yes |
-| `x-n8n-mcp-token` | The tenant's MCP access token, the per-request equivalent of `N8N_MCP_ACCESS_TOKEN` | No |
+| `x-n8n-mcp-token` | The tenant's MCP access token, the per-request equivalent of `N8N_MCP_ACCESS_TOKEN`. Requires `x-n8n-url` | No |
 | `x-instance-id` | Opaque tenant identifier, used to key caches and sessions | No |
 | `x-session-id` | Client-supplied session identifier | No |
 
-A request whose headers carry `x-n8n-url` plus either credential is authoritative: it never falls back to the server's own `N8N_API_KEY` or `N8N_MCP_ACCESS_TOKEN`. All three credential headers are redacted from logs.
+In multi-tenant mode send `x-n8n-url` + `x-n8n-key` + `x-n8n-mcp-token`: the Public API key is the
+tenant's identity for every management tool, so a request with the token but no key is rejected like
+any other incomplete tenant header set, and `x-n8n-mcp-token` without `x-n8n-url` is rejected in any
+mode (the MCP endpoint is derived from the URL). `N8N_MCP_ACCESS_TOKEN` in the environment is never
+used for a header-driven request: a request whose headers carry `x-n8n-url` plus a credential is
+authoritative and never falls back to the server's own `N8N_API_KEY` or `N8N_MCP_ACCESS_TOKEN`. All
+three credential headers are redacted from logs.
 
 #### Getting Your n8n API Key
 

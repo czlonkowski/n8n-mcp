@@ -103,10 +103,14 @@ N8N_API_KEY=your-n8n-api-key
 N8N_MCP_ACCESS_TOKEN=your-mcp-access-token
 ```
 
-**HTTP mode, per request (multi-tenant):** send the token in the `x-n8n-mcp-token`
-header, next to `x-n8n-url` and `x-n8n-key`. A request whose headers carry the URL plus
-either credential is authoritative for that request and never falls back to the server's
-own environment variables. The header is redacted from logs, like the other two.
+**HTTP mode, per request (multi-tenant):** send all three headers — `x-n8n-url`,
+`x-n8n-key` and `x-n8n-mcp-token`. The Public API key is the tenant's identity for every
+management tool, so a request carrying the token but no key is rejected like any other
+incomplete tenant header set. `x-n8n-mcp-token` without `x-n8n-url` is rejected in any
+mode: the MCP endpoint is derived from the URL. `N8N_MCP_ACCESS_TOKEN` in the
+environment is never used for a header-driven request — a request whose headers carry
+the URL plus a credential is authoritative and never falls back to the server's own
+environment variables. All three headers are redacted from logs.
 
 See [HTTP Deployment](./HTTP_DEPLOYMENT.md) for the rest of the HTTP-mode setup.
 

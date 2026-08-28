@@ -48,6 +48,13 @@ const clientCache = createInstanceCache<N8nOfficialMcpClient>((client, key) => {
  * only needs `{ n8nApiUrl, n8nMcpAccessToken }`, so a context that carries a
  * token but no `n8nApiKey` is still context-authoritative.
  *
+ * That "url + either credential" rule is about programmatic `InstanceContext`s
+ * (the embedding API). Header-driven multi-tenant HTTP requests are held to a
+ * stricter rule by the server itself: `x-n8n-url` + `x-n8n-key` are both
+ * required, and `x-n8n-mcp-token` without `x-n8n-url` is rejected as an
+ * incomplete header set — see `src/http-server-single-session.ts` and
+ * docs/HTTP_DEPLOYMENT.md.
+ *
  * Only when there is no such instance context at all do environment
  * variables come into play — and even then, multi-tenant mode
  * (SECURITY, GHSA-jxx9-px88-pj69-style gate) refuses that fallback outright,

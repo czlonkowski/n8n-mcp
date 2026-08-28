@@ -1500,16 +1500,27 @@ export class SingleSessionHTTPServer {
         // SECURITY (GHSA-jxx9-px88-pj69, GHSA-2cf7-hpwf-47h9): in multi-tenant
         // mode both tenant headers are required; an incomplete context is
         // rejected.
-        if (process.env.ENABLE_MULTI_TENANT === 'true' && (!hasUrl || !hasKey)) {
-          logger.warn('Multi-tenant request missing tenant headers', {
+        const multiTenantIncomplete = process.env.ENABLE_MULTI_TENANT === 'true' && (!hasUrl || !hasKey);
+        // The same completeness rule applies to x-n8n-mcp-token in any mode:
+        // the MCP endpoint is derived from x-n8n-url, so a token on its own
+        // cannot address the caller's instance. Without this the request
+        // would fall through to N8N_MCP_ACCESS_TOKEN from the environment —
+        // the operator's own token, against the operator's own instance.
+        const mcpTokenWithoutUrl = !!hasMcpToken && !hasUrl;
+        if (multiTenantIncomplete || mcpTokenWithoutUrl) {
+          logger.warn('Request with an incomplete instance header set', {
             hasUrl: !!hasUrl,
-            hasKey: !!hasKey
+            hasKey: !!hasKey,
+            hasMcpToken: !!hasMcpToken,
+            multiTenant: process.env.ENABLE_MULTI_TENANT === 'true'
           });
           res.status(400).json({
             jsonrpc: '2.0',
             error: {
               code: -32602,
-              message: 'Multi-tenant headers required'
+              message: multiTenantIncomplete
+                ? 'Multi-tenant headers required'
+                : 'x-n8n-mcp-token requires x-n8n-url'
             },
             id: req.body?.id ?? null
           });
