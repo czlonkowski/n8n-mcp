@@ -664,7 +664,7 @@ Two sources:
         // strings, and the server's argument coercion only touches properties
         // that declare a scalar type.
         versionId: {
-          description: "Version ID. local: the numeric snapshot id as a string or number; native: n8n's version id. Required for get and diff, for a single-version delete, and for native rollback; optional for local rollback."
+          description: "Version ID. local: numeric snapshot id (number or numeric string); native: n8n's version id string. Required for get and diff, for a single-version delete, and for native rollback; optional for local rollback."
         },
         toVersionId: {
           description: 'The second version to compare against in diff mode (same id format as versionId)'

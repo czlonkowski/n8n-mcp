@@ -15,6 +15,7 @@ import { N8nApiClient } from '@/services/n8n-api-client';
 import { NodeRepository } from '@/database/node-repository';
 import { startFakeOfficialMcp, FakeOfficialMcp, FakeTool } from '../../helpers/fake-official-mcp-server';
 import { resetToolPolicyCache } from '@/mcp/tool-policy';
+import { VERSION_OWNERSHIP_ERROR_PREFIX } from '@/services/workflow-versioning-service';
 
 const telemetryMocks = vi.hoisted(() => ({
   trackEvent: vi.fn(),
@@ -44,7 +45,8 @@ vi.mock('@/database/node-repository');
 // Method names mirror the real WorkflowVersioningService (getVersionHistory /
 // getVersion / restoreVersion / deleteVersion / deleteAllVersions /
 // pruneVersions / compareVersions).
-vi.mock('@/services/workflow-versioning-service', () => ({
+vi.mock('@/services/workflow-versioning-service', async (orig) => ({
+  ...(await orig<any>()),
   // vi.fn(impl), not .mockImplementation(): clearAllMocks() in beforeEach
   // strips a mockImplementation but keeps the constructor argument.
   WorkflowVersioningService: vi.fn(() => versioningMock),
@@ -216,9 +218,8 @@ describe('n8n_workflow_versions source routing', () => {
   });
 
   it('local diff reports an ownership mismatch with the service message', async () => {
-    versioningMock.compareVersions.mockRejectedValue(
-      new Error('Version 2 does not belong to workflow w')
-    );
+    const ownershipError = `Version 2 ${VERSION_OWNERSHIP_ERROR_PREFIX} w`;
+    versioningMock.compareVersions.mockRejectedValue(new Error(ownershipError));
 
     const r = await handlers.handleWorkflowVersions(
       { mode: 'diff', workflowId: 'w', versionId: 1, toVersionId: 2 },
@@ -228,7 +229,7 @@ describe('n8n_workflow_versions source routing', () => {
     expect(r).toMatchObject({
       success: false,
       code: 'INVALID_ARGS',
-      error: 'Version 2 does not belong to workflow w',
+      error: ownershipError,
       source: 'local',
     });
   });
@@ -258,6 +259,22 @@ describe('n8n_workflow_versions source routing', () => {
     );
     expect(r).toMatchObject({ success: true, source: 'native', backend: 'official-mcp', mode: 'list' });
     expect(versioningMock.getVersionHistory).not.toHaveBeenCalled();
+  });
+
+  it('native list clamps limit to a whole number in [1, 50]', async () => {
+    officialMock.override = async () => ({ success: true, data: { success: true, versions: [], count: 0 } });
+
+    await handlers.handleWorkflowVersions(
+      { mode: 'list', source: 'native', workflowId: 'w', limit: 0, offset: 3 },
+      repository
+    );
+    expect(officialMock.spy.mock.calls[0][2]).toEqual({ workflowId: 'w', limit: 1, offset: 3 });
+
+    await handlers.handleWorkflowVersions(
+      { mode: 'list', source: 'native', workflowId: 'w', limit: 7.9 },
+      repository
+    );
+    expect(officialMock.spy.mock.calls[1][2]).toEqual({ workflowId: 'w', limit: 7, offset: 0 });
   });
 
   it('native get sends the version id as a string', async () => {
@@ -319,6 +336,22 @@ describe('n8n_workflow_versions source routing', () => {
       validation: 'not available for native versions',
     });
     expect(versioningMock.restoreVersion).not.toHaveBeenCalled();
+  });
+
+  it('a failed native rollback carries no validation note', async () => {
+    officialMock.override = async () => ({
+      success: false,
+      code: 'OFFICIAL_MCP_ERROR',
+      error: 'version not found',
+    });
+
+    const r = await handlers.handleWorkflowVersions(
+      { mode: 'rollback', source: 'native', workflowId: 'w', versionId: 'nope' },
+      repository
+    );
+
+    expect(r).toMatchObject({ success: false, source: 'native', mode: 'rollback' });
+    expect(r.validation).toBeUndefined();
   });
 
   it('native delete and prune are refused without an official call', async () => {

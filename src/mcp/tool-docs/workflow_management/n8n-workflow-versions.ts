@@ -115,7 +115,7 @@ per workflow, plus an age-based retention window). Native history retention is n
       versionId: {
         type: 'string | number',
         required: false,
-        description: 'Version ID. local: the numeric snapshot id, as a number or a numeric string (anything else is INVALID_ARGS). native: n8n\'s string version id. Required for get and diff, for a single delete, and for native rollback; optional for local rollback.'
+        description: 'Version ID. local: numeric snapshot id (number or numeric string; anything else is INVALID_ARGS). native: n8n\'s version id string. Required for get and diff, for a single delete, and for native rollback; optional for local rollback.'
       },
       toVersionId: {
         type: 'string | number',
@@ -217,11 +217,13 @@ Native rollback additionally carries validation: "not available for native versi
 - get: Fast (~100ms) - single row retrieval
 - rollback: Moderate (~200-500ms) - includes backup creation and workflow update
 - delete: Fast (~50-100ms) - database delete operation
-- prune: Moderate (~100-300ms) - depends on number of versions to delete`,
+- prune: Moderate (~100-300ms) - depends on number of versions to delete
+- diff (local): Fast (~100ms) - two snapshot reads and an in-memory comparison
+- native modes: one round-trip to n8n's MCP server per call (30s client deadline by default), so slower than any local mode`,
     modeComparison: `| Mode | Required Params | Optional Params | Sources | Risk Level |
 |------|-----------------|-----------------|---------|------------|
 | list | workflowId | limit, offset | local, native | Low |
-| get | versionId | - | local, native | Low |
+| get | versionId (native: + workflowId) | - | local, native | Low |
 | diff | workflowId, versionId, toVersionId | - | local, native | Low |
 | rollback | workflowId | versionId, validateBefore | local, native | Medium |
 | delete | workflowId | versionId, deleteAll | local | High |

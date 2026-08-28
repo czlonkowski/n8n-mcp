@@ -39,7 +39,7 @@ import { InstanceContext, validateInstanceContext, getInstanceScopeId } from '..
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
 import { WorkflowAutoFixer, AutoFixConfig } from '../services/workflow-auto-fixer';
 import { ExpressionFormatValidator, ExpressionFormatIssue } from '../services/expression-format-validator';
-import { WorkflowVersioningService } from '../services/workflow-versioning-service';
+import { WorkflowVersioningService, VERSION_OWNERSHIP_ERROR_PREFIX } from '../services/workflow-versioning-service';
 import { handleUpdatePartialWorkflow } from './handlers-workflow-diff';
 import { telemetry } from '../telemetry';
 import { TemplateService } from '../templates/template-service';
@@ -3162,8 +3162,11 @@ async function handleNativeWorkflowVersions(
       aliases = ['get_workflow_history'];
       officialArgs = {
         workflowId,
-        limit: Math.min(input.limit ?? 10, NATIVE_VERSIONS_LIMIT_CAP),
-        offset: input.offset ?? 0,
+        // n8n rejects a non-integer or out-of-range page, so the bounds are
+        // applied here rather than forwarded and refused. The schema already
+        // constrains `offset`; the floor keeps both fields normalised the same way.
+        limit: Math.max(1, Math.min(NATIVE_VERSIONS_LIMIT_CAP, Math.floor(input.limit ?? 10))),
+        offset: Math.max(0, Math.floor(input.offset ?? 0)),
       };
       break;
     case 'get':
@@ -3210,7 +3213,7 @@ async function handleNativeWorkflowVersions(
   if (mode === 'diff' && labelled.success) {
     labelled.data = withDiffFormat(labelled.data, 'n8n');
   }
-  if (mode === 'rollback') {
+  if (mode === 'rollback' && labelled.success) {
     labelled.validation = NATIVE_VALIDATION_NOTE;
   }
   return labelled;
@@ -3400,7 +3403,7 @@ async function handleLocalWorkflowVersions(
         const message = error instanceof Error ? error.message : String(error);
         // The service refuses a snapshot belonging to another workflow; that is
         // a caller mistake, not a failure of the comparison.
-        if (message.includes('does not belong to workflow')) {
+        if (message.includes(VERSION_OWNERSHIP_ERROR_PREFIX)) {
           return {
             success: false,
             code: 'INVALID_ARGS',
@@ -3430,11 +3433,15 @@ export async function handleWorkflowVersions(
     // SECURITY (GHSA-2cf7-hpwf-47h9): multi-tenant requests must resolve a
     // complete tenant scope; fail closed otherwise.
     if (process.env.ENABLE_MULTI_TENANT === 'true' && getInstanceScopeId(context) === '') {
+      const source = input.source ?? 'local';
       return {
         success: false,
         mode: input.mode,
-        source: input.source ?? 'local',
-        error: 'Workflow version storage is not available for this tenant context'
+        source,
+        backend: source === 'native' ? 'official-mcp' : 'n8n-mcp',
+        error: source === 'native'
+          ? "Reading n8n's own version history needs an instance-scoped context for this tenant"
+          : 'Workflow version storage is not available for this tenant context'
       };
     }
 

@@ -74,6 +74,13 @@ export interface WorkflowStorageInfo {
   lastBackup: string;
 }
 
+/**
+ * The tail of the error `compareVersions` throws when a snapshot belongs to a
+ * different workflow. Exported so callers can tell that caller mistake from a
+ * storage failure without re-typing the wording.
+ */
+export const VERSION_OWNERSHIP_ERROR_PREFIX = 'does not belong to workflow';
+
 export interface VersionDiff {
   versionId1: number;
   versionId2: number;
@@ -385,7 +392,7 @@ export class WorkflowVersioningService {
 
     for (const version of [v1, v2]) {
       if (version.workflowId !== workflowId) {
-        throw new Error(`Version ${version.id} does not belong to workflow ${workflowId}`);
+        throw new Error(`Version ${version.id} ${VERSION_OWNERSHIP_ERROR_PREFIX} ${workflowId}`);
       }
     }
 
