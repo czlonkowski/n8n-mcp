@@ -362,6 +362,15 @@ export class PropertyFilter {
   /**
    * Detect properties whose options are resolved at runtime rather than
    * enumerated statically (loadOptions methods or resource-locator list search).
+   *
+   * Precedence: a `loadOptionsMethod` on the property itself wins over a
+   * resource-locator mode's `searchListMethod`. A property carrying both is
+   * a plain options field that also happens to offer a list-search mode, and
+   * the property-level method is the one that fills the field. Only one
+   * dynamic source is reported, so the caller has a single method to call.
+   *
+   * `dependsOn` merges the property-level and mode-level dependency lists and
+   * de-duplicates them: the two commonly name the same parent field.
    */
   private static extractDynamicOptions(prop: any): SimplifiedProperty['dynamicOptions'] | undefined {
     const dependsOn = (o: any): string[] => Array.isArray(o?.loadOptionsDependsOn) ? o.loadOptionsDependsOn.map(String) : [];
@@ -375,7 +384,7 @@ export class PropertyFilter {
         return {
           methodName: mode.typeOptions.searchListMethod,
           methodType: 'listSearch',
-          dependsOn: [...dependsOn(prop.typeOptions), ...dependsOn(mode.typeOptions)]
+          dependsOn: [...new Set([...dependsOn(prop.typeOptions), ...dependsOn(mode.typeOptions)])]
         };
       }
     }

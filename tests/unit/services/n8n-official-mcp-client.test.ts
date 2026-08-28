@@ -164,6 +164,22 @@ describe('N8nOfficialMcpClient', () => {
     }
   });
 
+  // A failed reference must not be cached: an instance whose agents module is
+  // still starting would otherwise serve that failure as the guide for the
+  // whole success TTL.
+  it('does not cache a failed reference', async () => {
+    let calls = 0;
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'get_agent_builder_reference', handler: () => { calls++; return calls === 1 ? { ok: false, code: 'unavailable' } : { ok: true, guide: '# guide' }; } }] });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    try {
+      await expect(client.reference()).rejects.toMatchObject({ code: 'OFFICIAL_MCP_TOOL_UNAVAILABLE' });
+      expect(await client.reference()).toMatchObject({ ok: true, guide: '# guide' });   // retried, not served from cache
+      expect(calls).toBe(2);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('reconnects once after the transport drops', async () => {
     fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
     const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });

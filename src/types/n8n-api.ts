@@ -503,8 +503,8 @@ export interface McpToolResponse {
   hint?: string;
   officialError?: unknown;
   truncated?: boolean;
-  // Reserved for a later task's response envelope (e.g. distinguishing
-  // official-MCP-backed results from ones served by this server directly).
+  // n8n_list_catalog: which catalog was listed ('projects' | 'tags') and
+  // which backend answered ('public-api' | 'official-mcp').
   kind?: string;
   backend?: string;
 }

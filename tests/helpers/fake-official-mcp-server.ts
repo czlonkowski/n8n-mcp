@@ -5,7 +5,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 
 export interface FakeTool { name: string; handler?: (args: Record<string, unknown>) => unknown | Promise<unknown>; isError?: boolean }
-export interface FakeOfficialMcpOptions { tools?: FakeTool[]; token?: string; raw?: { status: number; body: string; contentType?: string }; port?: number }
+export interface FakeOfficialMcpOptions { tools?: FakeTool[]; token?: string; raw?: { status: number; body: string; contentType?: string } }
 export interface FakeOfficialMcp {
   url: string;
   requests: Array<{ method: string; authorization?: string }>;
@@ -106,7 +106,7 @@ export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): P
       }
     }
   });
-  await new Promise<void>(r => server.listen(opts.port ?? 0, '127.0.0.1', r));
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   const port = (server.address() as AddressInfo).port;
   return {
     url: `http://127.0.0.1:${port}/mcp-server/http`,

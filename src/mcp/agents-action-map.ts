@@ -26,6 +26,13 @@ export type AgentAction =
 export interface AgentActionSpec {
   tools: string[];
   defaultTimeoutMs: number;
+  /**
+   * Writes to the instance. Every action that creates, changes, runs or
+   * removes an agent — a create/mutate leaves a persisted draft behind and a
+   * call runs the agent's real tools, so neither is a read. Source of truth
+   * for `DESTRUCTIVE_TOOL_OPERATIONS['n8n_manage_agents']`, which drives
+   * `DISABLED_TOOL_OPERATIONS` filtering.
+   */
   destructive: boolean;
   /**
    * Safe to send twice. Only an idempotent call is retried after a
@@ -45,10 +52,10 @@ export const AGENT_ACTION_MAP: Record<AgentAction, AgentActionSpec> = {
   reference: { tools: ['get_agent_builder_reference'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
   search: { tools: ['search_agents'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
   get: { tools: ['get_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
-  create: { tools: ['create_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: false },
-  mutate: { tools: ['mutate_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: false },
+  create: { tools: ['create_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
+  mutate: { tools: ['mutate_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
   validate: { tools: ['validate_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
-  call: { tools: ['call_agent'], defaultTimeoutMs: CALL_TIMEOUT_MS, destructive: false, idempotent: false },
+  call: { tools: ['call_agent'], defaultTimeoutMs: CALL_TIMEOUT_MS, destructive: true, idempotent: false },
   publish: { tools: ['publish_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
   unpublish: { tools: ['unpublish_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
   revert: { tools: ['revert_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
@@ -60,6 +67,9 @@ export const AGENT_ACTION_MAP: Record<AgentAction, AgentActionSpec> = {
 };
 
 export const AGENT_ACTIONS = Object.keys(AGENT_ACTION_MAP) as AgentAction[];
+
+/** The write actions, derived from the map so the two never drift apart. */
+export const DESTRUCTIVE_AGENT_ACTIONS = AGENT_ACTIONS.filter(a => AGENT_ACTION_MAP[a].destructive);
 
 /** Returns the first tool name from `spec.tools` that appears in `available`, or null. */
 export function resolveOfficialTool(spec: AgentActionSpec, available: string[]): string | null {

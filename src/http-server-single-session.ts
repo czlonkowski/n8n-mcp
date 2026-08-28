@@ -29,6 +29,7 @@ import { InstanceContext, validateInstanceContext } from './types/instance-conte
 import { SessionState } from './types/session-state';
 import type { AdditionalTool } from './types/additional-tools';
 import { closeSharedDatabase } from './database/shared-database';
+import { clearOfficialMcpClientCache } from './mcp/official-mcp-access';
 
 dotenv.config();
 
@@ -1718,6 +1719,14 @@ export class SingleSessionHTTPServer {
       await telemetry.flushBeforeExit();
     } catch (error) {
       logger.debug('Telemetry flush during shutdown failed:', error);
+    }
+
+    // Close every cached n8n MCP client, so their transports and pinned
+    // undici dispatchers do not keep the process alive.
+    try {
+      await clearOfficialMcpClientCache();
+    } catch (error) {
+      logger.warn('Error closing n8n MCP clients:', error);
     }
 
     // Close the shared database connection (only during process shutdown)

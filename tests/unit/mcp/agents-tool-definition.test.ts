@@ -15,7 +15,10 @@ describe('n8n_manage_agents tool definition', () => {
   });
   it('is registered for operation filtering with the destructive set', () => {
     expect(TOOL_OPERATION_PARAM['n8n_manage_agents']).toBe('action');
-    expect([...DESTRUCTIVE_TOOL_OPERATIONS['n8n_manage_agents']].sort()).toEqual(['delete', 'publish', 'revert', 'unpublish', 'update_integration']);
+    // Every write action, not just the publish/delete pair: create and mutate
+    // persist a draft, and call runs the agent's real tools.
+    expect([...DESTRUCTIVE_TOOL_OPERATIONS['n8n_manage_agents']].sort())
+      .toEqual(['call', 'create', 'delete', 'mutate', 'publish', 'revert', 'unpublish', 'update_integration']);
   });
   it('has documentation', () => {
     expect(toolsDocumentation['n8n_manage_agents']).toBeDefined();

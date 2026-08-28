@@ -22,7 +22,7 @@ Build sequence: reference → discover_assets (kind=models with provider, kind=i
 
 Gates: reference and search work for every agent; all other actions need the agent exposed to MCP (agents created here are exposed automatically).
 
-Custom tools are TypeScript with only @n8n/agents and zod imports; compile errors come back as AGENT_TOOL_COMPILE_ERROR.
+Custom tools are TypeScript with only @n8n/agents and zod imports; errors from n8n's agent tooling (a compile failure, an unknown agentId) come back as AGENT_TOOL_ERROR.
 
 Credentials: on this n8n generation the agents runtime rejects azureOpenAiApi and aws credentials as incompatible (reported as missing: ["credential"]); the response hint names the accepted credential types.`,
     parameters: {
@@ -30,7 +30,7 @@ Credentials: on this n8n generation the agents runtime rejects azureOpenAiApi an
       args: { type: 'object', description: 'Per action — search: projectId?, query?, publishedOnly?, excludeAgentId?, limit?; get: agentId, versionId?; create: projectId, name, config?; mutate: agentId, baseConfigHash, operation; validate: agentId; call: agentId, request ({type:"message", message, sessionId?} | {type:"approval", approved, continuation}); publish/revert: agentId, versionId?; unpublish/delete: agentId; versions: agentId, limit?, offset?; discover_assets: projectId, kind (models|integrations|workflows|subagents|mcpServers), provider?, credentialId?, query?; verify_mcp_server: projectId, name, url, transport?, authentication?, credential?; update_integration: agentId, action (connect|disconnect), type, credentialId, settings?, replacesCredentialId?' },
       timeoutMs: { type: 'number', description: 'Request timeout, 5000-600000 ms. Default 30000, 180000 for call. On expiry the run continues in n8n (see n8n_executions).' },
     },
-    returns: '{success, action, officialTool, data} on success; {success:false, action, code, error, hint?, officialError?} on failure. Codes: NOT_CONFIGURED, OFFICIAL_MCP_AUTH_FAILED, OFFICIAL_MCP_NOT_ENABLED, OFFICIAL_MCP_RATE_LIMITED, OFFICIAL_MCP_TOOL_UNAVAILABLE, OFFICIAL_MCP_URL_REJECTED, OFFICIAL_MCP_TIMEOUT, OFFICIAL_MCP_TRANSPORT_ERROR, INVALID_ARGS, STALE_CONFIG, AGENT_NOT_RUNNABLE, AGENT_TOOL_COMPILE_ERROR, OFFICIAL_MCP_ERROR.',
+    returns: '{success, action, officialTool, data} on success; {success:false, action, code, error, hint?, officialError?} on failure. Codes: NOT_CONFIGURED, OFFICIAL_MCP_AUTH_FAILED, OFFICIAL_MCP_NOT_ENABLED, OFFICIAL_MCP_RATE_LIMITED, OFFICIAL_MCP_TOOL_UNAVAILABLE, OFFICIAL_MCP_URL_REJECTED, OFFICIAL_MCP_TIMEOUT, OFFICIAL_MCP_TRANSPORT_ERROR, INVALID_ARGS, STALE_CONFIG, AGENT_NOT_RUNNABLE, AGENT_TOOL_ERROR, OFFICIAL_MCP_ERROR.',
     examples: [
       'n8n_manage_agents({action: "discover_assets", args: {projectId: "p1", kind: "models", provider: "openai"}})',
       'n8n_manage_agents({action: "mutate", args: {agentId: "a1", baseConfigHash: "…", operation: {type: "skill.upsert", skill: {name: "triage", instructions: "…"}}}})',

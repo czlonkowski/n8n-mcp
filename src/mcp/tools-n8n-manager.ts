@@ -1,5 +1,5 @@
 import { ToolDefinition } from '../types';
-import { AGENT_ACTIONS } from './agents-action-map';
+import { AGENT_ACTIONS, DESTRUCTIVE_AGENT_ACTIONS } from './agents-action-map';
 
 /**
  * n8n Management Tools
@@ -929,5 +929,7 @@ export const DESTRUCTIVE_TOOL_OPERATIONS: Record<string, Set<string>> = {
   // transferToFolderId it archives the folder's workflows.
   'n8n_manage_folders': new Set(['create', 'rename', 'move', 'delete']),
   'n8n_workflow_versions': new Set(['delete', 'rollback', 'prune']),
-  'n8n_manage_agents': new Set(['publish', 'unpublish', 'revert', 'delete', 'update_integration']),
+  // Derived from AGENT_ACTION_MAP: create/mutate persist a draft and call runs
+  // the agent's real tools, so the write set is wider than the publish/delete pair.
+  'n8n_manage_agents': new Set(DESTRUCTIVE_AGENT_ACTIONS),
 };

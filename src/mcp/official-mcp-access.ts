@@ -178,7 +178,11 @@ export async function buildOfficialMcpHealth(context: InstanceContext | undefine
   };
 }
 
-/** Closes and drops every cached client. Used by tests to reset state between cases and on server shutdown. */
+/**
+ * Closes and drops every cached client, ending each one's transport and its
+ * pinned undici dispatcher. Called from `SingleSessionHTTPServer.shutdown()`
+ * and by tests resetting state between cases.
+ */
 export async function clearOfficialMcpClientCache(): Promise<void> {
   const clients = [...clientCache.values()];
   clientCache.clear();

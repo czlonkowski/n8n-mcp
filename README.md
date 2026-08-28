@@ -431,7 +431,7 @@ DISABLED_TOOLS=n8n_create_workflow,n8n_update_full_workflow,n8n_update_partial_w
 For tools that bundle read and write operations under one name, block only the destructive operations while keeping `list` and `get`:
 
 ```bash
-DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_manage_agents:publish,delete
+DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration
 ```
 
 Combine with a read-only n8n API key (Settings → API in your n8n instance) for defence in depth. See [Read-Only Deployment Recipe](./docs/HTTP_DEPLOYMENT.md#read-only-deployment-recipe) for the full setup guide.

@@ -43,8 +43,8 @@ const OFFICIAL_CODE_MAP: Record<string, { code: string; hint: string }> = {
     hint: 'Run action=validate and fix the listed errors/missing items before calling or publishing.',
   },
   agent_tool_error: {
-    code: 'AGENT_TOOL_COMPILE_ERROR',
-    hint: 'A custom tool failed to compile. Custom tools are TypeScript with only @n8n/agents and zod imports; fix the source in the error and re-run the customTool.upsert operation.',
+    code: 'AGENT_TOOL_ERROR',
+    hint: "n8n's agent tooling reported an error — see officialError.error. Typical causes: unknown agentId, or a custom tool that failed to compile (TypeScript; only @n8n/agents and zod imports).",
   },
 };
 
@@ -97,6 +97,11 @@ async function credentialTypeHint(args: Record<string, unknown>, data: unknown, 
   if (!Array.isArray(missing) || !missing.includes('credential')) return undefined;
   const credentialId = await credentialIdFromResult(args, data, client);
   if (!credentialId) return undefined;
+  // Only look the credential up when this request's own context can: with no
+  // context at all the env instance IS the target, but a context carrying
+  // only an MCP token must not fall through to the operator's N8N_API_KEY
+  // just to decorate a hint.
+  if (context && !context.n8nApiKey) return undefined;
   const api = getN8nApiClient(context);
   if (!api) return undefined;
   try {
@@ -120,10 +125,6 @@ export async function handleManageAgents(args: unknown, context?: InstanceContex
 
   const spec = AGENT_ACTION_MAP[action];
   try {
-    if (action === 'reference') {
-      const data = await client.reference();
-      return { success: true, action, officialTool: spec.tools[0], data };
-    }
     const caps = await client.capabilities();
     if (!caps.reachable) {
       return officialFailure(new OfficialMcpError(caps.error ?? 'OFFICIAL_MCP_TRANSPORT_ERROR', 'n8n MCP server is not reachable'), action);
@@ -134,6 +135,14 @@ export async function handleManageAgents(args: unknown, context?: InstanceContex
         new OfficialMcpError('OFFICIAL_MCP_TOOL_UNAVAILABLE', `No tool for action "${action}" on this instance (looked for ${spec.tools.join(', ')})`),
         action
       );
+    }
+
+    // `reference` goes through the same alias resolution as everything else
+    // (an instance without the tool must answer OFFICIAL_MCP_TOOL_UNAVAILABLE,
+    // not a transport error), then through the client's own cache of the
+    // guide, which is large and static.
+    if (action === 'reference') {
+      return { success: true, action, officialTool: tool, data: await client.reference() };
     }
 
     const result: OfficialToolResult = await client.callTool(tool, toolArgs, { timeoutMs: timeoutMs ?? spec.defaultTimeoutMs, idempotent: spec.idempotent });

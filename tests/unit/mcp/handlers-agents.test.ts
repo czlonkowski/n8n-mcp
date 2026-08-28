@@ -6,6 +6,7 @@ const api = vi.hoisted(() => ({ getN8nApiClient: vi.fn() }));
 vi.mock('@/mcp/handlers-n8n-manager', () => ({ getN8nApiClient: api.getN8nApiClient }));
 import { handleManageAgents } from '@/mcp/handlers-agents';
 import { AGENT_ACTION_MAP, resolveOfficialTool } from '@/mcp/agents-action-map';
+import { OfficialMcpError } from '@/services/n8n-official-mcp-client';
 
 function fakeClient(tools: string[], results: Record<string, any> = {}) {
   return {
@@ -49,6 +50,41 @@ describe('handleManageAgents', () => {
     const r = await handleManageAgents({ action: 'reference' });
     expect(client.reference).toHaveBeenCalled(); expect(client.callTool).not.toHaveBeenCalled();
     expect(r).toMatchObject({ success: true, officialTool: 'get_agent_builder_reference', data: { guide: '# guide' } });
+  });
+  // reference used to skip capability resolution entirely, so an instance
+  // without the agents module answered with a transport error instead of the
+  // same OFFICIAL_MCP_TOOL_UNAVAILABLE every other action gives.
+  it('resolves reference against the instance tool list like every other action', async () => {
+    const client = fakeClient(['search_workflows']); access.getOfficialMcpClient.mockReturnValue(client);
+    const r = await handleManageAgents({ action: 'reference' });
+    expect(r).toMatchObject({ success: false, action: 'reference', code: 'OFFICIAL_MCP_TOOL_UNAVAILABLE' });
+    expect(client.reference).not.toHaveBeenCalled();
+  });
+  it('surfaces a failed reference as a failure envelope', async () => {
+    const client = fakeClient(ALL);
+    client.reference.mockRejectedValue(new OfficialMcpError('OFFICIAL_MCP_TOOL_UNAVAILABLE', 'n8n did not return the agent builder reference'));
+    access.getOfficialMcpClient.mockReturnValue(client);
+    expect(await handleManageAgents({ action: 'reference' })).toMatchObject({ success: false, action: 'reference', code: 'OFFICIAL_MCP_TOOL_UNAVAILABLE' });
+  });
+  it('maps agent_tool_error to AGENT_TOOL_ERROR with a hint covering both causes', async () => {
+    const client = fakeClient(ALL, { mutate_agent: { ok: false, code: 'agent_tool_error', message: 'tool failed' } });
+    access.getOfficialMcpClient.mockReturnValue(client);
+    const r = await handleManageAgents({ action: 'mutate', args: { agentId: 'a', baseConfigHash: 'h', operation: {} } });
+    expect(r).toMatchObject({ success: false, code: 'AGENT_TOOL_ERROR' });
+    expect(r.hint).toContain('officialError.error');
+    expect(r.hint).toContain('unknown agentId');
+  });
+  it('never reaches for the environment n8n API to build a credential hint for a token-only context', async () => {
+    const client = fakeClient(ALL, {
+      validate_agent: { ok: true, valid: false, errors: [], missing: ['credential'] },
+      get_agent: { ok: true, agent: { id: 'a' }, config: { credential: 'c1' } },
+    });
+    access.getOfficialMcpClient.mockReturnValue(client);
+    api.getN8nApiClient.mockReturnValue({ getCredential: vi.fn().mockResolvedValue({ id: 'c1', name: 'Azure', type: 'azureOpenAiApi' }) });
+    const r = await handleManageAgents({ action: 'validate', args: { agentId: 'a' } }, { n8nApiUrl: 'https://tenant.example.com', n8nMcpAccessToken: 'ctx-token-placeholder' });
+    expect(r.success).toBe(true);
+    expect(r.hint).toBeUndefined();
+    expect(api.getN8nApiClient).not.toHaveBeenCalled();
   });
   it('maps official error codes', async () => {
     const client = fakeClient(ALL, { mutate_agent: { ok: false, code: 'stale_config', configHash: 'h2' }, validate_agent: { ok: false, code: 'agent_misconfigured' } });

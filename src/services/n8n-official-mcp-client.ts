@@ -126,6 +126,10 @@ export class N8nOfficialMcpClient {
   }
 
   private async connect(): Promise<Connected> {
+    // A closed client is terminal: reconnecting here would resurrect a
+    // transport the owner already disposed of (an evicted cache entry, a
+    // shut-down server).
+    if (this.closed) throw new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'Client is closed');
     if (this.client) return { client: this.client, generation: this.generation };
     if (this.connecting) return this.connecting;
     const myGeneration = this.generation;
@@ -257,10 +261,21 @@ export class N8nOfficialMcpClient {
     }
   }
 
+  /**
+   * The agent-builder guide, cached for the success TTL — it is large and
+   * static. A failed call is never cached: an instance that answered
+   * `isError` or `{ok:false}` once (agents module still starting, tool
+   * refused) would otherwise keep serving that failure as if it were the
+   * guide for the next ten minutes. It throws instead, so the caller maps it
+   * like any other failed action.
+   */
   async reference(): Promise<AgentBuilderReference> {
     if (this.ref && Date.now() - this.ref.at < OFFICIAL_MCP_CACHE_TTL_MS) return this.ref.value;
     const result = await this.callTool('get_agent_builder_reference', {}, { idempotent: true });
     const value = (result.json && typeof result.json === 'object' ? result.json : { guide: result.text }) as AgentBuilderReference;
+    if (result.isError || value.ok === false) {
+      throw new OfficialMcpError('OFFICIAL_MCP_TOOL_UNAVAILABLE', 'n8n did not return the agent builder reference');
+    }
     this.ref = { value, at: Date.now() };
     return value;
   }
