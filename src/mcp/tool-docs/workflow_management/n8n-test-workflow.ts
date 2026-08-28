@@ -36,7 +36,7 @@ export const n8nTestWorkflowDoc: ToolDocumentation = {
 
 n8n's public API does not support direct workflow execution, which is why \`prepare\`/\`pinned\`/\`direct\` go through n8n's own MCP server instead. Those three need \`N8N_MCP_ACCESS_TOKEN\` (n8n 2.34+).
 
-**Consent: "Available in MCP".** n8n refuses MCP calls for a workflow whose "Available in MCP" setting is off, and this tool returns \`WORKFLOW_NOT_EXPOSED\` rather than changing it. Re-run with \`exposeToMcp: true\` to enable it — a visible, persistent setting on the workflow, so confirm with the user first. The setting is never turned off again, and a response that enabled it carries \`exposedToMcp: true\`.
+**Consent: "Available in MCP".** n8n refuses MCP calls for a workflow whose "Available in MCP" setting is off, and this tool returns \`WORKFLOW_NOT_EXPOSED\` rather than changing it. Re-run with \`exposeToMcp: true\` to enable it — a visible, persistent setting on the workflow, so confirm with the user first. This flow only ever turns the setting on - disabling it again is a deliberate \`updateSettings\` write (\`availableInMCP: false\`) or a change in the n8n UI. A response that enabled it carries \`exposedToMcp: true\`.
 
 **executionMode: production.** \`method: direct\` runs as a manual execution unless you explicitly pass \`executionMode: 'production'\`. A production run behaves like a live one — real side effects, production execution data. It is never chosen for you.
 

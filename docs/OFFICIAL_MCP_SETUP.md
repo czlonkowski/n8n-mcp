@@ -25,24 +25,30 @@ enables:
 
 It also routes a few operations of three existing tools to n8n's MCP server, because
 the Public API cannot perform them. Each of these tools keeps the Public API as its
-default path and states `backend: 'public-api' | 'official-mcp'` in every response:
+default path, and every successful or routed response states
+`backend: 'public-api' | 'official-mcp'` (an argument-validation envelope rejected
+before any call has no backend to name):
 
 | Tool | Routed operations | Needs the token | Public-API path (no token) |
 |------|-------------------|-----------------|-----------------------------|
 | `n8n_test_workflow` | `method: 'prepare'` (list the nodes that need pinned data), `method: 'pinned'` (run with that data), `method: 'direct'` (start a run, with `message` or `data` forwarded to the trigger as input) | yes, for those three methods | `method: 'auto'` (default) and `method: 'trigger'` trigger the workflow over HTTP through its webhook/form/chat trigger. `auto` never runs anything through n8n's MCP server |
-| `n8n_workflow_versions` | `source: 'native'` for `list`, `get`, `diff` and `rollback` - n8n's own workflow history, the same list the n8n UI shows, including edits made by people | yes, for `source: 'native'` | `source: 'local'` (default) reads the snapshots n8n-mcp takes before it changes a workflow; `delete` and `prune` are local-only |
+| `n8n_workflow_versions` | `source: 'native'` for `list`, `get`, `diff` and `rollback` - n8n's own workflow history, the same list the n8n UI shows, including edits made by people | yes, for `source: 'native'` (n8n 2.34+, except the native `diff`, which needs the `get_workflow_versions_diff` tool from n8n 2.36) | `source: 'local'` (default) reads the snapshots n8n-mcp takes before it changes a workflow; `delete` and `prune` are local-only |
 | `n8n_manage_datatable` | `addColumn`, `deleteColumn`, `renameColumn` - the Public API cannot change a table's columns after creation | yes, for those three actions | every other action (tables and rows) goes through the Public API |
 
 The routed workflow operations of the first two tools additionally need the workflow's
 "Available in MCP" setting - see section 4. The column actions do not: they address a
 data table, which is not subject to that setting, but they do need the table's
-`projectId`, which is resolved automatically when exactly one project is accessible
-(otherwise the call returns `PROJECT_REQUIRED` and lists the candidates).
+`projectId`, which is resolved automatically when exactly one project is accessible.
+Otherwise the call returns `PROJECT_REQUIRED`, listing the candidate projects when
+several are accessible and asking for an explicit `projectId` when none could be
+resolved.
 
 **Prerequisites:**
 
 - n8n **2.18.4 or later** for instance-level MCP itself.
 - n8n **2.34 or later with the agents module enabled** for `n8n_manage_agents`.
+- n8n **2.34 or later** for the routed operations in the table above; the native
+  `diff` additionally needs **2.36**, where `get_workflow_versions_diff` first shipped.
 - An **owner or admin** account on the n8n instance (instance-level MCP settings are
   admin-only).
 
@@ -160,8 +166,11 @@ with the user before passing the flag.
 
 Two properties of this flow are fixed:
 
-- **n8n-mcp never turns "Available in MCP" off.** There is no operation, flag or code
-  path that disables it; removing a workflow from MCP is done in the n8n UI.
+- **The consent flow only ever enables the setting, and n8n-mcp never disables it
+  implicitly.** No routed operation, and no failure path, turns it back off. Turning it
+  off is a deliberate act: `n8n_update_partial_workflow`'s `updateSettings` operation
+  (or `n8n_create_workflow` / `n8n_update_full_workflow`) with
+  `settings.availableInMCP: false`, or the toggle in the n8n UI.
 - **The setting is never enabled implicitly.** Without `exposeToMcp: true` the call
   fails with `WORKFLOW_NOT_EXPOSED` and nothing is written.
 
@@ -213,18 +222,19 @@ If something is misconfigured, `officialMcp.error` carries one of these codes, a
 | `OFFICIAL_MCP_URL_REJECTED` | The derived MCP endpoint failed URL safety validation (a private or reserved address). Use a public instance URL, or set `WEBHOOK_SECURITY_MODE=moderate` for local development. |
 | `OFFICIAL_MCP_TIMEOUT` | The request exceeded `timeoutMs`. The run continues in n8n - check `n8n_executions` for it, reuse the `sessionId` if you have one instead of re-sending, or raise `timeoutMs`. |
 | `OFFICIAL_MCP_TRANSPORT_ERROR` | Could not complete the request to n8n's MCP server. Check that the instance is reachable and try again. |
-| `OFFICIAL_MCP_ERROR` | n8n's MCP server answered with a failure for the call itself (the response carries n8n's own error payload). |
 
-The routed operations can also answer with codes of their own, which describe the call
+A tool response carries these codes too, plus codes of its own that describe the call
 rather than the connection:
 
 | Code | Meaning and fix |
 |------|-----------------|
+| `OFFICIAL_MCP_ERROR` | n8n's MCP server answered with a failure for the call itself, including a failed `direct` dispatch; the response carries n8n's own error payload. |
+| `INVALID_ARGS` | The arguments were rejected — by n8n-mcp before the call, or by n8n's MCP server. The message names the offending field. |
 | `WORKFLOW_NOT_EXPOSED` | The workflow's "Available in MCP" setting is off. Re-run with `exposeToMcp: true` after confirming with the user, or turn the setting on in the n8n UI. |
 | `OPERATION_DISABLED` | Server policy (`DISABLED_TOOLS` / `DISABLED_TOOL_OPERATIONS`) forbids this operation - including the `expose` operation behind `exposeToMcp: true`. Change the policy, or enable "Available in MCP" in the n8n UI and re-run without the flag. |
 | `EXPOSE_FAILED` | `exposeToMcp: true` was accepted but the workflow update failed (the message carries the API error). Check the Public API credentials and the workflow id. |
-| `EXECUTION_FAILED` | The run started and ended badly (`error`, `crashed` or `canceled`). The `executionId` is on the response - inspect it with `n8n_executions({action: 'get', id, mode: 'error'})`. |
-| `PROJECT_REQUIRED` | A data-table column action could not resolve which project owns the table. Pass `projectId` (list them with `n8n_list_catalog({kind: 'projects'})`). |
+| `EXECUTION_FAILED` | A `method: 'pinned'` run started and ended badly (`error`, `crashed` or `canceled`). The `executionId` is on the response - inspect it with `n8n_executions({action: 'get', id, mode: 'error'})`. A `direct` call does not wait for the outcome, so it never returns this code. |
+| `PROJECT_REQUIRED` | A data-table column action could not resolve which project owns the table. When several projects are accessible the message lists them; when none could be resolved it just asks for the id. Pass `projectId` (list them with `n8n_list_catalog({kind: 'projects'})`). |
 | `MODE_NOT_SUPPORTED_FOR_SOURCE` | The mode does not exist for that source - `delete` and `prune` are local-only, because n8n owns the retention of its own version history. |
 
 ## 6. Limitations

@@ -428,10 +428,10 @@ For governance-sensitive environments, use both env vars together. Fully disable
 DISABLED_TOOLS=n8n_create_workflow,n8n_update_full_workflow,n8n_update_partial_workflow,n8n_delete_workflow,n8n_autofix_workflow,n8n_deploy_template,n8n_test_workflow,n8n_manage_credentials,n8n_manage_datatable
 ```
 
-For tools that bundle read and write operations under one name, block only the destructive operations while keeping `list` and `get`. Use this instead of a full `DISABLED_TOOLS` entry where the tool's read operations are acceptable — the `n8n_manage_datatable` line below is the alternative to removing the tool entirely as above:
+For tools that bundle read and write operations under one name, block only the destructive operations while keeping `list` and `get`. Use this instead of a full `DISABLED_TOOLS` entry where the tool's read operations are acceptable — the `n8n_manage_datatable` and `n8n_test_workflow` lines below are the alternative to removing those tools entirely as above. Name every operation that writes: for `n8n_test_workflow` that is `auto`, `trigger`, `pinned` and `direct` (all four run the workflow — an omitted `method` counts as `auto`), leaving only the read-only `prepare`; add `expose` to that list to also block the `exposeToMcp` consent write:
 
 ```bash
-DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration;n8n_manage_datatable:deleteTable,deleteRows;n8n_test_workflow:direct
+DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration;n8n_manage_datatable:deleteTable,deleteRows;n8n_test_workflow:auto,trigger,pinned,direct
 ```
 
 Combine with a read-only n8n API key (Settings → API in your n8n instance) for defence in depth. See [Read-Only Deployment Recipe](./docs/HTTP_DEPLOYMENT.md#read-only-deployment-recipe) for the full setup guide.

@@ -56,7 +56,8 @@ validator to check. \`validateBefore\` is accepted and ignored on native, and th
 returns WORKFLOW_NOT_EXPOSED with a hint. Re-running with \`exposeToMcp: true\` turns on the
 workflow's "Available in MCP" setting and retries once; the response then carries
 \`exposedToMcp: true\`. That setting is visible and persistent in the n8n UI - confirm with the user
-before enabling it. Nothing ever disables it again.
+before enabling it. This flow only ever turns the setting on - disabling it again is a deliberate
+\`updateSettings\` write (\`availableInMCP: false\`) or a change in the n8n UI.
 
 Every response states \`mode\`, \`source\` and \`backend\` (\`"n8n-mcp"\` for local, \`"official-mcp"\`
 for native).
