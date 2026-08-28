@@ -660,10 +660,15 @@ export class N8NDocumentationMCPServer {
 
       const cloned = JSON.parse(JSON.stringify(original));
 
+      // Operations still reachable after filtering, counted over the schema enum
+      // UNION the destructive set so virtual operations (destructive values that
+      // are not selectable enum values, e.g. `expose`) are not overlooked.
+      const remaining = [...getValidOperations(toolName)].filter(v => !ops.has(v));
+
       const param = cloned.inputSchema?.properties?.[paramName];
       if (param?.enum) {
         param.enum = (param.enum as string[]).filter(v => !ops.has(v.toLowerCase()));
-        if (param.enum.length === 0) {
+        if (remaining.length === 0) {
           logger.warn(
             `DISABLED_TOOL_OPERATIONS: all operations for '${toolName}' are disabled ` +
             `but the tool still appears in ListTools. ` +
@@ -685,10 +690,6 @@ export class N8NDocumentationMCPServer {
       // remaining read paths, which would defeat the read-only deployment use case.
       const destructive = DESTRUCTIVE_TOOL_OPERATIONS[toolName];
       if (destructive && cloned.annotations) {
-        // Virtual operations (destructive values that are not selectable enum
-        // values, e.g. `expose`) never appear in param.enum, so the remaining
-        // set is computed over enum UNION destructive minus what policy disabled.
-        const remaining = [...getValidOperations(toolName)].filter(v => !ops.has(v));
         const stillDestructive = remaining.some(v => destructive.has(String(v).toLowerCase()));
         if (!stillDestructive) {
           cloned.annotations = { ...cloned.annotations, readOnlyHint: true, destructiveHint: false };

@@ -88,15 +88,22 @@ export async function callOfficialTool(
     // OFFICIAL_MCP_ERROR; nothing else breaks.
     if (result.text.startsWith('Input validation error')) return { success: false, action: label, code: 'INVALID_ARGS', error: result.text.slice(0, 2000) };
     // Failure shapes across the official tool families: an MCP-level error
-    // (`isError`), the agent tools' root `ok: false`, the version / data-table /
-    // execution tools' root `success: false`, and `execute_workflow`'s
-    // `status: 'error'` (which carries the reason in `error`, not in `success`).
+    // (`isError`), the agent tools' root `ok: false`, and the version /
+    // data-table / execution tools' root `success: false`.
+    //
+    // `execute_workflow` reports a failed dispatch as `{ executionId, status:
+    // 'error', error }` with no `success` field, so it needs its own rule — and
+    // that rule is scoped to that one tool: `test_workflow` uses the same
+    // `status` field for the outcome of a RUN that started fine
+    // (`error | crashed | canceled`). Precedence: tool-level failures are
+    // OFFICIAL_MCP_ERROR here; run outcomes belong to the calling handler,
+    // which maps them to EXECUTION_FAILED with the executionId.
     const root = data as any;
     const isFailure =
       result.isError ||
       root?.ok === false ||
       root?.success === false ||
-      (root?.status === 'error' && typeof root?.error === 'string');
+      (tool === 'execute_workflow' && root?.status === 'error' && typeof root?.error === 'string');
     if (isFailure) {
       return { success: false, action: label, officialTool: tool, code: 'OFFICIAL_MCP_ERROR', error: officialErrorText(data, undefined), officialError: data };
     }

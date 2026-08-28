@@ -46,6 +46,11 @@ describe('isNotExposedResponse', () => {
     expect(isNotExposedResponse({ success: false, code: 'OFFICIAL_MCP_ERROR', error: REFUSAL })).toBe(true);
   });
 
+  it('tolerates leading whitespace before the prefix', () => {
+    expect(isNotExposedResponse({ success: false, code: 'OFFICIAL_MCP_ERROR', error: `\n  ${REFUSAL}` })).toBe(true);
+    expect(isNotExposedResponse({ success: false, code: 'OFFICIAL_MCP_ERROR', error: 'x', officialError: { error: ` ${REFUSAL}` } })).toBe(true);
+  });
+
   it('is a prefix match, not a substring match', () => {
     expect(isNotExposedResponse({ success: false, code: 'OFFICIAL_MCP_ERROR', error: 'Some unrelated text that is not available in MCP land' })).toBe(false);
     expect(isNotExposedResponse({ success: false, code: 'OFFICIAL_MCP_ERROR', error: `Upstream said: ${REFUSAL}` })).toBe(false);

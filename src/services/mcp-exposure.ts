@@ -64,7 +64,9 @@ export function isNotExposedResponse(response: McpToolResponse): boolean {
     ...errorTexts(response.officialError),
     ...(typeof response.error === 'string' ? [response.error] : []),
   ];
-  return candidates.some(text => text.startsWith(NOT_EXPOSED_PREFIX));
+  // trimStart only: leading whitespace from a wrapped payload must not defeat
+  // the check, but the prefix rule itself is unchanged.
+  return candidates.some(text => text.trimStart().startsWith(NOT_EXPOSED_PREFIX));
 }
 
 /**

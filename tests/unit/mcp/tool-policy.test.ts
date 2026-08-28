@@ -153,6 +153,25 @@ describe('virtual operations (enum union destructive set)', () => {
     expect(filtered.annotations.destructiveHint).toBe(true);
   });
 
+  it('does not advise moving the tool to DISABLED_TOOLS while an operation is still reachable', () => {
+    const server = new TestableN8NMCPServer();
+    // Every enum value gone, but the virtual `expose` operation is still enabled.
+    server.testBuildFilteredToolDefinitions(
+      new Map([['n8n_probe_tool', new Set(['auto', 'trigger', 'pinned', 'direct'])]])
+    );
+    const warnings = vi.mocked(logger.warn).mock.calls.map(c => String(c[0]));
+    expect(warnings.some(w => w.includes("all operations for 'n8n_probe_tool' are disabled"))).toBe(false);
+  });
+
+  it('advises moving the tool to DISABLED_TOOLS once nothing is reachable', () => {
+    const server = new TestableN8NMCPServer();
+    server.testBuildFilteredToolDefinitions(
+      new Map([['n8n_probe_tool', new Set(['auto', 'trigger', 'pinned', 'direct', 'expose'])]])
+    );
+    const warnings = vi.mocked(logger.warn).mock.calls.map(c => String(c[0]));
+    expect(warnings.some(w => w.includes("all operations for 'n8n_probe_tool' are disabled"))).toBe(true);
+  });
+
   it('flips the tool to read-only once the virtual operation is disabled too', () => {
     const server = new TestableN8NMCPServer();
     const cache = server.testBuildFilteredToolDefinitions(

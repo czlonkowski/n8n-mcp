@@ -252,9 +252,18 @@ describe('callOfficialTool over the wire', () => {
   });
 
   it('maps an execute_workflow status:error result to OFFICIAL_MCP_ERROR', async () => {
-    await connect([{ name: 'execute_workflow', handler: () => ({ executionId: null, status: 'error', error: 'trigger missing' }) }]);
+    await connect([{ name: 'execute_workflow', handler: () => ({ executionId: null, status: 'error', error: 'boom' }) }]);
     const r: any = await callOfficialTool(undefined, ['execute_workflow'], { workflowId: 'w' }, 30000, 'test_workflow', false);
-    expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_ERROR', error: 'trigger missing' });
+    expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_ERROR', error: 'boom' });
+  });
+
+  // Precedence: tool-level failures are callOfficialTool's; the outcome of a run
+  // that started fine belongs to the handler (EXECUTION_FAILED, with executionId).
+  it('leaves test_workflow status:error a tool-level success for the handler to judge', async () => {
+    await connect([{ name: 'test_workflow', handler: () => ({ executionId: 'e1', status: 'error', error: 'node failed' }) }]);
+    const r: any = await callOfficialTool(undefined, ['test_workflow'], { workflowId: 'w' }, 30000, 'test_workflow', false);
+    expect(r.success).toBe(true);
+    expect(r.data).toMatchObject({ executionId: 'e1', status: 'error', error: 'node failed' });
   });
 
   it('keeps a root success:true result a success', async () => {
