@@ -16,6 +16,11 @@ import { n8nDocumentationToolsFinal } from './tools';
 import { UIAppRegistry } from './ui';
 import { SkillResourceRegistry } from './skills';
 import { n8nManagementTools, TOOL_OPERATION_PARAM, DESTRUCTIVE_TOOL_OPERATIONS } from './tools-n8n-manager';
+import {
+  getDisabledTools as getDisabledToolsPolicy,
+  getDisabledToolOperations as getDisabledToolOperationsPolicy,
+  getValidOperations,
+} from './tool-policy';
 import { makeToolsN8nFriendly } from './tools-n8n-friendly';
 import { getWorkflowExampleString } from './workflow-examples';
 import { logger } from '../utils/logger';
@@ -606,61 +611,24 @@ export class N8NDocumentationMCPServer {
   }
 
   /**
-   * Parse and cache disabled tools from DISABLED_TOOLS environment variable.
-   * Returns a Set of tool names that should be filtered from registration.
-   *
-   * Cached after first call since environment variables don't change at runtime.
-   * Includes safety limits: max 10KB env var length, max 200 tools.
+   * Per-instance cache over the shared `DISABLED_TOOLS` policy
+   * (src/mcp/tool-policy.ts), which does the parsing, the safety limits and
+   * the operator-facing logging.
    *
    * @returns Set of disabled tool names
    */
   private getDisabledTools(): Set<string> {
-    // Return cached value if available
     if (this.disabledToolsCache !== null) {
       return this.disabledToolsCache;
     }
-
-    let disabledToolsEnv = process.env.DISABLED_TOOLS || '';
-    if (!disabledToolsEnv) {
-      this.disabledToolsCache = new Set();
-      return this.disabledToolsCache;
-    }
-
-    // Safety limit: prevent abuse with very long environment variables
-    if (disabledToolsEnv.length > 10000) {
-      logger.warn(`DISABLED_TOOLS environment variable too long (${disabledToolsEnv.length} chars), truncating to 10000`);
-      disabledToolsEnv = disabledToolsEnv.substring(0, 10000);
-    }
-
-    let tools = disabledToolsEnv
-      .split(',')
-      .map(t => t.trim())
-      .filter(Boolean);
-
-    // Safety limit: prevent abuse with too many tools
-    if (tools.length > 200) {
-      logger.warn(`DISABLED_TOOLS contains ${tools.length} tools, limiting to first 200`);
-      tools = tools.slice(0, 200);
-    }
-
-    if (tools.length > 0) {
-      logger.info(`Disabled tools configured: ${tools.join(', ')}`);
-    }
-
-    this.disabledToolsCache = new Set(tools);
+    this.disabledToolsCache = getDisabledToolsPolicy();
     return this.disabledToolsCache;
   }
 
   /**
-   * Parse and cache per-operation disabled rules from DISABLED_TOOL_OPERATIONS env var.
-   *
-   * Format: semicolon-separated list of <tool_name>:<comma_separated_operations>
-   * Example: DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune,truncate;n8n_executions:delete
-   *
-   * Cached after first call. Also pre-builds filteredToolDefinitionsCache so
+   * Per-instance cache over the shared `DISABLED_TOOL_OPERATIONS` policy
+   * (src/mcp/tool-policy.ts). Also pre-builds filteredToolDefinitionsCache so
    * ListTools requests pay no per-request cloning cost.
-   *
-   * Safety limits mirror DISABLED_TOOLS: max 10KB env var, max 50 entries.
    *
    * @returns Map of toolName -> Set of disabled operation names
    */
@@ -669,71 +637,7 @@ export class N8NDocumentationMCPServer {
       return this.disabledToolOperationsCache;
     }
 
-    const result = new Map<string, Set<string>>();
-    let envVal = process.env.DISABLED_TOOL_OPERATIONS || '';
-
-    if (!envVal) {
-      this.disabledToolOperationsCache = result;
-      this.filteredToolDefinitionsCache = new Map();
-      return result;
-    }
-
-    if (envVal.length > 10000) {
-      logger.warn(`DISABLED_TOOL_OPERATIONS environment variable too long (${envVal.length} chars), truncating to 10000`);
-      envVal = envVal.substring(0, 10000);
-    }
-
-    let entries = envVal.split(';').map(e => e.trim()).filter(Boolean);
-
-    if (entries.length > 50) {
-      logger.warn(`DISABLED_TOOL_OPERATIONS contains ${entries.length} entries, limiting to first 50`);
-      entries = entries.slice(0, 50);
-    }
-
-    for (const entry of entries) {
-      const colonIdx = entry.indexOf(':');
-      if (colonIdx === -1) continue;
-
-      const toolName = entry.substring(0, colonIdx).trim();
-      const opsStr = entry.substring(colonIdx + 1).trim();
-
-      if (!toolName || !opsStr) continue;
-
-      // Lowercase ops so matching is case-insensitive and consistent with the
-      // (lowercase) operation enum values used for schema stripping and dispatch.
-      const ops = opsStr.split(',').map(o => o.trim().toLowerCase()).filter(Boolean);
-      if (ops.length === 0) continue;
-
-      const existing = result.get(toolName) ?? new Set<string>();
-      ops.forEach(op => existing.add(op));
-      result.set(toolName, existing);
-    }
-
-    // Warn (don't fail) on entries that can never match, so a typo such as
-    // `n8n_execution:delete` (wrong tool) or `n8n_executions:remove` (wrong op)
-    // is visible rather than silently leaving an operation enabled.
-    for (const [toolName, ops] of result) {
-      const paramName = TOOL_OPERATION_PARAM[toolName];
-      if (!paramName) {
-        logger.warn(`DISABLED_TOOL_OPERATIONS: unknown tool '${toolName}' — no per-operation filtering applied. Eligible tools: ${Object.keys(TOOL_OPERATION_PARAM).join(', ')}`);
-        continue;
-      }
-      const tool = n8nManagementTools.find(t => t.name === toolName);
-      const enumValues: string[] = (tool?.inputSchema as any)?.properties?.[paramName]?.enum ?? [];
-      for (const op of ops) {
-        if (enumValues.length > 0 && !enumValues.includes(op)) {
-          logger.warn(`DISABLED_TOOL_OPERATIONS: '${op}' is not a valid ${paramName} for '${toolName}' (valid: ${enumValues.join(', ')}); it will have no effect.`);
-        }
-      }
-    }
-
-    if (result.size > 0) {
-      const summary = [...result.entries()]
-        .map(([t, ops]) => `${t}: [${[...ops].join(', ')}]`)
-        .join('; ');
-      logger.info(`Disabled tool operations configured: ${summary}`);
-    }
-
+    const result = getDisabledToolOperationsPolicy();
     this.disabledToolOperationsCache = result;
     this.filteredToolDefinitionsCache = this.buildFilteredToolDefinitions(result);
     return result;
@@ -781,7 +685,10 @@ export class N8NDocumentationMCPServer {
       // remaining read paths, which would defeat the read-only deployment use case.
       const destructive = DESTRUCTIVE_TOOL_OPERATIONS[toolName];
       if (destructive && cloned.annotations) {
-        const remaining = (param?.enum as string[] | undefined) ?? [];
+        // Virtual operations (destructive values that are not selectable enum
+        // values, e.g. `expose`) never appear in param.enum, so the remaining
+        // set is computed over enum UNION destructive minus what policy disabled.
+        const remaining = [...getValidOperations(toolName)].filter(v => !ops.has(v));
         const stillDestructive = remaining.some(v => destructive.has(String(v).toLowerCase()));
         if (!stillDestructive) {
           cloned.annotations = { ...cloned.annotations, readOnlyHint: true, destructiveHint: false };
