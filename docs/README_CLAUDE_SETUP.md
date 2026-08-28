@@ -120,7 +120,7 @@ After restarting Claude Desktop:
 ### Documentation & Validation Tools (offline, always available)
 - **`search_nodes`** - Search n8n nodes by keyword, with optional real-world configuration examples
 - **`get_node`** - Get node info with progressive detail levels (`detail`: `minimal`, `standard`, `full`) and modes (schema info, docs, property search, version comparison)
-- **`validate_node`** - Validate a node configuration against a profile (`minimal`, `runtime`, `ai-friendly`, `strict`)
+- **`validate_node`** - Validate a node configuration. `mode: 'minimal'` checks required fields only; `mode: 'full'` (default) runs full validation against a `profile` (`minimal`, `runtime`, `ai-friendly` (default), `strict`)
 - **`validate_workflow`** - Full workflow validation: structure, connections, expressions, AI tool connections
 - **`search_templates`** - Search workflow templates by keyword, by node type, by task, or by metadata
 - **`get_template`** - Get a complete workflow JSON by template ID, ready to import

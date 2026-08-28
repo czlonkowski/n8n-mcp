@@ -74,7 +74,7 @@ When operations are independent, execute them in parallel for maximum performanc
 ALWAYS check templates before building from scratch (2,709 available).
 
 ### 4. Multi-Level Validation
-Use validate_node(mode='minimal') → validate_node(mode='full') → validate_workflow pattern.
+Use validate_node({..., mode: 'minimal'}) → validate_node({..., mode: 'full'}) → validate_workflow({workflow}) pattern.
 
 ### 5. Never Trust Defaults
 ⚠️ CRITICAL: Default parameter values are the #1 source of runtime failures.
@@ -111,12 +111,12 @@ ALWAYS explicitly configure ALL parameters that control node behavior.
    - Show workflow architecture to user for approval before proceeding
 
 5. **Validation Phase** (parallel for multiple nodes)
-   - `validate_node({nodeType, config, mode: 'minimal'})` - Quick required fields check
-   - `validate_node({nodeType, config, mode: 'full', profile: 'runtime'})` - Full validation with fixes
+   - `validate_node({nodeType, config, mode: 'minimal'})` - Quick required fields check only
+   - `validate_node({nodeType, config, mode: 'full', profile: 'runtime'})` - Full validation (default mode) with errors/warnings/suggestions
    - Fix ALL errors before proceeding
 
 6. **Building Phase**
-   - If using template: `get_template(templateId, {mode: "full"})`
+   - If using template: `get_template({templateId, mode: 'full'})`
    - **MANDATORY ATTRIBUTION**: "Based on template by **[author.name]** (@[username]). View at: [url]"
    - Build from validated configurations
    - ⚠️ EXPLICITLY set ALL parameters - never rely on defaults
@@ -126,7 +126,7 @@ ALWAYS explicitly configure ALL parameters that control node behavior.
    - Build in artifact (unless deploying to n8n instance)
 
 7. **Workflow Validation** (before deployment)
-   - `validate_workflow(workflow)` - Complete validation: structure, connections, expressions, AI tools
+   - `validate_workflow({workflow})` - Complete validation: structure, connections, expressions, AI tools
    - Fix ALL issues before deployment
 
 8. **Deployment** (if n8n API configured)
@@ -158,10 +158,10 @@ Default values cause runtime failures. Example:
 `validate_node({nodeType, config, mode: 'minimal'})` - Required fields only (<100ms)
 
 ### Level 2 - Comprehensive (before building)
-`validate_node({nodeType, config, mode: 'full', profile: 'runtime'})` - Full validation with fixes
+`validate_node({nodeType, config, mode: 'full', profile: 'runtime'})` - Full validation (default mode) with fixes
 
 ### Level 3 - Complete (after building)
-`validate_workflow(workflow)` - Connections, expressions, AI tools
+`validate_workflow({workflow})` - Connections, expressions, AI tools
 
 ### Level 4 - Post-Deployment
 1. `n8n_validate_workflow({id})` - Validate deployed workflow
@@ -321,8 +321,8 @@ search_templates({
 search_templates({searchMode: 'by_task', task: 'slack_integration'})
 
 // STEP 2: Use template
-get_template(templateId, {mode: 'full'})
-validate_workflow(workflow)
+get_template({templateId, mode: 'full'})
+validate_workflow({workflow})
 
 // Response after all tools complete:
 "Found template by **David Ashby** (@cfomodz).
@@ -355,7 +355,7 @@ validate_node({nodeType: 'n8n-nodes-base.slack', config: fullConfig, mode: 'full
 
 // STEP 5: Validate
 [Silent execution]
-validate_workflow(workflowJson)
+validate_workflow({workflow: workflowJson})
 
 // Response after all tools complete:
 "Created workflow: Webhook → Slack
