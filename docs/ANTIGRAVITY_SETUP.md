@@ -130,10 +130,10 @@ ALWAYS explicitly configure ALL parameters that control node behavior.
    - Fix ALL issues before deployment
 
 8. **Deployment** (if n8n API configured)
-   - `n8n_create_workflow(workflow)` - Deploy
+   - `n8n_create_workflow({name, nodes, connections})` - Deploy
    - `n8n_validate_workflow({id})` - Post-deployment check
    - `n8n_update_partial_workflow({id, operations: [...]})` - Batch updates
-   - `n8n_test_workflow()` - Test/trigger the workflow (webhook, form, chat)
+   - `n8n_test_workflow({workflowId})` - Test/trigger the workflow (webhook, form, chat)
 
 ## Critical Warnings
 
@@ -201,8 +201,8 @@ Use `n8n_update_partial_workflow` with multiple operations in a single call:
 n8n_update_partial_workflow({
   id: "wf-123",
   operations: [
-    {type: "updateNode", nodeId: "slack-1", changes: {...}},
-    {type: "updateNode", nodeId: "http-1", changes: {...}},
+    {type: "updateNode", nodeId: "slack-1", updates: {...}},
+    {type: "updateNode", nodeId: "http-1", updates: {...}},
     {type: "cleanStaleConnections"}
   ]
 })
@@ -244,8 +244,8 @@ The `addConnection` operation requires **four separate string parameters**. Comm
   "type": "addConnection",
   "source": "node-id-string",
   "target": "target-node-id-string",
-  "sourcePort": "main",
-  "targetPort": "main"
+  "sourceOutput": "main",
+  "targetInput": "main"
 }
 ```
 
@@ -261,8 +261,8 @@ IF nodes have **two outputs** (TRUE and FALSE). Use the **`branch` parameter** t
   "type": "addConnection",
   "source": "if-node-id",
   "target": "success-handler-id",
-  "sourcePort": "main",
-  "targetPort": "main",
+  "sourceOutput": "main",
+  "targetInput": "main",
   "branch": "true"
 }
 ```
@@ -273,8 +273,8 @@ IF nodes have **two outputs** (TRUE and FALSE). Use the **`branch` parameter** t
   "type": "addConnection",
   "source": "if-node-id",
   "target": "failure-handler-id",
-  "sourcePort": "main",
-  "targetPort": "main",
+  "sourceOutput": "main",
+  "targetInput": "main",
   "branch": "false"
 }
 ```
@@ -284,8 +284,8 @@ IF nodes have **two outputs** (TRUE and FALSE). Use the **`branch` parameter** t
 n8n_update_partial_workflow({
   id: "workflow-id",
   operations: [
-    {type: "addConnection", source: "If Node", target: "True Handler", sourcePort: "main", targetPort: "main", branch: "true"},
-    {type: "addConnection", source: "If Node", target: "False Handler", sourcePort: "main", targetPort: "main", branch: "false"}
+    {type: "addConnection", source: "If Node", target: "True Handler", sourceOutput: "main", targetInput: "main", branch: "true"},
+    {type: "addConnection", source: "If Node", target: "False Handler", sourceOutput: "main", targetInput: "main", branch: "false"}
   ]
 })
 ```
@@ -300,8 +300,8 @@ Use the same four-parameter format:
   "type": "removeConnection",
   "source": "source-node-id",
   "target": "target-node-id",
-  "sourcePort": "main",
-  "targetPort": "main"
+  "sourceOutput": "main",
+  "targetInput": "main"
 }
 ```
 
@@ -369,8 +369,8 @@ Validation: ✅ Passed"
 n8n_update_partial_workflow({
   id: "wf-123",
   operations: [
-    {type: "updateNode", nodeId: "slack-1", changes: {position: [100, 200]}},
-    {type: "updateNode", nodeId: "http-1", changes: {position: [300, 200]}},
+    {type: "updateNode", nodeId: "slack-1", updates: {position: [100, 200]}},
+    {type: "updateNode", nodeId: "http-1", updates: {position: [300, 200]}},
     {type: "cleanStaleConnections"}
   ]
 })

@@ -90,10 +90,10 @@ You are an expert in n8n automation software using n8n-MCP tools. Your role is t
    - Fix any issues found before deployment
 
 7. **Deployment Phase** (if n8n API configured):
-   - `n8n_create_workflow(workflow)` - Deploy validated workflow
+   - `n8n_create_workflow({name, nodes, connections})` - Deploy validated workflow
    - `n8n_validate_workflow({id: 'workflow-id'})` - Post-deployment validation
-   - `n8n_update_partial_workflow()` - Make incremental updates using diffs
-   - `n8n_test_workflow()` - Test/trigger the workflow (webhook, form, chat)
+   - `n8n_update_partial_workflow({id, operations: [...]})` - Make incremental updates using diffs
+   - `n8n_test_workflow({workflowId})` - Test/trigger the workflow (webhook, form, chat)
 
 ## Key Insights
 
@@ -119,7 +119,7 @@ You are an expert in n8n automation software using n8n-MCP tools. Your role is t
 ### After Deployment:
 1. n8n_validate_workflow({id}) - Validate deployed workflow
 2. n8n_executions({action: 'list'}) - Monitor execution status
-3. n8n_update_partial_workflow() - Fix issues using diffs
+3. n8n_update_partial_workflow({id, operations: [...]}) - Fix issues using diffs
 
 ## Response Structure
 
@@ -148,12 +148,12 @@ validate_node({nodeType: 'n8n-nodes-base.slack', config: fullConfig, mode: 'full
 validate_workflow({workflow: workflowJson})
 
 ### 5. Deploy (if configured)
-n8n_create_workflow(validatedWorkflow)
+n8n_create_workflow({name: 'My Workflow', nodes: validatedWorkflow.nodes, connections: validatedWorkflow.connections})
 n8n_validate_workflow({id: createdWorkflowId})
 
 ### 6. Update Using Diffs
 n8n_update_partial_workflow({
-  workflowId: id,
+  id: createdWorkflowId,
   operations: [
     {type: 'updateNode', nodeId: 'slack1', updates: {position: [100, 200]}}
   ]
