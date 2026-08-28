@@ -93,13 +93,11 @@ export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): P
 
   const server = http.createServer(async (req, res) => {
     requests.push({ method: req.method || '', authorization: req.headers.authorization });
-    if (req.method !== 'POST') {
-      // Nothing reads the request stream on these paths (raw/401/405 responses all
-      // return before readBody is called), so attach a no-op handler up front — an
-      // unconsumed request stream that errors would otherwise throw an unhandled
-      // 'error' event and crash the process.
-      req.on('error', () => {});
-    }
+    // Several paths answer before the request stream is consumed (raw, 401, 405), and
+    // an unconsumed stream that errors would otherwise emit an unhandled 'error' event
+    // and crash the process. Attach a no-op handler to every request up front; readBody
+    // adds its own rejecting listener for the paths that do read the body.
+    req.on('error', () => {});
     try {
       if (raw) { res.statusCode = raw.status; res.setHeader('content-type', raw.contentType ?? 'text/html'); res.end(raw.body); return; }
       if (opts.token !== undefined && req.headers.authorization !== `Bearer ${opts.token}`) {
