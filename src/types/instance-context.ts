@@ -204,7 +204,7 @@ export function validateInstanceContext(context: InstanceContext): {
   // Validate MCP access token if provided
   if (context.n8nMcpAccessToken !== undefined && !isValidMcpAccessTokenField(context.n8nMcpAccessToken)) {
     // Never include the value: it is a secret.
-    errors.push('Invalid n8nMcpAccessToken: must be a non-empty string without whitespace (max 4 KB)');
+    errors.push('Invalid n8nMcpAccessToken: must be a non-empty string without whitespace (max 4 KB) and not a placeholder value');
   }
 
   // Validate timeout
