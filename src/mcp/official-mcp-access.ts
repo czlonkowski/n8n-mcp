@@ -98,14 +98,21 @@ const SETUP_HINT_MAX_LENGTH = 500;
 /**
  * An embedder may supply a plain-text setup hint (e.g. a link to their own
  * onboarding page) via `context.metadata.officialMcpSetupHint`. Treated as
- * plain text only: any tag-like content is stripped and the result is
- * capped, so an embedder-supplied string can never inject markup or grow
- * unbounded into a tool response.
+ * plain text only: every `<` and `>` character is removed (so no markup —
+ * tag-like or otherwise — can survive) and the result is capped, so an
+ * embedder-supplied string can never inject markup or grow unbounded into a
+ * tool response.
  */
 function embedderSetupHint(context?: InstanceContext): string | undefined {
   const raw = context?.metadata?.officialMcpSetupHint;
   if (typeof raw !== 'string') return undefined;
-  const stripped = raw.replace(/<[^>]*>/g, '').trim();
+  // Bound the input before any processing so every later step is linear in
+  // a fixed-size string, regardless of how long the caller-supplied value is.
+  const bounded = raw.slice(0, SETUP_HINT_MAX_LENGTH * 2);
+  const stripped = bounded
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (stripped.length === 0) return undefined;
   return stripped.slice(0, SETUP_HINT_MAX_LENGTH);
 }

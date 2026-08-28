@@ -58,6 +58,18 @@ describe('envelopes', () => {
     const custom = notConfiguredResponse({ n8nApiUrl: 'https://x.example.com', n8nApiKey: 'k', metadata: { officialMcpSetupHint: '<b>Open</b> the instance page ' + 'x'.repeat(600) } }, 'get');
     expect(custom.hint).not.toContain('<b>'); expect(custom.hint!.length).toBeLessThanOrEqual(500);
   });
+  it('strips every angle bracket from the embedder hint, even nested/malformed tag-like input', () => {
+    const custom = notConfiguredResponse({ n8nApiUrl: 'https://x.example.com', n8nApiKey: 'k', metadata: { officialMcpSetupHint: '<script<script<script>alert(1)' } }, 'get');
+    expect(custom.hint).not.toContain('<');
+    expect(custom.hint).not.toContain('>');
+  });
+  it('handles an embedder hint with 100k angle brackets in linear time', () => {
+    const start = Date.now();
+    const custom = notConfiguredResponse({ n8nApiUrl: 'https://x.example.com', n8nApiKey: 'k', metadata: { officialMcpSetupHint: '<'.repeat(100_000) } }, 'get');
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(custom.hint).not.toContain('<');
+    expect(custom.hint!.length).toBeLessThanOrEqual(500);
+  });
   it('officialFailure maps OfficialMcpError and unknown errors', () => {
     expect(officialFailure(new OfficialMcpError('OFFICIAL_MCP_RATE_LIMITED', 'slow down', 429), 'call'))
       .toMatchObject({ success: false, action: 'call', code: 'OFFICIAL_MCP_RATE_LIMITED', error: 'slow down', details: { status: 429 } });
@@ -87,15 +99,16 @@ describe('buildOfficialMcpHealth', () => {
   });
 
   // Same hint logic as notConfiguredResponse: an embedder's own hint wins,
-  // stripped to text and capped.
+  // with angle brackets removed (text only) and capped.
   it('prefers the embedder setup hint when there is no config', async () => {
     const health = await buildOfficialMcpHealth(
       { metadata: { officialMcpSetupHint: '<b>Open</b> the setup page ' + 'x'.repeat(600) } },
       false,
     );
     expect(health.configured).toBe(false);
-    expect(health.hint).toContain('Open the setup page');
-    expect(health.hint).not.toContain('<b>');
+    expect(health.hint).toContain('Open');
+    expect(health.hint).toContain('the setup page');
+    expect(health.hint).not.toMatch(/[<>]/);
     expect(health.hint!.length).toBeLessThanOrEqual(500);
   });
 
