@@ -59,7 +59,7 @@ import {
   normalizeMcpWorkflowNodes,
 } from '../utils/mcp-input-normalizer';
 import { buildOfficialMcpHealth, OfficialMcpHealth } from './official-mcp-access';
-import { callOfficialTool } from './handlers-official-tools';
+import { callOfficialTool, resolveProjectChoices } from './handlers-official-tools';
 import { withMcpExposure } from '../services/mcp-exposure';
 import { isOperationDisabled } from './tool-policy';
 import {
@@ -4087,6 +4087,185 @@ export async function handleDeleteRows(args: unknown, context?: InstanceContext)
     return handleCrudError(error);
   }
 }
+
+// ========================================================================
+// Data Table Column Actions (routed to n8n's own MCP server)
+// ========================================================================
+
+/**
+ * n8n's Public API can create and drop whole data tables but cannot change a
+ * table's columns; the instance-level MCP server can. These three actions are
+ * therefore the only part of `n8n_manage_datatable` that needs
+ * `N8N_MCP_ACCESS_TOKEN`. Renaming a TABLE stays on the Public API path
+ * (`updateTable`).
+ */
+const DATATABLE_ACTION = 'manage_datatable';
+const DATATABLE_TIMEOUT_MS = DEFAULT_TIMEOUT_MS;
+
+type ColumnAction = 'addColumn' | 'deleteColumn' | 'renameColumn';
+
+const COLUMN_TOOLS: Record<ColumnAction, string[]> = {
+  addColumn: ['add_data_table_column'],
+  deleteColumn: ['delete_data_table_column'],
+  renameColumn: ['rename_data_table_column'],
+};
+
+/** n8n's own rule for a data table column name: identifier-shaped, at most 63 characters. */
+const columnNameSchema = z
+  .string()
+  .min(1, 'Column name cannot be empty')
+  .max(63, 'Column name must be at most 63 characters')
+  .regex(
+    /^[a-zA-Z][a-zA-Z0-9_]*$/,
+    'Column name must start with a letter and contain only letters, digits and underscores'
+  );
+
+const columnTargetSchema = tableIdSchema.extend({
+  projectId: optionalEmptyAware(z.string()),
+  timeoutMs: z.number().int().min(MIN_TIMEOUT_MS).max(MAX_TIMEOUT_MS).optional(),
+});
+
+const addColumnSchema = columnTargetSchema.extend({
+  column: z.preprocess(
+    tryParseJson,
+    z.object({
+      name: columnNameSchema,
+      type: z.enum(['string', 'number', 'boolean', 'date']),
+    })
+  ),
+});
+
+const deleteColumnSchema = columnTargetSchema.extend({
+  columnId: z.string().min(1, 'columnId is required'),
+});
+
+const renameColumnSchema = deleteColumnSchema.extend({
+  name: columnNameSchema,
+});
+
+function columnInvalidArgs(action: ColumnAction, error: z.ZodError): McpToolResponse {
+  return {
+    success: false,
+    action,
+    code: 'INVALID_ARGS',
+    error: error.issues.map(i => `${i.path.join('.') || 'input'}: ${i.message}`).join('; '),
+  };
+}
+
+/**
+ * The official column tools require a `projectId` the Public-API data table
+ * actions never asked for. An explicit one always wins; otherwise the shared
+ * project resolution is used, and only an unambiguous single project is taken
+ * automatically — picking one of several would silently target the wrong
+ * project.
+ */
+async function resolveDataTableProjectId(
+  input: { projectId?: string },
+  action: ColumnAction,
+  context?: InstanceContext
+): Promise<{ projectId: string } | { failure: McpToolResponse }> {
+  if (input.projectId) return { projectId: input.projectId };
+
+  const resolved = await resolveProjectChoices(context);
+  if ('failure' in resolved) return { failure: { ...resolved.failure, action } };
+
+  const items = resolved.choices.items;
+  if (items.length === 1) return { projectId: items[0].id };
+  if (items.length === 0) {
+    return {
+      failure: {
+        success: false,
+        action,
+        code: 'PROJECT_REQUIRED',
+        error: 'No project could be resolved for this instance; pass projectId',
+      },
+    };
+  }
+  return {
+    failure: {
+      success: false,
+      action,
+      code: 'PROJECT_REQUIRED',
+      error: 'Several projects are accessible; pass projectId',
+      details: { candidates: items },
+    },
+  };
+}
+
+async function callColumnTool(
+  action: ColumnAction,
+  officialArgs: Record<string, unknown>,
+  timeoutMs: number | undefined,
+  context?: InstanceContext
+): Promise<McpToolResponse> {
+  // Column writes are not idempotent: a retry after a connection-level failure
+  // could add or rename twice.
+  const response = await callOfficialTool(
+    context,
+    COLUMN_TOOLS[action],
+    officialArgs,
+    timeoutMs ?? DATATABLE_TIMEOUT_MS,
+    DATATABLE_ACTION,
+    false
+  );
+  return { ...response, action, backend: 'official-mcp' };
+}
+
+export async function handleAddColumn(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  const parsed = addColumnSchema.safeParse(args);
+  if (!parsed.success) return columnInvalidArgs('addColumn', parsed.error);
+
+  const resolved = await resolveDataTableProjectId(parsed.data, 'addColumn', context);
+  if ('failure' in resolved) return resolved.failure;
+
+  return callColumnTool(
+    'addColumn',
+    {
+      dataTableId: parsed.data.tableId,
+      projectId: resolved.projectId,
+      name: parsed.data.column.name,
+      type: parsed.data.column.type,
+    },
+    parsed.data.timeoutMs,
+    context
+  );
+}
+
+export async function handleDeleteColumn(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  const parsed = deleteColumnSchema.safeParse(args);
+  if (!parsed.success) return columnInvalidArgs('deleteColumn', parsed.error);
+
+  const resolved = await resolveDataTableProjectId(parsed.data, 'deleteColumn', context);
+  if ('failure' in resolved) return resolved.failure;
+
+  return callColumnTool(
+    'deleteColumn',
+    { dataTableId: parsed.data.tableId, projectId: resolved.projectId, columnId: parsed.data.columnId },
+    parsed.data.timeoutMs,
+    context
+  );
+}
+
+export async function handleRenameColumn(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  const parsed = renameColumnSchema.safeParse(args);
+  if (!parsed.success) return columnInvalidArgs('renameColumn', parsed.error);
+
+  const resolved = await resolveDataTableProjectId(parsed.data, 'renameColumn', context);
+  if ('failure' in resolved) return resolved.failure;
+
+  return callColumnTool(
+    'renameColumn',
+    {
+      dataTableId: parsed.data.tableId,
+      projectId: resolved.projectId,
+      columnId: parsed.data.columnId,
+      name: parsed.data.name,
+    },
+    parsed.data.timeoutMs,
+    context
+  );
+}
+
 
 // ========================================================================
 // Credential Management Handlers

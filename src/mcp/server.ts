@@ -1866,8 +1866,13 @@ export class N8NDocumentationMCPServer {
           case 'updateRows':   return n8nHandlers.handleUpdateRows(args, this.instanceContext);
           case 'upsertRows':   return n8nHandlers.handleUpsertRows(args, this.instanceContext);
           case 'deleteRows':   return n8nHandlers.handleDeleteRows(args, this.instanceContext);
+          // Column actions need n8n's own MCP server - the Public API cannot
+          // change a table's schema after creation.
+          case 'addColumn':    return n8nHandlers.handleAddColumn(args, this.instanceContext);
+          case 'deleteColumn': return n8nHandlers.handleDeleteColumn(args, this.instanceContext);
+          case 'renameColumn': return n8nHandlers.handleRenameColumn(args, this.instanceContext);
           default:
-            throw new Error(`Unknown action: ${dtAction}. Valid actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows`);
+            throw new Error(`Unknown action: ${dtAction}. Valid actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows, addColumn, deleteColumn, renameColumn`);
         }
       }
 

@@ -757,20 +757,20 @@ Two sources:
   },
   {
     name: 'n8n_manage_datatable',
-    description: `Manage n8n data tables and rows. Actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows.`,
+    description: `Manage n8n data tables, rows and columns. Actions: createTable, listTables, getTable, updateTable, deleteTable, getRows, insertRows, updateRows, upsertRows, deleteRows, addColumn, deleteColumn, renameColumn. The column actions run through n8n's own MCP server (N8N_MCP_ACCESS_TOKEN, n8n 2.34+) because the public API cannot change a table's columns after creation; everything else uses the public API.`,
     inputSchema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['createTable', 'listTables', 'getTable', 'updateTable', 'deleteTable', 'getRows', 'insertRows', 'updateRows', 'upsertRows', 'deleteRows'],
-          description: 'Operation to perform',
+          enum: ['createTable', 'listTables', 'getTable', 'updateTable', 'deleteTable', 'getRows', 'insertRows', 'updateRows', 'upsertRows', 'deleteRows', 'addColumn', 'deleteColumn', 'renameColumn'],
+          description: 'Operation to perform. addColumn/deleteColumn/renameColumn need N8N_MCP_ACCESS_TOKEN.',
         },
         tableId: { type: 'string', description: 'Data table ID (required for all actions except createTable and listTables)' },
-        name: { type: 'string', description: 'For createTable: table name. For updateTable: new name (rename only — schema is immutable after creation)' },
+        name: { type: 'string', description: 'For createTable: table name. For updateTable: new table name. For renameColumn: new column name.' },
         columns: {
           type: 'array',
-          description: 'For createTable (required, at least one): column definitions. Schema is immutable after creation via public API.',
+          description: 'For createTable (required, at least one): column definitions. Change columns later with addColumn/deleteColumn/renameColumn.',
           items: {
             type: 'object',
             properties: {
@@ -792,7 +792,18 @@ Two sources:
         returnType: { type: 'string', enum: ['count', 'id', 'all'], description: 'For insertRows: what to return (default: count)' },
         returnData: { type: 'boolean', description: 'For updateRows/upsertRows/deleteRows: return affected rows (default: false)' },
         dryRun: { type: 'boolean', description: 'For updateRows/upsertRows/deleteRows: preview without applying (default: false)' },
-        projectId: { type: 'string', description: 'For createTable: project ID to create the table in. If omitted, uses the default project.' },
+        projectId: { type: 'string', description: 'For createTable: project ID to create the table in. If omitted, uses the default project. For the column actions: the project owning the table - resolved automatically when the instance has exactly one accessible project, otherwise required (the error lists the candidates).' },
+        columnId: { type: 'string', description: 'For deleteColumn/renameColumn: ID of the column (from getTable).' },
+        column: {
+          type: 'object',
+          description: 'For addColumn: the column to add. Name must start with a letter, contain only letters, digits and underscores, and be at most 63 characters.',
+          properties: {
+            name: { type: 'string' },
+            type: { type: 'string', enum: ['string', 'number', 'boolean', 'date'] },
+          },
+          required: ['name', 'type'],
+        },
+        timeoutMs: { type: 'number', description: 'For the column actions: client timeout in ms (5000-600000, default 30000).' },
       },
       required: ['action'],
     },
@@ -974,6 +985,7 @@ export const TOOL_OPERATION_PARAM: Record<string, string> = {
   'n8n_workflow_versions': 'mode',
   'n8n_manage_agents': 'action',
   'n8n_list_catalog': 'kind',
+  'n8n_manage_datatable': 'action',
 };
 
 /**
@@ -1010,4 +1022,12 @@ export const DESTRUCTIVE_TOOL_OPERATIONS: Record<string, Set<string>> = {
   // Derived from AGENT_ACTION_MAP: create/mutate persist a draft and call runs
   // the agent's real tools, so the write set is wider than the publish/delete pair.
   'n8n_manage_agents': new Set(DESTRUCTIVE_AGENT_ACTIONS),
+  // Every write action; listTables/getTable/getRows are the read paths. The
+  // column actions write through n8n's own MCP server, the rest through the
+  // public API - both are writes as far as policy is concerned.
+  'n8n_manage_datatable': new Set([
+    'createtable', 'updatetable', 'deletetable',
+    'insertrows', 'updaterows', 'upsertrows', 'deleterows',
+    'addcolumn', 'deletecolumn', 'renamecolumn',
+  ]),
 };

@@ -555,4 +555,71 @@ describe('Disabled Tool Operations Feature (Issue #714)', () => {
       }
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // n8n_manage_datatable — registered for per-operation policy alongside the
+  // column actions that route to n8n's own MCP server.
+  // ---------------------------------------------------------------------------
+
+  describe('n8n_manage_datatable operations', () => {
+    it('should strip the disabled actions from the enum but stay destructive', () => {
+      const disabledOps = new Map([['n8n_manage_datatable', new Set(['deletetable', 'deleterows'])]]);
+      server = new TestableN8NMCPServer();
+      const cache = server.testBuildFilteredToolDefinitions(disabledOps);
+
+      const filtered = cache.get('n8n_manage_datatable');
+      const enumValues: string[] = filtered.inputSchema.properties.action.enum;
+      expect(enumValues).not.toContain('deleteTable');
+      expect(enumValues).not.toContain('deleteRows');
+      expect(enumValues).toContain('getRows');
+      expect(enumValues).toContain('addColumn');
+      // Other writes (createTable, insertRows, the column actions) remain.
+      expect(filtered.annotations.destructiveHint).toBe(true);
+      expect(filtered.annotations.readOnlyHint).toBe(false);
+    });
+
+    it('should recompute annotations to read-only when every write action is disabled', () => {
+      const disabledOps = new Map([[
+        'n8n_manage_datatable',
+        new Set([
+          'createtable', 'updatetable', 'deletetable',
+          'insertrows', 'updaterows', 'upsertrows', 'deleterows',
+          'addcolumn', 'deletecolumn', 'renamecolumn',
+        ]),
+      ]]);
+      server = new TestableN8NMCPServer();
+      const cache = server.testBuildFilteredToolDefinitions(disabledOps);
+
+      const filtered = cache.get('n8n_manage_datatable');
+      const enumValues: string[] = filtered.inputSchema.properties.action.enum;
+      expect(enumValues).toEqual(['listTables', 'getTable', 'getRows']);
+      expect(filtered.annotations.readOnlyHint).toBe(true);
+      expect(filtered.annotations.destructiveHint).toBe(false);
+    });
+
+    it('should refuse a disabled action at call time', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_manage_datatable:deleteTable,deleteRows';
+      server = new TestableN8NMCPServer();
+
+      await expect(
+        server.testExecuteTool('n8n_manage_datatable', { action: 'deleteRows', tableId: 't1' })
+      ).rejects.toThrow("Operation 'deleteRows' on tool 'n8n_manage_datatable' is disabled by server policy");
+    });
+
+    it('should not refuse an action that stays enabled', async () => {
+      expect.assertions(1);
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_manage_datatable:deleteTable,deleteRows';
+      server = new TestableN8NMCPServer();
+
+      // The call gets past the policy gate and then fails on something else
+      // (no n8n API configured here) - either way exactly one assertion runs.
+      try {
+        const result = await server.testExecuteTool('n8n_manage_datatable', { action: 'listTables' });
+        expect(result).toBeDefined();
+      } catch (error: any) {
+        expect(error.message).not.toContain('disabled by server policy');
+      }
+    });
+  });
+
 });
