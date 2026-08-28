@@ -216,7 +216,7 @@ n8n_update_partial_workflow({id: "wf-123", operations: [{...}]})
 
 ###   CRITICAL: addConnection Syntax
 
-The `addConnection` operation requires **four separate string parameters**. Common mistakes cause misleading errors.
+The `addConnection` operation takes `source` and `target` as **separate string parameters** (node names); `sourceOutput` and `targetInput` are optional and default to `"main"`. Common mistakes cause misleading errors.
 
 ❌ WRONG - Object format (fails with "Expected string, received object"):
 ```json
