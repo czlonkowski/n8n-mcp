@@ -3490,28 +3490,18 @@ export async function handleWorkflowVersions(
 
     // Local snapshots are numbered; coerce both ids up front so every mode
     // below works with numbers.
+    const invalidLocalVersionId = (error: string): McpToolResponse => ({
+      success: false,
+      mode: input.mode,
+      source: 'local',
+      backend: 'n8n-mcp',
+      code: 'INVALID_ARGS',
+      error,
+    });
     const parsedVersionId = parseLocalVersionId(input.versionId, 'versionId');
-    if (!parsedVersionId.ok) {
-      return {
-        success: false,
-        mode: input.mode,
-        source: 'local',
-        backend: 'n8n-mcp',
-        code: 'INVALID_ARGS',
-        error: parsedVersionId.error,
-      };
-    }
+    if (!parsedVersionId.ok) return invalidLocalVersionId(parsedVersionId.error);
     const parsedToVersionId = parseLocalVersionId(input.toVersionId, 'toVersionId');
-    if (!parsedToVersionId.ok) {
-      return {
-        success: false,
-        mode: input.mode,
-        source: 'local',
-        backend: 'n8n-mcp',
-        code: 'INVALID_ARGS',
-        error: parsedToVersionId.error,
-      };
-    }
+    if (!parsedToVersionId.ok) return invalidLocalVersionId(parsedToVersionId.error);
     const versionId = parsedVersionId.value;
     const toVersionId = parsedToVersionId.value;
 
