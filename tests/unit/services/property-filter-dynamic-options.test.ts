@@ -30,10 +30,11 @@ describe('PropertyFilter dynamicOptions', () => {
 // 'nodes-base.slack'). The node's channel resource-locator property is named
 // `channelId`, not `channel` — ESSENTIAL_PROPERTIES['nodes-base.slack'] once
 // named `channel`, so getEssentials() never surfaced the channel picker.
-// There is no existing tests/unit test that opens the real database
-// read-only for this kind of assertion (tests that load nodes.db live under
-// tests/integration), so this reproduces the shape inline instead of adding
-// a new database-backed unit test.
+// Two complementary checks cover this: an inline fixture (below) pins the
+// derivation rules against a hand-shaped schema snapshot, and a separate
+// database-backed test further down opens the real, read-only data/nodes.db
+// to guard the Slack essentials config against schema drift going forward
+// (skipped when that file isn't present).
 const slackProps = [
   { name: 'resource', displayName: 'Resource', type: 'options', default: 'message' },
   { name: 'operation', displayName: 'Operation', type: 'options', default: 'post' },

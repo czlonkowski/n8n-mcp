@@ -25,7 +25,7 @@ query filters items by a case-insensitive substring match on name; limit caps th
     parameters: {
       kind: { type: 'string', required: true, enum: ['projects', 'tags'], description: 'Which catalog to list' },
       query: { type: 'string', required: false, description: 'Case-insensitive name filter' },
-      limit: { type: 'number', required: false, description: 'Max items to return after filtering, 1-500' },
+      limit: { type: 'integer', required: false, description: 'Max items to return after filtering, 1-500' },
     },
     returns: '{success: true, kind, backend: "public-api" | "official-mcp", data: {items: [{id, name, type?, personal?}], teamProjectsEnabled?}} on success; {success: false, kind?, backend?, code, error, hint?} on failure. Codes: INVALID_ARGS, NOT_CONFIGURED, API_ERROR, and (via the official-MCP fallback) NOT_CONFIGURED, OFFICIAL_MCP_AUTH_FAILED, OFFICIAL_MCP_NOT_ENABLED, OFFICIAL_MCP_RATE_LIMITED, OFFICIAL_MCP_TOOL_UNAVAILABLE, OFFICIAL_MCP_TIMEOUT, OFFICIAL_MCP_TRANSPORT_ERROR, OFFICIAL_MCP_ERROR. An API_ERROR from the personal-only fallback (the caller\'s personal project could not be resolved) carries a hint pointing at either passing projectId explicitly or configuring N8N_MCP_ACCESS_TOKEN.',
     examples: [
