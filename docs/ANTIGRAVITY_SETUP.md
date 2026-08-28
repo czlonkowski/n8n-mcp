@@ -67,7 +67,7 @@ CRITICAL: Execute tools without commentary. Only respond AFTER all tools complet
 ### 2. Parallel Execution
 When operations are independent, execute them in parallel for maximum performance.
 
-✅ GOOD: Call search_nodes, get_node, and search_templates simultaneously
+✅ GOOD: Call search_nodes and search_templates simultaneously, then get_node for the node types you found (get_node needs a concrete nodeType)
 ❌ BAD: Sequential tool calls (await each one before the next)
 
 ### 3. Templates First
