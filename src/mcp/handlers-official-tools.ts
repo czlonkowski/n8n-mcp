@@ -34,6 +34,29 @@ const exploreSchema = z.object({
 const EXPLORE_TOOLS = ['explore_node_resources'];
 
 /**
+ * The n8n minor version that first shipped each official tool we route to, used
+ * only to make `OFFICIAL_MCP_TOOL_UNAVAILABLE` actionable ("upgrade to X" rather
+ * than "not available"). Absent entries fall back to `DEFAULT_MIN_VERSION`, the
+ * release that introduced the instance-level MCP server's workflow tools.
+ */
+export const OFFICIAL_TOOL_MIN_VERSION: Record<string, string> = {
+  get_workflow_versions_diff: '2.36',
+  get_workflow_history: '2.34',
+  get_workflow_version: '2.34',
+  restore_workflow_version: '2.34',
+  prepare_workflow_pin_data: '2.34',
+  test_workflow: '2.34',
+  execute_workflow: '2.34',
+  add_data_table_column: '2.34',
+  delete_data_table_column: '2.34',
+  rename_data_table_column: '2.34',
+  explore_node_resources: '2.34',
+  search_projects: '2.34',
+};
+
+const DEFAULT_MIN_VERSION = '2.34';
+
+/**
  * Shared "call one official tool, wrap the result" path for the passthrough
  * tools. `idempotent` says whether the call may be re-sent after a
  * connection-level failure — see `N8nOfficialMcpClient.callTool`.
@@ -52,7 +75,10 @@ export async function callOfficialTool(
     const caps = await client.capabilities();
     if (!caps.reachable) return officialFailure(new OfficialMcpError(caps.error ?? 'OFFICIAL_MCP_TRANSPORT_ERROR', 'n8n MCP server is not reachable'), label) as McpToolResponse;
     const tool = toolAliases.find(t => caps.toolNames.includes(t));
-    if (!tool) return officialFailure(new OfficialMcpError('OFFICIAL_MCP_TOOL_UNAVAILABLE', `This instance does not expose ${toolAliases.join(' / ')}`), label) as McpToolResponse;
+    if (!tool) {
+      const minVersion = OFFICIAL_TOOL_MIN_VERSION[toolAliases[0]] ?? DEFAULT_MIN_VERSION;
+      return officialFailure(new OfficialMcpError('OFFICIAL_MCP_TOOL_UNAVAILABLE', `This instance does not expose ${toolAliases.join(' / ')} (needs n8n >= ${minVersion})`), label) as McpToolResponse;
+    }
     const result = await client.callTool(tool, args, { timeoutMs, idempotent });
     const data = result.json ?? result.text;
     // "Input validation error" is the literal prefix n8n's MCP server puts on
@@ -61,7 +87,17 @@ export async function callOfficialTool(
     // that wording, invalid args stop mapping to INVALID_ARGS and degrade to
     // OFFICIAL_MCP_ERROR; nothing else breaks.
     if (result.text.startsWith('Input validation error')) return { success: false, action: label, code: 'INVALID_ARGS', error: result.text.slice(0, 2000) };
-    if (result.isError || (data as any)?.ok === false) {
+    // Failure shapes across the official tool families: an MCP-level error
+    // (`isError`), the agent tools' root `ok: false`, the version / data-table /
+    // execution tools' root `success: false`, and `execute_workflow`'s
+    // `status: 'error'` (which carries the reason in `error`, not in `success`).
+    const root = data as any;
+    const isFailure =
+      result.isError ||
+      root?.ok === false ||
+      root?.success === false ||
+      (root?.status === 'error' && typeof root?.error === 'string');
+    if (isFailure) {
       return { success: false, action: label, officialTool: tool, code: 'OFFICIAL_MCP_ERROR', error: officialErrorText(data, undefined), officialError: data };
     }
     return { success: true, action: label, officialTool: tool, data, ...(result.truncated ? { truncated: true } : {}) };
@@ -130,21 +166,57 @@ export async function handleListCatalog(args: unknown, context?: InstanceContext
     }
   }
 
+  const resolved = await resolveProjectChoices(context);
+  if ('failure' in resolved) return { ...resolved.failure, kind } as McpToolResponse;
+  const { backend, teamProjectsEnabled, items } = resolved.choices;
+  return {
+    success: true,
+    kind,
+    backend,
+    data: { teamProjectsEnabled, items: filterItems(items, query, limit) },
+  } as McpToolResponse;
+}
+
+export interface ProjectChoice {
+  id: string;
+  name: string;
+  type?: string;
+  personal?: boolean;
+}
+
+export interface ProjectChoices {
+  backend: 'public-api' | 'official-mcp';
+  teamProjectsEnabled: boolean;
+  items: ProjectChoice[];
+}
+
+/**
+ * Resolve the projects this instance offers, in the order `n8n_list_catalog`
+ * uses: the Public API first, then — only on a licence-shaped refusal (403/404)
+ * — the official MCP server's `search_projects`, and finally the caller's own
+ * personal project when no official client is configured.
+ *
+ * Returns either the resolved choices or an undecorated failure envelope for
+ * the caller to decorate (`kind`, `action`, ...).
+ */
+export async function resolveProjectChoices(
+  context?: InstanceContext
+): Promise<{ choices: ProjectChoices } | { failure: McpToolResponse }> {
+  const api = getN8nApiClient(context);
+  if (!api) {
+    return { failure: { success: false, code: 'NOT_CONFIGURED', error: 'n8n API not configured. Set N8N_API_URL and N8N_API_KEY.' } };
+  }
+
   try {
     const projects = (await api.listProjects()).map(p => ({ id: p.id, name: p.name, type: p.type, personal: p.type === 'personal' }));
     // GET /projects is itself licence-gated (Community instances answer 403 before this
     // point is reached), so a successful listing means team projects ARE licensed here —
     // regardless of whether any happen to be visible to this API key.
-    return {
-      success: true,
-      kind,
-      backend: 'public-api',
-      data: { teamProjectsEnabled: true, items: filterItems(projects, query, limit) },
-    } as McpToolResponse;
+    return { choices: { backend: 'public-api', teamProjectsEnabled: true, items: projects } };
   } catch (err) {
     const status = err instanceof N8nApiError ? err.statusCode : undefined;
     if (status !== 403 && status !== 404) {
-      return { success: false, kind, code: 'API_ERROR', error: err instanceof Error ? err.message : String(err) } as McpToolResponse;
+      return { failure: { success: false, code: 'API_ERROR', error: err instanceof Error ? err.message : String(err) } };
     }
   }
 
@@ -152,38 +224,35 @@ export async function handleListCatalog(args: unknown, context?: InstanceContext
   // lists projects regardless of the Public API's licence gate.
   if (getOfficialMcpClient(context)) {
     const official = await callOfficialTool(context, CATALOG_TOOLS, {}, DEFAULT_TIMEOUT_MS, 'list_catalog', true);
-    if (!official.success) return { ...official, kind, backend: 'official-mcp' } as McpToolResponse;
+    if (!official.success) return { failure: { ...official, backend: 'official-mcp' } as McpToolResponse };
     // search_projects output schema (docs/local/official-agent-tools-2026-08-27/all-official-tools-2026-08-27.json): { data: [{id, name, type}], count, teamProjectsEnabled?, hint? }.
     const officialData = official.data as any;
     const raw = (officialData?.data ?? []) as any[];
-    const items: CatalogItem[] = raw.map(p => ({ id: String(p.id), name: String(p.name), type: p.type, personal: p.type === 'personal' }));
+    const items: ProjectChoice[] = raw.map(p => ({ id: String(p.id), name: String(p.name), type: p.type, personal: p.type === 'personal' }));
     const teamProjectsEnabled = typeof officialData?.teamProjectsEnabled === 'boolean'
       ? officialData.teamProjectsEnabled
       : items.some(p => !p.personal);
-    return {
-      success: true,
-      kind,
-      backend: 'official-mcp',
-      data: { teamProjectsEnabled, items: filterItems(items, query, limit) },
-    } as McpToolResponse;
+    return { choices: { backend: 'official-mcp', teamProjectsEnabled, items } };
   }
 
   try {
     const personalId = await api.resolvePersonalProjectId();
     return {
-      success: true,
-      kind,
-      backend: 'public-api',
-      data: { teamProjectsEnabled: false, items: filterItems([{ id: personalId, name: 'Personal', type: 'personal', personal: true }], query, limit) },
-    } as McpToolResponse;
+      choices: {
+        backend: 'public-api',
+        teamProjectsEnabled: false,
+        items: [{ id: personalId, name: 'Personal', type: 'personal', personal: true }],
+      },
+    };
   } catch (err) {
     return {
-      success: false,
-      kind,
-      backend: 'public-api',
-      code: 'API_ERROR',
-      error: err instanceof Error ? err.message : String(err),
-      hint: 'Team projects are not available through the Public API on this instance and the personal project could not be resolved. Pass projectId explicitly, or configure N8N_MCP_ACCESS_TOKEN so projects can be listed through n8n\'s MCP server.',
-    } as McpToolResponse;
+      failure: {
+        success: false,
+        backend: 'public-api',
+        code: 'API_ERROR',
+        error: err instanceof Error ? err.message : String(err),
+        hint: 'Team projects are not available through the Public API on this instance and the personal project could not be resolved. Pass projectId explicitly, or configure N8N_MCP_ACCESS_TOKEN so projects can be listed through n8n\'s MCP server.',
+      } as McpToolResponse,
+    };
   }
 }

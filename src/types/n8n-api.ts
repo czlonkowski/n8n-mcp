@@ -504,9 +504,21 @@ export interface McpToolResponse {
   officialError?: unknown;
   truncated?: boolean;
   // n8n_list_catalog: which catalog was listed ('projects' | 'tags') and
-  // which backend answered ('public-api' | 'official-mcp').
+  // which backend answered ('public-api' | 'official-mcp' | 'n8n-mcp').
   kind?: string;
   backend?: string;
+  // Routed workflow-side operations: which route ran (`method` for
+  // n8n_test_workflow, `source` for n8n_workflow_versions, `mode` for the
+  // requested sub-operation), whether the consent flow had to enable
+  // "Available in MCP" on the workflow, a validation report attached to the
+  // result, and non-fatal warnings from the call (e.g. canvas-group repairs
+  // reported by a workflow write).
+  method?: string;
+  source?: string;
+  mode?: string;
+  exposedToMcp?: boolean;
+  validation?: unknown;
+  warnings?: string[];
 }
 
 // Execution Filtering Types

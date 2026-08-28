@@ -1,11 +1,13 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 vi.mock('@/utils/logger', () => ({ logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() } }));
 const access = vi.hoisted(() => ({ getOfficialMcpClient: vi.fn() }));
 vi.mock('@/mcp/official-mcp-access', async (orig) => ({ ...(await orig<any>()), getOfficialMcpClient: access.getOfficialMcpClient }));
 const api = vi.hoisted(() => ({ getN8nApiClient: vi.fn() }));
 vi.mock('@/mcp/handlers-n8n-manager', () => ({ getN8nApiClient: api.getN8nApiClient }));
-import { handleExploreNodeResources, handleListCatalog } from '@/mcp/handlers-official-tools';
+import { handleExploreNodeResources, handleListCatalog, callOfficialTool, resolveProjectChoices } from '@/mcp/handlers-official-tools';
 import { N8nApiError } from '@/utils/n8n-errors';
+import { N8nOfficialMcpClient } from '@/services/n8n-official-mcp-client';
+import { startFakeOfficialMcp, FakeOfficialMcp, FakeTool } from '../../helpers/fake-official-mcp-server';
 
 function fakeClient(tools: string[], result: any = { ok: true, results: [{ name: '#general', value: 'C1' }] }) {
   return {
@@ -178,5 +180,99 @@ describe('handleListCatalog', () => {
   it('NOT_CONFIGURED without an api client', async () => {
     api.getN8nApiClient.mockReturnValue(null);
     expect(await handleListCatalog({ kind: 'tags' })).toMatchObject({ success: false, code: 'NOT_CONFIGURED' });
+  });
+});
+
+describe('resolveProjectChoices', () => {
+  it('resolves from the Public API', async () => {
+    api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockResolvedValue([{ id: 'p1', name: 'Personal', type: 'personal' }, { id: 'p2', name: 'Team A', type: 'team' }]) });
+    const r: any = await resolveProjectChoices();
+    expect(r.choices).toEqual({
+      backend: 'public-api',
+      teamProjectsEnabled: true,
+      items: [{ id: 'p1', name: 'Personal', type: 'personal', personal: true }, { id: 'p2', name: 'Team A', type: 'team', personal: false }],
+    });
+  });
+  it('falls back to the official server on a licence refusal', async () => {
+    api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)) });
+    access.getOfficialMcpClient.mockReturnValue(fakeClient(['search_projects'], { ok: true, data: [{ id: 'p1', name: 'Personal', type: 'personal' }, { id: 'p2', name: 'Team A', type: 'team' }] }));
+    const r: any = await resolveProjectChoices();
+    expect(r.choices).toMatchObject({ backend: 'official-mcp', teamProjectsEnabled: true, items: [{ id: 'p1', personal: true }, { id: 'p2', personal: false }] });
+  });
+  it('falls back to the personal project when no official client is configured', async () => {
+    api.getN8nApiClient.mockReturnValue({
+      listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)),
+      resolvePersonalProjectId: vi.fn().mockResolvedValue('personal-1'),
+    });
+    access.getOfficialMcpClient.mockReturnValue(null);
+    const r: any = await resolveProjectChoices();
+    expect(r.choices).toEqual({
+      backend: 'public-api',
+      teamProjectsEnabled: false,
+      items: [{ id: 'personal-1', name: 'Personal', type: 'personal', personal: true }],
+    });
+  });
+  it('returns an undecorated failure envelope when nothing can resolve projects', async () => {
+    api.getN8nApiClient.mockReturnValue({
+      listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)),
+      resolvePersonalProjectId: vi.fn().mockRejectedValue(new Error('no personal project')),
+    });
+    access.getOfficialMcpClient.mockReturnValue(null);
+    const r: any = await resolveProjectChoices();
+    expect(r.failure).toMatchObject({ success: false, code: 'API_ERROR', backend: 'public-api' });
+    expect(r.failure.kind).toBeUndefined();
+  });
+});
+
+/**
+ * These go through the REAL N8nOfficialMcpClient against the fake server, so the
+ * envelope mapping is exercised on the wire rather than against a hand-written
+ * client double.
+ */
+describe('callOfficialTool over the wire', () => {
+  let savedMode: string | undefined;
+  let fake: FakeOfficialMcp | undefined;
+  let client: N8nOfficialMcpClient | undefined;
+
+  beforeAll(() => { savedMode = process.env.WEBHOOK_SECURITY_MODE; process.env.WEBHOOK_SECURITY_MODE = 'moderate'; });
+  afterAll(() => { if (savedMode === undefined) delete process.env.WEBHOOK_SECURITY_MODE; else process.env.WEBHOOK_SECURITY_MODE = savedMode; });
+  afterEach(async () => { await client?.close(); await fake?.close(); client = undefined; fake = undefined; });
+
+  async function connect(tools: FakeTool[]) {
+    fake = await startFakeOfficialMcp({ tools });
+    client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    access.getOfficialMcpClient.mockReturnValue(client);
+  }
+
+  it('maps a root success:false result (no isError) to OFFICIAL_MCP_ERROR', async () => {
+    await connect([{ name: 'get_workflow_history', handler: () => ({ success: false, workflowId: 'w', versions: [], count: 0, error: 'boom' }) }]);
+    const r: any = await callOfficialTool(undefined, ['get_workflow_history'], { workflowId: 'w' }, 30000, 'workflow_versions', true);
+    expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_ERROR', error: 'boom', officialTool: 'get_workflow_history' });
+    expect(r.officialError).toMatchObject({ success: false, workflowId: 'w' });
+  });
+
+  it('maps an execute_workflow status:error result to OFFICIAL_MCP_ERROR', async () => {
+    await connect([{ name: 'execute_workflow', handler: () => ({ executionId: null, status: 'error', error: 'trigger missing' }) }]);
+    const r: any = await callOfficialTool(undefined, ['execute_workflow'], { workflowId: 'w' }, 30000, 'test_workflow', false);
+    expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_ERROR', error: 'trigger missing' });
+  });
+
+  it('keeps a root success:true result a success', async () => {
+    await connect([{ name: 'get_workflow_history', handler: () => ({ success: true, workflowId: 'w', versions: [{ id: 1 }], count: 1 }) }]);
+    const r: any = await callOfficialTool(undefined, ['get_workflow_history'], { workflowId: 'w' }, 30000, 'workflow_versions', true);
+    expect(r).toMatchObject({ success: true, data: { success: true, count: 1 } });
+  });
+
+  it('names the minimum n8n version when the instance lacks the tool', async () => {
+    await connect([{ name: 'get_workflow_history' }]);
+    const r: any = await callOfficialTool(undefined, ['get_workflow_versions_diff'], {}, 30000, 'workflow_versions', true);
+    expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_TOOL_UNAVAILABLE' });
+    expect(r.error).toContain('n8n >= 2.36');
+  });
+
+  it('falls back to the default minimum version for an unmapped tool', async () => {
+    await connect([{ name: 'get_workflow_history' }]);
+    const r: any = await callOfficialTool(undefined, ['some_future_tool'], {}, 30000, 'future', true);
+    expect(r.error).toContain('n8n >= 2.34');
   });
 });
