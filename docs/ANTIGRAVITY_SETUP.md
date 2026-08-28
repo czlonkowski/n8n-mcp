@@ -294,7 +294,7 @@ n8n_update_partial_workflow({
 
 ### removeConnection Syntax
 
-`removeConnection` takes the same fields; `sourceOutput` and `targetInput` are optional and default to `"main"`:
+`removeConnection` takes `source` and `target`; `sourceOutput` is optional (default `"main"`) and selects which output's connections to the target are removed; `targetInput` is not used by this operation:
 ```json
 {
   "type": "removeConnection",
