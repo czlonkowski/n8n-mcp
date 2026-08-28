@@ -47,7 +47,7 @@ n8n-mcp provides tools organized into categories:
 | `n8n_audit_instance` | Security audit (built-in + custom scan) | 500-5000ms |
 | `n8n_autofix_workflow` | Auto-fix validation errors | 200-1500ms |
 | `n8n_manage_agents` | Persisted n8n Agent CRUD/validate/publish | 150-400ms; `call` action: 5-60s |
-| `n8n_explore_node_resources` | Resolve live loadOptions/listSearch values | 200-2000ms |
+| `n8n_explore_node_resources` | Resolve live loadOptions/listSearch values | 200 ms - 5 s |
 | `n8n_list_catalog` | List projects or tags | 50-300ms |
 
 ---

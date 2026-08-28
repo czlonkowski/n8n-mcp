@@ -193,7 +193,7 @@ A **persisted n8n Agent** is a different artifact from the AI Agent node covered
 | A reasoning step inside a workflow, wired with `ai_*` sub-nodes | **AI Agent node** (this skill, above) |
 | A standalone assistant with its own lifecycle — draft, validate, publish, versions, channels — independent of any one workflow | **Persisted Agent** (`n8n_manage_agents`) |
 
-**Prerequisites:** `N8N_MCP_ACCESS_TOKEN` configured (separate from the Public API key) and n8n **2.34+** with the agents module enabled. Without the token, every action but `reference`/`search` fails.
+**Prerequisites:** `N8N_MCP_ACCESS_TOKEN` configured (separate from the Public API key) and n8n **2.34+** with the agents module enabled. The token is required for **every** action, including `reference`/`search` — without it, nothing works. Separately, `reference` and `search` work for **any** agent regardless of MCP exposure; every other action needs the target agent exposed to MCP (agents created through this tool are exposed automatically — the exposure gate only matters for agents that already existed before this tool touched them).
 
 **Build sequence:**
 1. `action: "reference"` — read the config schema and the exact mutate operations before anything else.
