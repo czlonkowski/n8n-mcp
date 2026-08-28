@@ -136,6 +136,17 @@ describe('handleListCatalog', () => {
     const r = await handleListCatalog({ kind: 'projects' });
     expect(r).toMatchObject({ success: true, backend: 'official-mcp', data: { teamProjectsEnabled: false } });
   });
+  it('keeps kind and backend on an official-mcp fallback failure (unreachable/auth failed)', async () => {
+    api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)) });
+    const client = {
+      capabilities: vi.fn().mockResolvedValue({ reachable: false, error: 'OFFICIAL_MCP_AUTH_FAILED', toolCount: 0, toolNames: [], agentTools: false, checkedAt: Date.now() }),
+      callTool: vi.fn(),
+    };
+    access.getOfficialMcpClient.mockReturnValue(client);
+    const r: any = await handleListCatalog({ kind: 'projects' });
+    expect(r).toMatchObject({ success: false, kind: 'projects', backend: 'official-mcp', code: 'OFFICIAL_MCP_AUTH_FAILED' });
+    expect(client.callTool).not.toHaveBeenCalled();
+  });
   it('returns the personal project only when the fallback is not configured', async () => {
     api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)), resolvePersonalProjectId: vi.fn().mockResolvedValue('p1') });
     access.getOfficialMcpClient.mockReturnValue(null);

@@ -152,7 +152,7 @@ export async function handleListCatalog(args: unknown, context?: InstanceContext
   // lists projects regardless of the Public API's licence gate.
   if (getOfficialMcpClient(context)) {
     const official = await callOfficialTool(context, CATALOG_TOOLS, {}, DEFAULT_TIMEOUT_MS, 'list_catalog', true);
-    if (!official.success) return official;
+    if (!official.success) return { ...official, kind, backend: 'official-mcp' } as McpToolResponse;
     // search_projects output schema (docs/local/official-agent-tools-2026-08-27/all-official-tools-2026-08-27.json): { data: [{id, name, type}], count, teamProjectsEnabled?, hint? }.
     const officialData = official.data as any;
     const raw = (officialData?.data ?? []) as any[];
