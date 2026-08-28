@@ -122,7 +122,8 @@ vi.mock('express', () => {
 const CANARY_AUTH = 'CANARY_AUTH_TEST_abc123';
 const CANARY_KEY = 'CANARY_N8N_KEY_TEST_def456';
 const CANARY_BODY = 'CANARY_BODY_TEST_ghi789';
-const CANARIES = [CANARY_AUTH, CANARY_KEY, CANARY_BODY];
+const CANARY_MCP_TOKEN = 'CANARY_MCP_TOKEN_TEST_jkl012';
+const CANARIES = [CANARY_AUTH, CANARY_KEY, CANARY_BODY, CANARY_MCP_TOKEN];
 
 function findHandler(method: 'get' | 'post' | 'delete', path: string) {
   const route = mockHandlers[method].find((r: any) => r.path === path);
@@ -211,6 +212,7 @@ describe('POST /mcp log redaction', () => {
     req.headers = {
       authorization: `Bearer ${CANARY_AUTH}`,
       'x-n8n-key': CANARY_KEY,
+      'x-n8n-mcp-token': CANARY_MCP_TOKEN,
       'content-type': 'application/json',
     };
     req.body = {
@@ -241,6 +243,7 @@ describe('POST /mcp log redaction', () => {
     req.headers = {
       authorization: `Bearer ${TEST_AUTH_TOKEN}`,
       'x-n8n-key': CANARY_KEY,
+      'x-n8n-mcp-token': CANARY_MCP_TOKEN,
       'content-type': 'application/json',
     };
     req.body = {
@@ -255,6 +258,7 @@ describe('POST /mcp log redaction', () => {
 
     const serialized = serializeAllLoggerCalls();
     expect(serialized).not.toContain(CANARY_KEY);
+    expect(serialized).not.toContain(CANARY_MCP_TOKEN);
     expect(serialized).not.toContain(CANARY_BODY);
     expect(serialized).not.toContain(TEST_AUTH_TOKEN);
   });

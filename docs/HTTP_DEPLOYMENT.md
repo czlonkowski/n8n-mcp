@@ -181,6 +181,20 @@ When configured, you get **21 additional tools** (total: 28 tools). See the [REA
 
 `N8N_MCP_ACCESS_TOKEN` additionally unlocks `n8n_manage_agents`, `n8n_explore_node_resources`, and the team-project fallback in `n8n_list_catalog` — see [Connecting n8n-mcp to n8n's instance-level MCP server](./OFFICIAL_MCP_SETUP.md). The MCP endpoint is derived from `N8N_API_URL`; instances that serve MCP from a split host (`N8N_MCP_BASE_URL`) are not supported.
 
+#### Per-Request Instance Headers (Multi-Tenant)
+
+In multi-tenant HTTP mode (`ENABLE_MULTI_TENANT=true`) each request carries its own n8n target instead of using the process-level environment variables:
+
+| Header | Description | Required |
+|--------|-------------|----------|
+| `x-n8n-url` | The tenant's n8n instance URL (validated by the SSRF gate) | Yes |
+| `x-n8n-key` | The tenant's n8n Public API key | Yes |
+| `x-n8n-mcp-token` | The tenant's MCP access token, the per-request equivalent of `N8N_MCP_ACCESS_TOKEN` | No |
+| `x-instance-id` | Opaque tenant identifier, used to key caches and sessions | No |
+| `x-session-id` | Client-supplied session identifier | No |
+
+A request whose headers carry `x-n8n-url` plus either credential is authoritative: it never falls back to the server's own `N8N_API_KEY` or `N8N_MCP_ACCESS_TOKEN`. All three credential headers are redacted from logs.
+
 #### Getting Your n8n API Key
 
 1. Log into your n8n instance

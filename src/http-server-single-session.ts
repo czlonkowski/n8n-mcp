@@ -39,6 +39,11 @@ const DEFAULT_PROTOCOL_VERSION = STANDARD_PROTOCOL_VERSION;
 interface MultiTenantHeaders {
   'x-n8n-url'?: string;
   'x-n8n-key'?: string;
+  // MCP access token for n8n's instance-level MCP server (n8n_manage_agents,
+  // n8n_explore_node_resources, the team-project fallback in n8n_list_catalog).
+  // Separate secret from x-n8n-key; the env-level equivalent is
+  // N8N_MCP_ACCESS_TOKEN.
+  'x-n8n-mcp-token'?: string;
   'x-instance-id'?: string;
   'x-session-id'?: string;
 }
@@ -111,6 +116,7 @@ function extractMultiTenantHeaders(req: express.Request): MultiTenantHeaders {
   return {
     'x-n8n-url': req.headers['x-n8n-url'] as string | undefined,
     'x-n8n-key': req.headers['x-n8n-key'] as string | undefined,
+    'x-n8n-mcp-token': req.headers['x-n8n-mcp-token'] as string | undefined,
     'x-instance-id': req.headers['x-instance-id'] as string | undefined,
     'x-session-id': req.headers['x-session-id'] as string | undefined,
   };
@@ -1488,6 +1494,7 @@ export class SingleSessionHTTPServer {
         const headers = extractMultiTenantHeaders(req);
         const hasUrl = headers['x-n8n-url'];
         const hasKey = headers['x-n8n-key'];
+        const hasMcpToken = headers['x-n8n-mcp-token'];
 
         // SECURITY (GHSA-jxx9-px88-pj69, GHSA-2cf7-hpwf-47h9): in multi-tenant
         // mode both tenant headers are required; an incomplete context is
@@ -1508,11 +1515,15 @@ export class SingleSessionHTTPServer {
           return;
         }
 
-        if (hasUrl || hasKey) {
-          // Create context with proper type handling
+        if (hasUrl || hasKey || hasMcpToken) {
+          // Create context with proper type handling. A context carrying
+          // n8nApiUrl plus either credential is authoritative for this
+          // request — resolveOfficialMcpConfig and getN8nApiClient never fall
+          // back to the environment for it.
           const candidate: InstanceContext = {
             n8nApiUrl: hasUrl || undefined,
             n8nApiKey: hasKey || undefined,
+            n8nMcpAccessToken: hasMcpToken || undefined,
             instanceId: headers['x-instance-id'] || undefined,
             sessionId: headers['x-session-id'] || undefined
           };
