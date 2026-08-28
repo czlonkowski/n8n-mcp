@@ -29,7 +29,7 @@ describe('handleExploreNodeResources', () => {
   it('forwards the validated args and returns data verbatim', async () => {
     const client = fakeClient(['explore_node_resources']); access.getOfficialMcpClient.mockReturnValue(client);
     const r = await handleExploreNodeResources({ ...VALID, filter: 'gen', timeoutMs: 60000 });
-    expect(client.callTool).toHaveBeenCalledWith('explore_node_resources', { ...VALID, filter: 'gen' }, { timeoutMs: 60000 });
+    expect(client.callTool).toHaveBeenCalledWith('explore_node_resources', { ...VALID, filter: 'gen' }, { timeoutMs: 60000, idempotent: true });
     expect(r).toMatchObject({ success: true, officialTool: 'explore_node_resources', data: { results: [{ value: 'C1' }] } });
   });
   it('OFFICIAL_MCP_TOOL_UNAVAILABLE when the instance lacks the tool', async () => {
@@ -97,7 +97,7 @@ describe('handleListCatalog', () => {
     const client = fakeClient(['search_projects'], { ok: true, data: [{ id: 'p1', name: 'Personal', type: 'personal' }] });
     access.getOfficialMcpClient.mockReturnValue(client);
     const r = await handleListCatalog({ kind: 'projects' });
-    expect(client.callTool).toHaveBeenCalledWith('search_projects', {}, { timeoutMs: 30000 });
+    expect(client.callTool).toHaveBeenCalledWith('search_projects', {}, { timeoutMs: 30000, idempotent: true });
     expect(r).toMatchObject({ success: true, backend: 'official-mcp', data: { teamProjectsEnabled: false, items: [{ id: 'p1', personal: true }] } });
   });
   it('uses the official teamProjectsEnabled flag when present, even with only a personal project returned', async () => {

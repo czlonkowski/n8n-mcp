@@ -31,13 +31,18 @@ const exploreSchema = z.object({
 
 const EXPLORE_TOOLS = ['explore_node_resources'];
 
-/** Shared "call one official tool, wrap the result" path for the passthrough tools. */
+/**
+ * Shared "call one official tool, wrap the result" path for the passthrough
+ * tools. `idempotent` says whether the call may be re-sent after a
+ * connection-level failure — see `N8nOfficialMcpClient.callTool`.
+ */
 export async function callOfficialTool(
   context: InstanceContext | undefined,
   toolAliases: string[],
   args: Record<string, unknown>,
   timeoutMs: number,
   label: string,
+  idempotent: boolean,
 ): Promise<McpToolResponse> {
   const client = getOfficialMcpClient(context);
   if (!client) return notConfiguredResponse(context, label) as McpToolResponse;
@@ -46,7 +51,7 @@ export async function callOfficialTool(
     if (!caps.reachable) return officialFailure(new OfficialMcpError(caps.error ?? 'OFFICIAL_MCP_TRANSPORT_ERROR', 'n8n MCP server is not reachable'), label) as McpToolResponse;
     const tool = toolAliases.find(t => caps.toolNames.includes(t));
     if (!tool) return officialFailure(new OfficialMcpError('OFFICIAL_MCP_TOOL_UNAVAILABLE', `This instance does not expose ${toolAliases.join(' / ')}`), label) as McpToolResponse;
-    const result = await client.callTool(tool, args, { timeoutMs });
+    const result = await client.callTool(tool, args, { timeoutMs, idempotent });
     const data = result.json ?? result.text;
     if (result.text.startsWith('Input validation error')) return { success: false, action: label, code: 'INVALID_ARGS', error: result.text.slice(0, 2000) };
     if (result.isError || (data as any)?.ok === false) {
@@ -66,7 +71,8 @@ export async function handleExploreNodeResources(args: unknown, context?: Instan
     return { success: false, action: 'explore_node_resources', code: 'INVALID_ARGS', error: parsed.error.issues.map(i => `${i.path.join('.') || 'input'}: ${i.message}`).join('; ') };
   }
   const { timeoutMs, ...forwarded } = parsed.data;
-  return callOfficialTool(context, EXPLORE_TOOLS, forwarded, timeoutMs ?? DEFAULT_TIMEOUT_MS, 'explore_node_resources');
+  // explore_node_resources only reads a node's dynamic option list.
+  return callOfficialTool(context, EXPLORE_TOOLS, forwarded, timeoutMs ?? DEFAULT_TIMEOUT_MS, 'explore_node_resources', true);
 }
 
 const CATALOG_TOOLS = ['search_projects'];
@@ -138,7 +144,7 @@ export async function handleListCatalog(args: unknown, context?: InstanceContext
   // Licence refusal (team projects are Enterprise-only): the official server
   // lists projects regardless of the Public API's licence gate.
   if (getOfficialMcpClient(context)) {
-    const official = await callOfficialTool(context, CATALOG_TOOLS, {}, DEFAULT_TIMEOUT_MS, 'list_catalog');
+    const official = await callOfficialTool(context, CATALOG_TOOLS, {}, DEFAULT_TIMEOUT_MS, 'list_catalog', true);
     if (!official.success) return official;
     // search_projects output schema (docs/local/official-agent-tools-2026-08-27/all-official-tools-2026-08-27.json): { data: [{id, name, type}], count, teamProjectsEnabled?, hint? }.
     const officialData = official.data as any;

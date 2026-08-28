@@ -27,6 +27,13 @@ export interface AgentActionSpec {
   tools: string[];
   defaultTimeoutMs: number;
   destructive: boolean;
+  /**
+   * Safe to send twice. Only an idempotent call is retried after a
+   * connection-level failure (see `N8nOfficialMcpClient.callTool`): a dead
+   * socket does not prove the request never reached n8n, so retrying a
+   * create/mutate/call could run it a second time.
+   */
+  idempotent: boolean;
 }
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -35,21 +42,21 @@ export const MIN_TIMEOUT_MS = 5_000;
 export const MAX_TIMEOUT_MS = 600_000;
 
 export const AGENT_ACTION_MAP: Record<AgentAction, AgentActionSpec> = {
-  reference: { tools: ['get_agent_builder_reference'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false },
-  search: { tools: ['search_agents'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false },
-  get: { tools: ['get_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false },
-  create: { tools: ['create_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false },
-  mutate: { tools: ['mutate_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false },
-  validate: { tools: ['validate_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false },
-  call: { tools: ['call_agent'], defaultTimeoutMs: CALL_TIMEOUT_MS, destructive: false },
-  publish: { tools: ['publish_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true },
-  unpublish: { tools: ['unpublish_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true },
-  revert: { tools: ['revert_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true },
-  versions: { tools: ['list_agent_versions'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false },
-  delete: { tools: ['delete_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true },
-  discover_assets: { tools: ['discover_agent_assets'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false },
-  verify_mcp_server: { tools: ['verify_agent_mcp_server'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false },
-  update_integration: { tools: ['update_agent_integration'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true },
+  reference: { tools: ['get_agent_builder_reference'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
+  search: { tools: ['search_agents'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
+  get: { tools: ['get_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
+  create: { tools: ['create_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: false },
+  mutate: { tools: ['mutate_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: false },
+  validate: { tools: ['validate_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
+  call: { tools: ['call_agent'], defaultTimeoutMs: CALL_TIMEOUT_MS, destructive: false, idempotent: false },
+  publish: { tools: ['publish_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
+  unpublish: { tools: ['unpublish_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
+  revert: { tools: ['revert_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
+  versions: { tools: ['list_agent_versions'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
+  delete: { tools: ['delete_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
+  discover_assets: { tools: ['discover_agent_assets'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
+  verify_mcp_server: { tools: ['verify_agent_mcp_server'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
+  update_integration: { tools: ['update_agent_integration'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
 };
 
 export const AGENT_ACTIONS = Object.keys(AGENT_ACTION_MAP) as AgentAction[];

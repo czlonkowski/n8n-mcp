@@ -34,15 +34,15 @@ describe('handleManageAgents', () => {
   it('forwards args verbatim to the mapped tool with the default timeout', async () => {
     const client = fakeClient(ALL, { get_agent: { ok: true, agent: { id: 'a1' } } }); access.getOfficialMcpClient.mockReturnValue(client);
     const r = await handleManageAgents({ action: 'get', args: { agentId: 'a1', versionId: 'v9' } });
-    expect(client.callTool).toHaveBeenCalledWith('get_agent', { agentId: 'a1', versionId: 'v9' }, { timeoutMs: 30_000 });
+    expect(client.callTool).toHaveBeenCalledWith('get_agent', { agentId: 'a1', versionId: 'v9' }, { timeoutMs: 30_000, idempotent: true });
     expect(r).toMatchObject({ success: true, action: 'get', officialTool: 'get_agent', data: { ok: true, agent: { id: 'a1' } } });
   });
   it('uses 180 s for call and honours an explicit timeoutMs', async () => {
     const client = fakeClient(ALL); access.getOfficialMcpClient.mockReturnValue(client);
     await handleManageAgents({ action: 'call', args: { agentId: 'a', request: { type: 'message', message: 'hi' } } });
-    expect(client.callTool).toHaveBeenLastCalledWith('call_agent', expect.anything(), { timeoutMs: 180_000 });
+    expect(client.callTool).toHaveBeenLastCalledWith('call_agent', expect.anything(), { timeoutMs: 180_000, idempotent: false });
     await handleManageAgents({ action: 'call', args: { agentId: 'a', request: { type: 'message', message: 'hi' } }, timeoutMs: 240_000 });
-    expect(client.callTool).toHaveBeenLastCalledWith('call_agent', expect.anything(), { timeoutMs: 240_000 });
+    expect(client.callTool).toHaveBeenLastCalledWith('call_agent', expect.anything(), { timeoutMs: 240_000, idempotent: false });
   });
   it('serves reference from the client cache', async () => {
     const client = fakeClient(ALL); access.getOfficialMcpClient.mockReturnValue(client);
@@ -84,7 +84,7 @@ describe('handleManageAgents', () => {
     api.getN8nApiClient.mockReturnValue({ getCredential: vi.fn().mockResolvedValue({ id: 'c1', name: 'Azure', type: 'azureOpenAiApi' }) });
     const r = await handleManageAgents({ action: 'validate', args: { agentId: 'a' } });
     expect(r.success).toBe(true);
-    expect(client.callTool).toHaveBeenCalledWith('get_agent', { agentId: 'a' }, { timeoutMs: 30_000 });
+    expect(client.callTool).toHaveBeenCalledWith('get_agent', { agentId: 'a' }, { timeoutMs: 30_000, idempotent: true });
     expect(r.hint).toContain('azureOpenAiApi'); expect(r.hint).toContain('openAiApi');
   });
   it('attaches the credential-type hint on the failure branch too (call_agent reports it as an error)', async () => {
@@ -138,7 +138,7 @@ describe('handleManageAgents', () => {
 
 describe('resolveOfficialTool', () => {
   it('returns the first alias present', () => {
-    expect(resolveOfficialTool({ tools: ['mutate_agent', 'update_agent'], defaultTimeoutMs: 1, destructive: false }, ['update_agent'])).toBe('update_agent');
-    expect(resolveOfficialTool({ tools: ['mutate_agent'], defaultTimeoutMs: 1, destructive: false }, [])).toBeNull();
+    expect(resolveOfficialTool({ tools: ['mutate_agent', 'update_agent'], defaultTimeoutMs: 1, destructive: false, idempotent: false }, ['update_agent'])).toBe('update_agent');
+    expect(resolveOfficialTool({ tools: ['mutate_agent'], defaultTimeoutMs: 1, destructive: false, idempotent: false }, [])).toBeNull();
   });
 });

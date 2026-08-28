@@ -1,11 +1,29 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { startFakeOfficialMcp, FakeOfficialMcp } from '../../helpers/fake-official-mcp-server';
-import { N8nOfficialMcpClient, probeOfficialMcp } from '@/services/n8n-official-mcp-client';
+import { N8nOfficialMcpClient, probeOfficialMcp, OFFICIAL_MCP_FAILURE_TTL_MS } from '@/services/n8n-official-mcp-client';
 import { SSRFProtection } from '@/utils/ssrf-protection';
 
 let savedMode: string | undefined;
 beforeAll(() => { savedMode = process.env.WEBHOOK_SECURITY_MODE; process.env.WEBHOOK_SECURITY_MODE = 'moderate'; });
 afterAll(() => { if (savedMode === undefined) delete process.env.WEBHOOK_SECURITY_MODE; else process.env.WEBHOOK_SECURITY_MODE = savedMode; });
+
+function spyOnPinnedFetch() {
+  const original = SSRFProtection.createPinnedFetch.bind(SSRFProtection);
+  let failNext = false;
+  const spy = vi.spyOn(SSRFProtection, 'createPinnedFetch').mockImplementation((addresses) => {
+    const real = original(addresses);
+    return {
+      fetch: (url, init) => {
+        // A genuine connection-level error: rejects with no HTTP status, the
+        // same shape a socket reset or DNS failure produces.
+        if (failNext) { failNext = false; return Promise.reject(new Error('simulated socket reset')); }
+        return real.fetch(url, init);
+      },
+      close: () => real.close(),
+    };
+  });
+  return { spy, breakNextFetch: () => { failNext = true; } };
+}
 
 describe('N8nOfficialMcpClient', () => {
   let fake: FakeOfficialMcp;
@@ -120,6 +138,32 @@ describe('N8nOfficialMcpClient', () => {
     await client.close();
   });
 
+  // A negative probe is cached for 30 s, not the 10 min a success gets: a
+  // token that was just fixed, or MCP being switched on in n8n's settings,
+  // must not leave every official-MCP-backed tool answering "not reachable"
+  // for ten minutes. Only Date is faked here — the transport's own timers and
+  // the loopback server keep running for real.
+  it('re-probes a failed capabilities result after the short failure TTL', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }], raw: { status: 401, body: '{}', contentType: 'application/json' } });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      expect(await client.capabilities()).toMatchObject({ reachable: false, error: 'OFFICIAL_MCP_AUTH_FAILED' });
+      fake.setRaw(undefined);
+
+      const postsAfterFailure = fake.requests.filter(r => r.method === 'POST').length;
+      vi.setSystemTime(Date.now() + OFFICIAL_MCP_FAILURE_TTL_MS - 1_000);
+      expect(await client.capabilities()).toMatchObject({ reachable: false });          // still inside the failure TTL
+      expect(fake.requests.filter(r => r.method === 'POST').length).toBe(postsAfterFailure);
+
+      vi.setSystemTime(Date.now() + 2_000);
+      expect(await client.capabilities()).toMatchObject({ reachable: true, toolCount: 1 });   // TTL expired: probed again
+    } finally {
+      vi.useRealTimers();
+      await client.close();
+    }
+  });
+
   it('reconnects once after the transport drops', async () => {
     fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
     const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
@@ -148,33 +192,62 @@ describe('N8nOfficialMcpClient', () => {
   it('retries once on a genuine connection failure, using a freshly created transport', async () => {
     fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
     const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
-
-    const originalCreatePinnedFetch = SSRFProtection.createPinnedFetch.bind(SSRFProtection);
-    let failNextFetch = false;
-    const spy = vi.spyOn(SSRFProtection, 'createPinnedFetch').mockImplementation((addresses) => {
-      const real = originalCreatePinnedFetch(addresses);
-      return {
-        fetch: (url, init) => {
-          if (failNextFetch) { failNextFetch = false; return Promise.reject(new Error('simulated socket reset')); }
-          return real.fetch(url, init);
-        },
-        close: () => real.close(),
-      };
-    });
+    const { spy, breakNextFetch } = spyOnPinnedFetch();
     try {
-      const first = await client.callTool('search_agents', {});
+      const first = await client.callTool('search_agents', {}, { idempotent: true });
       expect(first.isError).toBe(false);
       expect(spy).toHaveBeenCalledTimes(1);
 
-      failNextFetch = true;   // breaks the next request on the already-connected client
+      breakNextFetch();   // breaks the next request on the already-connected client
       const requestsBeforeRetry = fake.requests.length;
-      const result = await client.callTool('search_agents', {});
+      const result = await client.callTool('search_agents', {}, { idempotent: true });
       expect(result.isError).toBe(false);
       expect(spy).toHaveBeenCalledTimes(2);                       // a fresh transport was created for the retry
       expect(fake.requests.length).toBeGreaterThan(requestsBeforeRetry); // the retry really hit the server again
-      await client.close();
     } finally {
       spy.mockRestore();
+      await client.close();
+    }
+  });
+
+  // A dead socket does not prove the request never reached n8n: create_agent,
+  // publish_agent and call_agent may already have run. Only a call the caller
+  // declares idempotent is re-sent.
+  it('does not retry a non-idempotent call after a connection failure', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'create_agent' }] });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    const { spy, breakNextFetch } = spyOnPinnedFetch();
+    try {
+      await client.callTool('create_agent', { name: 'a' }, { idempotent: true });   // establishes the connection
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      breakNextFetch();
+      const postsBefore = fake.requests.filter(r => r.method === 'POST').length;
+      await expect(client.callTool('create_agent', { name: 'b' })).rejects.toMatchObject({ code: 'OFFICIAL_MCP_TRANSPORT_ERROR' });
+      expect(spy).toHaveBeenCalledTimes(1);                  // no second transport: the call was not re-sent
+      // The discarded transport's own teardown may still send a DELETE; no
+      // second POST is what proves the call itself was not repeated.
+      expect(fake.requests.filter(r => r.method === 'POST').length).toBe(postsBefore);
+    } finally {
+      spy.mockRestore();
+      await client.close();
+    }
+  });
+
+  // An HTTP status means the request reached n8n, so even an idempotent call
+  // is surfaced rather than re-sent.
+  it('does not retry when the failure carries an HTTP status', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    try {
+      await client.callTool('search_agents', {}, { idempotent: true });
+      fake.setRaw({ status: 503, body: 'restarting', contentType: 'text/plain' });
+      const postsBefore = fake.requests.filter(r => r.method === 'POST').length;
+      await expect(client.callTool('search_agents', {}, { idempotent: true }))
+        .rejects.toMatchObject({ code: 'OFFICIAL_MCP_TRANSPORT_ERROR', status: 503 });
+      expect(fake.requests.filter(r => r.method === 'POST').length).toBe(postsBefore + 1);   // exactly one attempt
+    } finally {
+      await client.close();
     }
   });
 

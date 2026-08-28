@@ -75,7 +75,7 @@ async function credentialIdFromResult(args: Record<string, unknown>, data: unkno
   const agentId = args.agentId;
   if (typeof agentId !== 'string') return undefined;
   try {
-    const result = await client.callTool('get_agent', { agentId }, { timeoutMs: DEFAULT_TIMEOUT_MS });
+    const result = await client.callTool('get_agent', { agentId }, { timeoutMs: DEFAULT_TIMEOUT_MS, idempotent: true });
     const credential = (result.json as any)?.config?.credential;
     return typeof credential === 'string' ? credential : undefined;
   } catch {
@@ -136,7 +136,7 @@ export async function handleManageAgents(args: unknown, context?: InstanceContex
       );
     }
 
-    const result: OfficialToolResult = await client.callTool(tool, toolArgs, { timeoutMs: timeoutMs ?? spec.defaultTimeoutMs });
+    const result: OfficialToolResult = await client.callTool(tool, toolArgs, { timeoutMs: timeoutMs ?? spec.defaultTimeoutMs, idempotent: spec.idempotent });
     const data = result.json ?? result.text;
 
     // Error text is capped at 2000 chars — n8n's error text is untrusted output.

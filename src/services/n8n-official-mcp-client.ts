@@ -40,6 +40,13 @@ export interface OfficialToolResult { isError: boolean; text: string; json?: unk
 export interface AgentBuilderReference { ok?: boolean; uri?: string; guide?: string; configSchema?: unknown; [key: string]: unknown }
 
 export const OFFICIAL_MCP_CACHE_TTL_MS = 10 * 60 * 1000;
+/**
+ * How long an unreachable probe result is trusted. Much shorter than the
+ * success TTL: a token that was just fixed, an instance that was restarting,
+ * or MCP being switched on in n8n's settings should not leave every
+ * official-MCP-backed tool answering "not reachable" for ten minutes.
+ */
+export const OFFICIAL_MCP_FAILURE_TTL_MS = 30_000;
 export const OFFICIAL_RESULT_MAX_BYTES = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -165,7 +172,8 @@ export class N8nOfficialMcpClient {
   }
 
   async capabilities(force = false): Promise<OfficialMcpCapabilities> {
-    if (!force && this.caps && Date.now() - this.caps.checkedAt < OFFICIAL_MCP_CACHE_TTL_MS) return this.caps;
+    const ttl = this.caps?.reachable === false ? OFFICIAL_MCP_FAILURE_TTL_MS : OFFICIAL_MCP_CACHE_TTL_MS;
+    if (!force && this.caps && Date.now() - this.caps.checkedAt < ttl) return this.caps;
     let generation: number | undefined;
     try {
       const connected = await this.connect();
@@ -188,7 +196,16 @@ export class N8nOfficialMcpClient {
     return caps.toolNames.includes(name);
   }
 
-  async callTool(name: string, args: Record<string, unknown>, opts: { timeoutMs?: number } = {}): Promise<OfficialToolResult> {
+  /**
+   * Forwards one tool call. `idempotent` must be true for the connection-level
+   * retry below to fire — see the comment at the retry gate.
+   *
+   * The SDK validates a tool's `structuredContent` against the `outputSchema`
+   * the server advertised for it, so a drift between n8n's declared schema and
+   * what it actually returns rejects here as `McpError(InvalidParams)`;
+   * `mapOfficialTransportError` turns that into a readable transport error.
+   */
+  async callTool(name: string, args: Record<string, unknown>, opts: { timeoutMs?: number; idempotent?: boolean } = {}): Promise<OfficialToolResult> {
     const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const state: { generation?: number } = {};
     const attempt = async (): Promise<OfficialToolResult> => {
@@ -215,13 +232,19 @@ export class N8nOfficialMcpClient {
       // Retry only a genuine connection-level failure — no HTTP status at
       // all (a socket error, DNS failure, or "fetch failed"). An HTTP
       // status (401/404/429/500/503/…) means the request reached n8n and
-      // may have already mutated state (create_agent, publish_agent,
-      // call_agent, …); retrying it here would risk duplicating that side
-      // effect, so it is surfaced instead. Also require that this client
-      // has connected successfully before, so a first-ever call against an
-      // unreachable endpoint fails fast instead of doubling the wait.
+      // may have already mutated state; retrying it here would risk
+      // duplicating that side effect, so it is surfaced instead. Also
+      // require that this client has connected successfully before, so a
+      // first-ever call against an unreachable endpoint fails fast instead
+      // of doubling the wait.
+      //
+      // Even a connection-level failure is only safe to retry for a call the
+      // caller declared idempotent. "No HTTP status" does not mean "no
+      // request reached n8n": a socket that dies while the response is being
+      // read leaves a create_agent/publish_agent/call_agent that already ran
+      // on the instance, and a blind retry would run it twice.
       const isConnectionFailure = mapped.code === 'OFFICIAL_MCP_TRANSPORT_ERROR' && mapped.status === undefined;
-      if (!isConnectionFailure || !this.hasConnectedSuccessfully) throw mapped;
+      if (!isConnectionFailure || !this.hasConnectedSuccessfully || opts.idempotent !== true) throw mapped;
       try {
         return await attempt();
       } catch (again) {
@@ -236,7 +259,7 @@ export class N8nOfficialMcpClient {
 
   async reference(): Promise<AgentBuilderReference> {
     if (this.ref && Date.now() - this.ref.at < OFFICIAL_MCP_CACHE_TTL_MS) return this.ref.value;
-    const result = await this.callTool('get_agent_builder_reference', {});
+    const result = await this.callTool('get_agent_builder_reference', {}, { idempotent: true });
     const value = (result.json && typeof result.json === 'object' ? result.json : { guide: result.text }) as AgentBuilderReference;
     this.ref = { value, at: Date.now() };
     return value;
