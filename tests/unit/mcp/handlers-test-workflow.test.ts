@@ -17,6 +17,7 @@ import { WorkflowValidator } from '@/services/workflow-validator';
 import { NodeRepository } from '@/database/node-repository';
 import { startFakeOfficialMcp, FakeOfficialMcp, FakeTool } from '../../helpers/fake-official-mcp-server';
 import { resetToolPolicyCache } from '@/mcp/tool-policy';
+import { z } from 'zod';
 
 const telemetryMocks = vi.hoisted(() => ({
   trackEvent: vi.fn(),
@@ -576,6 +577,32 @@ describe('n8n_test_workflow over the wire', () => {
   it('turns n8n\'s refusal into WORKFLOW_NOT_EXPOSED', async () => {
     const context = await contextFor([
       { name: 'prepare_workflow_pin_data', isError: true, handler: () => ({ error: REFUSAL }) },
+    ]);
+
+    const r = await handlers.handleTestWorkflow({ workflowId: 'w', method: 'prepare' }, context);
+
+    expect(r).toMatchObject({
+      success: false,
+      code: 'WORKFLOW_NOT_EXPOSED',
+      method: 'prepare',
+      backend: 'official-mcp',
+    });
+    expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
+  });
+
+  // The real prepare_workflow_pin_data advertises a success-only output schema
+  // and answers the refusal with `structuredContent: { error: … }`. Enforcing
+  // that schema client-side turned the refusal into a transport error, so
+  // exposeToMcp could never fire — the refusal must survive to the handler.
+  it('reads the refusal through a structuredContent payload the tool\'s output schema forbids', async () => {
+    const context = await contextFor([
+      {
+        name: 'prepare_workflow_pin_data',
+        outputSchema: { nodeSchemasToGenerate: z.object({}).passthrough() },
+        isError: true,
+        handler: () => REFUSAL,
+        structured: () => ({ error: REFUSAL }),
+      },
     ]);
 
     const r = await handlers.handleTestWorkflow({ workflowId: 'w', method: 'prepare' }, context);

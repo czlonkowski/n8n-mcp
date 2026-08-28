@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import { startFakeOfficialMcp, FakeOfficialMcp } from '../../helpers/fake-official-mcp-server';
 import { N8nOfficialMcpClient, probeOfficialMcp, mapOfficialTransportError, OFFICIAL_MCP_FAILURE_TTL_MS } from '@/services/n8n-official-mcp-client';
 import { SSRFProtection } from '@/utils/ssrf-protection';
@@ -79,7 +80,7 @@ describe('N8nOfficialMcpClient', () => {
   // the text would let an oversized structured result through untouched.
   it('drops structuredContent that exceeds the size cap', async () => {
     fake = await startFakeOfficialMcp({
-      tools: [{ name: 'big_structured', handler: () => 'small text', structured: { blob: 'y'.repeat(300 * 1024) } }],
+      tools: [{ name: 'big_structured', handler: () => 'small text', structured: () => ({ blob: 'y'.repeat(300 * 1024) }) }],
     });
     const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
     const result = await client.callTool('big_structured', {});
@@ -91,11 +92,38 @@ describe('N8nOfficialMcpClient', () => {
   });
 
   it('keeps structuredContent that fits the size cap', async () => {
-    fake = await startFakeOfficialMcp({ tools: [{ name: 'small_structured', handler: () => 'text', structured: { ok: true } }] });
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'small_structured', handler: () => 'text', structured: () => ({ ok: true }) }] });
     const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
     const result = await client.callTool('small_structured', {});
     expect(result.json).toEqual({ ok: true });
     expect(result.truncated).toBe(false);
+    await client.close();
+  });
+
+  // n8n's tools advertise success-only output schemas and then answer refusals
+  // with a different payload — `prepare_workflow_pin_data` on a workflow that is
+  // not exposed to MCP returns isError with `{ error: 'Workflow is not available
+  // in MCP. …' }`. The SDK's default (Ajv) client-side check would reject that as
+  // McpError(InvalidParams), hiding the refusal callers need to read behind an
+  // opaque transport error.
+  it('returns an isError result whose payload contradicts the advertised output schema', async () => {
+    fake = await startFakeOfficialMcp({
+      tools: [{
+        name: 'prepare_workflow_pin_data',
+        outputSchema: { nodeSchemasToGenerate: z.object({}).passthrough() },
+        handler: () => 'Workflow is not available in MCP.',
+        structured: () => ({ error: 'Workflow is not available in MCP. Enable MCP access on the workflow first.' }),
+        isError: true,
+      }],
+    });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    // The SDK only caches output validators from listTools(), which is what
+    // capabilities()/hasTool() runs — so the schema must be learned first for
+    // this to exercise the client-side check at all.
+    expect(await client.hasTool('prepare_workflow_pin_data')).toBe(true);
+    const result = await client.callTool('prepare_workflow_pin_data', { workflowId: 'wf-1' });
+    expect(result.isError).toBe(true);
+    expect(result.json).toEqual({ error: 'Workflow is not available in MCP. Enable MCP access on the workflow first.' });
     await client.close();
   });
 
@@ -182,7 +210,7 @@ describe('N8nOfficialMcpClient', () => {
 
   it('keeps the -32602 case readable and marks only connection failures retryable', () => {
     expect(mapOfficialTransportError(new McpError(-32602, 'Authorization: Bearer eyJsecret')).message)
-      .toBe("Result did not match the tool's output schema or the request was rejected (JSON-RPC -32602)");
+      .toBe('n8n MCP server rejected the request arguments (JSON-RPC -32602)');
     expect(mapOfficialTransportError(new Error('fetch failed'))).toMatchObject({ retryable: true, message: 'fetch failed' });
     expect(mapOfficialTransportError('a thrown string')).toMatchObject({ retryable: false, message: 'Request to n8n MCP server failed' });
   });

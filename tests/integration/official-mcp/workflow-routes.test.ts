@@ -161,36 +161,10 @@ describe.skipIf(!enabled)('official MCP: routed workflow operations (live)', () 
     const refused = await handleTestWorkflow({ workflowId, method: 'prepare' });
     expect(refused.success).toBe(false);
     expect(refused.method).toBe('prepare');
-    // Live finding (n8n 2.36.7, not anticipated by the plan's response-shape
-    // table): prepare_workflow_pin_data's "not exposed" refusal is the bare
-    // `{"error": "..."}` shape, and on this instance that shape does not
-    // validate against the tool's own advertised MCP outputSchema. The MCP
-    // SDK's client-side output-schema check rejects it as McpError(InvalidParams)
-    // *before* n8n-mcp's NOT_EXPOSED_PREFIX matcher ever sees the text, so
-    // callOfficialTool reports OFFICIAL_MCP_TRANSPORT_ERROR instead of
-    // WORKFLOW_NOT_EXPOSED here - confirmed live (both with and without
-    // exposeToMcp: true; the consent auto-flip never fires for method:
-    // 'prepare' as a result, since it depends on recognising NOT_EXPOSED).
-    // get_workflow_history's refusal shape (`{success:false, ..., error}`,
-    // no isError) does not hit this drift and is used below to perform the
-    // actual exposure - this is real n8n MCP server behaviour, not a code
-    // defect in this PR, and is called out under Concerns in the report.
-    expect(['WORKFLOW_NOT_EXPOSED', 'OFFICIAL_MCP_TRANSPORT_ERROR']).toContain(refused.code);
+    expect(refused.code).toBe('WORKFLOW_NOT_EXPOSED');
 
-    const exposedViaVersions = await handleWorkflowVersions(
-      { mode: 'list', source: 'native', workflowId, exposeToMcp: true },
-      repository
-    );
-    expect(exposedViaVersions).toMatchObject({
-      success: true,
-      mode: 'list',
-      source: 'native',
-      backend: 'official-mcp',
-      exposedToMcp: true,
-    });
-
-    const exposed = await handleTestWorkflow({ workflowId, method: 'prepare' });
-    expect(exposed).toMatchObject({ success: true, method: 'prepare', backend: 'official-mcp' });
+    const exposed = await handleTestWorkflow({ workflowId, method: 'prepare', exposeToMcp: true });
+    expect(exposed).toMatchObject({ success: true, method: 'prepare', backend: 'official-mcp', exposedToMcp: true });
     expect(typeof (exposed.data as any)?.coverage?.total).toBe('number');
 
     const workflow = await handleGetWorkflow({ id: workflowId });

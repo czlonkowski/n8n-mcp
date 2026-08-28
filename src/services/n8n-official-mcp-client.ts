@@ -1,9 +1,27 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import type { jsonSchemaValidator, JsonSchemaValidatorResult } from '@modelcontextprotocol/sdk/validation/index.js';
 import { SSRFProtection, PinnedFetch } from '../utils/ssrf-protection';
 import { PROJECT_VERSION } from '../utils/version';
 import { logger } from '../utils/logger';
+
+/**
+ * The SDK client validates a tool result's `structuredContent` against the
+ * `outputSchema` the server advertised for that tool, and turns a mismatch
+ * into `McpError(InvalidParams)`. n8n declares output schemas that describe
+ * only the success shape, then answers refusals and errors with a different
+ * payload — `prepare_workflow_pin_data` on a workflow that is not exposed to
+ * MCP returns `isError: true` with `{ error: 'Workflow is not available in
+ * MCP. …' }` — so enforcing the schema here converts a server refusal our
+ * callers need to read into an opaque transport error.
+ *
+ * Results are untrusted data that we forward and size-cap regardless of what
+ * the schema claims, so client-side enforcement buys nothing. Opt out of it.
+ */
+const PERMISSIVE_JSON_SCHEMA_VALIDATOR: jsonSchemaValidator = {
+  getValidator: <T>() => (input: unknown): JsonSchemaValidatorResult<T> => ({ valid: true, data: input as T, errorMessage: undefined }),
+};
 
 export type OfficialMcpErrorCode =
   | 'NOT_CONFIGURED' | 'OFFICIAL_MCP_AUTH_FAILED' | 'OFFICIAL_MCP_NOT_ENABLED'
@@ -89,12 +107,11 @@ export function mapOfficialTransportError(err: unknown): OfficialMcpError {
     if (err.code === ErrorCode.RequestTimeout) {
       return new OfficialMcpError('OFFICIAL_MCP_TIMEOUT', 'Request to n8n MCP server timed out');
     }
-    // InvalidParams reaches here from two places, both worth naming: the SDK
-    // validating a tool's `structuredContent` against the output schema the
-    // server advertised for it (n8n's schema and payload drifting apart), and
-    // n8n itself rejecting the request's arguments.
+    // InvalidParams now only reaches here from n8n itself rejecting the
+    // request's arguments (JSON-RPC -32602): the client opts out of the SDK's
+    // client-side output-schema check (see PERMISSIVE_JSON_SCHEMA_VALIDATOR).
     if (err.code === ErrorCode.InvalidParams) {
-      return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', "Result did not match the tool's output schema or the request was rejected (JSON-RPC -32602)");
+      return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'n8n MCP server rejected the request arguments (JSON-RPC -32602)');
     }
     const code = typeof err.code === 'number' ? err.code : 'unknown';
     return new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', `n8n MCP server returned a protocol error (JSON-RPC code ${code})`);
@@ -206,7 +223,7 @@ export class N8nOfficialMcpClient {
         requestInit: { headers: { Authorization: `Bearer ${this.token}` } },
         fetch: pinned.fetch,
       });
-      const client = new Client({ name: 'n8n-mcp', version: PROJECT_VERSION }, { capabilities: {} });
+      const client = new Client({ name: 'n8n-mcp', version: PROJECT_VERSION }, { capabilities: {}, jsonSchemaValidator: PERMISSIVE_JSON_SCHEMA_VALIDATOR });
       try {
         await client.connect(transport, { timeout: DEFAULT_TIMEOUT_MS });
       } catch (err) {
@@ -268,10 +285,9 @@ export class N8nOfficialMcpClient {
    * Forwards one tool call. `idempotent` must be true for the connection-level
    * retry below to fire — see the comment at the retry gate.
    *
-   * The SDK validates a tool's `structuredContent` against the `outputSchema`
-   * the server advertised for it, so a drift between n8n's declared schema and
-   * what it actually returns rejects here as `McpError(InvalidParams)`;
-   * `mapOfficialTransportError` turns that into a readable transport error.
+   * Results are returned as n8n sent them — including `isError` refusals whose
+   * payload does not match the tool's advertised `outputSchema` (see
+   * PERMISSIVE_JSON_SCHEMA_VALIDATOR); callers decide what a refusal means.
    */
   async callTool(name: string, args: Record<string, unknown>, opts: { timeoutMs?: number; idempotent?: boolean } = {}): Promise<OfficialToolResult> {
     const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;

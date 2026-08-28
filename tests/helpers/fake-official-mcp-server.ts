@@ -8,9 +8,22 @@ import { z } from 'zod';
  * `structured` makes the tool answer with `structuredContent` as well as text.
  * It requires an `outputSchema` on the registration (the SDK only emits
  * structuredContent for tools that declare one), so the tool is registered
- * with a passthrough object schema when it is set.
+ * with a passthrough object schema when `outputSchema` is not given.
+ *
+ * `outputSchema` declares a real shape instead, as a zod raw shape (what
+ * `McpServer.registerTool` accepts; the SDK converts it to the JSON Schema the
+ * client sees in `listTools`). Use it to reproduce n8n's tools, which advertise
+ * a success-only schema and then answer refusals with a different payload —
+ * note the server skips its own output validation for `isError` results, so
+ * such a mismatch does reach the wire.
  */
-export interface FakeTool { name: string; handler?: (args: Record<string, unknown>) => unknown | Promise<unknown>; isError?: boolean; structured?: Record<string, unknown> }
+export interface FakeTool {
+  name: string;
+  handler?: (args: Record<string, unknown>) => unknown | Promise<unknown>;
+  isError?: boolean;
+  structured?: (args: Record<string, unknown>) => unknown;
+  outputSchema?: Record<string, z.ZodTypeAny>;
+}
 /**
  * A JSON-RPC error to answer one method with, instead of dispatching it to the
  * McpServer. Needed because `McpServer` converts every failure inside a tool
@@ -65,13 +78,14 @@ export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): P
       // keeps normalizeObjectSchema's "already an object schema" path and lets arbitrary
       // arguments flow through untouched — good enough for a test fake with no real schema.
       const config: any = { description: `fake ${tool.name}`, inputSchema: z.object({}).passthrough() as any };
-      if (tool.structured) config.outputSchema = z.object({}).passthrough() as any;
+      if (tool.outputSchema) config.outputSchema = tool.outputSchema as any;
+      else if (tool.structured) config.outputSchema = z.object({}).passthrough() as any;
       mcp.registerTool<any, any>(tool.name, config, async (args: any) => {
         const typedArgs = args as Record<string, unknown>;
         const value = tool.handler ? await tool.handler(typedArgs) : { ok: true, tool: tool.name, args: typedArgs };
         return {
           content: [{ type: 'text' as const, text: typeof value === 'string' ? value : JSON.stringify(value) }],
-          ...(tool.structured ? { structuredContent: tool.structured } : {}),
+          ...(tool.structured ? { structuredContent: tool.structured(typedArgs) as Record<string, unknown> } : {}),
           isError: tool.isError === true,
         };
       });
