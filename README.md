@@ -390,14 +390,14 @@ These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
 - **`n8n_list_workflows`** - List workflows with filtering and pagination
 - **`n8n_validate_workflow`** - Validate workflows in n8n by ID
 - **`n8n_autofix_workflow`** - Automatically fix common workflow errors
-- **`n8n_workflow_versions`** - Manage version history and rollback
+- **`n8n_workflow_versions`** - Version history, diff and rollback over two histories: `source: 'local'` (the snapshots n8n-mcp takes before it changes a workflow, the default) and `source: 'native'` (n8n's own workflow history, including UI edits — needs `N8N_MCP_ACCESS_TOKEN` and the workflow's "Available in MCP" setting)
 - **`n8n_deploy_template`** - Deploy templates from n8n.io directly to your instance with auto-fix
 
 #### Node Resource Discovery
 - **`n8n_explore_node_resources`** - Resolve a node's dynamic dropdown (loadOptions) or resource-locator search (listSearch) values — Slack channels, Google Sheets tabs, model lists — using a real credential, so workflow configs use existing IDs instead of invented ones. Requires `N8N_MCP_ACCESS_TOKEN` (see [Official MCP Setup](./docs/OFFICIAL_MCP_SETUP.md))
 
 #### Execution Management
-- **`n8n_test_workflow`** - Test/trigger workflow execution (webhook, form, chat)
+- **`n8n_test_workflow`** - Run a workflow. `method: 'auto'` (default) triggers it over HTTP through its webhook/form/chat trigger; `method: 'prepare'`/`'pinned'`/`'direct'` run workflows that have no such trigger through n8n's own MCP server (needs `N8N_MCP_ACCESS_TOKEN` and the workflow's "Available in MCP" setting)
 - **`n8n_executions`** - Unified execution management (list, get, delete)
 - **`n8n_evaluations`** - Run and read evaluation test runs (list runs, aggregated metrics, per-case results on n8n 2.30+; trigger and cancel on 2.32+)
 
@@ -405,7 +405,7 @@ These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
 - **`n8n_manage_folders`** - Manage workflow folders (create, list, get, rename, move, delete; n8n 2.19+). Place workflows into folders via `n8n_create_workflow`'s `parentFolderId` or `n8n_update_partial_workflow`'s `moveToFolder` operation (n8n 2.32+)
 
 #### Data Table Management
-- **`n8n_manage_datatable`** - Manage n8n data tables and rows (list, get, create, update, delete)
+- **`n8n_manage_datatable`** - Manage n8n data tables, rows and columns (list, get, create, update, delete; `addColumn`/`deleteColumn`/`renameColumn` change an existing table's columns through n8n's own MCP server and need `N8N_MCP_ACCESS_TOKEN`)
 
 #### Credential Management
 - **`n8n_manage_credentials`** - Manage n8n credentials (list, get, create, update, delete, getSchema)
@@ -428,10 +428,10 @@ For governance-sensitive environments, use both env vars together. Fully disable
 DISABLED_TOOLS=n8n_create_workflow,n8n_update_full_workflow,n8n_update_partial_workflow,n8n_delete_workflow,n8n_autofix_workflow,n8n_deploy_template,n8n_test_workflow,n8n_manage_credentials,n8n_manage_datatable
 ```
 
-For tools that bundle read and write operations under one name, block only the destructive operations while keeping `list` and `get`:
+For tools that bundle read and write operations under one name, block only the destructive operations while keeping `list` and `get`. Use this instead of a full `DISABLED_TOOLS` entry where the tool's read operations are acceptable — the `n8n_manage_datatable` line below is the alternative to removing the tool entirely as above:
 
 ```bash
-DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration
+DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration;n8n_manage_datatable:deleteTable,deleteRows;n8n_test_workflow:direct
 ```
 
 Combine with a read-only n8n API key (Settings → API in your n8n instance) for defence in depth. See [Read-Only Deployment Recipe](./docs/HTTP_DEPLOYMENT.md#read-only-deployment-recipe) for the full setup guide.

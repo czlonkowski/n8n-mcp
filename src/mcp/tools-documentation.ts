@@ -158,13 +158,13 @@ When working with Code nodes, always start by calling the relevant guide:
 - n8n_list_workflows - List workflows with filters
 - n8n_validate_workflow - Validate workflow by ID
 - n8n_autofix_workflow - Auto-fix common issues
-- n8n_test_workflow - Test/trigger workflows (webhook, form, chat, execute)
+- n8n_test_workflow - Run a workflow: method='auto'/'trigger' over its webhook/form/chat trigger, or method='prepare'/'pinned'/'direct' through n8n's MCP server (needs N8N_MCP_ACCESS_TOKEN)
 - n8n_executions - Unified execution management (action='get'/'list'/'delete')
 - n8n_evaluations - Run and read evaluation test runs (action='list_runs'/'get_run'/'list_cases' on n8n 2.30+, 'run'/'cancel' on 2.32+)
 - n8n_health_check - Check n8n API connectivity
-- n8n_workflow_versions - Version history and rollback
+- n8n_workflow_versions - Version history, diff and rollback over n8n-mcp snapshots (source='local') or n8n's own history (source='native', needs N8N_MCP_ACCESS_TOKEN)
 - n8n_deploy_template - Deploy templates directly to n8n instance
-- n8n_manage_datatable - Manage data tables and rows
+- n8n_manage_datatable - Manage data tables, rows and columns (addColumn/deleteColumn/renameColumn need N8N_MCP_ACCESS_TOKEN)
 - n8n_manage_credentials - Manage credentials (action='list'/'get'/'create'/'update'/'delete'/'getSchema')
 - n8n_manage_folders - Manage workflow folders (action='create'/'list'/'get'/'rename'/'move'/'delete', n8n 2.19+; workflow placement via parentFolderId/moveToFolder needs 2.32+)
 - n8n_audit_instance - Security audit of the n8n instance

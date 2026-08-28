@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.76.0] - 2026-08-28
+
+### Added
+
+- **`n8n_test_workflow` can run workflows that have no webhook, form or chat trigger**, through n8n's instance-level MCP server (`N8N_MCP_ACCESS_TOKEN`, n8n 2.34+). The new `method` parameter selects the path: `auto` (default) and `trigger` keep the existing HTTP behaviour, `prepare` lists the nodes that need pinned data, `pinned` runs the workflow with a `pinData` map you build from that list, and `direct` starts a run with optional inputs. Supporting parameters: `pinData`, `triggerNodeName`, `executionMode` (`manual` default, `production` only when passed), `timeoutMs` and `exposeToMcp`. Every response states `method` and `backend`.
+- **`n8n_workflow_versions` can read n8n's own version history**, with `source: 'native'` (the same list the n8n UI shows, including edits made by people) alongside the existing `source: 'local'` snapshots that n8n-mcp takes before it changes a workflow. Native supports `list`, `get`, `rollback` and the new `diff` mode; `delete` and `prune` stay local-only. New parameters: `source`, `toVersionId`, `offset` (native list) and `exposeToMcp`. `diff` also works on local snapshots.
+- **`n8n_manage_datatable` can change an existing table's columns**: `addColumn`, `deleteColumn` and `renameColumn`, routed to n8n's MCP server because the public API cannot alter columns after a table is created. The owning `projectId` is resolved automatically when exactly one project is accessible; otherwise the call returns `PROJECT_REQUIRED` and lists the candidates.
+- **An `exposeToMcp` consent flow for the routed workflow operations.** n8n refuses MCP calls for a workflow whose "Available in MCP" setting is off; that refusal is reported as `WORKFLOW_NOT_EXPOSED` with a hint. Re-running with `exposeToMcp: true` turns the setting on, retries once, and marks the response `exposedToMcp: true`. `DISABLED_TOOL_OPERATIONS` accepts a virtual `expose` operation (`n8n_test_workflow:expose`, `n8n_workflow_versions:expose`) to block that write while leaving the read paths available. See `docs/OFFICIAL_MCP_SETUP.md` sections 1 and 4.
+- No new tools: the three operations above extend existing ones, so the tool count is unchanged (28), and `n8n_health_check` is unchanged.
+
+### Changed
+
+- `n8n_test_workflow` is annotated as destructive (`destructiveHint: true`) and is now eligible for `DISABLED_TOOL_OPERATIONS` filtering on its `method` parameter (`auto`, `trigger`, `pinned`, `direct` are the write methods; `prepare` is the read path). A call that omits `method` is checked as `auto`, so a rule naming `auto` cannot be sidestepped by leaving the parameter out.
+- `n8n_manage_datatable` now honours `DISABLED_TOOL_OPERATIONS` on its `action` parameter. Entries naming it were previously accepted and had no effect; a deployment that already lists it should check that the operations it names are the ones it wants blocked (`createtable`, `updatetable`, `deletetable`, `insertrows`, `updaterows`, `upsertrows`, `deleterows`, `addcolumn`, `deletecolumn`, `renamecolumn`).
+- Results from n8n's MCP server are no longer validated against the `outputSchema` that server advertises. n8n declares schemas that describe only the success shape and then answers refusals with a different payload, so the check turned a refusal the caller needs to read into an opaque transport error. Results were already treated as untrusted data and size-capped regardless of the schema.
+- `versionId` and `toVersionId` carry no JSON-Schema `type`, because local snapshot ids are numbers and native version ids are strings; both forms are accepted.
+- A local `diff` reports added, removed and modified nodes as node **IDs** (`data.format: "n8n-mcp"`). A native diff returns n8n's own payload (`data.format: "n8n"`) with field-level before/after values.
+- A result from n8n's MCP server whose root carries `success: false`, and an `execute_workflow` result with `status: 'error'`, are reported as failures (`OFFICIAL_MCP_ERROR`) instead of being passed through as successes. This applies to the tools added in 2.75.0 as well.
+- `OFFICIAL_MCP_TOOL_UNAVAILABLE` now names the n8n version that first shipped the missing tool, so the message says what to upgrade to.
+
+### Security
+
+- **`method: 'auto'` never runs anything through n8n's MCP server.** Without a webhook, form or chat trigger it reports that the workflow cannot be triggered and names `method: 'prepare'` / `'pinned'` / `'direct'` — the routed methods are only ever reached when they are asked for by name.
+- **`executionMode: 'production'` is only used when it is passed explicitly**; `method: 'direct'` runs as a manual execution otherwise.
+- **"Available in MCP" is only ever enabled with `exposeToMcp: true`, and n8n-mcp never disables it.** No code path turns the setting off; removing a workflow from MCP is done in the n8n UI.
+- The consent write is an ordinary workflow update through the public API — read the workflow, merge the one setting, write the whole workflow back — with the same overwrite window and the same side effects as every other n8n-mcp update (n8n may normalise webhook ids, and inherited canvas groups may be repaired or dropped; those adjustments come back as `warnings`).
+- The consent write is refused with `OPERATION_DISABLED` when server policy disables `n8n_update_partial_workflow` or the calling tool's `expose` operation, so a read-only deployment cannot be talked into writing the setting.
+
 ## [2.75.1] - 2026-08-28
 
 ### Fixed

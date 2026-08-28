@@ -199,7 +199,7 @@ When execution fails, the response includes guidance for debugging:
       'method=direct returns as soon as the run starts; poll n8n_executions with the executionId for the outcome',
       'executionMode: production runs the workflow for real',
       'All HTTP trigger types require the workflow to be ACTIVE',
-      'Workflows without webhook/form/chat triggers cannot be executed externally',
+      'Workflows without webhook/form/chat triggers cannot be triggered over HTTP - run them with method=pinned or method=direct instead',
       'Chat trigger requires message parameter',
       'Form data must match expected form fields',
       'Webhook method must match node configuration'
