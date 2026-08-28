@@ -80,7 +80,7 @@ When set, these are sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret` he
 
 To use `n8n_manage_agents`, `n8n_explore_node_resources`, and the project fallback in `n8n_list_catalog`, set:
 
-- `N8N_MCP_ACCESS_TOKEN` - MCP API key from n8n Settings → Instance-level MCP → Enable MCP access. This is a separate secret from `N8N_API_KEY` and should be stored the same way. The MCP endpoint is derived from `N8N_API_URL`; instances that serve MCP from a split host (`N8N_MCP_BASE_URL`) are not supported.
+- `N8N_MCP_ACCESS_TOKEN` - MCP API key from n8n Settings → Instance-level MCP → set MCP status to Enabled. This is a separate secret from `N8N_API_KEY` and should be stored the same way. The MCP endpoint is derived from `N8N_API_URL`; instances that serve MCP from a split host (`N8N_MCP_BASE_URL`) are not supported.
 
 See [Connecting n8n-mcp to n8n's instance-level MCP server](./docs/OFFICIAL_MCP_SETUP.md) for the full setup walkthrough, including how to get the token from the n8n UI, prerequisites, and troubleshooting.
 

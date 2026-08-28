@@ -11,7 +11,7 @@ export type OfficialMcpErrorCode =
   | 'OFFICIAL_MCP_TIMEOUT' | 'OFFICIAL_MCP_TRANSPORT_ERROR';
 
 export const OFFICIAL_MCP_HINTS: Record<OfficialMcpErrorCode, string> = {
-  NOT_CONFIGURED: 'Set N8N_MCP_ACCESS_TOKEN to the MCP API key from n8n Settings → Instance-level MCP → "Enable MCP access" (a separate key from N8N_API_KEY). The endpoint is derived from N8N_API_URL.',
+  NOT_CONFIGURED: 'Set N8N_MCP_ACCESS_TOKEN to the MCP API key from n8n Settings → Instance-level MCP → set MCP status to Enabled (a separate key from N8N_API_KEY). The endpoint is derived from N8N_API_URL.',
   OFFICIAL_MCP_AUTH_FAILED: 'The MCP access token was rejected. Regenerate it in n8n Settings → Instance-level MCP and update N8N_MCP_ACCESS_TOKEN.',
   OFFICIAL_MCP_NOT_ENABLED: 'n8n did not answer as an MCP server at <origin>/mcp-server/http. Enable instance-level MCP access in Settings (n8n >= 2.18.4), or the instance serves MCP from a different host (N8N_MCP_BASE_URL), which is not supported.',
   OFFICIAL_MCP_RATE_LIMITED: 'n8n limits the MCP server to 100 requests per window per token. Wait and retry.',

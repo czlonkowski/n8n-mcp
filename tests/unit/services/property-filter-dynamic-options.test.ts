@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+import Database from 'better-sqlite3';
 import { PropertyFilter } from '@/services/property-filter';
 
 const props = [
@@ -58,5 +61,41 @@ describe('PropertyFilter essentials for nodes-base.slack', () => {
 
   it('exposes the channelId resource locator search method', () => {
     expect(byName('channelId')!.dynamicOptions).toEqual({ methodName: 'getChannels', methodType: 'listSearch', dependsOn: [] });
+  });
+});
+
+// Regression test against the real database: an inline fixture (above) can
+// verify the current behaviour, but it can't catch schema drift — the exact
+// bug class that produced the `channel`/`channelId` mismatch in the first
+// place. This opens data/nodes.db read-only and checks getEssentials() against
+// the Slack node's actual, current property schema.
+const dbPath = path.join(__dirname, '../../../data/nodes.db');
+const dbExists = fs.existsSync(dbPath);
+
+describe('PropertyFilter essentials for nodes-base.slack (real database)', () => {
+  it.skipIf(!dbExists)('every ESSENTIAL_PROPERTIES name for nodes-base.slack exists in the real schema, and channelId resolves to a listSearch method', () => {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const row = db.prepare("SELECT properties_schema FROM nodes WHERE node_type = 'nodes-base.slack'").get() as { properties_schema: string } | undefined;
+      expect(row).toBeDefined();
+      const props = JSON.parse(row!.properties_schema);
+      const schemaNames = new Set(props.map((p: any) => p.name));
+
+      // ESSENTIAL_PROPERTIES is a private static field; reach in for this
+      // schema-drift check rather than exporting it just for the test.
+      const config = (PropertyFilter as any).ESSENTIAL_PROPERTIES['nodes-base.slack'];
+      expect(config).toBeDefined();
+      for (const name of [...config.required, ...config.common]) {
+        expect(schemaNames.has(name)).toBe(true);
+      }
+
+      const simplified = PropertyFilter.getEssentials(props, 'nodes-base.slack');
+      const channelId = [...simplified.required, ...simplified.common].find(p => p.name === 'channelId');
+      expect(channelId).toBeDefined();
+      expect(channelId!.dynamicOptions?.methodType).toBe('listSearch');
+      expect(channelId!.dynamicOptions?.methodName).toBe('getChannels');
+    } finally {
+      db.close();
+    }
   });
 });

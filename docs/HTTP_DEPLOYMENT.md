@@ -173,7 +173,7 @@ Enable 21 additional tools for managing n8n workflows by configuring API access:
 | `N8N_API_KEY` | n8n API key (from Settings > API) | `n8n_api_key_xxx` |
 | `N8N_API_TIMEOUT` | Request timeout (ms) | `30000` |
 | `N8N_API_MAX_RETRIES` | Max retry attempts | `3` |
-| `N8N_MCP_ACCESS_TOKEN` | MCP API key from n8n Settings → Instance-level MCP → Enable MCP access (optional; separate from `N8N_API_KEY`) | `n8n_mcp_xxx` |
+| `N8N_MCP_ACCESS_TOKEN` | MCP API key from n8n Settings → Instance-level MCP → set MCP status to Enabled (optional; separate from `N8N_API_KEY`) | `n8n_mcp_xxx` |
 
 #### What This Enables
 

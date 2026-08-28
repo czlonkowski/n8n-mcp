@@ -121,7 +121,10 @@ When working with Code nodes, always start by calling the relevant guide:
    - validate_node({nodeType: "nodes-base.slack", config: {...}}) - Full validation with errors/warnings/suggestions
    - validate_workflow({workflow: {...}}) - Validate entire workflow
 
-## Tool Categories (27 Tools Total)
+## Tool Categories (28 Tools Total)
+
+**Meta Tools** (1 tool)
+- tools_documentation - Get documentation for any MCP tool (this tool)
 
 **Discovery Tools** (1 tool)
 - search_nodes - Full-text search across all nodes (supports OR, AND, FUZZY modes)

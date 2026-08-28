@@ -15,10 +15,13 @@ enables:
 - **`n8n_explore_node_resources`** - resolve a node's dynamic dropdown (`loadOptions`)
   or resource-locator search (`listSearch`) values, such as Slack channels or Google
   Sheets tabs, using one of the instance's real credentials.
-- The team-project fallback in **`n8n_list_catalog`** - when the Public API's
-  `GET /projects` doesn't expose team projects (for example, because the API key's
-  role can't see them), `n8n_list_catalog` falls back to n8n's MCP server for the
-  project list.
+- The team-project fallback in **`n8n_list_catalog`** - team projects are a licensed
+  (Enterprise) feature. On an instance without that licence, the Public API's
+  `GET /projects` refuses the request outright; when `N8N_MCP_ACCESS_TOKEN` is
+  configured, `n8n_list_catalog` then falls back to n8n's MCP server, which lists
+  projects regardless of that licence gate. `n8n_manage_agents` and
+  `n8n_explore_node_resources` need the token unconditionally; `n8n_list_catalog`
+  works without it and only uses the token for this fallback.
 
 **Prerequisites:**
 
@@ -46,8 +49,10 @@ These steps match the n8n UI as of n8n 2.36.
 
    ![Connect a client dialog, API key tab](./img/n8n-connect-client-api-key.png)
 
-   The circular-arrow button next to the Access token field regenerates the token -
-   doing so invalidates the old one, so update your configuration if you regenerate it.
+   The dialog shows the token masked after the fact; the full value is only ever
+   shown once, right after it is generated or regenerated. Copy it at that moment -
+   the circular-arrow button regenerates the token and invalidates the previous one,
+   so update your configuration if you regenerate it.
 
 The dialog's **Server URL** field (`<your instance origin>/mcp-server/http`) is shown
 for reference only. n8n-mcp derives this endpoint itself from `N8N_API_URL`, so you
@@ -126,21 +131,24 @@ Run `n8n_health_check` - the response includes an `officialMcp` block:
 - `officialMcp.agentTools` - whether the agents module's tools are present (needs
   n8n 2.34+ with the agents module).
 
-By default this reports the last cached result. Call `n8n_health_check` with
-`mode: "diagnostic"` to force a fresh, live probe.
+By default this reports the last cached result - on the very first call there is no
+cached result yet, so `reachable` and `toolCount` are absent. Call `n8n_health_check`
+with `mode: "diagnostic"` for that first check, and any time you want a fresh, live
+probe instead of the cached one.
 
 If something is misconfigured, `officialMcp.error` carries one of these codes, and
 `officialMcp.hint` (or the tool's own error response) gives a one-line fix:
 
 | Code | Fix |
 |------|-----|
-| `NOT_CONFIGURED` | Set `N8N_MCP_ACCESS_TOKEN` to the MCP API key from n8n Settings → Instance-level MCP → "Enable MCP access" (a separate key from `N8N_API_KEY`). |
+| `NOT_CONFIGURED` | Set `N8N_MCP_ACCESS_TOKEN` to the MCP API key from n8n Settings → Instance-level MCP → set **MCP status** to **Enabled** (a separate key from `N8N_API_KEY`). |
 | `OFFICIAL_MCP_AUTH_FAILED` | The token was rejected. Regenerate it in n8n Settings → Instance-level MCP and update `N8N_MCP_ACCESS_TOKEN`. |
 | `OFFICIAL_MCP_NOT_ENABLED` | n8n didn't answer as an MCP server at the derived endpoint. Enable instance-level MCP access in Settings (n8n 2.18.4+), or the instance serves MCP from a different host, which n8n-mcp doesn't support (see Limitations below). |
 | `OFFICIAL_MCP_RATE_LIMITED` | n8n limits its MCP server to 100 requests per window per token. Wait and retry. |
 | `OFFICIAL_MCP_TOOL_UNAVAILABLE` | This n8n instance doesn't expose the required tool. Agents need n8n 2.34+ with the agents module enabled; other tools depend on the n8n version. |
 | `OFFICIAL_MCP_URL_REJECTED` | The derived MCP endpoint failed URL safety validation (a private or reserved address). Use a public instance URL, or set `WEBHOOK_SECURITY_MODE=moderate` for local development. |
 | `OFFICIAL_MCP_TIMEOUT` | The request exceeded `timeoutMs`. The run continues in n8n - check `n8n_executions` for it, reuse the `sessionId` if you have one instead of re-sending, or raise `timeoutMs`. |
+| `OFFICIAL_MCP_TRANSPORT_ERROR` | Could not complete the request to n8n's MCP server. Check that the instance is reachable and try again. |
 
 ## 6. Limitations
 
