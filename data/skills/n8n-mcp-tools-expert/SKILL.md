@@ -22,6 +22,9 @@ n8n-mcp provides tools organized into categories:
 7. **Credential Management** - Full credential CRUD + schema discovery (`n8n_manage_credentials`)
 8. **Security & Audit** - Instance security auditing with custom deep scan (`n8n_audit_instance`)
 9. **Documentation & Guides** - Tool docs, AI agent guide, Code node guides
+10. **Agents** - Create, configure, validate, run and publish persisted n8n Agents (`n8n_manage_agents`, requires `N8N_MCP_ACCESS_TOKEN`)
+11. **Node Resource Resolution** - Resolve live dropdown/resource-locator values with a real credential (`n8n_explore_node_resources`, requires `N8N_MCP_ACCESS_TOKEN`)
+12. **Instance Catalog** - List projects and tags (`n8n_list_catalog`)
 
 ---
 
@@ -43,6 +46,9 @@ n8n-mcp provides tools organized into categories:
 | `n8n_manage_credentials` | Credential CRUD + schema discovery | 50-500ms |
 | `n8n_audit_instance` | Security audit (built-in + custom scan) | 500-5000ms |
 | `n8n_autofix_workflow` | Auto-fix validation errors | 200-1500ms |
+| `n8n_manage_agents` | Persisted n8n Agent CRUD/validate/publish | 150-400ms; `call` action: 5-60s |
+| `n8n_explore_node_resources` | Resolve live loadOptions/listSearch values | 200-2000ms |
+| `n8n_list_catalog` | List projects or tags | 50-300ms |
 
 ---
 
@@ -271,6 +277,16 @@ See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for all actions, the includeUsage sha
 
 ---
 
+## Agents
+
+Three tools talk to n8n's instance-level MCP server (a separate endpoint from the Public API) and need `N8N_MCP_ACCESS_TOKEN` — see "Tool Availability" below.
+
+- `n8n_manage_agents` — create, configure, validate, run and publish persisted n8n Agents (a standalone assistant artifact: model, instructions, tools, skills, tasks, memory, channels — not the AI Agent workflow node). Actions: `reference`, `search`, `get`, `create`, `mutate`, `validate`, `call`, `publish`, `unpublish`, `revert`, `versions`, `delete`, `discover_assets`, `verify_mcp_server`, `update_integration`. Start with `action: "reference"`, then `discover_assets` → `create` → `mutate` (one resource at a time, always the latest `configHash` — a stale one comes back as `STALE_CONFIG`) → `validate`. `publish` only on explicit request; `call` runs the agent with real credentials and tools and may return `approvals[]` for the human to decide. `timeoutMs` is a top-level parameter (default 30000, 180000 for `call`), not part of `args`. Needs n8n **2.34+** with the agents module; on 2.36.x the agents runtime rejects `azureOpenAiApi`/`aws` credentials. See **n8n-agents** skill's "Persisted n8n Agents" section for the full workflow.
+- `n8n_explore_node_resources` — resolve the real values behind a node's `loadOptions` dropdown or resource-locator `listSearch` (Slack channels, Google Sheets tabs, model lists) using a live credential, instead of guessing an ID. Use it when `get_node` (`standard` detail) shows `dynamicOptions: {methodName, methodType, dependsOn}` on a property — pass that `methodName`/`methodType` plus a `credentialId` from `n8n_manage_credentials({action: "list"})`.
+- `n8n_list_catalog` — list instance-level `projects` (personal project marked, gives `projectId` for `n8n_manage_agents`/`n8n_manage_datatable`) or `tags`. Works without the token via the Public API; with it configured, falls back to the official MCP server for team projects when the Public API's licence gate refuses (`teamProjectsEnabled` reports which).
+
+---
+
 ## Security & Audit
 
 `n8n_audit_instance` combines n8n's built-in audit (categories `credentials`/`database`/`nodes`/`instance`/`filesystem`) with a custom deep scan (`hardcoded_secrets`, `unauthenticated_webhooks`, `error_handling`, `data_retention`). All parameters optional: `categories`, `includeCustomScan` (default `true`), `customChecks`, `daysAbandonedWorkflow`. Detected secrets are masked (first 6 + last 4 chars). Output is an actionable markdown report — summary table, findings by workflow, and a Remediation Playbook split into auto-fixable / requires-review / requires-user-action.
@@ -312,6 +328,11 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for examples.
 - n8n_manage_folders (folder CRUD: n8n 2.19+, registered Community tier and up; workflow placement via parentFolderId/moveToFolder: n8n 2.32+)
 - n8n_manage_credentials
 - n8n_audit_instance
+- n8n_list_catalog (works without the token; needs it only for the team-project fallback)
+
+**Requires `N8N_MCP_ACCESS_TOKEN`** (a separate token from n8n Settings → Instance-level MCP, in addition to the Public API credentials above):
+- n8n_manage_agents
+- n8n_explore_node_resources
 
 If API tools unavailable, use templates and validation-only workflows.
 

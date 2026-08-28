@@ -184,6 +184,33 @@ Beyond the filter, a simple bot (trigger → agent → reply) lives fine in one 
 
 ---
 
+## Persisted n8n Agents (n8n_manage_agents)
+
+A **persisted n8n Agent** is a different artifact from the AI Agent node covered above: a standalone assistant record — model, instructions, tools, skills, tasks, memory, channels — stored and versioned by n8n itself, managed through `n8n_manage_agents` (n8n's instance-level MCP server), not a node inside a workflow's JSON.
+
+| You need to… | Use |
+|---|---|
+| A reasoning step inside a workflow, wired with `ai_*` sub-nodes | **AI Agent node** (this skill, above) |
+| A standalone assistant with its own lifecycle — draft, validate, publish, versions, channels — independent of any one workflow | **Persisted Agent** (`n8n_manage_agents`) |
+
+**Prerequisites:** `N8N_MCP_ACCESS_TOKEN` configured (separate from the Public API key) and n8n **2.34+** with the agents module enabled. Without the token, every action but `reference`/`search` fails.
+
+**Build sequence:**
+1. `action: "reference"` — read the config schema and the exact mutate operations before anything else.
+2. `action: "discover_assets"` — list available models, integrations, workflows, subagents, MCP servers for the target project.
+3. `action: "create"` — `projectId`, `name`, `config`.
+4. `action: "mutate"` — one resource per call (`config.patch`, `skill.upsert`/`delete`, `task.upsert`/`delete`, `customTool.upsert`/`delete`), always with the **latest** `configHash` from the previous response. A stale hash comes back as `STALE_CONFIG` — re-`get` and retry with the fresh one.
+5. `action: "validate"` — before offering to `call` or `publish`.
+6. `action: "publish"` — **only on the user's explicit request**, never proactively.
+
+`action: "call"` runs the agent with real credentials and real tools — a live execution, not a dry run. A result can carry `approvals[]` for tool calls that need a human decision; **never approve on the user's behalf** — surface them and resume only after the user decides.
+
+**Credential caveat:** on n8n 2.36.x the agents runtime rejects `azureOpenAiApi` and `aws` credentials (reported as `missing: ["credential"]`); the response's `hint` names the accepted types instead.
+
+→ **n8n-mcp-tools-expert** `## Agents` for the tool's full action list and error codes.
+
+---
+
 ## RAG (retrieval augmented generation)
 
 n8n ships the LangChain RAG primitives (document loaders, splitters, embeddings, vector stores, retrievers). Two opinions worth stating up front:
@@ -234,7 +261,7 @@ n8n ships the LangChain RAG primitives (document loaders, splitters, embeddings,
 
 | Want to do | Reality |
 |---|---|
-| Run / chat-test the agent end-to-end with live tokens | `n8n_test_workflow` runs the workflow, but a true multi-turn chat session is a UI activity (canvas chat tester). |
+| Chat-test a workflow's AI Agent node end-to-end interactively | `n8n_test_workflow` runs the workflow, but a true multi-turn chat session against the node is a UI activity (canvas chat tester). A persisted Agent, by contrast, can be run live via `n8n_manage_agents` `call` — see "Persisted n8n Agents" above. |
 | Set credentials' actual secret values | `n8n_manage_credentials` creates/updates credential records, but the agent provider keys themselves are entered/verified in the UI. |
 | Assign a workflow's Error Workflow | UI only — see **n8n-error-handling**. Build the catch-all, then hand the user the UI step. |
 | Pin the exact model availability per instance | Model lists shift between versions — `search_nodes`/`get_node` reflect what's installed. Verify on the target instance. |
