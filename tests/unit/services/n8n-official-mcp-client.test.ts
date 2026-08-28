@@ -91,6 +91,46 @@ describe('N8nOfficialMcpClient', () => {
     await client.close();
   });
 
+  // Dropping an oversized payload wholesale would turn a root failure into a
+  // success at the call site, which reads the failure flags off the structured
+  // content — so a bounded projection of the failure survives the cap.
+  it('keeps a bounded failure projection of oversized structuredContent', async () => {
+    fake = await startFakeOfficialMcp({
+      tools: [{
+        name: 'big_failure',
+        handler: () => 'small text',
+        structured: () => ({
+          success: false,
+          code: 'SOME_CODE',
+          error: 'e'.repeat(5000),
+          blob: 'y'.repeat(300 * 1024),
+        }),
+      }],
+    });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    const result = await client.callTool('big_failure', {});
+
+    expect(result.truncated).toBe(true);
+    expect(result.json).toEqual({ success: false, code: 'SOME_CODE', error: 'e'.repeat(2000) });
+    await client.close();
+  });
+
+  it('projects an oversized ok:false payload the same way', async () => {
+    fake = await startFakeOfficialMcp({
+      tools: [{
+        name: 'big_agent_failure',
+        handler: () => 'small text',
+        structured: () => ({ ok: false, blob: 'y'.repeat(300 * 1024) }),
+      }],
+    });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    const result = await client.callTool('big_agent_failure', {});
+
+    expect(result.truncated).toBe(true);
+    expect(result.json).toEqual({ ok: false, error: 'n8n returned an error payload too large to include' });
+    await client.close();
+  });
+
   it('keeps structuredContent that fits the size cap', async () => {
     fake = await startFakeOfficialMcp({ tools: [{ name: 'small_structured', handler: () => 'text', structured: () => ({ ok: true }) }] });
     const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });

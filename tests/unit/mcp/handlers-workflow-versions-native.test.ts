@@ -200,6 +200,28 @@ describe('n8n_workflow_versions source routing', () => {
     expect(versioningMock.compareVersions).not.toHaveBeenCalled();
   });
 
+  it('local diff refuses ids Number() would silently reinterpret', async () => {
+    // `Number('0x10')` is 16 and `Number('1e3')` is 1000 — an id in either
+    // shape would address a different snapshot instead of being refused.
+    for (const versionId of ['0x10', '1e3', '1.5', '  ', '+1']) {
+      const r = await handlers.handleWorkflowVersions(
+        { mode: 'diff', workflowId: 'w', versionId, toVersionId: 2 },
+        repository
+      );
+      expect(r).toMatchObject({ success: false, code: 'INVALID_ARGS', source: 'local', backend: 'n8n-mcp' });
+      expect(r.error).toContain('versionId');
+    }
+    expect(versioningMock.compareVersions).not.toHaveBeenCalled();
+  });
+
+  it('local diff still accepts a padded decimal id', async () => {
+    await handlers.handleWorkflowVersions(
+      { mode: 'diff', workflowId: 'w', versionId: ' 12 ', toVersionId: '-3' },
+      repository
+    );
+    expect(versioningMock.compareVersions).toHaveBeenCalledWith(12, -3, 'w');
+  });
+
   it('local diff requires both ids and the workflow id', async () => {
     const missingTo = await handlers.handleWorkflowVersions(
       { mode: 'diff', workflowId: 'w', versionId: 1 },

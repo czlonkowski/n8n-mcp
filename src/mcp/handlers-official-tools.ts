@@ -14,6 +14,7 @@ import { OfficialMcpError } from '../services/n8n-official-mcp-client';
 import { MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, DEFAULT_TIMEOUT_MS } from './agents-action-map';
 import { logger } from '../utils/logger';
 import { getN8nApiClient } from './handlers-n8n-manager';
+import { publicApiMatchesContext, PUBLIC_API_CONTEXT_HINT } from '../services/mcp-exposure';
 import { N8nApiError } from '../utils/n8n-errors';
 
 // Strict: a misspelled key (`currentNodeParameter`, `timeOutMs`) is reported
@@ -98,14 +99,22 @@ export async function callOfficialTool(
     // (`error | crashed | canceled`). Precedence: tool-level failures are
     // OFFICIAL_MCP_ERROR here; run outcomes belong to the calling handler,
     // which maps them to EXECUTION_FAILED with the executionId.
+    //
+    // `error` is optional in that shape, so the status alone decides: a failed
+    // dispatch that carries no message must not come back as a success.
     const root = data as any;
+    const executeDispatchFailed = tool === 'execute_workflow' && root?.status === 'error';
     const isFailure =
       result.isError ||
       root?.ok === false ||
       root?.success === false ||
-      (tool === 'execute_workflow' && root?.status === 'error' && typeof root?.error === 'string');
+      executeDispatchFailed;
     if (isFailure) {
-      return { success: false, action: label, officialTool: tool, code: 'OFFICIAL_MCP_ERROR', error: officialErrorText(data, undefined), officialError: data };
+      const hasText = typeof root?.message === 'string' || typeof root?.error === 'string';
+      const error = executeDispatchFailed && !hasText
+        ? 'execute_workflow reported status "error" without an error message'
+        : officialErrorText(data, undefined);
+      return { success: false, action: label, officialTool: tool, code: 'OFFICIAL_MCP_ERROR', error, officialError: data };
     }
     return { success: true, action: label, officialTool: tool, data, ...(result.truncated ? { truncated: true } : {}) };
   } catch (err) {
@@ -203,27 +212,37 @@ export interface ProjectChoices {
  * — the official MCP server's `search_projects`, and finally the caller's own
  * personal project when no official client is configured.
  *
+ * A url+token context skips the Public API steps entirely: there the
+ * official-MCP client is context-authoritative while `getN8nApiClient` falls
+ * back to the operator's own instance, so listing projects through it would
+ * read another instance's projects — and hand their ids back to the caller,
+ * who then forwards one to a call on the context instance.
+ *
  * Returns either the resolved choices or an undecorated failure envelope for
  * the caller to decorate (`kind`, `action`, ...).
  */
 export async function resolveProjectChoices(
   context?: InstanceContext
 ): Promise<{ choices: ProjectChoices } | { failure: McpToolResponse }> {
-  const api = getN8nApiClient(context);
-  if (!api) {
-    return { failure: { success: false, code: 'NOT_CONFIGURED', error: 'n8n API not configured. Set N8N_API_URL and N8N_API_KEY.' } };
-  }
+  const contextMatches = publicApiMatchesContext(context);
+  const api = contextMatches ? getN8nApiClient(context) : null;
 
-  try {
-    const projects = (await api.listProjects()).map(p => ({ id: p.id, name: p.name, type: p.type, personal: p.type === 'personal' }));
-    // GET /projects is itself licence-gated (Community instances answer 403 before this
-    // point is reached), so a successful listing means team projects ARE licensed here —
-    // regardless of whether any happen to be visible to this API key.
-    return { choices: { backend: 'public-api', teamProjectsEnabled: true, items: projects } };
-  } catch (err) {
-    const status = err instanceof N8nApiError ? err.statusCode : undefined;
-    if (status !== 403 && status !== 404) {
-      return { failure: { success: false, code: 'API_ERROR', error: err instanceof Error ? err.message : String(err) } };
+  if (contextMatches) {
+    if (!api) {
+      return { failure: { success: false, code: 'NOT_CONFIGURED', error: 'n8n API not configured. Set N8N_API_URL and N8N_API_KEY.' } };
+    }
+
+    try {
+      const projects = (await api.listProjects()).map(p => ({ id: p.id, name: p.name, type: p.type, personal: p.type === 'personal' }));
+      // GET /projects is itself licence-gated (Community instances answer 403 before this
+      // point is reached), so a successful listing means team projects ARE licensed here —
+      // regardless of whether any happen to be visible to this API key.
+      return { choices: { backend: 'public-api', teamProjectsEnabled: true, items: projects } };
+    } catch (err) {
+      const status = err instanceof N8nApiError ? err.statusCode : undefined;
+      if (status !== 403 && status !== 404) {
+        return { failure: { success: false, code: 'API_ERROR', error: err instanceof Error ? err.message : String(err) } };
+      }
     }
   }
 
@@ -240,6 +259,12 @@ export async function resolveProjectChoices(
       ? officialData.teamProjectsEnabled
       : items.some(p => !p.personal);
     return { choices: { backend: 'official-mcp', teamProjectsEnabled, items } };
+  }
+
+  if (!api) {
+    // Only reachable on a url+token context with no official client: there is
+    // no resolver left that addresses the instance this request names.
+    return { failure: { success: false, code: 'NOT_CONFIGURED', backend: 'official-mcp', error: PUBLIC_API_CONTEXT_HINT } as McpToolResponse };
   }
 
   try {

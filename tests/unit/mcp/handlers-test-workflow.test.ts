@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { N8nApiClient } from '@/services/n8n-api-client';
+import { N8nApiError } from '@/utils/n8n-errors';
 import { WorkflowValidator } from '@/services/workflow-validator';
 import { NodeRepository } from '@/database/node-repository';
 import { startFakeOfficialMcp, FakeOfficialMcp, FakeTool } from '../../helpers/fake-official-mcp-server';
@@ -214,6 +215,22 @@ describe('n8n_test_workflow method routing', () => {
     expect(r).toMatchObject({ success: true, method: 'prepare', backend: 'official-mcp' });
     // prepare needs no trigger analysis, so it must not spend a workflow GET.
     expect(mockApiClient.getWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('runs prepare without a Public API key configured', async () => {
+    // Official-only deployment: N8N_MCP_ACCESS_TOKEN + url, no N8N_API_KEY.
+    // prepare never touches the Public API, so it must not demand one.
+    configMock.getN8nApiConfig.mockReturnValue(null);
+    handlers.getN8nApiClient();
+    officialMock.override = async () => ({ success: true, data: { coverage: { total: 0 } } });
+
+    const r = await handlers.handleTestWorkflow(
+      { workflowId: 'w', method: 'prepare' },
+      { n8nApiUrl: 'https://n8n.test.com', n8nMcpAccessToken: 'tok' }
+    );
+
+    expect(r).toMatchObject({ success: true, method: 'prepare', backend: 'official-mcp' });
+    expect(officialMock.spy).toHaveBeenCalled();
   });
 
   // ----------------------------------------------------------------- pinned
@@ -472,13 +489,35 @@ describe('n8n_test_workflow method routing', () => {
     expect(withoutClient.details.hint).toContain('method: pinned');
     expect(withoutClient.details.hint).toContain('N8N_MCP_ACCESS_TOKEN');
 
-    // Official credentials present: still the legacy error, never a direct run.
+    // Official credentials present alongside the Public API key for the same
+    // instance: still the legacy error, never a direct run.
     const withClient = await handlers.handleTestWorkflow(
       { workflowId: 'w' },
-      { n8nApiUrl: 'https://n8n.test.com', n8nMcpAccessToken: 'tok' }
+      { n8nApiUrl: 'https://n8n.test.com', n8nApiKey: 'key', n8nMcpAccessToken: 'tok' }
     );
     expect(withClient).toMatchObject({ success: false, error: 'Workflow cannot be triggered externally' });
     expect(officialMock.spy).not.toHaveBeenCalled();
+  });
+
+  it('labels a thrown API error with the method and backend it was on', async () => {
+    // The workflow read for pinned/direct throws for a mistyped workflowId;
+    // the caller still has to be told which route the call was on.
+    mockApiClient.getWorkflow.mockRejectedValue(
+      new N8nApiError('Workflow not found', 404, 'NOT_FOUND')
+    );
+
+    const r = await handlers.handleTestWorkflow({
+      workflowId: 'nope',
+      method: 'pinned',
+      pinData: { Webhook: [{ json: {} }] },
+    });
+
+    expect(r).toMatchObject({ success: false, method: 'pinned', backend: 'official-mcp', code: 'NOT_FOUND' });
+  });
+
+  it('labels an invalid-input envelope with the requested method', async () => {
+    const r = await handlers.handleTestWorkflow({ workflowId: 'w', method: 'nonsense' });
+    expect(r).toMatchObject({ success: false, error: 'Invalid input', method: 'nonsense', backend: 'public-api' });
   });
 
   // ------------------------------------------------- context/instance mismatch
@@ -504,6 +543,38 @@ describe('n8n_test_workflow method routing', () => {
     expect(r).toMatchObject({ success: false, code: 'NOT_CONFIGURED', method: 'direct', backend: 'official-mcp' });
     expect(mockApiClient.getWorkflow).not.toHaveBeenCalled();
     expect(officialMock.spy).not.toHaveBeenCalled();
+  });
+
+  it('refuses auto and trigger too — the HTTP trigger path runs on the same Public API client', async () => {
+    const context = { n8nApiUrl: 'https://other-instance.test.com', n8nMcpAccessToken: 'tok' };
+
+    const auto = await handlers.handleTestWorkflow({ workflowId: 'w' }, context);
+    expect(auto).toMatchObject({ success: false, code: 'NOT_CONFIGURED', method: 'auto', backend: 'public-api' });
+
+    const trigger = await handlers.handleTestWorkflow({ workflowId: 'w', method: 'trigger' }, context);
+    expect(trigger).toMatchObject({ success: false, code: 'NOT_CONFIGURED', method: 'trigger', backend: 'public-api' });
+
+    expect(mockApiClient.getWorkflow).not.toHaveBeenCalled();
+    expect(registryMock.execute).not.toHaveBeenCalled();
+  });
+
+  it('lets a plain prepare through on a url + token context but refuses it with exposeToMcp', async () => {
+    const context = { n8nApiUrl: 'https://other-instance.test.com', n8nMcpAccessToken: 'tok' };
+    officialMock.override = async () => ({ success: true, data: { coverage: { total: 0 } } });
+
+    const plain = await handlers.handleTestWorkflow({ workflowId: 'w', method: 'prepare' }, context);
+    expect(plain).toMatchObject({ success: true, method: 'prepare', backend: 'official-mcp' });
+
+    // exposeToMcp would write through the Public API client, which on this
+    // context is the operator's own instance — refused before the official call.
+    officialMock.spy.mockClear();
+    const consenting = await handlers.handleTestWorkflow(
+      { workflowId: 'w', method: 'prepare', exposeToMcp: true },
+      context
+    );
+    expect(consenting).toMatchObject({ success: false, code: 'NOT_CONFIGURED', method: 'prepare', backend: 'official-mcp' });
+    expect(officialMock.spy).not.toHaveBeenCalled();
+    expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
   });
 
   // --------------------------------------------------------------- exposure

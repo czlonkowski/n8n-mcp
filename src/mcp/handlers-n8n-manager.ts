@@ -1704,6 +1704,9 @@ const FAILED_RUN_STATUSES = new Set(['error', 'crashed', 'canceled']);
 const LEGACY_TIMEOUT_SCOPE_WARNING =
   'timeout applies to the HTTP trigger path only; use timeoutMs for method prepare/pinned/direct';
 
+/** The `n8n_test_workflow` methods routed through n8n's own MCP server. */
+const OFFICIAL_TEST_METHODS = new Set(['prepare', 'pinned', 'direct']);
+
 /**
  * Handler for n8n_test_workflow tool
  *
@@ -1719,17 +1722,13 @@ const LEGACY_TIMEOUT_SCOPE_WARNING =
  */
 export async function handleTestWorkflow(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
   try {
-    const client = ensureApiConfigured(context);
     const input = testWorkflowSchema.parse(args);
     const method = input.method ?? 'auto';
 
-    // Import trigger system (lazy to avoid circular deps)
-    const {
-      detectTriggerFromWorkflow,
-      classifyTriggerNode,
-      ensureRegistryInitialized,
-      TriggerRegistry,
-    } = await import('../triggers');
+    // Nullable on purpose: `prepare` needs no Public API call, so it must not
+    // require N8N_API_KEY. Every other method resolves the same client through
+    // ensureApiConfigured below, which turns a null into the NOT_CONFIGURED error.
+    const apiClient = getN8nApiClient(context);
 
     // Reads default to 30 s; a run gets the longer deadline.
     const officialTimeoutMs = input.timeoutMs ?? (method === 'prepare' ? DEFAULT_TIMEOUT_MS : PINNED_TIMEOUT_MS);
@@ -1743,7 +1742,7 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       // warnings from the consent write) — spread first, then label it.
       const response = await withMcpExposure(
         {
-          apiClient: client,
+          apiClient,
           workflowId: input.workflowId,
           exposeToMcp: input.exposeToMcp,
           action: OFFICIAL_TEST_ACTION,
@@ -1758,11 +1757,6 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       }
       return decorated;
     };
-
-    // prepare only needs the workflow id — no trigger analysis, no workflow GET.
-    if (method === 'prepare') {
-      return routeOfficial(['prepare_workflow_pin_data'], { workflowId: input.workflowId }, true, 'prepare');
-    }
 
     // An EMPTY pinData is refused like a missing one: n8n would run the
     // workflow with nothing pinned, so every credentialed and HTTP node in it
@@ -1789,20 +1783,39 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       };
     }
 
-    // pinned/direct route the workflow through the official-MCP client, which
-    // is context-authoritative on a url+token context; `client` (used for the
-    // read below) falls back to the environment's Public API client in that
-    // same case. Refuse before reading, so trigger detection is never run
-    // against — and forwarded from — the wrong instance's workflow.
-    if ((method === 'pinned' || method === 'direct') && !publicApiMatchesContext(context)) {
+    // Every path of this tool except a plain `prepare` depends on the Public
+    // API client: `auto`/`trigger` run through it, `pinned`/`direct` read the
+    // workflow through it for trigger detection, and any `exposeToMcp` consent
+    // write goes through it. On a url+token context that client silently falls
+    // back to the operator's own instance while the official-MCP client is
+    // context-authoritative, so refuse before any read, trigger or write.
+    // A plain `prepare` touches none of it and stays open.
+    const isPlainPrepare = method === 'prepare' && input.exposeToMcp !== true;
+    if (!isPlainPrepare && !publicApiMatchesContext(context)) {
       return {
         success: false,
         code: 'NOT_CONFIGURED',
         method,
-        backend: 'official-mcp',
+        backend: OFFICIAL_TEST_METHODS.has(method) ? 'official-mcp' : 'public-api',
         error: PUBLIC_API_CONTEXT_HINT,
       };
     }
+
+    // prepare only needs the workflow id — no trigger analysis, no workflow
+    // GET, and no Public API key: it runs before ensureApiConfigured.
+    if (method === 'prepare') {
+      return routeOfficial(['prepare_workflow_pin_data'], { workflowId: input.workflowId }, true, 'prepare');
+    }
+
+    const client = ensureApiConfigured(context);
+
+    // Import trigger system (lazy to avoid circular deps)
+    const {
+      detectTriggerFromWorkflow,
+      classifyTriggerNode,
+      ensureRegistryInitialized,
+      TriggerRegistry,
+    } = await import('../triggers');
 
     // Fetch the workflow to analyze its trigger
     const workflow = await client.getWorkflow(input.workflowId);
@@ -2035,9 +2048,21 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       },
     };
   } catch (error) {
+    // A schema failure happens before `input` exists, so the labels come from
+    // the raw arguments here. A blank `method` is the default one, matching
+    // what the schema would have resolved it to.
+    const raw = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const rawMethod =
+      typeof raw.method === 'string' && raw.method.trim() !== '' ? raw.method : 'auto';
+    const label = {
+      method: rawMethod,
+      backend: OFFICIAL_TEST_METHODS.has(rawMethod) ? 'official-mcp' : 'public-api',
+    };
+
     if (error instanceof z.ZodError) {
       return {
         success: false,
+        ...label,
         error: 'Invalid input',
         details: { errors: error.errors },
       };
@@ -2046,6 +2071,7 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
     if (error instanceof N8nApiError) {
       return {
         success: false,
+        ...label,
         error: getUserFriendlyErrorMessage(error),
         code: error.code,
         details: error.details as Record<string, unknown> | undefined,
@@ -2054,6 +2080,7 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
 
     return {
       success: false,
+      ...label,
       error: error instanceof Error ? error.message : 'Unknown error occurred',
     };
   }
@@ -3125,9 +3152,13 @@ function withDiffFormat(data: unknown, format: 'n8n' | 'n8n-mcp'): Record<string
 
 /**
  * Coerce a version id for the local store, which numbers its snapshots.
- * A numeric string is accepted; anything that is not a whole number is refused
- * by name rather than silently becoming NaN.
+ * A decimal-integer string is accepted; anything else is refused by name
+ * rather than silently becoming NaN — or, worse, a different snapshot:
+ * `Number()` also reads `0x10` as 16 and `1e3` as 1000, so a malformed or
+ * n8n-shaped id has to fail the shape check before any conversion.
  */
+const LOCAL_VERSION_ID_PATTERN = /^-?\d+$/;
+
 function parseLocalVersionId(
   value: number | string | undefined,
   field: string
@@ -3135,6 +3166,12 @@ function parseLocalVersionId(
   if (value === undefined) return { ok: true, value: undefined };
   if (typeof value === 'string' && value.trim() === '') {
     return { ok: false, error: `${field} must be an integer version id for source: local` };
+  }
+  if (typeof value === 'string' && !LOCAL_VERSION_ID_PATTERN.test(value.trim())) {
+    return {
+      ok: false,
+      error: `${field} must be an integer version id for source: local (got ${JSON.stringify(value)}). n8n's own string version ids need source: native.`,
+    };
   }
   const parsed = typeof value === 'number' ? value : Number(value.trim());
   if (!Number.isInteger(parsed)) {
@@ -4200,11 +4237,16 @@ async function resolveDataTableProjectId(
 
   const items = resolved.choices.items;
   if (items.length === 1) return { projectId: items[0].id };
+
+  // Project resolution is I/O, so the envelope says which backend answered it
+  // — the routed-response contract holds for these failures too.
+  const backend = resolved.choices.backend;
   if (items.length === 0) {
     return {
       failure: {
         success: false,
         action,
+        backend,
         code: 'PROJECT_REQUIRED',
         error: 'No project could be resolved for this instance; pass projectId',
       },
@@ -4214,6 +4256,7 @@ async function resolveDataTableProjectId(
     failure: {
       success: false,
       action,
+      backend,
       code: 'PROJECT_REQUIRED',
       error: 'Several projects are accessible; pass projectId',
       details: { candidates: items },

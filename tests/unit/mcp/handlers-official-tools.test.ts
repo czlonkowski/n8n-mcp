@@ -212,6 +212,32 @@ describe('resolveProjectChoices', () => {
       items: [{ id: 'personal-1', name: 'Personal', type: 'personal', personal: true }],
     });
   });
+  it('skips the Public API entirely on a url + token context', async () => {
+    // getN8nApiClient falls back to the operator's own instance here, so
+    // listing projects through it would read — and hand back — the wrong
+    // instance's project ids. Resolution goes straight to the official server.
+    const listProjects = vi.fn();
+    api.getN8nApiClient.mockReturnValue({ listProjects, resolvePersonalProjectId: vi.fn() });
+    access.getOfficialMcpClient.mockReturnValue(
+      fakeClient(['search_projects'], { ok: true, data: [{ id: 'p9', name: 'Team B', type: 'team' }] })
+    );
+
+    const r: any = await resolveProjectChoices({ n8nApiUrl: 'https://other.test.com', n8nMcpAccessToken: 'tok' } as any);
+
+    expect(listProjects).not.toHaveBeenCalled();
+    expect(r.choices).toMatchObject({ backend: 'official-mcp', items: [{ id: 'p9', name: 'Team B' }] });
+  });
+
+  it('fails closed on a url + token context with no official client', async () => {
+    api.getN8nApiClient.mockReturnValue({ listProjects: vi.fn(), resolvePersonalProjectId: vi.fn().mockResolvedValue('personal-1') });
+    access.getOfficialMcpClient.mockReturnValue(null);
+
+    const r: any = await resolveProjectChoices({ n8nApiUrl: 'https://other.test.com', n8nMcpAccessToken: 'tok' } as any);
+
+    expect(r.failure).toMatchObject({ success: false, code: 'NOT_CONFIGURED', backend: 'official-mcp' });
+    expect(r.failure.error).toContain('x-n8n-key');
+  });
+
   it('returns an undecorated failure envelope when nothing can resolve projects', async () => {
     api.getN8nApiClient.mockReturnValue({
       listProjects: vi.fn().mockRejectedValue(new N8nApiError('Forbidden', 403)),
@@ -257,6 +283,15 @@ describe('callOfficialTool over the wire', () => {
     expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_ERROR', error: 'boom' });
   });
 
+  it('maps an execute_workflow status:error result with no error message to OFFICIAL_MCP_ERROR', async () => {
+    // `error` is optional in that shape — the status alone decides, or a
+    // failed dispatch that carries no message would read as a success.
+    await connect([{ name: 'execute_workflow', handler: () => ({ executionId: null, status: 'error' }) }]);
+    const r: any = await callOfficialTool(undefined, ['execute_workflow'], { workflowId: 'w' }, 30000, 'test_workflow', false);
+    expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_ERROR' });
+    expect(r.error).toBe('execute_workflow reported status "error" without an error message');
+  });
+
   // Precedence: tool-level failures are callOfficialTool's; the outcome of a run
   // that started fine belongs to the handler (EXECUTION_FAILED, with executionId).
   it('leaves test_workflow status:error a tool-level success for the handler to judge', async () => {
@@ -264,6 +299,16 @@ describe('callOfficialTool over the wire', () => {
     const r: any = await callOfficialTool(undefined, ['test_workflow'], { workflowId: 'w' }, 30000, 'test_workflow', false);
     expect(r.success).toBe(true);
     expect(r.data).toMatchObject({ executionId: 'e1', status: 'error', error: 'node failed' });
+  });
+
+  it('still maps an oversized root success:false result to OFFICIAL_MCP_ERROR', async () => {
+    await connect([{
+      name: 'get_workflow_history',
+      handler: () => 'text',
+      structured: () => ({ success: false, error: 'boom', blob: 'y'.repeat(300 * 1024) }),
+    }]);
+    const r: any = await callOfficialTool(undefined, ['get_workflow_history'], { workflowId: 'w' }, 30000, 'workflow_versions', true);
+    expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_ERROR', error: 'boom' });
   });
 
   it('keeps a root success:true result a success', async () => {

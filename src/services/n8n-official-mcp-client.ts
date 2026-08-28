@@ -151,6 +151,33 @@ function structuredSize(value: unknown): number {
   }
 }
 
+/**
+ * A bounded stand-in for an oversized structured payload that reports a
+ * failure at its root.
+ *
+ * Callers read the failure flags (`success: false` / `ok: false`) off the
+ * structured content, so dropping an oversized payload wholesale would turn a
+ * failure into a success. Keeping the flag, a capped message and the code
+ * preserves that mapping at a fixed size. Returns `undefined` for anything
+ * that is not a root-level failure — those are dropped as before.
+ */
+function boundedFailureProjection(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const root = value as Record<string, unknown>;
+  const flag = root.success === false ? 'success' : root.ok === false ? 'ok' : undefined;
+  if (!flag) return undefined;
+
+  const message =
+    typeof root.error === 'string' ? root.error
+    : typeof root.message === 'string' ? root.message
+    : 'n8n returned an error payload too large to include';
+  return {
+    [flag]: false,
+    error: message.slice(0, 2000),
+    ...(typeof root.code === 'string' ? { code: root.code } : {}),
+  };
+}
+
 function parseResult(raw: { content?: Array<{ type: string; text?: string }>; isError?: boolean; structuredContent?: unknown }): OfficialToolResult {
   let text = (raw.content ?? []).filter(c => c.type === 'text' && typeof c.text === 'string').map(c => c.text as string).join('\n');
   const textBytes = Buffer.byteLength(text, 'utf8');
@@ -164,7 +191,9 @@ function parseResult(raw: { content?: Array<{ type: string; text?: string }>; is
   if (json !== undefined) {
     structuredBytes = structuredSize(json);
     if (structuredBytes > OFFICIAL_RESULT_MAX_BYTES) {
-      json = undefined;
+      // A root-level failure keeps a bounded projection of itself; anything
+      // else is dropped. An oversized failure must never read as a success.
+      json = boundedFailureProjection(json);
       truncated = true;
     }
   }

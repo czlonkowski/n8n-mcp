@@ -37,8 +37,8 @@ export const WORKFLOW_NOT_EXPOSED_HINT =
  */
 export const PUBLIC_API_CONTEXT_HINT =
   'This request names an n8n instance (x-n8n-url) without its Public API key (x-n8n-key). ' +
-  'Enabling "Available in MCP" and the pinned/direct trigger lookup need the Public API ' +
-  'credentials of the same instance — add x-n8n-key alongside x-n8n-url.';
+  'Enabling "Available in MCP", the pinned/direct trigger lookup and the HTTP trigger path ' +
+  'all need the Public API credentials of the same instance — add x-n8n-key alongside x-n8n-url.';
 
 /**
  * Whether the Public API client resolved for this request (`getN8nApiClient`)

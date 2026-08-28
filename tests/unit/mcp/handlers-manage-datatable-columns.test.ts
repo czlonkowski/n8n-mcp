@@ -48,8 +48,11 @@ vi.mock('@/mcp/handlers-official-tools', async (orig) => {
   };
 });
 
-function choices(items: Array<{ id: string; name: string; type?: string }>) {
-  return async () => ({ choices: { backend: 'public-api', teamProjectsEnabled: true, items } });
+function choices(
+  items: Array<{ id: string; name: string; type?: string }>,
+  backend: 'public-api' | 'official-mcp' = 'public-api'
+) {
+  return async () => ({ choices: { backend, teamProjectsEnabled: true, items } });
 }
 
 /**
@@ -147,10 +150,22 @@ describe('n8n_manage_datatable column actions', () => {
     expect(r).toMatchObject({
       success: false,
       action: 'renameColumn',
+      backend: 'public-api',
       code: 'PROJECT_REQUIRED',
       details: { candidates: [{ id: 'p1' }, { id: 'p2' }] },
     });
     expect(officialMock.spy).not.toHaveBeenCalled();
+  });
+
+  it('names the resolver backend that answered on a PROJECT_REQUIRED envelope', async () => {
+    officialMock.projects = choices(
+      [{ id: 'p1', name: 'Personal', type: 'personal' }, { id: 'p2', name: 'Team', type: 'team' }],
+      'official-mcp'
+    );
+
+    const r = await handlers.handleRenameColumn({ action: 'renameColumn', tableId: 't1', columnId: 'c1', name: 'renamed' });
+
+    expect(r).toMatchObject({ success: false, code: 'PROJECT_REQUIRED', backend: 'official-mcp' });
   });
 
   it('reports PROJECT_REQUIRED when no project could be resolved', async () => {
@@ -158,7 +173,7 @@ describe('n8n_manage_datatable column actions', () => {
 
     const r = await handlers.handleDeleteColumn({ action: 'deleteColumn', tableId: 't1', columnId: 'c1' });
 
-    expect(r).toMatchObject({ success: false, action: 'deleteColumn', code: 'PROJECT_REQUIRED' });
+    expect(r).toMatchObject({ success: false, action: 'deleteColumn', backend: 'public-api', code: 'PROJECT_REQUIRED' });
     expect(r.error).toContain('No project');
     expect(officialMock.spy).not.toHaveBeenCalled();
   });
