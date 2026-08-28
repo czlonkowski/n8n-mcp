@@ -465,7 +465,7 @@ n8n_autofix_workflow({
    A flat object instead of an array of `{json}` items is the usual mistake here.
 3. `n8n_test_workflow({workflowId, method: "pinned", pinData})` — runs it with that data and waits for the result.
 
-**For a quick manual run without pinned data**, `method: "direct"` starts a manual execution and returns as soon as it has started; poll `n8n_executions({action: "get", id: executionId, mode: "error"})` for the outcome. It stays a manual execution unless you explicitly pass `executionMode: "production"`, which runs it for real — don't.
+**For a quick manual run without pinned data**, `method: "direct"` starts a manual execution and returns as soon as it has started; poll `n8n_executions({action: "get", id: executionId, mode: "error"})` for the outcome. Nothing is pinned on a `direct` run, so every node executes and any external call it makes is real — and even `pinned` only pins trigger, credentialed and HTTP Request nodes. `executionMode: "production"` changes the execution context, not whether there are side effects; leave it at the default unless the user asked for a production run.
 
 **`method: "auto"` never runs a workflow through n8n's MCP server.** On a workflow with no external trigger it reports that fact and names `prepare`/`pinned`/`direct`; the routed methods only run when you ask for them by name.
 

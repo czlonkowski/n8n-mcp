@@ -26,8 +26,8 @@ export const n8nTestWorkflowDoc: ToolDocumentation = {
 | \`auto\` (default) | Public API | Detects a webhook/form/chat trigger and triggers it over HTTP. Without such a trigger it reports that the workflow cannot be triggered externally and names the official methods. It never runs anything through n8n's MCP server. |
 | \`trigger\` | Public API | The same HTTP path, requested explicitly. Detection, the trigger types below and the error when no trigger exists are identical to \`auto\`. |
 | \`prepare\` | n8n MCP server | Read-only: lists the nodes that need pinned data and the schemas n8n can generate for them. Build \`pinData\` from this. |
-| \`pinned\` | n8n MCP server | Runs the workflow with \`pinData\` standing in for the trigger's output, and waits for the run to finish. |
-| \`direct\` | n8n MCP server | Starts a run with optional \`inputs\` and returns as soon as it has started. |
+| \`pinned\` | n8n MCP server | Runs the workflow with \`pinData\` standing in for trigger, credentialed and HTTP Request nodes, and waits for the run to finish. Every other node still executes for real. |
+| \`direct\` | n8n MCP server | Starts a run with optional \`inputs\` and returns as soon as it has started. Nothing is pinned — every node runs. |
 
 **Trigger types (HTTP path):**
 - **webhook**: HTTP-based triggers (GET/POST/PUT/DELETE)
@@ -38,7 +38,9 @@ n8n's public API does not support direct workflow execution, which is why \`prep
 
 **Consent: "Available in MCP".** n8n refuses MCP calls for a workflow whose "Available in MCP" setting is off, and this tool returns \`WORKFLOW_NOT_EXPOSED\` rather than changing it. Re-run with \`exposeToMcp: true\` to enable it — a visible, persistent setting on the workflow, so confirm with the user first. This flow only ever turns the setting on - disabling it again is a deliberate \`updateSettings\` write (\`availableInMCP: false\`) or a change in the n8n UI. A response that enabled it carries \`exposedToMcp: true\`. In a per-request (multi-tenant or header-driven) deployment, \`exposeToMcp\` and the \`pinned\`/\`direct\` methods need the Public API key (\`x-n8n-key\`) for the same instance as \`x-n8n-url\` — without it they return \`NOT_CONFIGURED\` rather than acting against a different instance.
 
-**executionMode: production.** \`method: direct\` runs as a manual execution unless you explicitly pass \`executionMode: 'production'\`. A production run behaves like a live one — real side effects, production execution data. It is never chosen for you.
+**Both run methods can cause real side effects.** \`direct\` runs every node, so any node that calls an external service calls it for real. \`pinned\` pins only trigger nodes, nodes with credentials and HTTP Request nodes; everything else — Code, Set, If, and credential-free I/O such as Execute Command or file read/write — executes normally. Treat both as live runs and confirm with the user before running a workflow that writes anywhere.
+
+**executionMode: production.** \`method: direct\` runs as a manual execution unless you explicitly pass \`executionMode: 'production'\`. That changes the execution context, not whether the run has side effects: a production run uses the production execution path and shows up as one in n8n's execution list. It is never chosen for you.
 
 **Typical sequence for a workflow with no external trigger:**
 1. \`{workflowId, method: 'prepare'}\` — see which nodes need pinned data.

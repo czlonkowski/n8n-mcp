@@ -448,7 +448,7 @@ export const n8nManagementTools: ToolDefinition[] = [
         executionMode: {
           type: 'string',
           enum: ['manual', 'production'],
-          description: 'For method=direct: manual (default) runs it as a manual execution; production runs it as a live one, with real side effects. Never chosen implicitly.'
+          description: 'For method=direct: manual (default) runs it as a manual execution; production runs it through the production execution path. Both execute the workflow\'s nodes for real - this only changes the execution context. Never chosen implicitly.'
         },
         exposeToMcp: {
           type: 'boolean',

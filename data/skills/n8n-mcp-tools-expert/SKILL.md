@@ -262,13 +262,14 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for full search/get/deploy exampl
 | `auto` (default) | Public API | Detects a webhook/form/chat trigger and fires it over HTTP. No such trigger → it reports that the workflow cannot be triggered and names the methods below. **`auto` never runs anything through n8n's MCP server.** |
 | `trigger` | Public API | Same HTTP path, requested explicitly. |
 | `prepare` | n8n's MCP server | Read-only: lists the nodes that need pinned data. |
-| `pinned` | n8n's MCP server | Runs the workflow with `pinData` standing in for the trigger output, and waits. A run that finishes in `error`/`crashed`/`canceled` comes back as `EXECUTION_FAILED` with the `executionId`. |
-| `direct` | n8n's MCP server | Starts a run and returns once it has started; `message` or `data`/`headers` are forwarded to the trigger as input. |
+| `pinned` | n8n's MCP server | Runs the workflow with `pinData` standing in for trigger, credentialed and HTTP Request nodes, and waits. Every other node still runs. A run that finishes in `error`/`crashed`/`canceled` comes back as `EXECUTION_FAILED` with the `executionId`. |
+| `direct` | n8n's MCP server | Starts a run and returns once it has started; nothing is pinned, so every node runs. `message` or `data`/`headers` are forwarded to the trigger as input. |
 
 - The last three need `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+) and the workflow's "Available in MCP" setting.
 - `pinData` is keyed by node **name**, and every value is an array of items wrapped as `{"json": {...}}` — `{"Webhook": [{"json": {"id": "123"}}]}`, never a flat object. It must be non-empty.
 - `triggerNodeName` picks the trigger node to start from (defaults to the detected one; n8n requires it whenever inputs are given).
-- `executionMode` applies to `direct`: `manual` (default) or `production`. A production run has real side effects — only pass it when the user asked for one.
+- **Both run methods execute the workflow's nodes for real.** `direct` runs every node; `pinned` pins only trigger nodes, nodes with credentials and HTTP Request nodes, so Code, Set, If and credential-free I/O (Execute Command, file read/write) still run. Confirm with the user before running a workflow that writes anywhere.
+- `executionMode` applies to `direct`: `manual` (default) or `production`. It changes the execution context, not whether the run has side effects — a production run goes through the production execution path and is recorded as one. Only pass it when the user asked for one.
 - `timeoutMs` is the client deadline for the official call (5000-600000; default 30000 for `prepare`, 300000 for `pinned`/`direct`).
 - `direct` returns as soon as the run starts, so it reports success with an `executionId` regardless of how the run ends — poll `n8n_executions({action: "get", id: executionId})` for the outcome. A dispatch n8n refuses outright comes back as `OFFICIAL_MCP_ERROR`, not `EXECUTION_FAILED`.
 

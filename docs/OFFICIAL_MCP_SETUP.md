@@ -174,8 +174,10 @@ Two properties of this flow are fixed:
   off is a deliberate act: `n8n_update_partial_workflow`'s `updateSettings` operation
   (or `n8n_create_workflow` / `n8n_update_full_workflow`) with
   `settings.availableInMCP: false`, or the toggle in the n8n UI.
-- **The setting is never enabled implicitly.** Without `exposeToMcp: true` the call
-  fails with `WORKFLOW_NOT_EXPOSED` and nothing is written.
+- **n8n-mcp never enables the setting implicitly.** Without `exposeToMcp: true` the call
+  fails with `WORKFLOW_NOT_EXPOSED` and nothing is written. An explicit
+  `settings.availableInMCP` passed through `updateSettings`, a create or a full update is
+  the caller's own deliberate write, and is applied like any other setting.
 
 **How the write is performed.** Enabling the setting is an ordinary workflow update
 through the Public API: n8n-mcp reads the workflow, merges `settings.availableInMCP:

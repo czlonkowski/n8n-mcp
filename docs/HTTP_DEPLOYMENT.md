@@ -895,11 +895,13 @@ Some tools are write/destructive or handle sensitive data and should be removed 
 DISABLED_TOOLS=n8n_create_workflow,n8n_update_full_workflow,n8n_update_partial_workflow,n8n_delete_workflow,n8n_autofix_workflow,n8n_deploy_template,n8n_test_workflow,n8n_manage_credentials,n8n_manage_datatable
 ```
 
-Four tools bundle read and write operations under a single name. Use `DISABLED_TOOL_OPERATIONS` to block only their destructive branches while keeping `list` and `get`:
+Several tools bundle read and write operations under a single name. Use `DISABLED_TOOL_OPERATIONS` to block only their destructive branches while keeping `list` and `get`. This example names every write operation of every tool that has one:
 
 ```bash
-DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete
+DISABLED_TOOL_OPERATIONS=n8n_executions:delete;n8n_test_workflow:auto,trigger,pinned,direct,expose;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_workflow_versions:delete,rollback,prune,expose;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration;n8n_manage_datatable:createTable,updateTable,deleteTable,insertRows,updateRows,upsertRows,deleteRows,addColumn,deleteColumn,renameColumn
 ```
+
+Two entries need explaining. For `n8n_test_workflow`, all four of `auto`, `trigger`, `pinned` and `direct` run the workflow (an omitted or blank `method` counts as `auto`), leaving only the read-only `prepare`. And `expose` is not a value of any operation parameter: it is the `exposeToMcp` consent write of `n8n_test_workflow` and `n8n_workflow_versions`, which enables a workflow's "Available in MCP" setting. Omitting `expose` leaves that write reachable.
 
 The operation parameter enum in the tool schema is updated to exclude disabled values, reducing the likelihood the model attempts them. Any attempt that does reach the server is rejected at dispatch before the handler runs.
 
