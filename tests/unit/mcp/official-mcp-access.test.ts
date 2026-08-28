@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 vi.mock('@/utils/logger', () => ({ logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() } }));
-import { resolveOfficialMcpConfig, getOfficialMcpClient, notConfiguredResponse, officialFailure, clearOfficialMcpClientCache } from '@/mcp/official-mcp-access';
+import { resolveOfficialMcpConfig, getOfficialMcpClient, notConfiguredResponse, officialFailure, clearOfficialMcpClientCache, buildOfficialMcpHealth } from '@/mcp/official-mcp-access';
 import { OfficialMcpError } from '@/services/n8n-official-mcp-client';
+import { startFakeOfficialMcp, FakeOfficialMcp } from '../../helpers/fake-official-mcp-server';
 
 const ENV = ['N8N_API_URL', 'N8N_API_KEY', 'N8N_MCP_ACCESS_TOKEN', 'ENABLE_MULTI_TENANT'] as const;
 let saved: Record<string, string | undefined>;
@@ -63,5 +64,65 @@ describe('envelopes', () => {
     expect(officialFailure(new Error('socket hang up'))).toMatchObject({ code: 'OFFICIAL_MCP_TRANSPORT_ERROR' });
     expect(officialFailure(new OfficialMcpError('OFFICIAL_MCP_AUTH_FAILED', 'n8n rejected the MCP access token', 401)))
       .toMatchObject({ success: false, code: 'OFFICIAL_MCP_AUTH_FAILED', error: 'n8n rejected the MCP access token', details: { status: 401 } });
+  });
+});
+
+describe('buildOfficialMcpHealth', () => {
+  let fake: FakeOfficialMcp;
+  let savedMode: string | undefined;
+  // The fake server listens on loopback, which the default strict SSRF mode
+  // refuses before any request is made.
+  beforeAll(() => { savedMode = process.env.WEBHOOK_SECURITY_MODE; process.env.WEBHOOK_SECURITY_MODE = 'moderate'; });
+  afterAll(() => { if (savedMode === undefined) delete process.env.WEBHOOK_SECURITY_MODE; else process.env.WEBHOOK_SECURITY_MODE = savedMode; });
+  afterEach(async () => { await fake?.close(); });
+
+  /** A context pointing at the fake server; url + token makes it authoritative, no env involved. */
+  function contextFor(url: string) {
+    return { n8nApiUrl: new URL(url).origin, n8nMcpAccessToken: 'mcp-token-placeholder' };
+  }
+
+  it('reports configured:false with a setup hint when there is no config', async () => {
+    const health = await buildOfficialMcpHealth(undefined, false);
+    expect(health).toEqual({ configured: false, hint: expect.stringContaining('N8N_MCP_ACCESS_TOKEN') });
+  });
+
+  it('reports the endpoint alone when configured but never probed and live is false', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
+    const health = await buildOfficialMcpHealth(contextFor(fake.url), false);
+    expect(health).toEqual({ configured: true, endpoint: fake.url });
+    expect(health).not.toHaveProperty('reachable');
+    expect(fake.requests).toHaveLength(0);   // status mode never touches the network
+  });
+
+  it('probes live and reports reachability, tool count and the check time', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }, { name: 'search_workflows' }] });
+    const health = await buildOfficialMcpHealth(contextFor(fake.url), true);
+    expect(health).toMatchObject({ configured: true, endpoint: fake.url, reachable: true, toolCount: 2, agentTools: true });
+    expect(new Date(health.checkedAt!).toISOString()).toBe(health.checkedAt);
+    expect(health).not.toHaveProperty('error');
+  });
+
+  it('reports the error code and hint when a live probe is rejected', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }], raw: { status: 401, body: '{}', contentType: 'application/json' } });
+    const health = await buildOfficialMcpHealth(contextFor(fake.url), true);
+    expect(health).toMatchObject({
+      configured: true,
+      endpoint: fake.url,
+      reachable: false,
+      toolCount: 0,
+      agentTools: false,
+      error: 'OFFICIAL_MCP_AUTH_FAILED',
+      hint: expect.stringContaining('N8N_MCP_ACCESS_TOKEN'),
+    });
+  });
+
+  it('serves the cached probe result once one exists, without a second request', async () => {
+    fake = await startFakeOfficialMcp({ tools: [{ name: 'search_agents' }] });
+    const context = contextFor(fake.url);
+    await buildOfficialMcpHealth(context, true);
+    const afterProbe = fake.requests.length;
+    const health = await buildOfficialMcpHealth(context, false);
+    expect(health).toMatchObject({ reachable: true, toolCount: 1 });
+    expect(fake.requests.length).toBe(afterProbe);
   });
 });
