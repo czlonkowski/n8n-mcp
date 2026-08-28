@@ -158,7 +158,7 @@ Default values cause runtime failures. Example:
 `validate_node({nodeType, config, mode: 'minimal'})` - Required fields only (<100ms)
 
 ### Level 2 - Comprehensive (before building)
-`validate_node({nodeType, config, mode: 'full', profile: 'runtime'})` - Full validation (default mode) with fixes
+`validate_node({nodeType, config, mode: 'full', profile: 'runtime'})` - Full validation (default mode); returns errors, warnings and suggestions — it does not change the config
 
 ### Level 3 - Complete (after building)
 `validate_workflow({workflow})` - Connections, expressions, AI tools
@@ -294,14 +294,12 @@ n8n_update_partial_workflow({
 
 ### removeConnection Syntax
 
-Use the same four-parameter format:
+`removeConnection` takes the same fields; `sourceOutput` and `targetInput` are optional and default to `"main"`:
 ```json
 {
   "type": "removeConnection",
   "source": "source-node-id",
-  "target": "target-node-id",
-  "sourceOutput": "main",
-  "targetInput": "main"
+  "target": "target-node-id"
 }
 ```
 
