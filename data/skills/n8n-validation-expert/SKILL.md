@@ -449,6 +449,32 @@ n8n_autofix_workflow({
 
 ---
 
+## Running the workflow after it validates
+
+`validate_workflow` checks structure, parameters and expressions — it never runs anything. A workflow that validates clean can still fail on real data, so run it once before calling it done.
+
+**With a webhook, form or chat trigger:** `n8n_test_workflow({workflowId})` — the default `method: "auto"` detects the trigger and fires it over HTTP (the workflow must be active).
+
+**Without such a trigger** (Manual Trigger, Schedule, sub-workflow) there is no HTTP entry point. Use the pin-data path, which runs through n8n's own MCP server (`N8N_MCP_ACCESS_TOKEN`, n8n 2.34+):
+
+1. `n8n_test_workflow({workflowId, method: "prepare"})` — lists the nodes that need pinned data.
+2. Build one sample item per listed node, keyed by node **name**, each item wrapped in `{json: {...}}`:
+   ```json
+   {"When clicking 'Test workflow'": [{"json": {"orderId": "1234", "email": "a@b.com"}}]}
+   ```
+   A flat object instead of an array of `{json}` items is the usual mistake here.
+3. `n8n_test_workflow({workflowId, method: "pinned", pinData})` — runs it with that data and waits for the result.
+
+**For a quick manual run without pinned data**, `method: "direct"` starts a manual execution and returns as soon as it has started; poll `n8n_executions({action: "get", id: executionId, mode: "error"})` for the outcome. It stays a manual execution unless you explicitly pass `executionMode: "production"`, which runs it for real — don't.
+
+**`method: "auto"` never runs a workflow through n8n's MCP server.** On a workflow with no external trigger it reports that fact and names `prepare`/`pinned`/`direct`; the routed methods only run when you ask for them by name.
+
+**Consent before the first routed run.** n8n refuses these calls for a workflow whose "Available in MCP" setting is off, which comes back as `WORKFLOW_NOT_EXPOSED`. Re-running with `exposeToMcp: true` turns that setting on and retries once. It is a visible, persistent setting on the workflow (and enabling it is a workflow update, so a concurrent UI edit can be overwritten) — **ask the user before passing it**, and note that nothing ever turns it back off; that is done in the n8n UI.
+
+**Reading the result:** a run that started and then failed comes back as `EXECUTION_FAILED` with the `executionId` — inspect it with `n8n_executions({action: "get", id, mode: "error"})` and fix from the node that threw, then validate and run again.
+
+---
+
 ## Reviewing an existing workflow
 
 Validating as you build (the loop above) is for catching schema and shape errors in your own in-progress work. **Reviewing an existing workflow** — yours or one you've been handed — is a different job: the workflow already passes `validate_workflow` clean, and you're hunting for the issues validation doesn't see (silent connection bugs, injection-prone queries, dropped-item Switches, Set/Code antipatterns, missing error paths). For that, pull the workflow with `n8n_get_workflow` and walk **[REVIEW_CHECKLIST.md](REVIEW_CHECKLIST.md)** — a severity-tiered audit (MUST FIX / SHOULD FIX / NICE TO HAVE) where every item points to the canonical skill for the fix. Run `n8n_audit_instance` alongside it to surface hardcoded secrets and unauthenticated webhooks across the whole instance.
