@@ -527,11 +527,15 @@ describe('Disabled Tool Operations Feature (Issue #714)', () => {
     });
 
     it('should not block prepare when the run methods are disabled', async () => {
+      expect.assertions(1);
       process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:auto,trigger';
       server = new TestableN8NMCPServer();
 
+      // The call gets past the policy gate and then fails on something else
+      // (no n8n API configured here) — either way exactly one assertion runs.
       try {
-        await server.testExecuteTool('n8n_test_workflow', { workflowId: 'w', method: 'prepare' });
+        const result = await server.testExecuteTool('n8n_test_workflow', { workflowId: 'w', method: 'prepare' });
+        expect(result).toBeDefined();
       } catch (error: any) {
         expect(error.message).not.toContain('disabled by server policy');
       }

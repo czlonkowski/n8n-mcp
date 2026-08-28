@@ -439,7 +439,7 @@ export const n8nManagementTools: ToolDefinition[] = [
         },
         pinData: {
           type: 'object',
-          description: 'For method=pinned (required): pinned trigger data, keyed by node name, each value an array of items. Get the node list from method=prepare.'
+          description: 'For method=pinned (required, non-empty): pinned trigger data keyed by node name. Each value is an array of ITEMS, and every item must be wrapped as { "json": { ... } } - e.g. {"Webhook": [{"json": {"id": "123"}}]}, never a flat object. Get the node list from method=prepare.'
         },
         triggerNodeName: {
           type: 'string',

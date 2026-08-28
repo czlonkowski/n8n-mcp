@@ -224,6 +224,15 @@ describe('n8n_test_workflow method routing', () => {
     expect(officialMock.spy).not.toHaveBeenCalled();
   });
 
+  it('refuses pinned with an empty pinData object', async () => {
+    // Nothing pinned means every credentialed/HTTP node in the workflow runs
+    // for real — refused like a missing pinData rather than forwarded.
+    const r = await handlers.handleTestWorkflow({ workflowId: 'w', method: 'pinned', pinData: {} });
+    expect(r).toMatchObject({ success: false, code: 'INVALID_ARGS', method: 'pinned' });
+    expect(r.error).toContain('method: prepare');
+    expect(officialMock.spy).not.toHaveBeenCalled();
+  });
+
   it('pinned converts timeoutMs to a shorter server-side timeout and auto-fills the trigger node', async () => {
     officialMock.override = async () => ({
       success: true,
@@ -595,6 +604,29 @@ describe('n8n_test_workflow over the wire', () => {
       method: 'pinned',
       backend: 'official-mcp',
       executionId: 'e1',
+    });
+  });
+
+  it('turns a pinned run that ended badly into EXECUTION_FAILED', async () => {
+    // Precedence over the real client: test_workflow's status is the outcome of
+    // a run that started fine, so callOfficialTool reports a success and the
+    // handler is the one that fails it.
+    const context = await contextFor([
+      { name: 'test_workflow', handler: () => ({ executionId: 'e9', status: 'error', error: 'node failed' }) },
+    ]);
+
+    const r = await handlers.handleTestWorkflow(
+      { workflowId: 'w', method: 'pinned', pinData: { Webhook: [{ json: {} }] } },
+      context
+    );
+
+    expect(r).toMatchObject({
+      success: false,
+      code: 'EXECUTION_FAILED',
+      error: 'node failed',
+      executionId: 'e9',
+      method: 'pinned',
+      backend: 'official-mcp',
     });
   });
 

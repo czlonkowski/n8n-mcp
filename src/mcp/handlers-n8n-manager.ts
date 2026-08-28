@@ -1736,12 +1736,15 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       return routeOfficial(['prepare_workflow_pin_data'], { workflowId: input.workflowId }, true, 'prepare');
     }
 
-    if (method === 'pinned' && !input.pinData) {
+    // An EMPTY pinData is refused like a missing one: n8n would run the
+    // workflow with nothing pinned, so every credentialed and HTTP node in it
+    // would do real work — the opposite of what "pinned" asks for.
+    if (method === 'pinned' && Object.keys(input.pinData ?? {}).length === 0) {
       return {
         success: false,
         code: 'INVALID_ARGS',
         method: 'pinned',
-        error: 'pinData is required for method: pinned (keys are node names, values are arrays of items). Run method: prepare first to see which nodes need pinned data.',
+        error: 'pinData is required for method: pinned (keys are node names, values are arrays of items wrapped as { "json": { ... } }). Run method: prepare first to see which nodes need pinned data.',
       };
     }
 

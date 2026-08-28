@@ -24,7 +24,7 @@ export const n8nTestWorkflowDoc: ToolDocumentation = {
 | method | backend | What it does |
 |---|---|---|
 | \`auto\` (default) | Public API | Detects a webhook/form/chat trigger and triggers it over HTTP. Without such a trigger it reports that the workflow cannot be triggered externally and names the official methods. It never runs anything through n8n's MCP server. |
-| \`trigger\` | Public API | The HTTP path above, without auto-detection fallback wording. |
+| \`trigger\` | Public API | The same HTTP path, requested explicitly. Detection, the trigger types below and the error when no trigger exists are identical to \`auto\`. |
 | \`prepare\` | n8n MCP server | Read-only: lists the nodes that need pinned data and the schemas n8n can generate for them. Build \`pinData\` from this. |
 | \`pinned\` | n8n MCP server | Runs the workflow with \`pinData\` standing in for the trigger's output, and waits for the run to finish. |
 | \`direct\` | n8n MCP server | Starts a run with optional \`inputs\` and returns as soon as it has started. |
@@ -108,7 +108,7 @@ Every response states \`method\` and \`backend\` ('public-api' or 'official-mcp'
       pinData: {
         type: 'object',
         required: false,
-        description: 'For method=pinned (required): pinned trigger data keyed by node name, each value an array of items. Build it from method=prepare.'
+        description: 'For method=pinned (required, non-empty): pinned trigger data keyed by node name. Each value is an array of ITEMS, and every item must be wrapped as { "json": { ... } } - e.g. {"Webhook": [{"json": {"id": "123"}}]}, never a flat object. Build it from method=prepare.'
       },
       triggerNodeName: {
         type: 'string',
