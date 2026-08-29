@@ -76,7 +76,7 @@ n8n_deploy_template({
 
 ### n8n_manage_datatable
 
-Unified tool for managing n8n data tables and rows. Supports CRUD operations on tables and rows with filtering, pagination, and dry-run support.
+Unified tool for managing n8n data tables, their rows and their columns. Supports CRUD operations on tables and rows with filtering, pagination, and dry-run support, plus column changes through n8n's MCP server.
 
 **Table Actions**: `createTable`, `listTables`, `getTable`, `updateTable`, `deleteTable`
 **Row Actions**: `getRows`, `insertRows`, `updateRows`, `upsertRows`, `deleteRows`
