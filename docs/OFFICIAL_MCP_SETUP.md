@@ -55,14 +55,27 @@ resolved.
 Everything else in n8n-mcp works exactly as before without this token - it is purely
 additive.
 
-## 2. Getting the token
+## 2. Enabling instance-level MCP and getting the token
 
-These steps match the n8n UI as of n8n 2.36.
+Everything in section 1, and every routed operation added in 2.76.0
+(`n8n_test_workflow` methods `prepare` / `pinned` / `direct`, `n8n_workflow_versions`
+with `source: 'native'`, the `n8n_manage_datatable` column actions), needs n8n's
+instance-level MCP server switched on first. It is off by default. These steps match
+the n8n UI as of n8n 2.36.
 
-1. In n8n, go to **Settings → Instance-level MCP**.
-2. Set **MCP status** to **Enabled**.
+1. In n8n, open the settings menu (the gear icon at the bottom of the left sidebar)
+   and pick **Instance-level MCP**.
 
-   ![Instance-level MCP settings page](./img/n8n-instance-level-mcp-settings.png)
+   ![Settings menu with the Instance-level MCP entry](./img/n8n-settings-menu-instance-level-mcp.png)
+
+2. On the **Instance level MCP** page, set **MCP status** to **Enabled**.
+
+   ![Instance-level MCP page with MCP status set to Enabled](./img/n8n-instance-level-mcp-status-enabled.png)
+
+   The **Access** section on the same page lists which workflows and agents connected
+   clients may use ("Workflows exposed" / "Agents exposed"). A workflow is only reachable
+   through the routed operations once it is on that list - either toggled there, or
+   enabled per workflow through the `exposeToMcp` consent flow described in section 4.
 
 3. Click **Connect your client → Connect**. This opens the "Connect a client" dialog.
 4. In the dialog, pick the **API key** tab (not **OAuth (recommended)** - n8n-mcp
