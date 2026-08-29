@@ -51,7 +51,10 @@ export const PUBLIC_API_CONTEXT_HINT =
  * `n8nApiUrl` with either `n8nApiKey` or `n8nMcpAccessToken`. A context that
  * names a url with a token but no key is therefore official-MCP-authoritative
  * while the Public API client silently falls back to the operator's own
- * instance — false only in that one case.
+ * instance. Returns false whenever the context names a url without a key
+ * (with or without a token): that is the only shape in which the Public API
+ * client cannot address the instance the context names. True for no context,
+ * key-only and url + key.
  */
 export function publicApiMatchesContext(context?: InstanceContext | null): boolean {
   const hasUrl = typeof context?.n8nApiUrl === 'string' && context.n8nApiUrl.length > 0;

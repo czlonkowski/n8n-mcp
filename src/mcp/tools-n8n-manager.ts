@@ -699,7 +699,7 @@ Two sources:
           description: 'Native only. When n8n refuses the workflow because it is not available in MCP, enable that setting on the workflow and retry once. This is a visible, persistent workflow setting - confirm with the user first.'
         },
         timeoutMs: {
-          type: 'number',
+          type: 'integer',
           minimum: 5000,
           maximum: 600000,
           description: 'Client deadline for the native call (default 30000)'
@@ -803,7 +803,12 @@ Two sources:
           },
           required: ['name', 'type'],
         },
-        timeoutMs: { type: 'number', description: 'For the column actions: client timeout in ms (5000-600000, default 30000).' },
+        timeoutMs: {
+          type: 'integer',
+          minimum: 5000,
+          maximum: 600000,
+          description: 'For the column actions: client timeout in ms (5000-600000, default 30000).',
+        },
       },
       required: ['action'],
     },
