@@ -65,7 +65,7 @@ Column names must start with a letter, contain only letters, digits and undersco
       projectId: { type: 'string', required: false, description: 'For createTable: project to create the table in. For the column actions: project owning the table - auto-resolved when exactly one project is accessible' },
       column: { type: 'object', required: false, description: 'For addColumn: {name, type} - name must match ^[a-zA-Z][a-zA-Z0-9_]*$ and be at most 63 characters; type is string, number, boolean or date' },
       columnId: { type: 'string', required: false, description: 'For deleteColumn/renameColumn: ID of the column (read it from getTable)' },
-      timeoutMs: { type: 'number', required: false, description: 'For the column actions: client timeout in ms (5000-600000, default 30000)' },
+      timeoutMs: { type: 'integer', required: false, description: 'For the column actions: client timeout in ms (5000-600000, default 30000)' },
     },
     returns: `Depends on action:
 - createTable: {id, name}

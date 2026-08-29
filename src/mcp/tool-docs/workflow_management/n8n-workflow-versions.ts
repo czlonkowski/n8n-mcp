@@ -158,7 +158,7 @@ per workflow, plus an age-based retention window). Native history retention is n
         description: 'Native only. On a WORKFLOW_NOT_EXPOSED refusal, enable the workflow\'s "Available in MCP" setting and retry once. Visible, persistent change - confirm with the user first.'
       },
       timeoutMs: {
-        type: 'number',
+        type: 'integer',
         required: false,
         default: 30000,
         description: 'Client deadline for the native call (5000-600000)'

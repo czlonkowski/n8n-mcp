@@ -129,7 +129,7 @@ Every response states \`method\` and \`backend\` ('public-api' or 'official-mcp'
         description: 'For the official methods: enable the workflow\'s persistent "Available in MCP" setting when n8n refuses the call. Confirm with the user first.'
       },
       timeoutMs: {
-        type: 'number',
+        type: 'integer',
         required: false,
         description: 'Client-side deadline for the official call, 5000-600000 (default: 30000 for prepare, 300000 for pinned/direct)'
       }
