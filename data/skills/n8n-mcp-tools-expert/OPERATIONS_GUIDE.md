@@ -80,6 +80,7 @@ Unified tool for managing n8n data tables and rows. Supports CRUD operations on 
 
 **Table Actions**: `createTable`, `listTables`, `getTable`, `updateTable`, `deleteTable`
 **Row Actions**: `getRows`, `insertRows`, `updateRows`, `upsertRows`, `deleteRows`
+**Column Actions** (n8n's MCP server, `N8N_MCP_ACCESS_TOKEN`, n8n 2.34+): `addColumn`, `deleteColumn`, `renameColumn`
 
 ```javascript
 // Create a data table
@@ -126,6 +127,31 @@ n8n_manage_datatable({
   filter: {filters: [{columnName: "email", condition: "eq", value: "a@b.com"}]},
   data: {score: 15},
   returnData: true
+})
+```
+
+```javascript
+// Column actions: the Public API cannot change columns after a table exists,
+// so these run through n8n's MCP server. projectId is the project owning the
+// table; when omitted it is resolved from the instance's projects (PROJECT_REQUIRED
+// asks for it when more than one project could own the table).
+n8n_manage_datatable({
+  action: "addColumn",
+  tableId: "dt-123",
+  column: {name: "status", type: "string"}   // letters/digits/underscores, starts with a letter, max 63 chars
+})
+
+n8n_manage_datatable({
+  action: "renameColumn",
+  tableId: "dt-123",
+  columnId: "col-456",   // from getTable
+  name: "state"
+})
+
+n8n_manage_datatable({
+  action: "deleteColumn",
+  tableId: "dt-123",
+  columnId: "col-456"
 })
 ```
 

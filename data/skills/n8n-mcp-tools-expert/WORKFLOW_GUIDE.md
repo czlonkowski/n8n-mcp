@@ -547,7 +547,14 @@ const result = n8n_deploy_template({
 
 ## n8n_workflow_versions (VERSION CONTROL)
 
-**Use when**: Managing workflow history, rollback, cleanup
+**Use when**: Managing workflow history, rollback, cleanup, comparing versions
+
+Two independent histories, selected with `source`:
+
+- `source: "local"` (default) — snapshots n8n-mcp takes before it changes a workflow. Any n8n version, no token; ids are numbers. Blind to edits made in the n8n UI. The only source with `delete` and `prune`.
+- `source: "native"` — n8n's own workflow history, the same list the UI shows. Needs `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+; native `diff` needs 2.36) and the workflow's "Available in MCP" setting; ids are opaque strings; `list` is capped at 50 with `offset`; `delete`/`prune` return `MODE_NOT_SUPPORTED_FOR_SOURCE`; native `rollback` runs without local validation and says so in `validation`.
+
+Every response states `source` and `backend`. The examples below use `source: "local"` unless noted.
 
 ### List Versions
 ```javascript
@@ -556,15 +563,53 @@ n8n_workflow_versions({
   workflowId: "workflow-id",
   limit: 10
 })
+
+// n8n's own history (edits made in the UI included)
+n8n_workflow_versions({
+  mode: "list",
+  source: "native",
+  workflowId: "workflow-id",
+  limit: 20,
+  offset: 0
+})
 ```
 
 ### Get Specific Version
 ```javascript
 n8n_workflow_versions({
   mode: "get",
-  versionId: 123
+  workflowId: "workflow-id",
+  versionId: 123          // local ids are numbers
+})
+
+n8n_workflow_versions({
+  mode: "get",
+  source: "native",
+  workflowId: "workflow-id",
+  versionId: "8f3c…"      // native ids are strings, from the native list
 })
 ```
+
+### Diff Two Versions
+```javascript
+// Local: added/removed/modified nodes reported as node IDs (data.format: "n8n-mcp")
+n8n_workflow_versions({
+  mode: "diff",
+  workflowId: "workflow-id",
+  versionId: 122,
+  toVersionId: 123
+})
+
+// Native: n8n's own payload with field-level before/after values (data.format: "n8n", n8n 2.36+)
+n8n_workflow_versions({
+  mode: "diff",
+  source: "native",
+  workflowId: "workflow-id",
+  versionId: "8f3c…",
+  toVersionId: "a91d…"
+})
+```
+Both versions must come from the same source and the same workflow; a mismatch is refused, not silently compared.
 
 ### Rollback to Previous Version
 ```javascript
@@ -572,11 +617,20 @@ n8n_workflow_versions({
   mode: "rollback",
   workflowId: "workflow-id",
   versionId: 123,  // Optional: specific version
-  validateBefore: true  // Default: validate before rollback
+  validateBefore: true  // Default: validate before rollback (local only)
+})
+
+// Native rollback restores n8n's own version; no local validation runs
+n8n_workflow_versions({
+  mode: "rollback",
+  source: "native",
+  workflowId: "workflow-id",
+  versionId: "8f3c…"
 })
 ```
 
 ### Delete Versions
+Local snapshots only (`source: "native"` returns `MODE_NOT_SUPPORTED_FOR_SOURCE`).
 ```javascript
 // Delete specific version
 n8n_workflow_versions({
@@ -594,6 +648,7 @@ n8n_workflow_versions({
 ```
 
 ### Prune Old Versions
+Local snapshots only.
 ```javascript
 n8n_workflow_versions({
   mode: "prune",
@@ -604,31 +659,55 @@ n8n_workflow_versions({
 
 ---
 
-## n8n_test_workflow (TRIGGER EXECUTION)
+## n8n_test_workflow (RUNNING WORKFLOWS)
 
-**Use when**: Testing workflow execution
+**Use when**: Running a workflow to test it
 
-**Auto-detects** trigger type (webhook, form, chat)
+`method` picks the path. `auto` (default) and `trigger` fire a webhook/form/chat trigger over HTTP through the Public API — the workflow must be active. `prepare`, `pinned` and `direct` go through n8n's MCP server (`N8N_MCP_ACCESS_TOKEN`, n8n 2.34+, workflow "Available in MCP") and also work for inactive workflows and workflows without an HTTP trigger. `auto` never runs anything through n8n's MCP server: without an HTTP trigger it reports that the workflow cannot be triggered and names the other methods. See SKILL.md "Running Workflows" for the full method table and the side-effect notes.
 
 ```javascript
-// Test webhook workflow
+// HTTP trigger path (method auto/trigger): the older fields still apply here
 n8n_test_workflow({
   workflowId: "workflow-id",
   triggerType: "webhook",  // Optional: auto-detected
   httpMethod: "POST",
   data: {message: "Hello!"},
   waitForResponse: true,
-  timeout: 120000
+  timeout: 120000          // HTTP trigger path only
 })
 
-// Test chat workflow
 n8n_test_workflow({
   workflowId: "workflow-id",
   triggerType: "chat",
   message: "Hello, AI agent!",
   sessionId: "session-123"  // For conversation continuity
 })
+
+// Which nodes need pinned data (read-only)
+n8n_test_workflow({
+  workflowId: "workflow-id",
+  method: "prepare"
+})
+
+// Run with pinned data standing in for trigger, credentialed and HTTP Request nodes
+n8n_test_workflow({
+  workflowId: "workflow-id",
+  method: "pinned",
+  pinData: {"Webhook": [{"json": {"id": "123"}}]},  // keyed by node name; items wrapped as {json: ...}
+  timeoutMs: 300000         // client deadline for the official call (5000-600000)
+})
+
+// Start a run without a webhook; returns once the run has started
+n8n_test_workflow({
+  workflowId: "workflow-id",
+  method: "direct",
+  data: {message: "Hello!"},
+  triggerNodeName: "Manual Trigger"   // optional; required by n8n when inputs are given
+})
+// then poll: n8n_executions({action: "get", id: executionId})
 ```
+
+`timeout` applies to the HTTP trigger path only; the routed methods use `timeoutMs`. A workflow whose "Available in MCP" setting is off comes back as `WORKFLOW_NOT_EXPOSED`; re-running with `exposeToMcp: true` enables that setting on the workflow (a visible, persistent change — confirm with the user first).
 
 ---
 
