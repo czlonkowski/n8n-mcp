@@ -148,12 +148,17 @@ n8n_manage_datatable({
   name: "state"
 })
 
+// deleteColumn drops the column's VALUES with it, and there is no undo.
+// A column's type cannot be changed after creation, so "make this column a number"
+// means drop-and-re-add — read the values out with getRows first if they matter.
 n8n_manage_datatable({
   action: "deleteColumn",
   tableId: "dt-123",
   columnId: "col-456"
 })
 ```
+
+Column types are `string`, `number`, `boolean` and `date`. The column actions also accept `timeoutMs` (5000-600000, default 30000).
 
 **Filter conditions**: `eq`, `neq`, `like`, `ilike`, `gt`, `gte`, `lt`, `lte`
 
