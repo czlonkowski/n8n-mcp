@@ -133,9 +133,12 @@ mode: the MCP endpoint is derived from the URL. `N8N_MCP_ACCESS_TOKEN` in the
 environment is never used for a header-driven request — a request whose headers carry
 the URL plus a credential is authoritative and never falls back to the server's own
 environment variables. All three headers are redacted from logs. This also applies in
-single-tenant mode: `n8n_test_workflow`'s `exposeToMcp` and its `pinned`/`direct`
-methods need `x-n8n-key` alongside `x-n8n-url` for the same instance — without it they
-return `NOT_CONFIGURED` rather than risk writing to or reading from a different instance.
+single-tenant mode: every path that also needs the Public API — `n8n_test_workflow` for
+every method except a plain `prepare` (the HTTP trigger path, the `pinned`/`direct` trigger
+lookup and the `exposeToMcp` write), and the project lookup behind `n8n_list_catalog` and the
+data-table column actions — needs `x-n8n-key` alongside `x-n8n-url` for the same instance.
+Without it the call returns `NOT_CONFIGURED` (the project lookup falls back to the MCP
+server's own `search_projects`) rather than reading from or writing to a different instance.
 
 See [HTTP Deployment](./HTTP_DEPLOYMENT.md) for the rest of the HTTP-mode setup.
 

@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- On a per-request context that names an instance (`x-n8n-url`) with `x-n8n-mcp-token` but no `x-n8n-key`, `exposeToMcp` and the `pinned`/`direct` trigger-detection read no longer fall back to the operator's own Public API instance; they now return `NOT_CONFIGURED` naming the missing `x-n8n-key`. Only single-tenant header-driven deployments could hit this — multi-tenant mode already requires both headers.
+- On a per-request context that names an instance (`x-n8n-url`) with `x-n8n-mcp-token` but no `x-n8n-key`, no path falls back to the operator's own Public API instance any more: `n8n_test_workflow` refuses every method except a plain `prepare` with `NOT_CONFIGURED` naming the missing `x-n8n-key`, and the project lookup behind `n8n_list_catalog` and the data-table column actions uses the MCP server's own `search_projects` instead of the environment client. Only single-tenant header-driven deployments could hit this — multi-tenant mode already requires both headers.
 - `method: 'direct'` with a `triggerNodeName` that matches no node in the workflow now returns `INVALID_ARGS` locally instead of forwarding the unknown name to n8n's MCP server.
 
 ### Security
