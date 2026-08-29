@@ -172,7 +172,25 @@ get_node({
 3. Looking for a specific field → `search_properties` mode. Otherwise continue.
 4. Still need more → `get_node({detail: "full"})`.
 
-**Dynamic properties**: when `standard` detail marks a property with `dynamicOptions: {methodName, methodType, dependsOn}`, its real values come from a live `loadOptions`/`listSearch` method, not from bundled docs — don't guess an ID for it. Resolve it with `n8n_explore_node_resources` (needs `N8N_MCP_ACCESS_TOKEN`, n8n 2.34+; pass that `methodName`/`methodType`, plus a `credentialId` from `n8n_manage_credentials({action: "list"})`) and use the returned `value` in the config; `dependsOn` lists which other parameters must already be set before the method returns useful results.
+**Dynamic properties**: when `standard` detail marks a property with `dynamicOptions: {methodName, methodType, dependsOn}`, its real values come from a live `loadOptions`/`listSearch` method, not from bundled docs — don't guess an ID for it. Resolve it with `n8n_explore_node_resources` (needs `N8N_MCP_ACCESS_TOKEN`, n8n 2.34+) and put the returned `value` in the config; `name` is display text only.
+
+All six parameters are required and none are inferred from each other:
+
+```javascript
+n8n_explore_node_resources({
+  nodeType: "n8n-nodes-base.googleSheets",  // LONG form
+  version: 4.5,                              // the node typeVersion the method belongs to
+  methodName: "getSheets",                   // copied verbatim from dynamicOptions
+  methodType: "listSearch",                  // "listSearch" for resource locators, "loadOptions" for plain dropdowns
+  credentialType: "googleSheetsOAuth2Api",
+  credentialId: "c2",                        // from n8n_manage_credentials({action: "list"})
+  currentNodeParameters: {                   // whatever dependsOn names, in its real shape
+    documentId: {__rl: true, mode: "id", value: "1AbC…"}
+  }
+})
+```
+
+`dependsOn` names the parameters the method needs already chosen — pass them in `currentNodeParameters`, keeping resource-locator values in their `{__rl: true, mode, value}` shape, or the method returns nothing useful. `methodName` is case-sensitive and specific to the `nodeType` + `version` pair; a mismatch returns `OFFICIAL_MCP_ERROR` rather than an empty list.
 
 ---
 

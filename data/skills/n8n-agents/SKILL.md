@@ -197,15 +197,19 @@ A **persisted n8n Agent** is a different artifact from the AI Agent node covered
 
 **Build sequence:**
 1. `action: "reference"` — read the config schema and the exact mutate operations before anything else.
-2. `action: "discover_assets"` — list available models, integrations, workflows, subagents, MCP servers for the target project.
+2. `action: "discover_assets"` — list what the agent can actually be wired to. Takes `projectId` (from `n8n_list_catalog({kind: "projects"})`) and `kind`: `models` (with a `provider`), `integrations`, `workflows`, `subagents` or `mcpServers`. One call per kind.
 3. `action: "create"` — `projectId`, `name`, `config`.
-4. `action: "mutate"` — one resource per call (`config.patch`, `skill.upsert`/`delete`, `task.upsert`/`delete`, `customTool.upsert`/`delete`), always with the **latest** `configHash` from the previous response. A stale hash comes back as `STALE_CONFIG` — re-`get` and retry with the fresh one.
+4. `action: "mutate"` — one resource per call (`config.patch`, `skill.upsert`/`delete`, `task.upsert`/`delete`, `customTool.upsert`/`delete`), always carrying the **latest** hash forward. Mind the two names: n8n returns it as `configHash` and expects it back as `args.baseConfigHash`. `args` are forwarded to n8n verbatim, so a near-miss on any field name comes back as `INVALID_ARGS`, not a helpful correction — which is why step 1 reads the schema first. A stale hash comes back as `STALE_CONFIG` — re-`get` and retry with the fresh one.
 5. `action: "validate"` — before offering to `call` or `publish`.
 6. `action: "publish"` — **only on the user's explicit request**, never proactively.
 
 `action: "call"` runs the agent with real credentials and real tools — a live execution, not a dry run. A result can carry `approvals[]` for tool calls that need a human decision; **never approve on the user's behalf** — surface them and resume only after the user decides.
 
+**Custom tools are a third code runtime — don't reuse either of the others.** A `customTool.upsert` body is **TypeScript**, and the only imports it may use are `@n8n/agents` and `zod`. This is not the Code node (JavaScript/Python, returns `[{json: …}]`) and not the AI-agent Custom Code Tool covered by **n8n-code-tool** (`@n8n/n8n-nodes-langchain.toolCode`, returns a string, no `$fromAI()`). Reaching for the wrong contract is the easy mistake here, because all three are "write code the agent calls". Read the shape from `action: "reference"` before writing one; a compile failure or an unknown `agentId` surfaces as `AGENT_TOOL_ERROR`.
+
 **Credential caveat:** on n8n 2.36.x the agents runtime rejects `azureOpenAiApi` and `aws` credentials (reported as `missing: ["credential"]`); the response's `hint` names the accepted types instead.
+
+**Testing without leaving debris:** name throwaway agents `[TEST] …` and `delete` them when you're done — a persisted Agent outlives the conversation that made it, unlike a workflow you can leave inactive.
 
 → **n8n-mcp-tools-expert** `## Agents` for the tool's full action list and error codes.
 

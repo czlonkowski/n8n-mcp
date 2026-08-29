@@ -554,7 +554,9 @@ Two independent histories, selected with `source`:
 - `source: "local"` (default) — snapshots n8n-mcp takes before it changes a workflow. Any n8n version, no token; ids are numbers. Blind to edits made in the n8n UI. The only source with `delete` and `prune`.
 - `source: "native"` — n8n's own workflow history, the same list the UI shows. Needs `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+; native `diff` needs 2.36) and the workflow's "Available in MCP" setting; ids are opaque strings; `list` is capped at 50 with `offset`; `delete`/`prune` return `MODE_NOT_SUPPORTED_FOR_SOURCE`; native `rollback` runs without local validation and says so in `validation`.
 
-Every response states `source` and `backend`. The examples below use `source: "local"` unless noted.
+Native modes are gated on the workflow's "Available in MCP" setting: when it is off the call answers `WORKFLOW_NOT_EXPOSED`, and re-running with `exposeToMcp: true` turns it on and retries once (`exposedToMcp: true` comes back in the response). That setting is visible and persistent in the n8n UI — confirm with the user before enabling it. Nothing ever disables it implicitly. `timeoutMs` (5000-600000) is the client deadline for a native call.
+
+Every response states `source` and `backend` (`n8n-mcp` for local, `official-mcp` for native). The examples below use `source: "local"` unless noted.
 
 ### List Versions
 ```javascript
@@ -663,7 +665,9 @@ n8n_workflow_versions({
 
 **Use when**: Running a workflow to test it
 
-`method` picks the path. `auto` (default) and `trigger` fire a webhook/form/chat trigger over HTTP through the Public API — the workflow must be active. `prepare`, `pinned` and `direct` go through n8n's MCP server (`N8N_MCP_ACCESS_TOKEN`, n8n 2.34+, workflow "Available in MCP") and also work for inactive workflows and workflows without an HTTP trigger. `auto` never runs anything through n8n's MCP server: without an HTTP trigger it reports that the workflow cannot be triggered and names the other methods. See SKILL.md "Running Workflows" for the full method table and the side-effect notes.
+`method` picks the path. `auto` (default) and `trigger` fire a webhook/form/chat trigger over HTTP through the Public API — the workflow must be active. `prepare`, `pinned` and `direct` go through n8n's MCP server (`N8N_MCP_ACCESS_TOKEN`, n8n 2.34+, workflow "Available in MCP") and also work for inactive workflows and workflows without an HTTP trigger. `auto` never runs anything through n8n's MCP server: without an HTTP trigger it reports that the workflow cannot be triggered and names the other methods.
+
+**Both routed run methods execute real nodes.** `direct` runs every node; `pinned` substitutes pinned data only for trigger nodes, nodes with credentials and HTTP Request nodes, so Code, Set, If and credential-free I/O (Execute Command, file read/write) still run for real. Confirm with the user before running a workflow that writes anywhere. `executionMode: "production"` (on `direct`) changes the execution context and how the run is recorded, not whether it has side effects — never pass it unasked. SKILL.md → "Running Workflows" has the same methods as a side-by-side table.
 
 ```javascript
 // HTTP trigger path (method auto/trigger): the older fields still apply here

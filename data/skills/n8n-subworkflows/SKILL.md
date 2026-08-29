@@ -66,7 +66,7 @@ Is it tightly coupled to this one caller's data shape?
 The reasons to extract go beyond reuse:
 
 - **Readability.** The caller shows one node ("Parse date") instead of five.
-- **Testability.** Run the sub-workflow alone with pinned input (`n8n_test_workflow`).
+- **Testability.** Run the sub-workflow alone with pinned input: `n8n_test_workflow({workflowId, method: "prepare"})` names the nodes that need data, then `method: "pinned"` runs it with what you build (needs `N8N_MCP_ACCESS_TOKEN` and the workflow's "Available in MCP" setting — see **n8n-mcp-tools-expert**). A sub-workflow has no HTTP trigger, so the default `method: "auto"` cannot run it.
 - **Replaceability.** Swap the implementation without rippling to callers.
 
 A 20-node workflow is fine *if it's mostly a linear sequence of Execute Workflow calls and decisions* — each node has one purpose, and you inspect a section by opening the sub-workflow it calls. A 20-node workflow of inline transformations is not fine. If yours has 15+ nodes and isn't mostly sub-workflow calls and branches, extract more.
