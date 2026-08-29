@@ -74,6 +74,12 @@ export const AGENT_TOOL_NAMES = [
 ] as const;
 
 export interface OfficialMcpCapabilities { reachable: boolean; toolCount: number; toolNames: string[]; agentTools: boolean; checkedAt: number; error?: OfficialMcpErrorCode }
+/**
+ * `sizeBytes` is the size of the payload as received from n8n (the larger of
+ * the text and the structured content), measured before any capping, so a
+ * caller can see how much was cut. `truncated` says whether `text` / `json`
+ * are smaller than that.
+ */
 export interface OfficialToolResult { isError: boolean; text: string; json?: unknown; sizeBytes: number; truncated: boolean }
 export interface AgentBuilderReference { ok?: boolean; uri?: string; guide?: string; configSchema?: unknown; [key: string]: unknown }
 
