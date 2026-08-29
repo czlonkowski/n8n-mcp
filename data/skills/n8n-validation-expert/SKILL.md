@@ -451,7 +451,7 @@ n8n_autofix_workflow({
 
 ## Running the workflow after it validates
 
-`validate_workflow` checks structure, parameters and expressions — it never runs anything. A workflow that validates clean can still fail on real data, so run it once before calling it done.
+`validate_workflow` checks structure, parameters and expressions — it never runs anything. A workflow that validates cleanly can still fail on real data, so run it once before calling it done.
 
 **With a webhook, form or chat trigger:** `n8n_test_workflow({workflowId})` — the default `method: "auto"` detects the trigger and fires it over HTTP (the workflow must be active).
 
