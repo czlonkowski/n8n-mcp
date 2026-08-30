@@ -244,7 +244,7 @@ describe('n8n_test_workflow method routing', () => {
 
   it('refuses pinned with an empty pinData object', async () => {
     // Nothing pinned means every credentialed/HTTP node in the workflow runs
-    // for real — refused like a missing pinData rather than forwarded.
+    // for real, refused like a missing pinData rather than forwarded.
     const r = await handlers.handleTestWorkflow({ workflowId: 'w', method: 'pinned', pinData: {} });
     expect(r).toMatchObject({ success: false, code: 'INVALID_ARGS', method: 'pinned' });
     expect(r.error).toContain('method: prepare');
@@ -545,7 +545,7 @@ describe('n8n_test_workflow method routing', () => {
     expect(officialMock.spy).not.toHaveBeenCalled();
   });
 
-  it('refuses auto and trigger too — the HTTP trigger path runs on the same Public API client', async () => {
+  it('refuses auto and trigger too, the HTTP trigger path runs on the same Public API client', async () => {
     const context = { n8nApiUrl: 'https://other-instance.test.com', n8nMcpAccessToken: 'tok' };
 
     const auto = await handlers.handleTestWorkflow({ workflowId: 'w' }, context);
@@ -566,7 +566,7 @@ describe('n8n_test_workflow method routing', () => {
     expect(plain).toMatchObject({ success: true, method: 'prepare', backend: 'official-mcp' });
 
     // exposeToMcp would write through the Public API client, which on this
-    // context is the operator's own instance — refused before the official call.
+    // context is the operator's own instance, refused before the official call.
     officialMock.spy.mockClear();
     const consenting = await handlers.handleTestWorkflow(
       { workflowId: 'w', method: 'prepare', exposeToMcp: true },
@@ -658,12 +658,12 @@ describe('n8n_test_workflow over the wire', () => {
 
   beforeAll(() => {
     savedMode = process.env.WEBHOOK_SECURITY_MODE;
-    // 'permissive': the official-MCP client's own endpoint check (async
-    // validateWebhookUrl) treats a resolved 127.x address as localhost and
-    // allows it under 'moderate' too, but validateInstanceContext's sync URL
-    // check (used once contexts below carry n8nApiKey, for I-1 coverage)
-    // only skips the private-IP-range check in 'permissive' mode.
-    process.env.WEBHOOK_SECURITY_MODE = 'permissive';
+    // 'moderate': both the official-MCP client's own endpoint check (async
+    // validateWebhookUrl) and validateInstanceContext's sync URL check (used
+    // once contexts below carry n8nApiKey, for I-1 coverage) allow the
+    // 127.x fixture host under this mode. Before #1033 the sync check refused
+    // it as a private IP, and this block had to widen to 'permissive'.
+    process.env.WEBHOOK_SECURITY_MODE = 'moderate';
   });
   afterAll(() => {
     if (savedMode === undefined) delete process.env.WEBHOOK_SECURITY_MODE;
@@ -698,7 +698,7 @@ describe('n8n_test_workflow over the wire', () => {
   /**
    * `n8nApiKey` is included so `publicApiMatchesContext` matches and the
    * consent write / pinned / direct trigger-detection read run against the
-   * same (mocked) instance the official call targets — `getN8nApiClient`
+   * same (mocked) instance the official call targets, `getN8nApiClient`
    * builds an instance-specific client here, but `N8nApiClient` is
    * class-mocked to `mockApiClient` regardless of construction args, and
    * `validateInstanceContext` accepts the fake server's 127.0.0.1 origin.
@@ -727,7 +727,7 @@ describe('n8n_test_workflow over the wire', () => {
   // The real prepare_workflow_pin_data advertises a success-only output schema
   // and answers the refusal with `structuredContent: { error: … }`. Enforcing
   // that schema client-side turned the refusal into a transport error, so
-  // exposeToMcp could never fire — the refusal must survive to the handler.
+  // exposeToMcp could never fire, the refusal must survive to the handler.
   it('reads the refusal through a structuredContent payload the tool\'s output schema forbids', async () => {
     const context = await contextFor([
       {

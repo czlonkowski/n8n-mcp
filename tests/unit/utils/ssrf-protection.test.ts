@@ -230,7 +230,7 @@ describe('SSRFProtection', () => {
     });
 
     // The "metadata blocked in all modes" promise must hold for IPv6-tunneled
-    // metadata too — otherwise permissive mode lets an attacker reach IMDS via
+    // metadata too, otherwise permissive mode lets an attacker reach IMDS via
     // `64:ff9b::169.254.169.254` and equivalents.
     it.each([
       ['http://[64:ff9b::a9fe:a9fe]/',     'NAT64 RFC 6052'],
@@ -256,7 +256,7 @@ describe('SSRFProtection', () => {
     });
 
     // The fail-safe stance for non-canonical tunneling prefixes must also hold
-    // in permissive mode — refusing to guess where an unknown wire format will
+    // in permissive mode, refusing to guess where an unknown wire format will
     // route is mode-independent.
     it.each([
       ['http://[64:ff9b:2::1]',             'unknown 64:ff9b: sub-prefix'],
@@ -518,7 +518,7 @@ describe('SSRFProtection', () => {
   });
 
   /**
-   * Sync URL validation — verifies the sync guard that runs inside
+   * Sync URL validation, verifies the sync guard that runs inside
    * validateInstanceContext and must not make any DNS calls.
    */
   describe('validateUrlSync', () => {
@@ -682,6 +682,45 @@ describe('SSRFProtection', () => {
       }
     });
 
+    // REGRESSION (#1033): validateUrlSync gates x-n8n-url inside
+    // validateInstanceContext, while validateWebhookUrl gates the official-MCP
+    // client's own endpoint check. Under `moderate` they used to disagree:
+    // `http://localhost:5678` passed the sync check and `http://127.0.0.1:5678`
+    // (the same host) was refused as a private IP. Both validators must give
+    // the same verdict for every loopback spelling.
+    it('should agree with validateWebhookUrl on loopback literals in moderate mode', async () => {
+      process.env.WEBHOOK_SECURITY_MODE = 'moderate';
+      const loopbackUrls = [
+        'http://localhost:5678',
+        'http://127.0.0.1:5678',
+        'http://127.0.0.2:5678', // the whole of 127.0.0.0/8 is loopback
+        'http://0.0.0.0:5678',
+        'http://[::1]:5678',
+      ];
+      for (const url of loopbackUrls) {
+        const sync = SSRFProtection.validateUrlSync(url);
+        expect(sync.valid, `sync url=${url} reason=${sync.reason}`).toBe(true);
+
+        const resolved = await SSRFProtection.validateWebhookUrl(url);
+        expect(resolved.valid, `async url=${url} reason=${resolved.reason}`).toBe(true);
+      }
+    });
+
+    it('should keep loopback literals blocked in strict mode', () => {
+      delete process.env.WEBHOOK_SECURITY_MODE;
+      for (const url of ['http://127.0.0.2:5678', 'http://[::1]:5678']) {
+        const result = SSRFProtection.validateUrlSync(url);
+        expect(result.valid, `url=${url}`).toBe(false);
+      }
+    });
+
+    it('should not treat a hostname merely starting with 127. as loopback', () => {
+      process.env.WEBHOOK_SECURITY_MODE = 'strict';
+      // `127.example.com` is a DNS name, not a literal, so the sync guard must
+      // leave it to the DNS-resolving validator rather than refuse it outright.
+      expect(SSRFProtection.validateUrlSync('http://127.example.com').valid).toBe(true);
+    });
+
     it('should reject non-http(s) protocols', () => {
       const badProtocols = [
         'file:///etc/passwd',
@@ -735,7 +774,7 @@ describe('SSRFProtection', () => {
       expect(result.reason).toBe('URL fragments are not allowed');
     });
 
-    // GHSA-56c3-vfp2-5qqj — IPv4-mapped IPv6 and private IPv6 addresses
+    // GHSA-56c3-vfp2-5qqj, IPv4-mapped IPv6 and private IPv6 addresses
     // were skipped by the IPv4-only checks, enabling SSRF to cloud metadata,
     // RFC1918 networks, and localhost via SDK embedders.
     describe('IPv6 private and IPv4-mapped addresses (GHSA-56c3-vfp2-5qqj)', () => {
@@ -766,7 +805,6 @@ describe('SSRFProtection', () => {
 
       it('should reject private IPv6 addresses in strict and moderate modes', () => {
         const payloads = [
-          'http://[::1]',        // IPv6 loopback (strict hits LOCALHOST_PATTERNS first)
           'http://[fe80::1]',    // Link-local
           'http://[fc00::1]',    // Unique local (literal fc00:)
           'http://[fd00::1]',    // Unique local (literal fd00:)
@@ -778,6 +816,14 @@ describe('SSRFProtection', () => {
             expect(result.valid, `url=${url} mode=${mode}`).toBe(false);
           }
         }
+      });
+
+      it('should reject the IPv6 loopback in strict mode only (it is localhost)', () => {
+        delete process.env.WEBHOOK_SECURITY_MODE;
+        expect(SSRFProtection.validateUrlSync('http://[::1]').valid).toBe(false);
+
+        process.env.WEBHOOK_SECURITY_MODE = 'moderate';
+        expect(SSRFProtection.validateUrlSync('http://[::1]').valid).toBe(true);
       });
 
       it('should reject IPv4-compatible IPv6 (::X:Y) that embeds cloud metadata or private IPv4', () => {
@@ -875,7 +921,7 @@ describe('SSRFProtection', () => {
       // earlier than tunneled-private (so it surfaces the cloud-metadata
       // reason verbatim) because metadata is unconditionally blocked in every
       // mode, including permissive.
-      describe('tunneled IPv4 (NAT64, 6to4, Teredo) — block when embedded IPv4 is metadata', () => {
+      describe('tunneled IPv4 (NAT64, 6to4, Teredo), block when embedded IPv4 is metadata', () => {
         const metadataPayloads: Array<[string, string]> = [
           ['http://[64:ff9b::a9fe:a9fe]',   'IMDS via NAT64 RFC 6052'],
           ['http://[64:ff9b:1::a9fe:a9fe]', 'IMDS via NAT64 RFC 8215'],
@@ -890,7 +936,7 @@ describe('SSRFProtection', () => {
         });
       });
 
-      describe('tunneled IPv4 (NAT64, 6to4, Teredo) — block when embedded IPv4 is private/loopback', () => {
+      describe('tunneled IPv4 (NAT64, 6to4, Teredo), block when embedded IPv4 is private/loopback', () => {
         const privatePayloads: Array<[string, string]> = [
           // NAT64 RFC 6052 well-known /96 (64:ff9b::/96)
           ['http://[64:ff9b::7f00:1]',      'loopback via NAT64'],
@@ -899,10 +945,10 @@ describe('SSRFProtection', () => {
           ['http://[64:ff9b::c0a8:1]',      '192.168.0.1 (RFC1918) via NAT64'],
           // NAT64 RFC 8215 local-use /96 sub-prefix (64:ff9b:1::/96)
           ['http://[64:ff9b:1::7f00:1]',    'loopback via RFC 8215 NAT64'],
-          // 6to4 RFC 3056 (2002::/16) — embedded IPv4 in bits 16-47
+          // 6to4 RFC 3056 (2002::/16), embedded IPv4 in bits 16-47
           ['http://[2002:7f00:1::]',        'loopback via 6to4'],
           ['http://[2002:a00:1::]',         'RFC1918 via 6to4'],
-          // Teredo RFC 4380 (2001::/32) — client IPv4 in last 32 bits XOR 0xffff:0xffff
+          // Teredo RFC 4380 (2001::/32), client IPv4 in last 32 bits XOR 0xffff:0xffff
           // 127.0.0.1 → (0x7f00^0xffff=0x80ff, 0x0001^0xffff=0xfffe)
           ['http://[2001::80ff:fffe]',      'loopback via Teredo'],
           // 10.0.0.1 → (0x0a00^0xffff=0xf5ff, 0x0001^0xffff=0xfffe)
@@ -915,7 +961,7 @@ describe('SSRFProtection', () => {
         });
       });
 
-      describe('tunneled IPv4 (NAT64, 6to4, Teredo) — allow when embedded IPv4 is public', () => {
+      describe('tunneled IPv4 (NAT64, 6to4, Teredo), allow when embedded IPv4 is public', () => {
         const allowedPayloads: Array<[string, string]> = [
           ['http://[64:ff9b::808:808]',   'Google DNS 8.8.8.8 via NAT64'],
           ['http://[64:ff9b::101:101]',   'Cloudflare 1.1.1.1 via NAT64'],
@@ -931,10 +977,10 @@ describe('SSRFProtection', () => {
       });
 
       it.each([
-        // parts[2]=2 — neither well-known NAT64 (parts[2..5]==0) nor RFC 8215
+        // parts[2]=2, neither well-known NAT64 (parts[2..5]==0) nor RFC 8215
         // local-use (parts[2]==1, parts[3..5]==0). Refuse to guess.
         ['http://[64:ff9b:2::1]',             'unknown 64:ff9b: sub-prefix'],
-        // parts[2]==1 BUT parts[3]!=0 — would be a literal RFC 6052 /48
+        // parts[2]==1 BUT parts[3]!=0, would be a literal RFC 6052 /48
         // embedding (IPv4 split around a u-octet at bits 64-71). RFC 8215
         // §3.1 recommends /96 sub-prefixes over the /48 embedding precisely
         // because the latter is rarely deployed; we refuse rather than guess
@@ -1166,7 +1212,7 @@ describe('SSRFProtection', () => {
 
     it('pinned lookup ignores subsequent dns.lookup answers', async () => {
       // Validator DNS answer (the "good" IP). Subsequent dns.lookup calls
-      // simulate an attacker-controlled resolver flipping to a private IP —
+      // simulate an attacker-controlled resolver flipping to a private IP,
       // the pinned agent's lookup must never consult them.
       let dnsCalls = 0;
       vi.mocked(dns.lookup).mockImplementation(async () => {

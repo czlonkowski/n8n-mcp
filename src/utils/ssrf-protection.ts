@@ -95,6 +95,23 @@ const PRIVATE_IP_RANGES = [
 
 export class SSRFProtection {
   /**
+   * Whether a bracket-stripped host is a loopback/localhost target.
+   *
+   * Shared by {@link validateUrlSync} and {@link validateResolvedAddress} so
+   * both validators agree on what `moderate` allows. Without it the two
+   * disagreed on literals: `http://localhost` passed the sync check while
+   * `http://127.0.0.1` (same host, same mode) was refused as a private IP.
+   *
+   * The whole of 127.0.0.0/8 is loopback, not just `127.0.0.1`, but the
+   * prefix test is gated on {@link isIPv4} so a DNS name like
+   * `127.example.com` is never mistaken for a literal (same reasoning as the
+   * PRIVATE_IP_RANGES gate added for #984).
+   */
+  private static isLoopbackHost(host: string): boolean {
+    return LOCALHOST_PATTERNS.has(host) || (isIPv4(host) && host.startsWith('127.'));
+  }
+
+  /**
    * IPv6 addresses that must be blocked: loopback, unspecified, link-local,
    * unique-local, site-local (deprecated), multicast, IPv4-mapped,
    * IPv4-compatible, and any IPv6→IPv4 tunneling address (NAT64, 6to4, Teredo)
@@ -124,7 +141,7 @@ export class SSRFProtection {
     // live here. Blocking the whole prefix avoids enumerating subforms.
     if (hostname.startsWith('::')) return true;
 
-    // Defensive long-form IPv4-mapped — WHATWG URL normally compresses this,
+    // Defensive long-form IPv4-mapped, WHATWG URL normally compresses this,
     // but keep the check in case normalization ever changes.
     if (hostname.startsWith('0:0:0:0:0:ffff:')) return true;
 
@@ -163,13 +180,13 @@ export class SSRFProtection {
    * `64:ff9b:1::/96` sub-prefix layout (parts[3..5] == 0), RFC 3056 6to4
    * (`2002::/16`), or RFC 4380 Teredo (`2001::/32`). Returns the literal
    * `'non_canonical'` when the prefix family is recognized but the shape
-   * does not strictly match — this includes anything in `64:ff9b:1::/48`
+   * does not strictly match, this includes anything in `64:ff9b:1::/48`
    * outside the /96 sub-prefix layout (e.g. the literal RFC 6052 /48
    * embedding that interleaves the IPv4 around a u-octet at bits 64-71).
    * Returns `null` for any other IPv6 (caller continues with other checks).
    *
    * Parsing is delegated to `ipaddr.js` so we don't roll a homegrown hextet
-   * expander — a bug there would be an SSRF bypass.
+   * expander, a bug there would be an SSRF bypass.
    */
   private static tryExtractTunneledIPv4(hostname: string): string | 'non_canonical' | null {
     let parsed: ReturnType<typeof ipaddr.parse>;
@@ -181,16 +198,16 @@ export class SSRFProtection {
     if (parsed.kind() !== 'ipv6') return null;
     const p = (parsed as ipaddr.IPv6).parts;
 
-    // NAT64 64:ff9b: family — both layouts here put the IPv4 in the last 32
+    // NAT64 64:ff9b: family, both layouts here put the IPv4 in the last 32
     // bits, so we recognize only the /96 well-known position for each.
     //   * RFC 6052 well-known: `64:ff9b::/96` (parts[2..5] all zero)
     //   * RFC 8215 local-use: `64:ff9b:1::/96` sub-prefix within the /48 block
-    //     (parts[2]==1, parts[3..5] zero) — RFC 8215 §3.1 recommends operators
+    //     (parts[2]==1, parts[3..5] zero), RFC 8215 §3.1 recommends operators
     //     embed IPv4 in /96 sub-prefixes rather than the literal RFC 6052 /48
     //     layout, which interleaves the IPv4 around a u-octet at bits 64-71.
     // Any other 64:ff9b: shape (including a literal RFC 6052 /48 embedding
     // such as `64:ff9b:1:a9fe:a9:fe00::`) is treated as non-canonical and
-    // fail-safe blocked — we won't guess which slot the OS NAT64 translator
+    // fail-safe blocked, we won't guess which slot the OS NAT64 translator
     // will read the IPv4 from.
     if (p[0] === 0x64 && p[1] === 0xff9b) {
       const rfc6052 = p[2] === 0 && p[3] === 0 && p[4] === 0 && p[5] === 0;
@@ -201,12 +218,12 @@ export class SSRFProtection {
       return 'non_canonical';
     }
 
-    // 6to4 2002::/16 (RFC 3056) — bits 16-47 are the embedded IPv4
+    // 6to4 2002::/16 (RFC 3056), bits 16-47 are the embedded IPv4
     if (p[0] === 0x2002) {
       return SSRFProtection.hextetsToIPv4(p[1], p[2]);
     }
 
-    // Teredo 2001::/32 (RFC 4380) — last 32 bits are the client IPv4
+    // Teredo 2001::/32 (RFC 4380), last 32 bits are the client IPv4
     // obfuscated by XOR with all-ones.
     if (p[0] === 0x2001 && p[1] === 0) {
       return SSRFProtection.hextetsToIPv4(p[6] ^ 0xffff, p[7] ^ 0xffff);
@@ -218,7 +235,7 @@ export class SSRFProtection {
   /**
    * First 16-bit group of an IPv6 address, or null when the input does not
    * parse as IPv6. Parsing is delegated to `ipaddr.js` for the same reason
-   * {@link tryExtractTunneledIPv4} does — a homegrown expander that disagreed
+   * {@link tryExtractTunneledIPv4} does, a homegrown expander that disagreed
    * with the OS resolver would be a hole.
    */
   private static firstHextet(hostname: string): number | null {
@@ -243,10 +260,10 @@ export class SSRFProtection {
    * against the resolved/literal IPv6.
    *
    * Two cases need pre-permissive rejection:
-   *   * **Tunneled metadata** — `64:ff9b::169.254.169.254` and equivalents
+   *   * **Tunneled metadata**, `64:ff9b::169.254.169.254` and equivalents
    *     across NAT64/6to4/Teredo. Without this, permissive lets IMDS
    *     traffic through an IPv6 wrapper.
-   *   * **Non-canonical tunneling prefix** — `64:ff9b:` shapes that match
+   *   * **Non-canonical tunneling prefix**, `64:ff9b:` shapes that match
    *     neither RFC 6052 nor RFC 8215 (or 6to4/Teredo equivalents we don't
    *     recognize). We refuse to guess what the OS translator will route
    *     to, regardless of mode.
@@ -337,7 +354,7 @@ export class SSRFProtection {
         return { valid: false, reason: 'DNS resolution failed' };
       }
 
-      // Steps 4-7: validate every resolved address. FAIL CLOSED — if any
+      // Steps 4-7: validate every resolved address. FAIL CLOSED, if any
       // address in the record set is disallowed, reject the whole hostname
       // instead of only checking the first.
       for (const { address } of resolved) {
@@ -383,7 +400,7 @@ export class SSRFProtection {
       return { valid: false, reason: 'Hostname resolves to cloud metadata endpoint' };
     }
 
-    // Step 4b: All-mode IPv6 tunneling gate — runs before the permissive
+    // Step 4b: All-mode IPv6 tunneling gate, runs before the permissive
     // early-return. Rejects (a) tunneled cloud-metadata (any mode) and
     // (b) non-canonical tunneling prefixes (the fail-safe promise must
     // hold in permissive too, not just strict/moderate).
@@ -406,9 +423,8 @@ export class SSRFProtection {
     }
 
     // Check if target is localhost
-    const isLocalhost = LOCALHOST_PATTERNS.has(hostname) ||
-                      resolvedIP === '::1' ||
-                      resolvedIP.startsWith('127.');
+    const isLocalhost = SSRFProtection.isLoopbackHost(hostname) ||
+                      SSRFProtection.isLoopbackHost(resolvedIP);
 
     // MODE: strict - Block localhost and private IPs
     if (mode === 'strict' && isLocalhost) {
@@ -460,7 +476,7 @@ export class SSRFProtection {
       // Node's lookup contract: when options.all is true, callback receives
       // an array of {address, family}; otherwise (address, family) for the
       // first candidate. validateWebhookUrl resolved and validated the full
-      // set — return all of it for `all`, and the first for the scalar shape.
+      // set, return all of it for `all`, and the first for the scalar shape.
       if (options && options.all) {
         callback(null, addresses.map(a => ({ address: a.address, family: a.family })));
       } else {
@@ -479,8 +495,8 @@ export class SSRFProtection {
    * `addresses` should be the full, ordered set from
    * {@link WebhookUrlValidationResult.addresses}, not just the first answer.
    * Passing every validated candidate lets `net.connect`'s Happy-Eyeballs
-   * fallback (`autoSelectFamily`) try each one in turn — e.g. when `localhost`
-   * resolves to `::1` first but the server only listens on IPv4 — instead of
+   * fallback (`autoSelectFamily`) try each one in turn, e.g. when `localhost`
+   * resolves to `::1` first but the server only listens on IPv4, instead of
    * hard-failing on a single pinned address (#978/#989/#990).
    *
    * @security GHSA-cmrh-wvq6-wm9r
@@ -504,7 +520,7 @@ export class SSRFProtection {
       (agent as any).createConnection = function (options: any, cb: any) {
         const connectOptions: any = { ...options, lookup: pinnedLookup };
         // Try every pinned candidate (Happy-Eyeballs) instead of hard-failing
-        // on the first — all candidates already passed SSRF validation, so
+        // on the first, all candidates already passed SSRF validation, so
         // this doesn't weaken the pinning guarantee. Guarded for Node
         // runtimes that predate autoSelectFamily.
         if (supportsAutoSelectFamily) {
@@ -527,13 +543,13 @@ export class SSRFProtection {
   /**
    * A fetch implementation whose sockets only ever connect to the given
    * validated addresses. For callers that speak fetch (the MCP SDK's
-   * Streamable HTTP transport) rather than axios — see createPinnedAgents.
+   * Streamable HTTP transport) rather than axios, see createPinnedAgents.
    * TLS still verifies against the URL hostname; only name resolution is pinned.
    *
    * Redirects are never followed (`redirect: 'manual'`). Pinning constrains
    * the addresses of the URL the caller asked for; a 3xx would hand the
    * choice of the next request's host, port and path to the server, and
-   * undici would re-resolve it through the same pinned lookup — reaching a
+   * undici would re-resolve it through the same pinned lookup, reaching a
    * different port on a validated address, or a URL that never went through
    * validateWebhookUrl at all. The 3xx is returned to the caller as an
    * ordinary non-ok response instead.
@@ -597,7 +613,7 @@ export class SSRFProtection {
       return { valid: false, reason: 'Cloud metadata endpoint blocked' };
     }
 
-    // All-mode IPv6 tunneling gate — rejects tunneled metadata and
+    // All-mode IPv6 tunneling gate, rejects tunneled metadata and
     // non-canonical tunneling prefixes before the permissive early-return.
     const tunneledReason = SSRFProtection.tunneledIPv6BlockReason(hostname);
     if (tunneledReason !== null) {
@@ -610,12 +626,23 @@ export class SSRFProtection {
       return { valid: true };
     }
 
-    if (mode === 'strict' && LOCALHOST_PATTERNS.has(hostname)) {
+    const isLocalhost = SSRFProtection.isLoopbackHost(hostname);
+
+    if (mode === 'strict' && isLocalhost) {
       return { valid: false, reason: 'Localhost access is blocked in strict mode' };
     }
 
+    // MODE: moderate - allow localhost, block everything else private.
+    // Must run before the PRIVATE_IP_RANGES and IPv6 gates below, which both
+    // cover loopback (127.0.0.0/8, ::1) and would otherwise refuse the
+    // literals that `moderate` exists to permit. This mirrors the ordering in
+    // validateResolvedAddress so the sync and async validators agree.
+    if (mode === 'moderate' && isLocalhost) {
+      return { valid: true };
+    }
+
     // SECURITY (#984): PRIVATE_IP_RANGES are prefix regexes, so gate them on
-    // isIPv4 — otherwise a DNS name like `247.example.com` is misread as an
+    // isIPv4, otherwise a DNS name like `247.example.com` is misread as an
     // IPv4 literal and wrongly refused. What a name resolves to is still
     // checked by the async validateWebhookUrl and the DNS-pinned agents.
     if (isIPv4(hostname) && PRIVATE_IP_RANGES.some(regex => regex.test(hostname))) {
