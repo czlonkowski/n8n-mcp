@@ -658,12 +658,12 @@ describe('n8n_test_workflow over the wire', () => {
 
   beforeAll(() => {
     savedMode = process.env.WEBHOOK_SECURITY_MODE;
-    // 'permissive': the official-MCP client's own endpoint check (async
-    // validateWebhookUrl) treats a resolved 127.x address as localhost and
-    // allows it under 'moderate' too, but validateInstanceContext's sync URL
-    // check (used once contexts below carry n8nApiKey, for I-1 coverage)
-    // only skips the private-IP-range check in 'permissive' mode.
-    process.env.WEBHOOK_SECURITY_MODE = 'permissive';
+    // 'moderate': both the official-MCP client's own endpoint check (async
+    // validateWebhookUrl) and validateInstanceContext's sync URL check (used
+    // once contexts below carry n8nApiKey, for I-1 coverage) allow the
+    // 127.x fixture host under this mode. Before #1033 the sync check refused
+    // it as a private IP, and this block had to widen to 'permissive'.
+    process.env.WEBHOOK_SECURITY_MODE = 'moderate';
   });
   afterAll(() => {
     if (savedMode === undefined) delete process.env.WEBHOOK_SECURITY_MODE;

@@ -682,6 +682,45 @@ describe('SSRFProtection', () => {
       }
     });
 
+    // REGRESSION (#1033): validateUrlSync gates x-n8n-url inside
+    // validateInstanceContext, while validateWebhookUrl gates the official-MCP
+    // client's own endpoint check. Under `moderate` they used to disagree:
+    // `http://localhost:5678` passed the sync check and `http://127.0.0.1:5678`
+    // (the same host) was refused as a private IP. Both validators must give
+    // the same verdict for every loopback spelling.
+    it('should agree with validateWebhookUrl on loopback literals in moderate mode', async () => {
+      process.env.WEBHOOK_SECURITY_MODE = 'moderate';
+      const loopbackUrls = [
+        'http://localhost:5678',
+        'http://127.0.0.1:5678',
+        'http://127.0.0.2:5678', // the whole of 127.0.0.0/8 is loopback
+        'http://0.0.0.0:5678',
+        'http://[::1]:5678',
+      ];
+      for (const url of loopbackUrls) {
+        const sync = SSRFProtection.validateUrlSync(url);
+        expect(sync.valid, `sync url=${url} reason=${sync.reason}`).toBe(true);
+
+        const resolved = await SSRFProtection.validateWebhookUrl(url);
+        expect(resolved.valid, `async url=${url} reason=${resolved.reason}`).toBe(true);
+      }
+    });
+
+    it('should keep loopback literals blocked in strict mode', () => {
+      delete process.env.WEBHOOK_SECURITY_MODE;
+      for (const url of ['http://127.0.0.2:5678', 'http://[::1]:5678']) {
+        const result = SSRFProtection.validateUrlSync(url);
+        expect(result.valid, `url=${url}`).toBe(false);
+      }
+    });
+
+    it('should not treat a hostname merely starting with 127. as loopback', () => {
+      process.env.WEBHOOK_SECURITY_MODE = 'strict';
+      // `127.example.com` is a DNS name, not a literal, so the sync guard must
+      // leave it to the DNS-resolving validator rather than refuse it outright.
+      expect(SSRFProtection.validateUrlSync('http://127.example.com').valid).toBe(true);
+    });
+
     it('should reject non-http(s) protocols', () => {
       const badProtocols = [
         'file:///etc/passwd',
@@ -766,7 +805,6 @@ describe('SSRFProtection', () => {
 
       it('should reject private IPv6 addresses in strict and moderate modes', () => {
         const payloads = [
-          'http://[::1]',        // IPv6 loopback (strict hits LOCALHOST_PATTERNS first)
           'http://[fe80::1]',    // Link-local
           'http://[fc00::1]',    // Unique local (literal fc00:)
           'http://[fd00::1]',    // Unique local (literal fd00:)
@@ -778,6 +816,14 @@ describe('SSRFProtection', () => {
             expect(result.valid, `url=${url} mode=${mode}`).toBe(false);
           }
         }
+      });
+
+      it('should reject the IPv6 loopback in strict mode only (it is localhost)', () => {
+        delete process.env.WEBHOOK_SECURITY_MODE;
+        expect(SSRFProtection.validateUrlSync('http://[::1]').valid).toBe(false);
+
+        process.env.WEBHOOK_SECURITY_MODE = 'moderate';
+        expect(SSRFProtection.validateUrlSync('http://[::1]').valid).toBe(true);
       });
 
       it('should reject IPv4-compatible IPv6 (::X:Y) that embeds cloud metadata or private IPv4', () => {
@@ -1166,7 +1212,7 @@ describe('SSRFProtection', () => {
 
     it('pinned lookup ignores subsequent dns.lookup answers', async () => {
       // Validator DNS answer (the "good" IP). Subsequent dns.lookup calls
-      // simulate an attacker-controlled resolver flipping to a private IP —
+      // simulate an attacker-controlled resolver flipping to a private IP,
       // the pinned agent's lookup must never consult them.
       let dnsCalls = 0;
       vi.mocked(dns.lookup).mockImplementation(async () => {
