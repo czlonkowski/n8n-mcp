@@ -458,7 +458,7 @@ export const n8nManagementTools: ToolDefinition[] = [
           type: 'integer',
           minimum: 5000,
           maximum: 600000,
-          description: 'Client-side deadline for the official call (default: 30000 for prepare, 300000 for pinned/direct)'
+          description: 'Whole-call timeout for the official path, including connection, tool discovery and execution (default: 30000 for prepare, 300000 for pinned/direct)'
         }
       },
       required: ['workflowId']
@@ -702,7 +702,7 @@ Two sources:
           type: 'integer',
           minimum: 5000,
           maximum: 600000,
-          description: 'Client deadline for the native call (default 30000)'
+          description: 'Whole-call timeout for the native path, including connection, tool discovery and execution (default 30000)'
         }
       },
       required: ['mode']
@@ -807,7 +807,7 @@ Two sources:
           type: 'integer',
           minimum: 5000,
           maximum: 600000,
-          description: 'For the column actions: client timeout in ms (5000-600000, default 30000).',
+          description: 'For the column actions: whole-call timeout in ms, including connection, tool discovery and execution (5000-600000, default 30000).',
         },
       },
       required: ['action'],
@@ -955,7 +955,7 @@ Two sources:
         filter: { type: 'string', description: 'Search text (listSearch only)' },
         paginationToken: { type: 'string', description: 'Token from a previous page (listSearch only)' },
         currentNodeParameters: { type: 'object', description: 'Parameters the method depends on (loadOptionsDependsOn), e.g. {documentId: {...}}' },
-        timeoutMs: { type: 'integer', minimum: 5000, maximum: 600000, description: 'Request timeout in ms (default 30000)' },
+        timeoutMs: { type: 'integer', minimum: 5000, maximum: 600000, description: 'Whole-call timeout in ms, including connection, tool discovery and execution (default 30000)' },
       },
       required: ['nodeType', 'version', 'methodName', 'methodType', 'credentialType', 'credentialId'],
     },
