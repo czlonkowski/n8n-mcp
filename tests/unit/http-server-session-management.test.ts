@@ -528,7 +528,8 @@ describe('HTTP Server Session Management', () => {
       const storedContext = {
         instanceId: 'tenant-a',
         n8nApiUrl: 'https://a.example.com',
-        n8nApiKey: 'old-key'
+        n8nApiKey: 'old-key',
+        n8nMcpAccessToken: 'stored-token'
       };
       const mcpServer: any = { instanceContext: storedContext };
       (server as any).transports['session-a'] = {
@@ -561,11 +562,20 @@ describe('HTTP Server Session Management', () => {
       await call({ instanceId: 'tenant-b', n8nApiUrl: 'https://b.example.com', n8nApiKey: 'new-key' });
       expect((server as any).sessionContexts['session-a'].n8nApiKey).toBe('old-key');
 
+      // Same instanceId but a different URL is a different config identity — it must
+      // re-initialize, not retarget the live session.
+      await call({ instanceId: 'tenant-a', n8nApiUrl: 'https://elsewhere.example.com', n8nApiKey: 'new-key' });
+      expect((server as any).sessionContexts['session-a'].n8nApiKey).toBe('old-key');
+      expect((server as any).sessionContexts['session-a'].n8nApiUrl).toBe('https://a.example.com');
+
       // A complete same-instance context with a rotated key refreshes the live session,
-      // including the frozen server's own context.
+      // including the frozen server's own context — and fields the request omits stay
+      // as stored (the MCP access token is not cleared by a request without it).
       await call({ instanceId: 'tenant-a', n8nApiUrl: 'https://a.example.com', n8nApiKey: 'new-key' });
       expect((server as any).sessionContexts['session-a'].n8nApiKey).toBe('new-key');
+      expect((server as any).sessionContexts['session-a'].n8nMcpAccessToken).toBe('stored-token');
       expect(mcpServer.instanceContext.n8nApiKey).toBe('new-key');
+      expect(mcpServer.instanceContext.n8nMcpAccessToken).toBe('stored-token');
     });
 
     it('should keep same-instance sessions alive in instance mode when concurrent sessions are allowed', async () => {

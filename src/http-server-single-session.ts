@@ -918,17 +918,25 @@ export class SingleSessionHTTPServer {
             // #1045: in instance strategy the context used to be frozen at creation, so a
             // rotated n8n API key or MCP access token kept being served until the session
             // idled out or the client re-initialized. Refresh it — but only from a request
-            // that carries the COMPLETE tenant identity for the SAME instance this session
-            // belongs to. A partial context (GHSA-2cf7-hpwf-47h9, #844) or a different
-            // instanceId must never overwrite a session's credentials.
+            // that carries the COMPLETE tenant identity for the SAME instance AND the SAME
+            // n8n URL this session is bound to. A partial context (GHSA-2cf7-hpwf-47h9,
+            // #844) or a different instanceId must never overwrite a session's
+            // credentials, and a changed URL is a different config identity that has to go
+            // through initialize, not mutate an existing session. Fields the request omits
+            // mean "unchanged" — merging over the stored context keeps a request without
+            // e.g. the MCP access token header from clearing a configured token.
             const storedContext = this.sessionContexts[sessionId];
             if (
               instanceContext.n8nApiUrl &&
               instanceContext.n8nApiKey &&
               instanceContext.instanceId &&
-              storedContext?.instanceId === instanceContext.instanceId
+              storedContext?.instanceId === instanceContext.instanceId &&
+              storedContext?.n8nApiUrl === instanceContext.n8nApiUrl
             ) {
-              await this.switchSessionContext(sessionId, instanceContext);
+              await this.switchSessionContext(sessionId, {
+                ...storedContext,
+                ...pickInstanceContextFields(instanceContext)
+              });
             }
           }
 
