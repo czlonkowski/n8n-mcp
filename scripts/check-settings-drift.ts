@@ -272,10 +272,15 @@ function installedNodesBaseVersion(): string | null {
 
 function installedEntityPackageVersion(): string | null {
   try {
-    const pkgPath = join(dirname(require.resolve('n8n-workflow')), '..', '..', 'package.json');
-    return (require(pkgPath) as { version?: string }).version ?? null;
+    return (require('n8n-workflow/package.json') as { version?: string }).version ?? null;
   } catch {
-    return null;
+    // Subpath blocked by a future exports map: walk up from the resolved entry instead.
+    try {
+      const pkgPath = join(dirname(require.resolve('n8n-workflow')), '..', '..', 'package.json');
+      return (require(pkgPath) as { version?: string }).version ?? null;
+    } catch {
+      return null;
+    }
   }
 }
 
