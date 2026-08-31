@@ -277,6 +277,13 @@ describe('n8n-version', () => {
 
         expect(cleaned).toEqual({ executionOrder: 'v1' });
       });
+
+      it('still drops engineType, which the write schema rejects on every version (Issue #1043)', () => {
+        const v = parseVersion('2.36.0')!;
+        const cleaned = cleanSettingsForVersion({ executionOrder: 'v1', engineType: 'v2' }, v);
+
+        expect(cleaned).toEqual({ executionOrder: 'v1' });
+      });
     });
 
     describe('below the pass-through floor', () => {
@@ -309,6 +316,14 @@ describe('n8n-version', () => {
       );
 
       expect(cleaned).toEqual({ executionOrder: 'v1', redactionPolicy: 'all' });
+    });
+
+    it('drops engineType even when the version could not be detected (Issue #1043)', () => {
+      // Modern n8n hides its version from API clients, so this null-version path is what
+      // production takes - derived stripping must not depend on the version probe
+      const cleaned = cleanSettingsForVersion({ executionOrder: 'v1', engineType: 'v2' }, null);
+
+      expect(cleaned).toEqual({ executionOrder: 'v1' });
     });
   });
 

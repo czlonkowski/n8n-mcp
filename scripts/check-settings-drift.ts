@@ -13,6 +13,8 @@
  *   npx tsx scripts/check-settings-drift.ts 2.34.4     # explicit n8n version
  */
 
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
 import {
   WORKFLOW_SETTINGS_PROPERTIES,
   type SettingsVersion,
@@ -20,6 +22,7 @@ import {
 
 const SCHEMA_PATH = 'dist/public-api/v1/openapi.yml';
 const SCHEMA_NAME = 'workflowSettings';
+const ENTITY_INTERFACE = 'IWorkflowSettings';
 
 function resolveVersion(): string {
   const fromArgs = process.argv[2];
@@ -115,35 +118,192 @@ export function parseSchemaProperties(yaml: string): Set<string> {
   return names;
 }
 
-async function main(): Promise<void> {
-  const version = resolveVersion();
-  console.log(`🔍 Checking workflow settings against n8n ${version}\n`);
+/**
+ * Pull the property names out of n8n-workflow's `IWorkflowSettings` declaration - the workflow
+ * entity's settings type, which the Public API schema is supposed to mirror but has trailed
+ * (engineType, issue #1043). Same philosophy as the schema parser: anything this cannot find
+ * throws, because an empty result would read as "no entity-only properties".
+ */
+export function parseEntitySettingsProperties(dts: string): Set<string> {
+  const lines = dts.split('\n');
+  // Anchored at line start (allowing export/declare) so comment lines mentioning the name
+  // don't count as declarations.
+  const declaration = new RegExp(
+    `^\\s*(?:export\\s+)?(?:declare\\s+)?interface ${ENTITY_INTERFACE}\\b`
+  );
+  const declarationIndices = lines.flatMap((line, i) => (declaration.test(line) ? [i] : []));
+  if (declarationIndices.length === 0) {
+    throw new Error(
+      `No "${ENTITY_INTERFACE}" interface in n8n-workflow's declarations. ` +
+        'n8n may have renamed or moved it - check the package.'
+    );
+  }
+  // These two shapes would parse cleanly but return a silently incomplete set, which reads as
+  // "no entity-only properties" - the one failure mode this check must never have.
+  if (declarationIndices.length > 1) {
+    throw new Error(
+      `"${ENTITY_INTERFACE}" is declared ${declarationIndices.length} times - declaration ` +
+        'merging would hide properties from this parser. Teach it to merge the declarations.'
+    );
+  }
+  const startIndex = declarationIndices[0];
+  let header = '';
+  for (let i = startIndex; i < lines.length; i++) {
+    header += lines[i];
+    if (lines[i].includes('{')) break;
+  }
+  if (/\bextends\b/.test(header)) {
+    throw new Error(
+      `"${ENTITY_INTERFACE}" extends a base type - inherited properties would be missed. ` +
+        'Teach this parser about heritage clauses.'
+    );
+  }
 
-  const schemaProperties = parseSchemaProperties(await fetchSchemaFile(version));
+  const names = new Set<string>();
+  let depth = 0;
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i];
+    // Depth 1 is the interface body; nested object types sit deeper and their keys are not
+    // settings properties. The check runs before this line's braces are counted, so a
+    // `foo?: {` line still registers foo while its members do not.
+    if (depth === 1) {
+      const match = line.trim().match(/^(?:readonly\s+)?([A-Za-z][A-Za-z0-9_]*)\??:/);
+      if (match) names.add(match[1]);
+    }
+    for (const char of line) {
+      if (char === '{') depth++;
+      else if (char === '}') depth--;
+    }
+    if (depth === 0 && i > startIndex) break;
+  }
+
+  if (names.size === 0) {
+    throw new Error(
+      `Parsed zero properties from "${ENTITY_INTERFACE}" - the declaration format changed`
+    );
+  }
+  return names;
+}
+
+function readEntityDeclarations(): string {
+  // Resolve from the installed n8n-workflow package (same release train as n8n and
+  // n8n-nodes-base) so hoisting and store layouts don't matter.
+  const dtsPath = join(dirname(require.resolve('n8n-workflow')), 'interfaces.d.ts');
+  try {
+    return readFileSync(dtsPath, 'utf8');
+  } catch (error) {
+    throw new Error(
+      `Could not read ${dtsPath} (${error instanceof Error ? error.message : error}). ` +
+        'If n8n-workflow moved its type declarations, update readEntityDeclarations in this script.'
+    );
+  }
+}
+
+export interface SettingsDrift {
+  /** In the schema, unknown to our table - a new setting we would silently drop. */
+  missing: string[];
+  /** In our table, gone from n8n entirely - stale entries to prune. */
+  removed: string[];
+  /** In our table from a later n8n than the target - expected while the pin trails. */
+  ahead: string[];
+  /** Derived properties confirmed (or assumed, without an entity set) as entity-only. */
+  entityOnly: string[];
+  /** On the entity, rejected by the write schema, and not marked derived - the #1043 shape. */
+  unhandledEntityOnly: string[];
+  /** Marked entityOnly in our table but now published in the schema - stripping is a choice again. */
+  publishedEntityOnly: string[];
+}
+
+/**
+ * Classify every property of the three sources. Pure so the gate itself is testable;
+ * `entityProperties` is null when the entity axis cannot run (see main).
+ */
+export function diffSettingsProperties(
+  schemaProperties: Set<string>,
+  entityProperties: Set<string> | null,
+  target: SettingsVersion
+): SettingsDrift {
   const ours = new Set(Object.keys(WORKFLOW_SETTINGS_PROPERTIES));
 
   const missing = [...schemaProperties].filter(name => !ours.has(name));
 
+  // The entity-vs-schema axis: a property n8n persists on the workflow entity but leaves out of
+  // the write schema comes back on GET and, echoed into a read-modify-write PUT, rejects the
+  // whole request (additionalProperties: false). Such a property must be marked derived so every
+  // write strips it. engineType (issue #1043) shipped exactly this way, and the schema-only diff
+  // stayed green because the property was absent from both sides of it.
+  const unhandledEntityOnly = entityProperties
+    ? [...entityProperties].filter(
+        name => !schemaProperties.has(name) && WORKFLOW_SETTINGS_PROPERTIES[name]?.derived !== true
+      )
+    : [];
+
+  // The reverse transition: n8n published a property we strip because its schema used to reject
+  // it. Stripping is no longer the only correct behaviour - callers might want to set it - so
+  // the flag has to be reconsidered rather than silently kept.
+  const publishedEntityOnly = [...schemaProperties].filter(
+    name => WORKFLOW_SETTINGS_PROPERTIES[name]?.entityOnly === true
+  );
+
   // A property we know but this version lacks is only drift when we claim it already existed:
   // one introduced in a later release is simply ahead of the pin, which is expected while the
-  // pinned version trails n8n's newest.
-  const target = parseVersion(version);
+  // pinned version trails n8n's newest. A derived property still on the entity is expected too -
+  // it is stripped from every write, so the schema not naming it cannot break anything.
   const removed: string[] = [];
   const ahead: string[] = [];
+  const entityOnly: string[] = [];
   for (const name of ours) {
     if (schemaProperties.has(name)) continue;
-    const introduced = WORKFLOW_SETTINGS_PROPERTIES[name].since;
-    (compareVersions(introduced, target) <= 0 ? removed : ahead).push(name);
+    const meta = WORKFLOW_SETTINGS_PROPERTIES[name];
+    if (meta.derived && (entityProperties === null || entityProperties.has(name))) {
+      entityOnly.push(name);
+      continue;
+    }
+    (compareVersions(meta.since, target) <= 0 ? removed : ahead).push(name);
   }
 
+  return { missing, removed, ahead, entityOnly, unhandledEntityOnly, publishedEntityOnly };
+}
+
+async function main(): Promise<void> {
+  const explicitVersion = process.argv[2];
+  const version = resolveVersion();
+  console.log(`🔍 Checking workflow settings against n8n ${version}\n`);
+
+  const schemaProperties = parseSchemaProperties(await fetchSchemaFile(version));
+
+  // The entity axis reads the INSTALLED n8n-workflow, which only describes the pinned dependency
+  // set. Compared against an explicitly requested other version it would manufacture skew
+  // findings (an old schema "missing" every newer entity property), so it runs in default mode
+  // only - which is the mode `npm run update:n8n` uses, right after installing the new set.
+  let entityProperties: Set<string> | null = null;
+  if (!explicitVersion) {
+    entityProperties = parseEntitySettingsProperties(readEntityDeclarations());
+  } else {
+    console.log('ℹ️  Entity axis skipped: the installed n8n-workflow may not match the requested version.\n');
+  }
+
+  const { missing, removed, ahead, entityOnly, unhandledEntityOnly, publishedEntityOnly } =
+    diffSettingsProperties(schemaProperties, entityProperties, parseVersion(version));
+  const ours = new Set(Object.keys(WORKFLOW_SETTINGS_PROPERTIES));
+
   console.log(`   n8n schema: ${schemaProperties.size} properties`);
+  if (entityProperties) console.log(`   n8n entity: ${entityProperties.size} properties`);
   console.log(`   ours:       ${ours.size} properties\n`);
 
   if (ahead.length > 0) {
     console.log(`ℹ️  ${ahead.length} known from a later n8n than the pin (expected): ${ahead.join(', ')}\n`);
   }
+  if (entityOnly.length > 0) {
+    console.log(`ℹ️  ${entityOnly.length} entity-only, stripped on write (expected): ${entityOnly.join(', ')}\n`);
+  }
 
-  if (missing.length === 0 && removed.length === 0) {
+  if (
+    missing.length === 0 &&
+    removed.length === 0 &&
+    unhandledEntityOnly.length === 0 &&
+    publishedEntityOnly.length === 0
+  ) {
     console.log('✅ No drift - src/constants/workflow-settings.ts matches n8n.');
     return;
   }
@@ -164,6 +324,34 @@ async function main(): Promise<void> {
     console.error(`\n❌ ${removed.length} property/properties in ours but not in n8n:`);
     for (const name of removed) console.error(`   - ${name}`);
     console.error('\n   n8n removed or renamed these. Remove them once no supported version has them.');
+  }
+
+  if (unhandledEntityOnly.length > 0) {
+    console.error(
+      `\n❌ ${unhandledEntityOnly.length} property/properties on the workflow entity but not in the write schema:`
+    );
+    for (const name of unhandledEntityOnly) console.error(`   ± ${name}`);
+    console.error(
+      '\n   n8n persists these and echoes them from GET, but the Public API write schema rejects'
+    );
+    console.error(
+      '   them, so read-modify-write updates fail. Add them to src/constants/workflow-settings.ts'
+    );
+    console.error('   with derived: true so every write strips them (see issue #1043).');
+  }
+
+  if (publishedEntityOnly.length > 0) {
+    console.error(
+      `\n❌ ${publishedEntityOnly.length} stripped property/properties now in the write schema:`
+    );
+    for (const name of publishedEntityOnly) console.error(`   ± ${name}`);
+    console.error(
+      '\n   These are stripped because the schema used to reject them, but this n8n accepts them,'
+    );
+    console.error(
+      '   so callers could be allowed to set them. Decide: drop entityOnly (and derived) in'
+    );
+    console.error('   src/constants/workflow-settings.ts, or keep stripping deliberately.');
   }
 
   process.exit(1);

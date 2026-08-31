@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.76.0] - 2026-08-28
+## [2.76.1] - 2026-08-31
+
+### Fixed
+
+- **Workflow updates no longer fail with `settings must NOT have additional properties` against n8n ≥ 2.36.0** ([#1043](https://github.com/czlonkowski/n8n-mcp/issues/1043)). n8n 2.36.0 added `engineType` to the workflow's persisted settings without adding it to the Public API write schema, so `n8n_update_partial_workflow` and `n8n_update_full_workflow` — which read the workflow, apply the change and write it back — echoed the property into a `PUT` the schema rejects. `engineType` is now stripped from every create and update payload, like `binaryMode` and `credentialResolverId` before it. Stripping does not change the setting on the instance: n8n keeps stored settings for keys the request omits.
+
+### Changed
+
+- `npm run check:settings-drift` now also diffs n8n's workflow entity settings (`IWorkflowSettings` from the installed `n8n-workflow` package) against the Public API schema. A property n8n persists but the write schema rejects — the exact shape of #1043, invisible to the schema-only check — now fails the n8n dependency update until it is marked as stripped.
 
 ### Added
 

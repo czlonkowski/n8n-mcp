@@ -328,6 +328,7 @@ describe('n8n-validation', () => {
             redactionPolicy: 'all' as const,
             binaryMode: 'combined',
             credentialResolverId: 'resolver-1',
+            engineType: 'v2',
           },
         };
 
@@ -668,6 +669,9 @@ describe('n8n-validation', () => {
             // Echoed by GET on n8n 2.33+, ignored on write, rejected outright by older n8n
             binaryMode: 'combined',
             credentialResolverId: 'resolver-1',
+            // Echoed by GET on n8n 2.36+ but rejected by the write schema on every version -
+            // echoing it back fails the whole update (Issue #1043)
+            engineType: 'v2',
           },
         } as any;
 
