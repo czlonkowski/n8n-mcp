@@ -131,14 +131,32 @@ export function parseSchemaProperties(yaml: string): Set<string> {
 export function parseEntitySettingsProperties(dts: string): Set<string> {
   const source = ts.createSourceFile('interfaces.d.ts', dts, ts.ScriptTarget.Latest);
 
-  const declarations: ts.InterfaceDeclaration[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isInterfaceDeclaration(node) && node.name.text === ENTITY_INTERFACE) {
-      declarations.push(node);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
+  // createSourceFile recovers from syntax errors, so a truncated file (missing brace,
+  // unterminated string) would yield a PARTIAL property set - reject anything that does not
+  // parse cleanly. parseDiagnostics is internal API, so its disappearance must also throw
+  // rather than quietly skipping the syntax gate.
+  const diagnostics = (source as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] })
+    .parseDiagnostics;
+  if (!Array.isArray(diagnostics)) {
+    throw new Error(
+      'TypeScript no longer exposes parseDiagnostics on SourceFile - rework this check to get ' +
+        'syntax diagnostics from a Program before trusting the parse.'
+    );
+  }
+  if (diagnostics.length > 0) {
+    throw new Error(
+      `n8n-workflow's declarations do not parse cleanly (` +
+        `${ts.flattenDiagnosticMessageText(diagnostics[0].messageText, ' ')}) - a partial ` +
+        'parse would under-report properties.'
+    );
+  }
+
+  // Top-level statements only: a same-named interface inside a namespace or module does not
+  // merge with the export this check is after.
+  const declarations = source.statements.filter(
+    (statement): statement is ts.InterfaceDeclaration =>
+      ts.isInterfaceDeclaration(statement) && statement.name.text === ENTITY_INTERFACE
+  );
 
   if (declarations.length === 0) {
     throw new Error(
@@ -363,13 +381,28 @@ async function main(): Promise<void> {
 
   if (explicitVersion) {
     console.log('ℹ️  Entity axis skipped: the installed n8n-workflow may not match the requested version.\n');
-  } else if (installedEntity && releasePins && releasePins.workflow !== installedEntity) {
-    // Residual skew after resolution. The axis still runs: it can only fail loudly (a human
-    // investigates at update time), never silently pass what a matching set would fail.
-    console.log(
-      `⚠️  Installed n8n-workflow ${installedEntity} differs from n8n ${version}'s pin ` +
-        `${releasePins.workflow} - entity findings may reflect a neighbouring release.\n`
-    );
+  } else {
+    // Residual skew after resolution, in either pin - the fallback release can match on
+    // n8n-workflow while shipping a different n8n-nodes-base (and so a different schema).
+    // The axis still runs: it can only fail loudly (a human investigates at update time),
+    // never silently pass what a matching set would fail.
+    const installedNodesBase = resolveVersion();
+    const skews: string[] = [];
+    if (releasePins && releasePins.nodesBase !== installedNodesBase) {
+      skews.push(`n8n-nodes-base ${installedNodesBase} vs pin ${releasePins.nodesBase}`);
+    }
+    if (releasePins && installedEntity && releasePins.workflow !== installedEntity) {
+      skews.push(`n8n-workflow ${installedEntity} vs pin ${releasePins.workflow}`);
+    }
+    if (!releasePins) {
+      skews.push(`n8n ${version}'s pins could not be fetched`);
+    }
+    if (skews.length > 0) {
+      console.log(
+        `⚠️  Installed packages differ from n8n ${version}'s (${skews.join('; ')}) - ` +
+          'findings may reflect a neighbouring release.\n'
+      );
+    }
   }
 
   const schemaProperties = parseSchemaProperties(await fetchSchemaFile(version));

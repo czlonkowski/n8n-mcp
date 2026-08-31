@@ -206,6 +206,25 @@ describe('check-settings-drift parseEntitySettingsProperties', () => {
     expect([...parseEntitySettingsProperties(dts)]).toEqual(['first', 'second', 'third']);
   });
 
+  it('throws on a truncated file instead of returning the partial property set', () => {
+    const dts = 'export interface IWorkflowSettings {\n    timezone?: string;';
+    expect(() => parseEntitySettingsProperties(dts)).toThrow(/parse cleanly/);
+  });
+
+  it('does not accept a same-named interface nested in a namespace as the target', () => {
+    const dts = [
+      'export namespace Other {',
+      '    export interface IWorkflowSettings {',
+      '        ghost?: string;',
+      '    }',
+      '}',
+      'export interface IWorkflowSettings {',
+      '    timezone?: string;',
+      '}',
+    ].join('\n');
+    expect([...parseEntitySettingsProperties(dts)]).toEqual(['timezone']);
+  });
+
   it('throws on a member it cannot enumerate rather than skipping it', () => {
     const dts = [
       'export interface IWorkflowSettings {',
