@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  enrichUnknownPropertyError,
   formatExecutionError,
   formatNoExecutionError,
   getUserFriendlyErrorMessage,
@@ -271,6 +272,124 @@ describe('NO_RESPONSE connection detail', () => {
     expect(getUserFriendlyErrorMessage(error)).toBe(
       'Unable to connect to n8n. Please check the server URL and ensure n8n is running. (ECONNREFUSED 127.0.0.1:5678)'
     );
+  });
+});
+
+describe('enrichUnknownPropertyError (#1047)', () => {
+  const settingsRejection = () =>
+    new N8nValidationError('request/body/settings must NOT have additional properties', {
+      message: 'request/body/settings must NOT have additional properties'
+    });
+
+  const workflowBody = {
+    name: 'My Workflow',
+    nodes: [],
+    connections: {},
+    settings: {
+      executionOrder: 'v1',
+      errorWorkflow: 'wf_secret_id',
+      someFutureSetting: 'secret-value'
+    }
+  };
+
+  it('lists the settings keys that were sent and flags keys missing from the known-settings table', () => {
+    const enriched = enrichUnknownPropertyError(settingsRejection(), workflowBody);
+
+    expect(enriched.message).toContain('request/body/settings must NOT have additional properties');
+    expect(enriched.message).toContain('Settings keys sent: executionOrder, errorWorkflow, someFutureSetting');
+    expect(enriched.message).toContain("Not in n8n-mcp's known settings table: someFutureSetting");
+  });
+
+  it('never includes setting values in the message', () => {
+    const enriched = enrichUnknownPropertyError(settingsRejection(), workflowBody);
+
+    expect(enriched.message).not.toContain('wf_secret_id');
+    expect(enriched.message).not.toContain('secret-value');
+    expect(enriched.message).not.toContain('v1');
+  });
+
+  it('keeps the error a 400 VALIDATION_ERROR with the original details', () => {
+    const original = settingsRejection();
+    const enriched = enrichUnknownPropertyError(original, workflowBody);
+
+    expect(enriched.statusCode).toBe(400);
+    expect(enriched.code).toBe('VALIDATION_ERROR');
+    expect(enriched.details).toBe(original.details);
+  });
+
+  it('surfaces the property name when the AJV params carry additionalProperty', () => {
+    const error = new N8nValidationError(
+      'request/body/settings must NOT have additional properties',
+      { errors: [{ params: { additionalProperty: 'engineType' } }] }
+    );
+
+    const enriched = enrichUnknownPropertyError(error, workflowBody);
+
+    expect(enriched.message).toContain('n8n identified the rejected property: engineType');
+  });
+
+  it('does not attribute a property when several AJV entries disagree', () => {
+    // A second AJV entry can belong to a different path (e.g. a nodes[] rejection);
+    // naming its property as the settings offender would misdirect the report.
+    const error = new N8nValidationError(
+      'request/body/settings must NOT have additional properties',
+      {
+        errors: [
+          { params: { additionalProperty: 'engineType' } },
+          { params: { additionalProperty: 'somethingElse' } }
+        ]
+      }
+    );
+
+    const enriched = enrichUnknownPropertyError(error, workflowBody);
+
+    expect(enriched.message).not.toContain('n8n identified the rejected property');
+    expect(enriched.message).toContain('Settings keys sent:');
+  });
+
+  it('lists top-level keys for the body-level variant', () => {
+    const error = new N8nValidationError('request/body must NOT have additional properties', {
+      message: 'request/body must NOT have additional properties'
+    });
+
+    const enriched = enrichUnknownPropertyError(error, workflowBody);
+
+    expect(enriched.message).toContain('Top-level keys sent: name, nodes, connections, settings');
+    expect(enriched.message).not.toContain('Settings keys sent');
+  });
+
+  it('reports (none) when the rejected settings object is absent from the sent body', () => {
+    const enriched = enrichUnknownPropertyError(settingsRejection(), { name: 'No Settings' });
+
+    expect(enriched.message).toContain('Settings keys sent: (none)');
+  });
+
+  it('leaves deeper additional-property paths untouched (they already name their segment)', () => {
+    const error = new N8nValidationError(
+      'request/body/nodes/0 must NOT have additional properties'
+    );
+
+    expect(enrichUnknownPropertyError(error, workflowBody)).toBe(error);
+  });
+
+  it('leaves unrelated 400s untouched', () => {
+    const error = new N8nValidationError('request/body/name must be string');
+
+    expect(enrichUnknownPropertyError(error, workflowBody)).toBe(error);
+  });
+
+  it('leaves non-400 errors untouched', () => {
+    const error = new N8nServerError('request/body must NOT have additional properties');
+
+    expect(enrichUnknownPropertyError(error, workflowBody)).toBe(error);
+  });
+
+  it('flows through getUserFriendlyErrorMessage for handler-facing output', () => {
+    const enriched = enrichUnknownPropertyError(settingsRejection(), workflowBody);
+    const friendly = getUserFriendlyErrorMessage(enriched);
+
+    expect(friendly).toContain('Invalid request:');
+    expect(friendly).toContain('Settings keys sent: executionOrder, errorWorkflow, someFutureSetting');
   });
 });
 

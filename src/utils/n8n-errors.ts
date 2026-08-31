@@ -1,4 +1,5 @@
 import { logger } from './logger';
+import { WORKFLOW_SETTINGS_PROPERTIES } from '../constants/workflow-settings';
 
 // Custom error classes for n8n API operations
 
@@ -138,6 +139,78 @@ function folderPlacementHint(error: N8nApiError): string {
   // earn upgrade advice.
   if (!/additional ?propert/i.test(haystack)) return '';
   return ' Note: workflow folder placement (parentFolderId) requires n8n 2.32 or later - retry without parentFolderId, or upgrade the instance.';
+}
+
+/**
+ * When n8n rejects a workflow write with "must NOT have additional properties", the AJV
+ * message names the failing path (`request/body` or `request/body/settings`) but never the
+ * offending key (#1047). By the time the error reaches an MCP handler the request payload is
+ * out of scope, so the API client enriches the error here, where the sent body is still
+ * available. Key names only, never values — settings can carry errorWorkflow ids and
+ * telemetry tags.
+ *
+ * The two shapes are matched exactly (`body must NOT` / `body/settings must NOT`) so deeper
+ * paths like `body/nodes/0` — which do name their offending segment — stay untouched.
+ */
+export function enrichUnknownPropertyError(
+  error: N8nApiError,
+  sentBody: Record<string, unknown>
+): N8nApiError {
+  if (error.statusCode !== 400) return error;
+  const detailsStr = safeStringify(error.details);
+  const haystack = `${error.message} ${detailsStr}`;
+
+  const settingsLevel = /body\/settings must NOT have additional propert/i.test(haystack);
+  const bodyLevel = !settingsLevel && /body must NOT have additional propert/i.test(haystack);
+  if (!settingsLevel && !bodyLevel) return error;
+
+  // Some n8n versions do name the property in the AJV error params — surface it when it is
+  // unambiguous. With several AJV entries the first match could belong to a different path
+  // (e.g. a nodes[] rejection alongside the settings one), so conflicting names are ignored.
+  const namedMatches = Array.from(
+    detailsStr.matchAll(/"additionalProperty"\s*:\s*"([^"]+)"/g),
+    match => match[1]
+  );
+  const named =
+    namedMatches.length > 0 && namedMatches.every(name => name === namedMatches[0])
+      ? namedMatches[0]
+      : undefined;
+
+  const parts: string[] = [];
+  if (settingsLevel) {
+    const settings = sentBody.settings;
+    const sentKeys =
+      settings && typeof settings === 'object' && !Array.isArray(settings)
+        ? Object.keys(settings)
+        : [];
+    parts.push(`Settings keys sent: ${sentKeys.join(', ') || '(none)'}.`);
+    if (named) {
+      parts.push(`n8n identified the rejected property: ${named}.`);
+    } else {
+      const unknown = sentKeys.filter(
+        key => !Object.prototype.hasOwnProperty.call(WORKFLOW_SETTINGS_PROPERTIES, key)
+      );
+      if (unknown.length > 0) {
+        parts.push(`Not in n8n-mcp's known settings table: ${unknown.join(', ')}.`);
+      }
+    }
+    parts.push(
+      'This usually means the instance stores a setting its Public API write schema rejects ' +
+        '(entity-vs-schema drift). Please report the offending key at ' +
+        'https://github.com/czlonkowski/n8n-mcp/issues.'
+    );
+  } else {
+    parts.push(`Top-level keys sent: ${Object.keys(sentBody).join(', ') || '(none)'}.`);
+    if (named) {
+      parts.push(`n8n identified the rejected property: ${named}.`);
+    }
+    parts.push(
+      "One of these keys is not accepted by this instance's Public API write schema. " +
+        'Please report the offending key at https://github.com/czlonkowski/n8n-mcp/issues.'
+    );
+  }
+
+  return new N8nValidationError(`${error.message} ${parts.join(' ')}`, error.details);
 }
 
 /**

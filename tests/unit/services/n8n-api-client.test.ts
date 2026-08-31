@@ -924,6 +924,80 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
     });
   });
 
+  describe('unknown-property enrichment (#1047)', () => {
+    // n8n's AJV message for "must NOT have additional properties" never names the offending
+    // key. The client appends the keys it actually sent, so the offender is identifiable
+    // from the error alone instead of by diffing n8n source.
+    const badRequest = (message: string, data?: unknown) =>
+      createAxiosError({ message, response: { status: 400, data: data ?? { message } } });
+
+    beforeEach(() => {
+      client = new N8nApiClient(defaultConfig);
+    });
+
+    it('names the settings keys that were sent when n8n rejects the settings object', async () => {
+      mockAxiosInstance.put.mockRejectedValue(
+        badRequest('request/body/settings must NOT have additional properties')
+      );
+
+      await expect(
+        client.updateWorkflow('123', {
+          name: 'WF',
+          nodes: [],
+          connections: {},
+          settings: { executionOrder: 'v1' } as any
+        })
+      ).rejects.toThrow(/Settings keys sent: .*executionOrder/);
+    });
+
+    it('names the top-level keys that were sent when n8n rejects the body', async () => {
+      mockAxiosInstance.post.mockRejectedValue(
+        badRequest('request/body must NOT have additional properties')
+      );
+
+      await expect(
+        client.createWorkflow({ name: 'WF', nodes: [], connections: {} })
+      ).rejects.toThrow(/Top-level keys sent: (?=.*name)(?=.*nodes)(?=.*connections)/);
+    });
+
+    it('does not alter rejections that already name their path segment', async () => {
+      mockAxiosInstance.put.mockRejectedValue(
+        badRequest('request/body/name must be string')
+      );
+
+      await expect(
+        client.updateWorkflow('123', { name: 'WF', nodes: [], connections: {} })
+      ).rejects.toThrow(/^request\/body\/name must be string$/);
+    });
+
+    it('reports the body the ladder actually sent, not the original payload', async () => {
+      // Once an instance is latched as not supporting canvas groups, the write goes out
+      // without nodeGroups. A body-level rejection of THAT request must not name
+      // nodeGroups — the one key provably absent from it.
+      const workflow: any = {
+        name: 'Grouped',
+        nodes: [
+          { id: 'a', name: 'Set A', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: {} }
+        ],
+        connections: {},
+        nodeGroups: [{ id: 'g1', name: 'Transform', nodeIds: ['a'] }]
+      };
+      mockAxiosInstance.put
+        // First write: groups rejected, retry without them succeeds → latches unsupported
+        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
+        .mockResolvedValueOnce({ data: { id: '123' } })
+        // Second write goes out without nodeGroups and is rejected at body level
+        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'));
+
+      await client.updateWorkflow('123', workflow);
+      const error: Error = await client.updateWorkflow('123', workflow).catch(e => e);
+
+      const keysSent = error.message.match(/Top-level keys sent: ([^.]*)\./)?.[1] ?? '';
+      expect(keysSent).toContain('name');
+      expect(keysSent).not.toContain('nodeGroups');
+    });
+  });
+
   describe('deleteWorkflow', () => {
     beforeEach(() => {
       client = new N8nApiClient(defaultConfig);

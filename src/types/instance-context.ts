@@ -42,6 +42,44 @@ export interface InstanceContext {
 }
 
 /**
+ * Every InstanceContext field, as a value-level list. `satisfies` keeps each entry a real
+ * key, and the exhaustiveness assertion below turns a field added to InstanceContext but
+ * not listed here into a compile error — the silent-field-drop class of #1045 cannot recur.
+ */
+const INSTANCE_CONTEXT_KEYS = [
+  'n8nApiUrl',
+  'n8nApiKey',
+  'n8nApiTimeout',
+  'n8nApiMaxRetries',
+  'n8nMcpAccessToken',
+  'instanceId',
+  'sessionId',
+  'metadata'
+] as const satisfies readonly (keyof InstanceContext)[];
+
+type MissingInstanceContextKeys = Exclude<keyof InstanceContext, (typeof INSTANCE_CONTEXT_KEYS)[number]>;
+const _instanceContextKeysExhaustive: MissingInstanceContextKeys extends never ? true : never = true;
+void _instanceContextKeysExhaustive;
+
+/**
+ * Copy exactly the declared InstanceContext fields from a context-shaped object.
+ *
+ * Structural typing lets embedders hand over a larger record (a tenant row, a config
+ * object), and restore reads persisted JSON — a plain spread would carry every extra
+ * enumerable property across the session-persistence boundary. Undefined fields are
+ * omitted rather than written as explicit `undefined`.
+ */
+export function pickInstanceContextFields(source: InstanceContext): InstanceContext {
+  const picked: Record<string, unknown> = {};
+  for (const key of INSTANCE_CONTEXT_KEYS) {
+    if (source[key] !== undefined) {
+      picked[key] = source[key];
+    }
+  }
+  return picked as InstanceContext;
+}
+
+/**
  * Validate URL format with enhanced checks
  */
 function isValidUrl(url: string): boolean {

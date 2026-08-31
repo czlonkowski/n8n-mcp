@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.77.0] - 2026-08-31
+
+### Added
+
+- **A rejected workflow write now names the keys it sent** ([#1047](https://github.com/czlonkowski/n8n-mcp/issues/1047)). n8n answers an unknown property in a workflow write with `must NOT have additional properties` and never says which property broke it — diagnosing an instance of this class meant diffing n8n source (#248, #466, #1043). When the rejection hits `request/body` or `request/body/settings`, the error now appends the top-level or settings key names that were actually sent, flags settings keys missing from n8n-mcp's known-settings table, and surfaces the property name when n8n's validator params carry one. Key names only, never values.
+
+### Fixed
+
+- **Multi-tenant: rotated credentials no longer keep serving from frozen sessions** ([#1045](https://github.com/czlonkowski/n8n-mcp/issues/1045)). Two defects in the `instance` session strategy. The session's `configHash` — its config identity — covered only the URL and instance ID, so rotating the n8n API key or the instance-level MCP access token produced a byte-identical hash, so a routing layer comparing config identities had no way to tell that a live session was still bound to the pre-rotation secrets. The hash input now includes both credentials, so a rotation changes the session's config identity and the stale session can be detected and re-initialized (an initialize always binds the fresh credentials); only the 8-character digest ever appears in session IDs and logs, never the values. The server also refreshes a live `instance`-strategy session itself when a request arrives carrying the complete tenant identity (URL, API key, matching instance ID) with changed credentials — a partial context or a different instance ID never overwrites a session's credentials. Separately, `exportSessionState()`/`restoreSessionState()` rebuilt the context field by field and silently dropped `n8nMcpAccessToken` (and the timeout/retry tuning) for every session persisted across a restart, so `n8n_manage_agents` reported `NOT_CONFIGURED` after every deploy for a token that was still correctly stored. `SessionState['context']` is now derived from `InstanceContext` and export/restore copy the whole context, so every field — current and future — survives the round-trip.
+
 ## [2.76.1] - 2026-08-31
 
 ### Fixed

@@ -721,5 +721,87 @@ describe('SingleSessionHTTPServer - Session Persistence', () => {
         metadata: { userId: 'user1', role: 'admin' }
       });
     });
+
+    it('should preserve n8nMcpAccessToken and API tuning through export → restore (#1045)', () => {
+      // Regression: the export/restore field lists silently dropped every
+      // InstanceContext field they did not name, so restored sessions lost the
+      // instance-level MCP access token after every deploy and n8n_manage_agents
+      // reported NOT_CONFIGURED for a token that was still correctly stored.
+      const serverAny = server as any;
+      const now = new Date();
+
+      serverAny.sessionMetadata['session-token'] = {
+        createdAt: new Date(now.getTime() - 60 * 1000),
+        lastAccess: new Date(now.getTime() - 30 * 1000)
+      };
+      serverAny.sessionContexts['session-token'] = {
+        n8nApiUrl: 'https://n8n1.example.com',
+        n8nApiKey: 'key1',
+        n8nMcpAccessToken: 'mcp-access-token-1',
+        n8nApiTimeout: 45000,
+        n8nApiMaxRetries: 5,
+        instanceId: 'instance1',
+        sessionId: 'session-token',
+        metadata: { userId: 'user1' }
+      };
+
+      const exported = server.exportSessionState();
+      expect(exported).toHaveLength(1);
+      expect(exported[0].context.n8nMcpAccessToken).toBe('mcp-access-token-1');
+      expect(exported[0].context.n8nApiTimeout).toBe(45000);
+      expect(exported[0].context.n8nApiMaxRetries).toBe(5);
+
+      delete serverAny.sessionMetadata['session-token'];
+      delete serverAny.sessionContexts['session-token'];
+
+      const count = server.restoreSessionState(exported);
+      expect(count).toBe(1);
+
+      expect(serverAny.sessionContexts['session-token']).toMatchObject({
+        n8nApiUrl: 'https://n8n1.example.com',
+        n8nApiKey: 'key1',
+        n8nMcpAccessToken: 'mcp-access-token-1',
+        n8nApiTimeout: 45000,
+        n8nApiMaxRetries: 5,
+        instanceId: 'instance1'
+      });
+    });
+
+    it('should keep undeclared context properties out of export and restore', () => {
+      // Structural typing lets an embedder hand over a larger record than
+      // InstanceContext; only declared fields may cross the persistence boundary
+      // in either direction.
+      const serverAny = server as any;
+      const now = new Date();
+
+      serverAny.sessionMetadata['session-extra'] = {
+        createdAt: new Date(now.getTime() - 60 * 1000),
+        lastAccess: new Date(now.getTime() - 30 * 1000)
+      };
+      serverAny.sessionContexts['session-extra'] = {
+        n8nApiUrl: 'https://n8n1.example.com',
+        n8nApiKey: 'key1',
+        instanceId: 'instance1',
+        oauthRefreshToken: 'must-not-be-exported'
+      };
+
+      const exported = server.exportSessionState();
+      expect(exported).toHaveLength(1);
+      expect(exported[0].context).not.toHaveProperty('oauthRefreshToken');
+
+      delete serverAny.sessionMetadata['session-extra'];
+      delete serverAny.sessionContexts['session-extra'];
+
+      // Restore must equally drop unknown keys arriving from persisted JSON.
+      const tampered = [
+        {
+          ...exported[0],
+          context: { ...exported[0].context, injectedKey: 'must-not-be-restored' } as any
+        }
+      ];
+      expect(server.restoreSessionState(tampered)).toBe(1);
+      expect(serverAny.sessionContexts['session-extra']).not.toHaveProperty('injectedKey');
+      expect(serverAny.sessionContexts['session-extra'].n8nApiKey).toBe('key1');
+    });
   });
 });
