@@ -166,6 +166,35 @@ describe('check-settings-drift parseEntitySettingsProperties', () => {
     expect([...parseEntitySettingsProperties(dts)]).toEqual(['timezone']);
   });
 
+  it('ignores a declaration-shaped line inside a block comment', () => {
+    const dts = [
+      '/*',
+      'export interface IWorkflowSettings {',
+      '    ghost?: string;',
+      '}',
+      '*/',
+      'export interface IWorkflowSettings {',
+      '    timezone?: string;',
+      '}',
+    ].join('\n');
+    expect([...parseEntitySettingsProperties(dts)]).toEqual(['timezone']);
+  });
+
+  it('is not derailed by an unbalanced brace inside a block comment', () => {
+    const dts = [
+      'export interface IWorkflowSettings {',
+      '    /* weird note: { */',
+      '    timezone?: string;',
+      '}',
+    ].join('\n');
+    expect([...parseEntitySettingsProperties(dts)]).toEqual(['timezone']);
+  });
+
+  it('throws when a property shares the opening-brace line instead of skipping it', () => {
+    const dts = 'export interface IWorkflowSettings { engineType?: string;\n    timezone?: string;\n}';
+    expect(() => parseEntitySettingsProperties(dts)).toThrow(/opening-brace/);
+  });
+
   it('parses the installed n8n-workflow declarations, which must cover our derived properties', () => {
     // Runs against the real package so a reformat of its .d.ts fails here instead of making
     // the drift check throw (or worse, quietly agree) during the next n8n update.
@@ -230,6 +259,20 @@ describe('check-settings-drift diffSettingsProperties', () => {
     expect(drift.unhandledEntityOnly).toEqual(['someNewInternalSetting']);
   });
 
+  it('still flags an entity-only property marked derived without entityOnly (detector must stay armed)', () => {
+    // binaryMode is derived but not entityOnly. If the schema stopped naming it while the
+    // entity kept it, derived alone must not count as handled - without entityOnly the
+    // published-upstream detector would never fire for it.
+    const schema = new Set(schemaOf236);
+    schema.delete('binaryMode');
+    const drift = diffSettingsProperties(schema, entityOf236, v236);
+
+    expect(drift.unhandledEntityOnly).toEqual(['binaryMode']);
+    // And it is not simultaneously soft-reported as expected or stale
+    expect(drift.entityOnly).toEqual(['engineType']);
+    expect(drift.removed).toEqual([]);
+  });
+
   it('flags a stripped entity-only property once n8n publishes it to the schema', () => {
     const schema = new Set([...schemaOf236, 'engineType']);
     const drift = diffSettingsProperties(schema, entityOf236, v236);
@@ -271,5 +314,14 @@ describe('check-settings-drift diffSettingsProperties', () => {
     expect(drift.entityOnly).toEqual(['engineType']);
     expect(drift.unhandledEntityOnly).toEqual([]);
     expect(drift.removed).toEqual([]);
+  });
+
+  it('classifies a derived property from a later n8n as ahead, not entity-only, without an entity set', () => {
+    // For a 2.20 target, engineType (since 2.36) cannot be on the entity yet - calling it
+    // "entity-only, expected" would be misleading; it is simply ahead of the pin.
+    const drift = diffSettingsProperties(schemaOf236, null, { major: 2, minor: 20, patch: 0 });
+
+    expect(drift.ahead).toContain('engineType');
+    expect(drift.entityOnly).toEqual([]);
   });
 });

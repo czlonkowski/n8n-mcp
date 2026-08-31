@@ -125,7 +125,9 @@ export function parseSchemaProperties(yaml: string): Set<string> {
  * throws, because an empty result would read as "no entity-only properties".
  */
 export function parseEntitySettingsProperties(dts: string): Set<string> {
-  const lines = dts.split('\n');
+  // Block comments could hide braces (breaking the depth count) or carry declaration-shaped
+  // text; neither should reach the parser.
+  const lines = dts.replace(/\/\*[\s\S]*?\*\//g, '').split('\n');
   // Anchored at line start (allowing export/declare) so comment lines mentioning the name
   // don't count as declarations.
   const declaration = new RegExp(
@@ -158,6 +160,15 @@ export function parseEntitySettingsProperties(dts: string): Set<string> {
         'Teach this parser about heritage clauses.'
     );
   }
+  // The line-based walk below only sees properties on lines after the opening brace, so
+  // content sharing the brace's line would be dropped silently. `header` ends at the line
+  // carrying the brace, wherever it is.
+  if (/\{\s*\S/.test(header)) {
+    throw new Error(
+      `"${ENTITY_INTERFACE}" has content on its opening-brace line - this parser reads ` +
+        'one property per line. Teach it the inline form.'
+    );
+  }
 
   const names = new Set<string>();
   let depth = 0;
@@ -183,6 +194,31 @@ export function parseEntitySettingsProperties(dts: string): Set<string> {
     );
   }
   return names;
+}
+
+/**
+ * The n8n-workflow version the target n8n release ships (an exact pin in its package.json),
+ * or null when it cannot be determined - the axis still runs, this only powers a warning.
+ */
+async function fetchEntityPackagePin(version: string): Promise<string | null> {
+  try {
+    const response = await fetch(`https://unpkg.com/n8n@${version}/package.json`);
+    if (!response.ok) return null;
+    const pkg = (await response.json()) as { dependencies?: Record<string, string> };
+    const pin = pkg.dependencies?.['n8n-workflow'];
+    return pin ? pin.replace(/^[^0-9]*/, '') : null;
+  } catch {
+    return null;
+  }
+}
+
+function installedEntityPackageVersion(): string | null {
+  try {
+    const pkgPath = join(dirname(require.resolve('n8n-workflow')), '..', '..', 'package.json');
+    return (require(pkgPath) as { version?: string }).version ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function readEntityDeclarations(): string {
@@ -232,10 +268,15 @@ export function diffSettingsProperties(
   // whole request (additionalProperties: false). Such a property must be marked derived so every
   // write strips it. engineType (issue #1043) shipped exactly this way, and the schema-only diff
   // stayed green because the property was absent from both sides of it.
+  // Handled means BOTH flags: derived makes writes strip it, entityOnly arms the
+  // published-upstream detector below. Requiring one without the other would disarm the
+  // detector for exactly the properties it exists for.
   const unhandledEntityOnly = entityProperties
-    ? [...entityProperties].filter(
-        name => !schemaProperties.has(name) && WORKFLOW_SETTINGS_PROPERTIES[name]?.derived !== true
-      )
+    ? [...entityProperties].filter(name => {
+        if (schemaProperties.has(name)) return false;
+        const meta = WORKFLOW_SETTINGS_PROPERTIES[name];
+        return !(meta?.derived === true && meta?.entityOnly === true);
+      })
     : [];
 
   // The reverse transition: n8n published a property we strip because its schema used to reject
@@ -248,18 +289,23 @@ export function diffSettingsProperties(
   // A property we know but this version lacks is only drift when we claim it already existed:
   // one introduced in a later release is simply ahead of the pin, which is expected while the
   // pinned version trails n8n's newest. A derived property still on the entity is expected too -
-  // it is stripped from every write, so the schema not naming it cannot break anything.
+  // it is stripped from every write, so the schema not naming it cannot break anything. Without
+  // an entity set, a derived property is assumed entity-only when the target is new enough to
+  // carry it, and ahead-of-the-pin otherwise.
+  const unhandledSet = new Set(unhandledEntityOnly);
   const removed: string[] = [];
   const ahead: string[] = [];
   const entityOnly: string[] = [];
   for (const name of ours) {
     if (schemaProperties.has(name)) continue;
+    if (unhandledSet.has(name)) continue; // already reported with its actionable message
     const meta = WORKFLOW_SETTINGS_PROPERTIES[name];
-    if (meta.derived && (entityProperties === null || entityProperties.has(name))) {
+    const introducedLater = compareVersions(meta.since, target) > 0;
+    if (meta.derived && (entityProperties ? entityProperties.has(name) : !introducedLater)) {
       entityOnly.push(name);
       continue;
     }
-    (compareVersions(meta.since, target) <= 0 ? removed : ahead).push(name);
+    (introducedLater ? ahead : removed).push(name);
   }
 
   return { missing, removed, ahead, entityOnly, unhandledEntityOnly, publishedEntityOnly };
@@ -279,6 +325,18 @@ async function main(): Promise<void> {
   let entityProperties: Set<string> | null = null;
   if (!explicitVersion) {
     entityProperties = parseEntitySettingsProperties(readEntityDeclarations());
+    // The pin names an n8n-nodes-base release, not an n8n one, and sibling n8n patch releases
+    // can reuse subpackage versions - so confirm the fetched schema's release actually ships
+    // the n8n-workflow we parsed. On a mismatch the axis still runs: it can only fail loudly
+    // (a human investigates at update time), never silently pass what a matching set would fail.
+    const installed = installedEntityPackageVersion();
+    const expected = await fetchEntityPackagePin(version);
+    if (installed && expected && installed !== expected) {
+      console.log(
+        `⚠️  Installed n8n-workflow ${installed} differs from n8n ${version}'s pin ${expected} - ` +
+          'entity findings may reflect a neighbouring release.\n'
+      );
+    }
   } else {
     console.log('ℹ️  Entity axis skipped: the installed n8n-workflow may not match the requested version.\n');
   }
@@ -337,7 +395,10 @@ async function main(): Promise<void> {
     console.error(
       '   them, so read-modify-write updates fail. Add them to src/constants/workflow-settings.ts'
     );
-    console.error('   with derived: true so every write strips them (see issue #1043).');
+    console.error(
+      '   with derived: true, entityOnly: true so every write strips them and the check can'
+    );
+    console.error('   tell when n8n publishes them later (see issue #1043).');
   }
 
   if (publishedEntityOnly.length > 0) {
