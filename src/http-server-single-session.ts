@@ -18,7 +18,7 @@ import dotenv from 'dotenv';
 import { getStartupBaseUrl, formatEndpointUrls, detectBaseUrl } from './utils/url-detector';
 import { PROJECT_VERSION } from './utils/version';
 import { v4 as uuidv4 } from 'uuid';
-import { createHash } from 'crypto';
+import { createHmac } from 'crypto';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import {
   negotiateProtocolVersion,
@@ -787,8 +787,12 @@ export class SingleSessionHTTPServer {
             // API key or the instance-level MCP access token must change the hash, so a
             // routing layer comparing hashes stops matching sessions bound to the old
             // secrets. The secrets only feed the digest — the session ID and logs carry
-            // just its first 8 hex chars, never the values.
-            const configHash = createHash('sha256')
+            // just its first 8 hex chars, never the values — and the digest is keyed
+            // with the server's auth token, so the truncated fingerprint is not an
+            // offline confirmation oracle for credential guesses (CodeQL
+            // js/insufficient-password-hash). Any legitimate hash-comparing consumer
+            // already holds AUTH_TOKEN, so cross-process comparability is preserved.
+            const configHash = createHmac('sha256', this.authToken ?? '')
               .update(JSON.stringify({
                 url: instanceContext.n8nApiUrl,
                 instanceId: instanceContext.instanceId,
