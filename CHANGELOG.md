@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `npm run check:settings-drift` now also diffs n8n's workflow entity settings (`IWorkflowSettings` from the installed `n8n-workflow` package) against the Public API schema. A property n8n persists but the write schema rejects — the exact shape of #1043, invisible to the schema-only check — now fails the n8n dependency update until it is marked as stripped.
 
+## [2.76.0] - 2026-08-28
+
 ### Added
 
 - **`n8n_test_workflow` can run workflows that have no webhook, form or chat trigger**, through n8n's instance-level MCP server (`N8N_MCP_ACCESS_TOKEN`, n8n 2.34+). The new `method` parameter selects the path: `auto` (default) and `trigger` keep the existing HTTP behaviour, `prepare` lists the nodes that need pinned data, `pinned` runs the workflow with a `pinData` map you build from that list, and `direct` starts a run with optional inputs. Supporting parameters: `pinData`, `triggerNodeName`, `executionMode` (`manual` default, `production` only when passed), `timeoutMs` and `exposeToMcp`. Successful and routed responses state `method` and `backend`.

@@ -13,8 +13,10 @@
  *   npx tsx scripts/check-settings-drift.ts 2.34.4     # explicit n8n version
  */
 
+import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
+import * as ts from 'typescript';
 import {
   WORKFLOW_SETTINGS_PROPERTIES,
   type SettingsVersion,
@@ -121,71 +123,54 @@ export function parseSchemaProperties(yaml: string): Set<string> {
 /**
  * Pull the property names out of n8n-workflow's `IWorkflowSettings` declaration - the workflow
  * entity's settings type, which the Public API schema is supposed to mirror but has trailed
- * (engineType, issue #1043). Same philosophy as the schema parser: anything this cannot find
- * throws, because an empty result would read as "no entity-only properties".
+ * (engineType, issue #1043). Parsed with the real TypeScript parser: review kept finding ways
+ * a hand-rolled lexer silently under-reports (comments, string types, inline braces), and a
+ * missed property here reads as "no entity-only properties" - the one failure mode this check
+ * must never have. Anything the walk cannot fully enumerate throws.
  */
 export function parseEntitySettingsProperties(dts: string): Set<string> {
-  // Block comments could hide braces (breaking the depth count) or carry declaration-shaped
-  // text; neither should reach the parser.
-  const lines = dts.replace(/\/\*[\s\S]*?\*\//g, '').split('\n');
-  // Anchored at line start (allowing export/declare) so comment lines mentioning the name
-  // don't count as declarations.
-  const declaration = new RegExp(
-    `^\\s*(?:export\\s+)?(?:declare\\s+)?interface ${ENTITY_INTERFACE}\\b`
-  );
-  const declarationIndices = lines.flatMap((line, i) => (declaration.test(line) ? [i] : []));
-  if (declarationIndices.length === 0) {
+  const source = ts.createSourceFile('interfaces.d.ts', dts, ts.ScriptTarget.Latest);
+
+  const declarations: ts.InterfaceDeclaration[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isInterfaceDeclaration(node) && node.name.text === ENTITY_INTERFACE) {
+      declarations.push(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+
+  if (declarations.length === 0) {
     throw new Error(
       `No "${ENTITY_INTERFACE}" interface in n8n-workflow's declarations. ` +
         'n8n may have renamed or moved it - check the package.'
     );
   }
-  // These two shapes would parse cleanly but return a silently incomplete set, which reads as
-  // "no entity-only properties" - the one failure mode this check must never have.
-  if (declarationIndices.length > 1) {
-    throw new Error(
-      `"${ENTITY_INTERFACE}" is declared ${declarationIndices.length} times - declaration ` +
-        'merging would hide properties from this parser. Teach it to merge the declarations.'
-    );
-  }
-  const startIndex = declarationIndices[0];
-  let header = '';
-  for (let i = startIndex; i < lines.length; i++) {
-    header += lines[i];
-    if (lines[i].includes('{')) break;
-  }
-  if (/\bextends\b/.test(header)) {
-    throw new Error(
-      `"${ENTITY_INTERFACE}" extends a base type - inherited properties would be missed. ` +
-        'Teach this parser about heritage clauses.'
-    );
-  }
-  // The line-based walk below only sees properties on lines after the opening brace, so
-  // content sharing the brace's line would be dropped silently. `header` ends at the line
-  // carrying the brace, wherever it is.
-  if (/\{\s*\S/.test(header)) {
-    throw new Error(
-      `"${ENTITY_INTERFACE}" has content on its opening-brace line - this parser reads ` +
-        'one property per line. Teach it the inline form.'
-    );
-  }
 
+  // Declaration merging is legal TypeScript, so all declarations contribute members.
   const names = new Set<string>();
-  let depth = 0;
-  for (let i = startIndex; i < lines.length; i++) {
-    const line = lines[i];
-    // Depth 1 is the interface body; nested object types sit deeper and their keys are not
-    // settings properties. The check runs before this line's braces are counted, so a
-    // `foo?: {` line still registers foo while its members do not.
-    if (depth === 1) {
-      const match = line.trim().match(/^(?:readonly\s+)?([A-Za-z][A-Za-z0-9_]*)\??:/);
-      if (match) names.add(match[1]);
+  for (const declaration of declarations) {
+    if (declaration.heritageClauses && declaration.heritageClauses.length > 0) {
+      throw new Error(
+        `"${ENTITY_INTERFACE}" extends a base type - inherited properties would be missed. ` +
+          'Resolve the heritage clause here before trusting this check.'
+      );
     }
-    for (const char of line) {
-      if (char === '{') depth++;
-      else if (char === '}') depth--;
+    for (const member of declaration.members) {
+      if (
+        ts.isPropertySignature(member) &&
+        (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name))
+      ) {
+        names.add(member.name.text);
+        continue;
+      }
+      // Index signatures, methods, computed names: not enumerable as settings properties, and
+      // skipping one silently would under-report - fail closed instead.
+      throw new Error(
+        `"${ENTITY_INTERFACE}" has a member this check cannot enumerate ` +
+          `(${ts.SyntaxKind[member.kind]}) - it would hide properties from the diff.`
+      );
     }
-    if (depth === 0 && i > startIndex) break;
   }
 
   if (names.size === 0) {
@@ -196,20 +181,66 @@ export function parseEntitySettingsProperties(dts: string): Set<string> {
   return names;
 }
 
-/**
- * The n8n-workflow version the target n8n release ships (an exact pin in its package.json),
- * or null when it cannot be determined - the axis still runs, this only powers a warning.
- */
-async function fetchEntityPackagePin(version: string): Promise<string | null> {
+interface ReleasePins {
+  nodesBase: string;
+  workflow: string;
+}
+
+/** The exact subpackage pins an n8n release publishes, or null when they cannot be fetched. */
+async function fetchReleasePins(version: string): Promise<ReleasePins | null> {
   try {
     const response = await fetch(`https://unpkg.com/n8n@${version}/package.json`);
     if (!response.ok) return null;
     const pkg = (await response.json()) as { dependencies?: Record<string, string> };
-    const pin = pkg.dependencies?.['n8n-workflow'];
-    return pin ? pin.replace(/^[^0-9]*/, '') : null;
+    const nodesBase = pkg.dependencies?.['n8n-nodes-base'];
+    const workflow = pkg.dependencies?.['n8n-workflow'];
+    if (!nodesBase || !workflow) return null;
+    return {
+      nodesBase: nodesBase.replace(/^[^0-9]*/, ''),
+      workflow: workflow.replace(/^[^0-9]*/, ''),
+    };
   } catch {
     return null;
   }
+}
+
+/**
+ * Find the n8n release whose published pins match the installed packages. The n8n-nodes-base
+ * pin only names a release on the same train, not the same release - nodes-base@2.36.4 ships
+ * in n8n@2.36.7, while n8n@2.36.4 pins nodes-base@2.36.3 - so fetching the schema "at the
+ * nodes-base version" can read a neighbouring release's schema. `npm run update:n8n` installs
+ * the latest subpackages, so the matching meta-release sits at or near the top of the version
+ * list; when none of the newest releases match, the same-number approximation stands and the
+ * caller's pin warning surfaces the residual skew.
+ */
+async function resolveSchemaRelease(
+  nodesBase: string,
+  entityVersion: string | null
+): Promise<{ version: string; pins: ReleasePins | null }> {
+  let versions: string[];
+  try {
+    versions = JSON.parse(execSync('npm view n8n versions --json', { encoding: 'utf8' }));
+  } catch {
+    return { version: nodesBase, pins: await fetchReleasePins(nodesBase) };
+  }
+
+  const floor = parseVersion(nodesBase);
+  const candidates = versions
+    .filter(candidate => /^\d+\.\d+\.\d+$/.test(candidate))
+    .filter(candidate => compareVersions(parseVersion(candidate), floor) >= 0)
+    .reverse()
+    .slice(0, 15);
+
+  let nodesBaseMatch: { version: string; pins: ReleasePins } | null = null;
+  for (const candidate of candidates) {
+    const pins = await fetchReleasePins(candidate);
+    if (!pins || pins.nodesBase !== nodesBase) continue;
+    if (entityVersion === null || pins.workflow === entityVersion) {
+      return { version: candidate, pins };
+    }
+    nodesBaseMatch ??= { version: candidate, pins };
+  }
+  return nodesBaseMatch ?? { version: nodesBase, pins: await fetchReleasePins(nodesBase) };
 }
 
 function installedEntityPackageVersion(): string | null {
@@ -313,33 +344,35 @@ export function diffSettingsProperties(
 
 async function main(): Promise<void> {
   const explicitVersion = process.argv[2];
-  const version = resolveVersion();
-  console.log(`🔍 Checking workflow settings against n8n ${version}\n`);
-
-  const schemaProperties = parseSchemaProperties(await fetchSchemaFile(version));
+  let version = resolveVersion();
 
   // The entity axis reads the INSTALLED n8n-workflow, which only describes the pinned dependency
   // set. Compared against an explicitly requested other version it would manufacture skew
   // findings (an old schema "missing" every newer entity property), so it runs in default mode
-  // only - which is the mode `npm run update:n8n` uses, right after installing the new set.
+  // only - which is the mode `npm run update:n8n` uses, right after installing the new set. In
+  // default mode the schema is fetched from the release whose pins match the installed packages.
   let entityProperties: Set<string> | null = null;
+  let releasePins: ReleasePins | null = null;
+  const installedEntity = explicitVersion ? null : installedEntityPackageVersion();
   if (!explicitVersion) {
     entityProperties = parseEntitySettingsProperties(readEntityDeclarations());
-    // The pin names an n8n-nodes-base release, not an n8n one, and sibling n8n patch releases
-    // can reuse subpackage versions - so confirm the fetched schema's release actually ships
-    // the n8n-workflow we parsed. On a mismatch the axis still runs: it can only fail loudly
-    // (a human investigates at update time), never silently pass what a matching set would fail.
-    const installed = installedEntityPackageVersion();
-    const expected = await fetchEntityPackagePin(version);
-    if (installed && expected && installed !== expected) {
-      console.log(
-        `⚠️  Installed n8n-workflow ${installed} differs from n8n ${version}'s pin ${expected} - ` +
-          'entity findings may reflect a neighbouring release.\n'
-      );
-    }
-  } else {
-    console.log('ℹ️  Entity axis skipped: the installed n8n-workflow may not match the requested version.\n');
+    ({ version, pins: releasePins } = await resolveSchemaRelease(version, installedEntity));
   }
+
+  console.log(`🔍 Checking workflow settings against n8n ${version}\n`);
+
+  if (explicitVersion) {
+    console.log('ℹ️  Entity axis skipped: the installed n8n-workflow may not match the requested version.\n');
+  } else if (installedEntity && releasePins && releasePins.workflow !== installedEntity) {
+    // Residual skew after resolution. The axis still runs: it can only fail loudly (a human
+    // investigates at update time), never silently pass what a matching set would fail.
+    console.log(
+      `⚠️  Installed n8n-workflow ${installedEntity} differs from n8n ${version}'s pin ` +
+        `${releasePins.workflow} - entity findings may reflect a neighbouring release.\n`
+    );
+  }
+
+  const schemaProperties = parseSchemaProperties(await fetchSchemaFile(version));
 
   const { missing, removed, ahead, entityOnly, unhandledEntityOnly, publishedEntityOnly } =
     diffSettingsProperties(schemaProperties, entityProperties, parseVersion(version));

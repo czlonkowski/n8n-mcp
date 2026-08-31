@@ -144,7 +144,7 @@ describe('check-settings-drift parseEntitySettingsProperties', () => {
     expect(() => parseEntitySettingsProperties(dts)).toThrow(/extends/);
   });
 
-  it('throws on declaration merging instead of reading only the first block', () => {
+  it('merges split declarations instead of reading only the first block', () => {
     const dts = [
       'export interface IWorkflowSettings {',
       '    timezone?: string;',
@@ -153,7 +153,7 @@ describe('check-settings-drift parseEntitySettingsProperties', () => {
       '    engineType?: string;',
       '}',
     ].join('\n');
-    expect(() => parseEntitySettingsProperties(dts)).toThrow(/declaration/i);
+    expect([...parseEntitySettingsProperties(dts)]).toEqual(['timezone', 'engineType']);
   });
 
   it('does not mistake a comment mentioning the interface for its declaration', () => {
@@ -190,9 +190,30 @@ describe('check-settings-drift parseEntitySettingsProperties', () => {
     expect([...parseEntitySettingsProperties(dts)]).toEqual(['timezone']);
   });
 
-  it('throws when a property shares the opening-brace line instead of skipping it', () => {
+  it('reads a property that shares the opening-brace line instead of skipping it', () => {
     const dts = 'export interface IWorkflowSettings { engineType?: string;\n    timezone?: string;\n}';
-    expect(() => parseEntitySettingsProperties(dts)).toThrow(/opening-brace/);
+    expect([...parseEntitySettingsProperties(dts)]).toEqual(['engineType', 'timezone']);
+  });
+
+  it('is not derailed by braces inside line comments or string literal types', () => {
+    const dts = [
+      'export interface IWorkflowSettings {',
+      '    first?: string; // }',
+      "    second?: '{';",
+      '    third?: string;',
+      '}',
+    ].join('\n');
+    expect([...parseEntitySettingsProperties(dts)]).toEqual(['first', 'second', 'third']);
+  });
+
+  it('throws on a member it cannot enumerate rather than skipping it', () => {
+    const dts = [
+      'export interface IWorkflowSettings {',
+      '    timezone?: string;',
+      '    [key: string]: unknown;',
+      '}',
+    ].join('\n');
+    expect(() => parseEntitySettingsProperties(dts)).toThrow(/cannot enumerate/);
   });
 
   it('parses the installed n8n-workflow declarations, which must cover our derived properties', () => {
