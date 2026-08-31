@@ -261,6 +261,15 @@ async function resolveSchemaRelease(
   return nodesBaseMatch ?? { version: nodesBase, pins: await fetchReleasePins(nodesBase) };
 }
 
+/** The version actually installed, which a stale node_modules can hold apart from the pin. */
+function installedNodesBaseVersion(): string | null {
+  try {
+    return (require('n8n-nodes-base/package.json') as { version?: string }).version ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function installedEntityPackageVersion(): string | null {
   try {
     const pkgPath = join(dirname(require.resolve('n8n-workflow')), '..', '..', 'package.json');
@@ -372,9 +381,15 @@ async function main(): Promise<void> {
   let entityProperties: Set<string> | null = null;
   let releasePins: ReleasePins | null = null;
   const installedEntity = explicitVersion ? null : installedEntityPackageVersion();
+  const installedNodesBase = explicitVersion ? null : installedNodesBaseVersion();
   if (!explicitVersion) {
     entityProperties = parseEntitySettingsProperties(readEntityDeclarations());
-    ({ version, pins: releasePins } = await resolveSchemaRelease(version, installedEntity));
+    // Match on what is installed, not what is declared - a stale node_modules would otherwise
+    // pair this run's entity types with a schema neither of them belongs to.
+    ({ version, pins: releasePins } = await resolveSchemaRelease(
+      installedNodesBase ?? version,
+      installedEntity
+    ));
   }
 
   console.log(`🔍 Checking workflow settings against n8n ${version}\n`);
@@ -386,9 +401,10 @@ async function main(): Promise<void> {
     // n8n-workflow while shipping a different n8n-nodes-base (and so a different schema).
     // The axis still runs: it can only fail loudly (a human investigates at update time),
     // never silently pass what a matching set would fail.
-    const installedNodesBase = resolveVersion();
     const skews: string[] = [];
-    if (releasePins && releasePins.nodesBase !== installedNodesBase) {
+    if (!installedNodesBase) {
+      skews.push('installed n8n-nodes-base version could not be read');
+    } else if (releasePins && releasePins.nodesBase !== installedNodesBase) {
       skews.push(`n8n-nodes-base ${installedNodesBase} vs pin ${releasePins.nodesBase}`);
     }
     if (releasePins && installedEntity && releasePins.workflow !== installedEntity) {
