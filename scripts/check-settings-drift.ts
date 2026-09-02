@@ -108,6 +108,7 @@ export function parseSchemaProperties(
   const names = new Set<string>();
   let keyIndent: number | null = null;
   let current: string | null = null;
+  let readOnlyIndent: number | null = null;
 
   for (let i = propertiesIndex + 1; i < lines.length; i++) {
     const line = lines[i];
@@ -117,16 +118,19 @@ export function parseSchemaProperties(
 
     if (keyIndent === null) keyIndent = indent;
     if (indent !== keyIndent) {
-      // nested schema of the property above; `readOnly: true` there marks a GET-only property
-      if (current && line.trim() === 'readOnly: true') readOnly?.add(current);
+      // Directly under the property above, `readOnly: true` marks a GET-only property. Deeper
+      // lines belong to a sub-schema and say nothing about the property itself.
+      if (current && indent > keyIndent && line.trim() === 'readOnly: true' && readOnlyIndent === indent) {
+        readOnly?.add(current);
+      }
       continue;
     }
 
     const match = line.trim().match(/^([A-Za-z][A-Za-z0-9_]*):/);
-    if (match) {
-      names.add(match[1]);
-      current = match[1];
-    }
+    current = match ? match[1] : null;
+    if (match) names.add(match[1]);
+    // The property's own attributes sit one level in; measured from the next line, not assumed.
+    readOnlyIndent = lines.slice(i + 1).find(next => next.trim() !== '')?.match(/^\s*/)?.[0].length ?? null;
   }
 
   if (names.size === 0) {

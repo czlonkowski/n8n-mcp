@@ -276,8 +276,8 @@ const SETTINGS_LADDER_FLOOR: SettingsVersion = { major: 1, minor: 119, patch: 0 
  * Each returned step is one retry. Keys absent from our settings table go first, together: the
  * usual cause is an instance whose GET echoes a property its write schema does not accept, and
  * one we have never heard of is the likeliest candidate. Known keys follow one at a time from
- * newest to oldest, since the instance evidently predates at least one of them. Keys that
- * predate the floor are never dropped here; an instance that old is handled by version.
+ * newest to oldest, since the instance evidently predates at least one of them. Keys introduced
+ * at or before the floor are never dropped here; an instance that old is handled by version.
  */
 export function settingsRejectionLadder(settings: unknown): string[][] {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return [];

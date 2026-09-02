@@ -31,6 +31,8 @@ export interface WorkflowNode {
   alwaysOutputData?: boolean;
   executeOnce?: boolean;
   webhookId?: string; // n8n assigns this for webhook/form/chat trigger nodes
+  /** Node-level telemetry tags, accepted by n8n's node write schema since 2.36. */
+  customTelemetryTags?: { tag?: Array<{ key: string; value: string }> };
 }
 
 export interface WorkflowConnection {

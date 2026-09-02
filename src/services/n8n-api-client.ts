@@ -83,8 +83,8 @@ const GROUPS_UNSUPPORTED_WARNING =
 const GROUP_DESCRIPTIONS_UNSUPPORTED_WARNING =
   'This n8n version does not support canvas group descriptions (added in 2.32); the descriptions were not saved.';
 const settingsRejectedWarning = (keys: string[]) =>
-  `This n8n version rejects the workflow settings ${keys.join(', ')}; the workflow was saved without them ` +
-  '(values already stored on the instance are unchanged). Upgrade n8n to set them.';
+  `This n8n version rejects the workflow settings ${keys.join(', ')}; they were left out of the write ` +
+  '(on an update, the values the instance already stores are unchanged). Upgrade n8n to set them.';
 
 /**
  * Statuses that mean "this instance does not serve that route". A router without the route may

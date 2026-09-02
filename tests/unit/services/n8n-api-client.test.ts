@@ -667,6 +667,21 @@ describe('N8nApiClient', () => {
       expect(warnings.join(' ')).toContain('mysteryKey');
     });
 
+    it('does not remember a batch of unknown keys, since only one of them may be the culprit', async () => {
+      mockAxiosInstance.put
+        .mockRejectedValueOnce(settingsRejected())
+        .mockResolvedValue({ data: { id: '123' } });
+      const settings = { executionOrder: 'v1', mysteryKey: 1, settingAddedNextWeek: true };
+
+      await client.updateWorkflow('123', workflowWith(settings));
+      mockAxiosInstance.put.mockRejectedValueOnce(settingsRejected()).mockResolvedValue({ data: { id: '123' } });
+      await client.updateWorkflow('123', workflowWith(settings));
+
+      // 2 for the first call, 2 for the second: the batch is probed again, not stripped up front.
+      expect(mockAxiosInstance.put).toHaveBeenCalledTimes(4);
+      expect(mockAxiosInstance.put.mock.calls[2][1].settings).toEqual(settings);
+    });
+
     it('falls back to the minimal settings n8n accepts when every key was rejected', async () => {
       mockAxiosInstance.put
         .mockRejectedValueOnce(settingsRejected())
@@ -713,6 +728,8 @@ describe('N8nApiClient', () => {
 
       const last = mockAxiosInstance.put.mock.calls.at(-1)![1];
       expect(last.settings).toEqual({ executionOrder: 'v1' });
+      // The failed confirmation probe must not have latched the instance as group-less.
+      expect(last.nodeGroups).toEqual([{ id: 'g1', name: 'G', nodeIds: ['a'] }]);
     });
 
     it('applies to create as well as update', async () => {

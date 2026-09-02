@@ -367,6 +367,8 @@ describe('check-settings-drift diffSettingsProperties', () => {
   });
 });
 
+// The node arm has no offline counterpart to the entity-declaration test above: it runs for real
+// only inside `npm run update:n8n`, against the schema fetched for the new pin.
 describe('check-settings-drift diffNodeProperties', () => {
   const nodeSchema = (props: string[]) =>
     [
@@ -390,13 +392,21 @@ describe('check-settings-drift diffNodeProperties', () => {
       '        createdAt:',
       '          type: string',
       '          readOnly: true',
+      '        credentials:',
+      '          type: object',
+      '          properties:',
+      '            main:',
+      '              type: string',
+      '              readOnly: true',
     ]);
 
     const drift = diffNodeProperties(yaml);
 
+    // credentials is writable: the readOnly inside its sub-schema must not be attributed to it
     expect(drift.missing).toEqual(['brandNewNodeFlag']);
     expect(drift.removed).not.toContain('id');
     expect(drift.removed).not.toContain('createdAt');
+    expect(drift.removed).not.toContain('credentials');
   });
 
   it('reports a property we send that the schema no longer lists', () => {
