@@ -608,7 +608,7 @@ const cancelTestRunSchema = z.object({
 const versionIdValue = z.union([z.number().int(), z.string().min(1)]);
 
 const workflowVersionsSchema = z.object({
-  mode: z.enum(['list', 'get', 'rollback', 'delete', 'prune', 'diff']),
+  mode: z.preprocess(emptyToUndefined, z.enum(['list', 'get', 'rollback', 'delete', 'prune', 'diff']).default('list')),
   source: z.enum(['local', 'native']).optional(),
   workflowId: z.string().optional(),
   versionId: versionIdValue.optional(),

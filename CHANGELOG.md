@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.79.0] - 2026-09-02
+
+### Changed
+
+- **The most common agent call errors now resolve instead of failing** ([#1051](https://github.com/czlonkowski/n8n-mcp/issues/1051)). Telemetry for the last week showed roughly 1,800 `error_occurred` events from three call shapes that carried enough information to act on. `n8n_executions` no longer requires `action`: an omitted value lists executions, and `action=get` without an `id` lists the executions of the given workflow (or recent executions) and says so in the response `message`; `delete` still requires `id`, and an unknown action gets a suggestion when the value belongs to another tool or is a common misspelling of `list`. `n8n_workflow_versions` defaults `mode` to `list`. `n8n_workflow_versions` and `n8n_test_workflow` accept `id` as an alias for `workflowId`, and the missing-parameter error of `n8n_test_workflow` names the parameter and the alias. `get_node` maps the retired `get_node_essentials` / `get_node_info` vocabulary onto the canonical parameters before validation: `mode` values `essentials`, `minimal`, `standard`, `full` and `operations` become `mode=info` at the matching `detail`, `properties` and `search` become `search_properties`, and `detail` values `essentials`, `summary` and `short` become `standard`, `minimal` and `minimal`. Aliases are logged at debug level; the schemas and documentation advertise only the canonical values. The `DISABLED_TOOL_OPERATIONS` policy treats an omitted `action` or `mode` as the new default, so a rule that disables `list` still applies, the `get`-without-`id` fallback refuses to list when `list` is disabled, and a filtered tool schema drops a `default` that names a disabled operation. Callers that already pass the canonical parameters see no change.
+
 ## [2.78.0] - 2026-09-02
 
 ### Added

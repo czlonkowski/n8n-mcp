@@ -218,6 +218,48 @@ describe('Unified get_node Tool', () => {
     });
   });
 
+  describe('Retired parameter vocabulary (#1051)', () => {
+    const call = (args: Record<string, unknown>) =>
+      (server as any).executeTool('get_node', { nodeType: 'nodes-base.httpRequest', ...args });
+
+    it('serves mode=essentials as info at standard detail', async () => {
+      const [aliased, canonical] = await Promise.all([
+        call({ mode: 'essentials' }),
+        call({ mode: 'info', detail: 'standard' }),
+      ]);
+      expect(aliased).toEqual(canonical);
+    });
+
+    it('serves mode=full as info at full detail', async () => {
+      const [aliased, canonical] = await Promise.all([
+        call({ mode: 'full' }),
+        call({ detail: 'full' }),
+      ]);
+      expect(aliased).toEqual(canonical);
+      expect(aliased.properties.length).toBe(canonical.properties.length);
+    });
+
+    it('serves detail=summary as minimal', async () => {
+      const [aliased, canonical] = await Promise.all([
+        call({ detail: 'summary' }),
+        call({ detail: 'minimal' }),
+      ]);
+      expect(aliased).toEqual(canonical);
+    });
+
+    it('routes mode=properties to search_properties and still requires propertyQuery', async () => {
+      await expect(call({ mode: 'properties' })).rejects.toThrow('propertyQuery is required for mode=search_properties');
+      const result = await call({ mode: 'properties', propertyQuery: 'url' });
+      expect(result).toEqual(await call({ mode: 'search_properties', propertyQuery: 'url' }));
+    });
+
+    it('still rejects values that are not aliases', async () => {
+      await expect(call({ mode: 'schema' })).rejects.toThrow('Invalid mode "schema"');
+      await expect(call({ detail: 'huge' })).rejects.toThrow('Invalid detail level "huge"');
+      await expect(call({ mode: 42 })).rejects.toThrow('Invalid mode "42"');
+    });
+  });
+
   describe('Info Mode - minimal detail', () => {
     it('should return only basic metadata for minimal detail', async () => {
       const result = await (server as any).getNode('nodes-base.httpRequest', 'minimal', 'info');

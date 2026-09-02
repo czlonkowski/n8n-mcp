@@ -2043,6 +2043,43 @@ describe('handlers-n8n-manager', () => {
     });
   });
 
+  describe('handleWorkflowVersions - mode default (#1051)', () => {
+    async function mockHistory(versions: unknown[]) {
+      const { WorkflowVersioningService } = await import('@/services/workflow-versioning-service');
+      const getVersionHistory = vi.fn().mockResolvedValue(versions);
+      vi.mocked(WorkflowVersioningService).mockImplementation(() => ({ getVersionHistory }) as any);
+      return getVersionHistory;
+    }
+
+    it('lists versions when mode is omitted', async () => {
+      const getVersionHistory = await mockHistory([{ versionId: 1 }, { versionId: 2 }]);
+
+      const result = await handlers.handleWorkflowVersions({ workflowId: 'wf-1' }, mockRepository);
+
+      expect(getVersionHistory).toHaveBeenCalledWith('wf-1', undefined);
+      expect(result.success).toBe(true);
+      expect((result.data as any).count).toBe(2);
+    });
+
+    it('treats a blank mode as omitted', async () => {
+      await mockHistory([]);
+
+      const result = await handlers.handleWorkflowVersions({ mode: '', workflowId: 'wf-1' }, mockRepository);
+
+      expect(result.success).toBe(true);
+      expect((result.data as any).count).toBe(0);
+    });
+
+    it('still rejects an unknown mode', async () => {
+      await mockHistory([]);
+
+      const result = await handlers.handleWorkflowVersions({ mode: 'history', workflowId: 'wf-1' }, mockRepository);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid input');
+    });
+  });
+
   describe('handleWorkflowVersions - rollback', () => {
     // Regression: the handler resolved its API client only when an InstanceContext was supplied,
     // which skipped getN8nApiClient's environment-variable fallback. On a plain N8N_API_URL setup

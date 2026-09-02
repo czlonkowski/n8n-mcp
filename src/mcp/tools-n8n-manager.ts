@@ -474,14 +474,15 @@ export const n8nManagementTools: ToolDefinition[] = [
   },
   {
     name: 'n8n_executions',
-    description: `Manage workflow executions: get details, list, or delete. Use action='get' with id for execution details, action='list' for listing executions, action='delete' to remove execution record.`,
+    description: `Manage workflow executions: get details, list, or delete. Use action='get' with id for execution details, action='list' (the default) for listing executions, action='delete' to remove execution record.`,
     inputSchema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
           enum: ['get', 'list', 'delete'],
-          description: 'Operation: get=get execution details, list=list executions, delete=delete execution'
+          default: 'list',
+          description: 'Operation: get=get execution details, list=list executions (default), delete=delete execution'
         },
         // For action='get' and action='delete'
         id: {
@@ -550,8 +551,7 @@ export const n8nManagementTools: ToolDefinition[] = [
           type: 'boolean',
           description: 'For action=list: include execution data (default: false)'
         }
-      },
-      required: ['action']
+      }
     },
     annotations: {
       title: 'Manage Executions',
@@ -648,7 +648,8 @@ Two sources:
         mode: {
           type: 'string',
           enum: ['list', 'get', 'rollback', 'delete', 'prune', 'diff'],
-          description: 'Operation mode'
+          default: 'list',
+          description: 'Operation mode (default: list)'
         },
         source: {
           type: 'string',
@@ -704,8 +705,7 @@ Two sources:
           maximum: 600000,
           description: 'Client deadline for the native call (default 30000)'
         }
-      },
-      required: ['mode']
+      }
     },
     annotations: {
       title: 'Workflow Versions',
@@ -1001,7 +1001,9 @@ export const TOOL_OPERATION_PARAM: Record<string, string> = {
  * default here — otherwise an omitted value would slip past a rule naming it.
  */
 export const TOOL_OPERATION_DEFAULT: Record<string, string> = {
+  'n8n_executions': 'list',
   'n8n_test_workflow': 'auto',
+  'n8n_workflow_versions': 'list',
 };
 
 /**

@@ -45,6 +45,7 @@ import {
   getDisabledOperations,
   isOperationDisabled,
   getValidOperations,
+  resolveRequestedOperation,
   resetToolPolicyCache,
 } from '../../../src/mcp/tool-policy';
 
@@ -92,6 +93,24 @@ describe('getDisabledTools', () => {
   it('caps the list at 200 entries', () => {
     process.env.DISABLED_TOOLS = Array.from({ length: 250 }, (_, i) => `tool_${i}`).join(',');
     expect(getDisabledTools().size).toBe(200);
+  });
+});
+
+describe('resolveRequestedOperation', () => {
+  it('returns the value the caller sent', () => {
+    expect(resolveRequestedOperation('n8n_executions', { action: 'delete' })).toBe('delete');
+  });
+
+  it('resolves an omitted or blank operation to the tool default (#1051)', () => {
+    expect(resolveRequestedOperation('n8n_executions', {})).toBe('list');
+    expect(resolveRequestedOperation('n8n_executions', { action: ' ' })).toBe('list');
+    expect(resolveRequestedOperation('n8n_workflow_versions', { workflowId: 'wf' })).toBe('list');
+    expect(resolveRequestedOperation('n8n_test_workflow', { workflowId: 'wf' })).toBe('auto');
+  });
+
+  it('is undefined for a tool without an operation parameter or default', () => {
+    expect(resolveRequestedOperation('n8n_get_workflow', {})).toBeUndefined();
+    expect(resolveRequestedOperation('n8n_manage_folders', {})).toBeUndefined();
   });
 });
 

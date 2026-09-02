@@ -97,8 +97,8 @@ per workflow, plus an age-based retention window). Native history retention is n
     parameters: {
       mode: {
         type: 'string',
-        required: true,
-        description: 'Operation mode: "list", "get", "rollback", "diff", "delete", or "prune"',
+        required: false,
+        description: 'Operation mode: "list" (default), "get", "rollback", "diff", "delete", or "prune"',
         enum: ['list', 'get', 'rollback', 'delete', 'prune', 'diff']
       },
       source: {

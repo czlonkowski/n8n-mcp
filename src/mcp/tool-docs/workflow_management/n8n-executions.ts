@@ -36,7 +36,7 @@ export const n8nExecutionsDoc: ToolDocumentation = {
 - Provides AI-friendly fix suggestions based on error patterns
 - Token-efficient (80-90% smaller than full mode)`,
     parameters: {
-      action: { type: 'string', required: true, description: 'Operation: "get", "list", or "delete"' },
+      action: { type: 'string', required: false, description: 'Operation: "get", "list" (default), or "delete". "get" without an id lists executions instead' },
       id: { type: 'string', required: false, description: 'Execution ID (required for action=get or action=delete)' },
       mode: { type: 'string', required: false, description: 'For action=get: "preview", "summary" (default), "filtered", "full", "error"' },
       nodeNames: { type: 'array', required: false, description: 'For action=get with mode=filtered: Filter to specific nodes by name' },

@@ -539,7 +539,7 @@ describe('Parameter Validation', () => {
         .rejects.toThrow('Missing required parameters for n8n_update_partial_workflow: id, operations');
 
       await expect(server.testExecuteTool('n8n_test_workflow', {}))
-        .rejects.toThrow('Missing required parameters for n8n_test_workflow: workflowId');
+        .rejects.toThrow('n8n_test_workflow: Validation failed:\n  • workflowId: workflowId is required');
 
       await expect(server.testExecuteTool('n8n_manage_datatable', {}))
         .rejects.toThrow('n8n_manage_datatable: Validation failed:\n  • action: action is required');

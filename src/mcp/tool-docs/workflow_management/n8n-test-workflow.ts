@@ -52,7 +52,7 @@ Every response states \`method\` and \`backend\` ('public-api' or 'official-mcp'
       workflowId: {
         type: 'string',
         required: true,
-        description: 'Workflow ID to execute'
+        description: 'Workflow ID to execute ("id" is accepted as an alias)'
       },
       method: {
         type: 'string',
