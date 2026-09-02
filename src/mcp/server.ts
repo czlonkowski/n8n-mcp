@@ -676,9 +676,9 @@ export class N8NDocumentationMCPServer {
       const remaining = [...getValidOperations(toolName)].filter(v => !ops.has(v));
 
       const param = cloned.inputSchema?.properties?.[paramName];
+      let defaultRemoved = false;
       if (param?.enum) {
         param.enum = (param.enum as string[]).filter(v => !ops.has(v.toLowerCase()));
-        let defaultRemoved = false;
         if (typeof param.default === 'string' && ops.has(param.default.toLowerCase())) {
           delete param.default;
           defaultRemoved = true;
@@ -698,7 +698,8 @@ export class N8NDocumentationMCPServer {
       }
 
       const disabledList = [...ops].join(', ');
-      cloned.description = `${cloned.description}\n\n> Operations disabled by server policy: ${disabledList}`;
+      cloned.description = `${cloned.description}\n\n> Operations disabled by server policy: ${disabledList}`
+        + (defaultRemoved ? `. The default for ${paramName} was one of them, so ${paramName} must be passed explicitly.` : '');
 
       // If filtering removed every destructive operation, the tool is now
       // read-only — recompute its MCP annotations so hosts that honor them

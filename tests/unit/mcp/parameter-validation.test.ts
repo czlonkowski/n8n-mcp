@@ -534,7 +534,7 @@ describe('Parameter Validation', () => {
         { name: 'n8n_validate_workflow', args: {}, expected: 'n8n_validate_workflow: Validation failed:\n  • id: id is required' },
       ];
 
-      // n8n_update_partial_workflow and n8n_test_workflow use legacy validation
+      // n8n_update_partial_workflow uses legacy validation; n8n_test_workflow moved to the schema-style format
       await expect(server.testExecuteTool('n8n_update_partial_workflow', {}))
         .rejects.toThrow('Missing required parameters for n8n_update_partial_workflow: id, operations');
 

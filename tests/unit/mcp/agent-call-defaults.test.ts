@@ -185,6 +185,7 @@ describe('agent call defaults and aliases (#1051)', () => {
       expect(action.enum).toEqual(['get', 'delete']);
       expect(action.default).toBeUndefined();
       expect(action.description).toContain('disabled by server policy: list; no default, pass a value)');
+      expect(filtered.get('n8n_executions').description).toContain('The default for action was one of them, so action must be passed explicitly.');
 
       const untouched = (server as any).buildFilteredToolDefinitions(new Map([['n8n_executions', new Set(['delete'])]]));
       expect(untouched.get('n8n_executions').inputSchema.properties.action.default).toBe('list');
@@ -204,6 +205,12 @@ describe('agent call defaults and aliases (#1051)', () => {
       await server.testExecuteTool('n8n_workflow_versions', { id: 'wf1' });
 
       expect(handlerMocks.handleWorkflowVersions.mock.calls[0][0]).toEqual({ id: 'wf1', workflowId: 'wf1' });
+    });
+
+    it('drops a blank workflowId so the handler reports it as missing', async () => {
+      await server.testExecuteTool('n8n_workflow_versions', { workflowId: '   ' });
+
+      expect(handlerMocks.handleWorkflowVersions.mock.calls[0][0]).toEqual({ workflowId: undefined });
     });
 
     it('keeps an explicit workflowId when both spellings are sent', async () => {

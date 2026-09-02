@@ -120,6 +120,11 @@ describe('withWorkflowIdAlias', () => {
     expect(withWorkflowIdAlias({ id: true })).toEqual({ id: true });
   });
 
+  it('drops a blank workflowId when no usable id replaces it', () => {
+    expect(withWorkflowIdAlias({ workflowId: '   ' })).toEqual({ workflowId: undefined });
+    expect(withWorkflowIdAlias({ workflowId: '', id: ' ' })).toEqual({ workflowId: undefined, id: ' ' });
+  });
+
   it('does not mutate the input', () => {
     const args = { id: 'wf-1' };
     withWorkflowIdAlias(args);

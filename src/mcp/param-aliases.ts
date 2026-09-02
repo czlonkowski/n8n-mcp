@@ -103,7 +103,8 @@ export function suggestExecutionsAction(action: string): string | undefined {
 /**
  * Agents send `id` and `workflowId` interchangeably for tools whose only
  * identifier is a workflow id. Returns a copy of the arguments with
- * `workflowId` filled from `id` when the canonical key is absent or blank.
+ * `workflowId` filled from `id` when the canonical key is absent or blank; a
+ * blank `workflowId` that nothing replaces is removed.
  * `id` is not a schema property, so the server's type coercion never sees it
  * and a numeric value has to be accepted here.
  */
@@ -116,7 +117,8 @@ export function withWorkflowIdAlias<T extends Record<string, unknown>>(args: T):
   }
   const id = typeof args.id === 'number' ? String(args.id) : args.id;
   if (typeof id !== 'string' || id.trim() === '') {
-    return args;
+    // A blank workflowId with nothing to replace it is dropped so handlers see it as absent.
+    return typeof args.workflowId === 'string' ? { ...args, workflowId: undefined } : args;
   }
   return { ...args, workflowId: id };
 }
