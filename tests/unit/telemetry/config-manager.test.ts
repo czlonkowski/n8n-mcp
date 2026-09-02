@@ -99,7 +99,7 @@ describe('TelemetryConfigManager', () => {
       manager.loadConfig();
 
       const stderrOutput = stderrWrite.mock.calls.map(c => String(c[0])).join('');
-      expect(stderrOutput).toContain('Anonymous Usage Statistics');
+      expect(stderrOutput).toContain('Usage Telemetry');
 
       // The protocol channel must stay untouched.
       expect(stdoutWrite).not.toHaveBeenCalled();
