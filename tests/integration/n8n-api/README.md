@@ -11,7 +11,7 @@ The Public API is **asymmetric** between read and write:
 | Behavior | GET | PUT / PATCH |
 |----------|-----|-------------|
 | `description` | May be returned | Rejected on some versions (Issue #431) |
-| Read-only fields (`id`, `createdAt`, `updatedAt`, `versionId`, `versionCounter`, `active`, `tags`, `meta`, `staticData`, `pinData`, `nodeGroups`, …) | Returned | Rejected (`additionalProperties: false` on many versions) |
+| Read-only fields (`id`, `createdAt`, `updatedAt`, `versionId`, `versionCounter`, `active`, `tags`, `meta`, `staticData`, `pinData`, …) | Returned | Rejected (`additionalProperties: false` on many versions) |
 | `settings` | Returned | Empty `{}` rejected; when empty or omitted the client sends `{ executionOrder: 'v1' }` |
 
 **Common failure mode (Issue #433):**

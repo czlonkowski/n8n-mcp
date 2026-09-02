@@ -696,6 +696,25 @@ describe('N8nApiClient', () => {
       expect(mockAxiosInstance.put).toHaveBeenCalledTimes(1);
     });
 
+    it('reaches the ladder when the settings rejection surfaces on the group ladder\'s retry', async () => {
+      // First send: groups rejected without a name. The group ladder retries without the field
+      // to confirm; that retry is refused for settings. The settings complaint must win, or the
+      // write fails with the groups error and the settings ladder never runs.
+      mockAxiosInstance.put
+        .mockRejectedValueOnce(badRequest('request/body must NOT have additional properties'))
+        .mockRejectedValueOnce(settingsRejected())
+        .mockResolvedValue({ data: { id: '123' } });
+
+      await client.updateWorkflow('123', {
+        ...workflowWith({ executionOrder: 'v1', mysteryKey: 1 }),
+        nodes: [{ id: 'a', name: 'A', type: 'n8n-nodes-base.set', typeVersion: 1, position: [0, 0], parameters: {} }],
+        nodeGroups: [{ id: 'g1', name: 'G', nodeIds: ['a'] }],
+      } as any);
+
+      const last = mockAxiosInstance.put.mock.calls.at(-1)![1];
+      expect(last.settings).toEqual({ executionOrder: 'v1' });
+    });
+
     it('applies to create as well as update', async () => {
       mockAxiosInstance.post
         .mockRejectedValueOnce(settingsRejected())

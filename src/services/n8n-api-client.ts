@@ -736,8 +736,11 @@ export class N8nApiClient {
           let result: Workflow;
           try {
             result = await send(withoutNodeGroups(payload));
-          } catch {
-            throw apiError;
+          } catch (retryError) {
+            // A settings rejection on the retry is the more specific complaint, and the settings
+            // ladder around this one can act on it; anything else keeps the original.
+            const second = handleN8nApiError(retryError);
+            throw isUnknownSettingsPropertyError(second) ? second : apiError;
           }
           this.groupSupport.groups = false;
           options.onWarning?.(GROUPS_UNSUPPORTED_WARNING);
