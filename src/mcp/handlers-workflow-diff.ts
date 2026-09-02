@@ -49,18 +49,20 @@ function compareVersions(
   return 'unknown';
 }
 
+// Ids of nodes that lack a webhookId in the given read. cleanWorkflowForUpdate() assigns a random
+// one to such nodes, and the server persists it, so the snapshot taken before a write and the read
+// taken after it legitimately differ there. A webhookId both reads carry is real content.
+function nodesWithoutWebhookId(workflow: Workflow): string[] {
+  return (workflow.nodes ?? []).filter(node => node.id && !node.webhookId).map(node => node.id);
+}
+
 // The shape an update would send, for comparing two reads of the same workflow. Cloned because
-// cleanWorkflowForUpdate() mutates: it assigns a random webhookId to webhook nodes that lack one,
-// so two reads of one workflow would otherwise compare unequal to themselves. Only those generated
-// ids are dropped; a webhookId the workflow already carried is real content and stays compared.
-function writableShape(workflow: Workflow): Record<string, unknown> {
-  const generated = new Set(
-    (workflow.nodes ?? []).filter(node => !node.webhookId).map(node => node.id),
-  );
+// cleanWorkflowForUpdate() mutates its input.
+function writableShape(workflow: Workflow, ignoreWebhookIdOf: Set<string>): Record<string, unknown> {
   const cleaned = cleanWorkflowForUpdate(structuredClone(workflow)) as Record<string, unknown>;
   if (Array.isArray(cleaned.nodes)) {
     for (const node of cleaned.nodes) {
-      if (generated.has(node.id)) delete node.webhookId;
+      if (ignoreWebhookIdOf.has(node.id)) delete node.webhookId;
     }
   }
   return cleaned;
@@ -68,9 +70,12 @@ function writableShape(workflow: Workflow): Record<string, unknown> {
 
 // Compare only the fields the update allowlist accepts. Version identity cannot verify a rollback:
 // a successful rollback writes a new version, so compareVersions() reports 'changed' regardless.
+// Generated webhook ids are ignored on both sides whichever read lacks them, so the outcome does
+// not depend on whether an earlier write mutated the snapshot in place.
 function sameWritableContent(a: Workflow, b: Workflow): boolean {
   try {
-    return isDeepStrictEqual(writableShape(a), writableShape(b));
+    const generated = new Set([...nodesWithoutWebhookId(a), ...nodesWithoutWebhookId(b)]);
+    return isDeepStrictEqual(writableShape(a, generated), writableShape(b, generated));
   } catch {
     return false;
   }

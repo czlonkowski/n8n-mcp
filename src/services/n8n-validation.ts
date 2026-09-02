@@ -36,12 +36,20 @@ const workflowNodeObjectSchema = z.object({
   alwaysOutputData: z.boolean().optional(),
   executeOnce: z.boolean().optional(),
   webhookId: z.string().optional(),
+  customTelemetryTags: z
+    .object({ tag: z.array(z.object({ key: z.string(), value: z.string() })).optional() })
+    .optional(),
 });
 
 export const workflowNodeSchema = z.preprocess(normalizeMcpWorkflowNode, workflowNodeObjectSchema);
 
-/** Properties accepted by n8n's Public API write schema for a node. */
-const ALLOWED_NODE_PROPERTIES = new Set(Object.keys(workflowNodeObjectSchema.shape));
+/**
+ * Node properties n8n's Public API write schema accepts, taken from the zod schema above so the
+ * two cannot drift apart. n8n's node schema is `additionalProperties: false`, so a property missing
+ * here is dropped from every write; `npm run check:settings-drift` compares this set against the
+ * schema n8n ships and fails when n8n adds one.
+ */
+export const WRITABLE_NODE_PROPERTIES: ReadonlySet<string> = new Set(Object.keys(workflowNodeObjectSchema.shape));
 
 /**
  * Strip unknown properties from a single node so it conforms to n8n's write schema.
@@ -49,7 +57,7 @@ const ALLOWED_NODE_PROPERTIES = new Set(Object.keys(workflowNodeObjectSchema.sha
  * PUT/PATCH rejects with "must NOT have additional properties".
  */
 export function cleanNodeForApi(node: WorkflowNode): WorkflowNode {
-  const cleaned = Object.entries(node).filter(([key]) => ALLOWED_NODE_PROPERTIES.has(key));
+  const cleaned = Object.entries(node).filter(([key]) => WRITABLE_NODE_PROPERTIES.has(key));
   return Object.fromEntries(cleaned) as WorkflowNode;
 }
 

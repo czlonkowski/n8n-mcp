@@ -7,8 +7,6 @@
  *
  * Memory impact: Reduces per-session memory from ~900MB to near-zero by sharing
  * a single ~68MB database connection across all sessions.
- *
- * See shared-database implementation for memory optimization details.
  */
 
 import path from 'path';

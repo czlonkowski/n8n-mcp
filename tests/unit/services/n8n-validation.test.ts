@@ -871,7 +871,7 @@ describe('n8n-validation', () => {
         expect(cleaned.nodes![0].webhookId).toBeUndefined();
       });
 
-      it('should strip unknown node properties echoed by n8n GET (Issue #extra-node-props)', () => {
+      it('should strip unknown node properties echoed by n8n GET (#983)', () => {
         const workflow = workflowWithNodes([
           {
             id: 'n1',

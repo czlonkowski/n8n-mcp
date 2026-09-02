@@ -5,6 +5,7 @@ import {
   diffSettingsProperties,
   parseEntitySettingsProperties,
   parseSchemaProperties,
+  diffNodeProperties,
 } from '../../../scripts/check-settings-drift';
 import { WORKFLOW_SETTINGS_PROPERTIES } from '../../../src/constants/workflow-settings';
 
@@ -363,5 +364,45 @@ describe('check-settings-drift diffSettingsProperties', () => {
 
     expect(drift.ahead).toContain('engineType');
     expect(drift.entityOnly).toEqual([]);
+  });
+});
+
+describe('check-settings-drift diffNodeProperties', () => {
+  const nodeSchema = (props: string[]) =>
+    [
+      'components:',
+      '  schemas:',
+      '    node:',
+      '      type: object',
+      '      additionalProperties: false',
+      '      properties:',
+      ...props,
+      '    workflowSettings:',
+      '      type: object',
+    ].join('\n');
+
+  it('reports a writable node property the zod schema lacks, and ignores read-only ones', () => {
+    const yaml = nodeSchema([
+      '        id:',
+      '          type: string',
+      '        brandNewNodeFlag:',
+      '          type: boolean',
+      '        createdAt:',
+      '          type: string',
+      '          readOnly: true',
+    ]);
+
+    const drift = diffNodeProperties(yaml);
+
+    expect(drift.missing).toEqual(['brandNewNodeFlag']);
+    expect(drift.removed).not.toContain('id');
+    expect(drift.removed).not.toContain('createdAt');
+  });
+
+  it('reports a property we send that the schema no longer lists', () => {
+    const drift = diffNodeProperties(nodeSchema(['        id:', '          type: string']));
+
+    expect(drift.missing).toEqual([]);
+    expect(drift.removed).toContain('webhookId');
   });
 });

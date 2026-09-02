@@ -21,9 +21,12 @@ import {
   WORKFLOW_SETTINGS_PROPERTIES,
   type SettingsVersion,
 } from '../src/constants/workflow-settings';
+import { WRITABLE_NODE_PROPERTIES } from '../src/services/n8n-validation';
 
 const SCHEMA_PATH = 'dist/public-api/v1/openapi.yml';
 const SCHEMA_NAME = 'workflowSettings';
+/** The node schema is `additionalProperties: false` too; cleanNodeForApi strips to WRITABLE_NODE_PROPERTIES. */
+const NODE_SCHEMA_NAME = 'node';
 const ENTITY_INTERFACE = 'IWorkflowSettings';
 
 function resolveVersion(): string {
@@ -70,13 +73,17 @@ const indentOf = (line: string): number => line.length - line.trimStart().length
  * this cannot find throws, which is the point - a silently empty result would read as "no
  * drift".
  */
-export function parseSchemaProperties(yaml: string): Set<string> {
+export function parseSchemaProperties(
+  yaml: string,
+  schemaName = SCHEMA_NAME,
+  readOnly?: Set<string>
+): Set<string> {
   const lines = yaml.split('\n');
 
-  const schemaIndex = lines.findIndex(line => new RegExp(`^\\s+${SCHEMA_NAME}:\\s*$`).test(line));
+  const schemaIndex = lines.findIndex(line => new RegExp(`^\\s+${schemaName}:\\s*$`).test(line));
   if (schemaIndex === -1) {
     throw new Error(
-      `No "${SCHEMA_NAME}:" schema in ${SCHEMA_PATH}. n8n may have renamed it - check the spec.`
+      `No "${schemaName}:" schema in ${SCHEMA_PATH}. n8n may have renamed it - check the spec.`
     );
   }
   const schemaIndent = indentOf(lines[schemaIndex]);
@@ -94,12 +101,13 @@ export function parseSchemaProperties(yaml: string): Set<string> {
     }
   }
   if (propertiesIndex === -1) {
-    throw new Error(`"${SCHEMA_NAME}" has no properties block in ${SCHEMA_PATH}`);
+    throw new Error(`"${schemaName}" has no properties block in ${SCHEMA_PATH}`);
   }
 
   const propertiesIndent = indentOf(lines[propertiesIndex]);
   const names = new Set<string>();
   let keyIndent: number | null = null;
+  let current: string | null = null;
 
   for (let i = propertiesIndex + 1; i < lines.length; i++) {
     const line = lines[i];
@@ -108,16 +116,37 @@ export function parseSchemaProperties(yaml: string): Set<string> {
     if (indent <= propertiesIndent) break;
 
     if (keyIndent === null) keyIndent = indent;
-    if (indent !== keyIndent) continue; // nested schema of the property above
+    if (indent !== keyIndent) {
+      // nested schema of the property above; `readOnly: true` there marks a GET-only property
+      if (current && line.trim() === 'readOnly: true') readOnly?.add(current);
+      continue;
+    }
 
     const match = line.trim().match(/^([A-Za-z][A-Za-z0-9_]*):/);
-    if (match) names.add(match[1]);
+    if (match) {
+      names.add(match[1]);
+      current = match[1];
+    }
   }
 
   if (names.size === 0) {
-    throw new Error(`Parsed zero properties from "${SCHEMA_NAME}" - the spec format changed`);
+    throw new Error(`Parsed zero properties from "${schemaName}" - the spec format changed`);
   }
   return names;
+}
+
+/**
+ * Node-level drift: properties the node write schema accepts that cleanNodeForApi would strip,
+ * and properties we send that the schema no longer lists. Read-only ones (createdAt, updatedAt)
+ * are rejected on write, so stripping them is correct and they are not reported.
+ */
+export function diffNodeProperties(yaml: string): { missing: string[]; removed: string[] } {
+  const readOnly = new Set<string>();
+  const schema = parseSchemaProperties(yaml, NODE_SCHEMA_NAME, readOnly);
+  return {
+    missing: [...schema].filter(name => !readOnly.has(name) && !WRITABLE_NODE_PROPERTIES.has(name)),
+    removed: [...WRITABLE_NODE_PROPERTIES].filter(name => !schema.has(name)),
+  };
 }
 
 /**
@@ -426,7 +455,9 @@ async function main(): Promise<void> {
     }
   }
 
-  const schemaProperties = parseSchemaProperties(await fetchSchemaFile(version));
+  const schemaYaml = await fetchSchemaFile(version);
+  const schemaProperties = parseSchemaProperties(schemaYaml);
+  const nodeDrift = diffNodeProperties(schemaYaml);
 
   const { missing, removed, ahead, entityOnly, unhandledEntityOnly, publishedEntityOnly } =
     diffSettingsProperties(schemaProperties, entityProperties, parseVersion(version));
@@ -443,13 +474,26 @@ async function main(): Promise<void> {
     console.log(`ℹ️  ${entityOnly.length} entity-only, stripped on write (expected): ${entityOnly.join(', ')}\n`);
   }
 
+  if (nodeDrift.missing.length > 0) {
+    console.error(`❌ ${nodeDrift.missing.length} node property/properties in n8n's write schema that cleanNodeForApi strips:`);
+    for (const name of nodeDrift.missing) console.error(`   + ${name}`);
+    console.error('\n   Add each to workflowNodeObjectSchema in src/services/n8n-validation.ts.\n');
+  }
+  if (nodeDrift.removed.length > 0) {
+    console.error(`❌ ${nodeDrift.removed.length} node property/properties we send that n8n's write schema no longer lists:`);
+    for (const name of nodeDrift.removed) console.error(`   - ${name}`);
+    console.error('\n   Remove them from workflowNodeObjectSchema once no supported version accepts them.\n');
+  }
+
   if (
     missing.length === 0 &&
     removed.length === 0 &&
     unhandledEntityOnly.length === 0 &&
-    publishedEntityOnly.length === 0
+    publishedEntityOnly.length === 0 &&
+    nodeDrift.missing.length === 0 &&
+    nodeDrift.removed.length === 0
   ) {
-    console.log('✅ No drift - src/constants/workflow-settings.ts matches n8n.');
+    console.log('✅ No drift - src/constants/workflow-settings.ts and the node schema match n8n.');
     return;
   }
 

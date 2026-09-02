@@ -177,7 +177,11 @@ export class N8nApiClient {
    * group would permanently disable groups for the instance. Per-client, which is per-instance.
    */
   private groupSupport = { groups: true, descriptions: true };
-  /** Settings keys this instance has rejected as unknown; stripped from later writes with a warning. */
+  /**
+   * Settings keys this instance has rejected as unknown; stripped from later writes with a warning.
+   * Like groupSupport, remembered for the client's lifetime: an instance upgraded mid-session keeps
+   * losing the key until the client is recreated, and the warning says so on every write.
+   */
   private rejectedSettings = new Set<string>();
   /**
    * Whether this instance is known to serve the modern publish/unpublish routes. Positive-only,
@@ -625,9 +629,12 @@ export class N8nApiClient {
    * trails n8n, and a property dropped up front is dropped silently. The cost of forwarding is
    * a 400 whose AJV message names the path but not the key, so this ladder finds the key the
    * only way it can, by retrying without candidates in the order settingsRejectionLadder gives.
-   * Every drop is reported through onWarning and remembered for this client's lifetime, so a
-   * session that has learnt the instance's schema stops paying the probe. The bound is the
-   * ladder length; a write that still fails after it surfaces the last rejection.
+   * Every drop is reported through onWarning. A key dropped on its own is remembered for this
+   * client's lifetime, so a session that has learnt the instance's schema stops paying the probe;
+   * the first step drops every unknown key together, and remembering all of them would keep
+   * stripping a key the instance accepts, so that step is probed again on the next write. The
+   * ladder adds at most steps.length writes, each of which may run the group ladder in full; a
+   * write that still fails after it surfaces the last rejection.
    */
   private async sendWorkflowWriteWithSettingsFallback(
     payload: Record<string, unknown>,
@@ -647,7 +654,9 @@ export class N8nApiClient {
       try {
         const result = await this.sendWorkflowWriteWithGroupFallback(body, send, options);
         if (dropped.length > 0) {
-          for (const key of dropped) this.rejectedSettings.add(key);
+          for (const single of steps.slice(0, step).filter(keys => keys.length === 1)) {
+            this.rejectedSettings.add(single[0]);
+          }
           options.onWarning?.(settingsRejectedWarning(dropped));
         }
         return result;
