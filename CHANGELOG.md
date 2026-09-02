@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.80.1] - 2026-09-03
+
+### Fixed
+
+- **`n8n_executions` now returns the data of AI Agent sub-nodes and of every run of a node** ([#965](https://github.com/czlonkowski/n8n-mcp/pull/965)). The execution processors read only `runData[node][0].data.main`, so a Chat Model, Tool, Memory or Output Parser node, whose task data lives under `ai_*` connection types, showed no items, and a node invoked more than once in an execution (an agent's model, called once per tool round) lost every run after the first. Items are now merged across runs, keyed by connection type and output port, so a node whose runs populate different types keeps them apart, and a port n8n recorded as `null` stays `null`. The last failing run's error is reported in every mode, `executionTime` is the sum across runs, and `preview` mode reads the first item without merging. In `summary` and `filtered` modes only as many items as the limit are merged, and inputs (`includeInputData`), which for AI sub-nodes carry whole prompts, are truncated with the same limit and described by a new `inputMetadata` field. The error processor reads the same helpers, so `error` mode's upstream context and execution path include AI sub-nodes too.
+
 ## [2.80.0] - 2026-09-03
 
 ### Fixed
