@@ -39,7 +39,7 @@ export const getNodeDoc: ToolDocumentation = {
       propertyQuery: { type: 'string', required: false, description: 'For mode=search_properties: search term to find properties (e.g., "auth", "header", "body")' },
       maxPropertyResults: { type: 'number', required: false, description: 'For mode=search_properties: max results (default 20)' },
       fromVersion: { type: 'string', required: false, description: 'For compare/breaking/migrations modes: source typeVersion as workflows store it (e.g., "1", "4.1")' },
-      toVersion: { type: 'string', required: false, description: 'For compare/breaking modes: target typeVersion (e.g., "2"). Defaults to the current version' }
+      toVersion: { type: 'string', required: false, description: 'For compare/breaking/migrations modes: target typeVersion (e.g., "2"). Defaults to the current version' }
     },
     returns: `Depends on mode:
 - info: Node schema with properties based on detail level
