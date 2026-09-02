@@ -688,7 +688,7 @@ describe('SSRFProtection', () => {
     // `http://localhost:5678` passed the sync check and `http://127.0.0.1:5678`
     // (the same host) was refused as a private IP. Both validators must give
     // the same verdict for every loopback spelling.
-    it('should agree with validateWebhookUrl on loopback literals in moderate mode', async () => {
+    it('should agree with validateWebhookUrl on localhost targets in moderate mode', async () => {
       process.env.WEBHOOK_SECURITY_MODE = 'moderate';
       const loopbackUrls = [
         'http://localhost:5678',

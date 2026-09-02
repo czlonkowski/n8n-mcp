@@ -95,7 +95,9 @@ const PRIVATE_IP_RANGES = [
 
 export class SSRFProtection {
   /**
-   * Whether a bracket-stripped host is a loopback target.
+   * Whether a bracket-stripped host names the local machine: a LOCALHOST_PATTERNS entry
+   * (these include `0.0.0.0`, the unspecified address rather than a loopback one) or any
+   * 127.0.0.0/8 literal.
    *
    * Shared by {@link validateUrlSync} and {@link validateResolvedAddress} so
    * both agree on what `moderate` allows. Before #1033 they disagreed on
