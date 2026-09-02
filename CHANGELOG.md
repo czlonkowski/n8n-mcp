@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.81.0] - 2026-09-03
+
+### Added
+
+- **Workflow writes retry without the settings an n8n instance rejects as unknown.** Settings are forwarded untouched on purpose, because the bundled settings table trails n8n's releases and a property dropped up front is dropped silently. The cost was that a setting the instance's write schema does not accept failed the whole write with `request/body/settings must NOT have additional properties`, a message that never names the key, which is what users hit when a GET echoes a property such as `timeSavedMode` that their n8n version stores but does not accept on PUT ([#1017](https://github.com/czlonkowski/n8n-mcp/pull/1017)). The API client now retries without candidates in a fixed order: keys absent from the settings table first, together, then known keys from newest to oldest; keys that predate n8n 1.119.0 are never dropped, since instances that old still report their version and are filtered precisely. Each dropped key is reported in the tool response `warnings` and remembered for the client's lifetime so later writes skip the probe. `timeSavedMode` itself stays writable: n8n 2.36 accepts and echoes it, so marking it derived would have dropped a real setting on current instances.
+
+### Fixed
+
+- **Node properties that n8n echoes on GET but rejects on PUT are stripped before a write** ([#983](https://github.com/czlonkowski/n8n-mcp/pull/983)). n8n's node schema is `additionalProperties: false`, and a GET can carry `issues`, `runIndex` or `data`, so a round trip failed with `request/body/nodes/0 must NOT have additional properties`. `cleanWorkflowForCreate` and `cleanWorkflowForUpdate` now keep only the properties of the node schema; the allowlist is derived from that schema, so it cannot drift from it. `onError` and `webhookId` were missing from the schema and are accepted.
+- **A rollback that n8n persisted before rejecting is no longer reported as failed** ([#979](https://github.com/czlonkowski/n8n-mcp/pull/979)). n8n's public API can commit workflow content and then throw on a later check, so `n8n_update_partial_workflow` could warn that a workflow was left broken when it had in fact been restored. After a rollback PUT throws, the handler re-reads the workflow and compares the writable fields with the pre-update snapshot; a match is reported as `rollbackVerifiedAfterError: true`. Webhook ids generated for the comparison are ignored; ids the workflow already carried are compared.
+- **Engine health check reported a hard-coded version** ([#908](https://github.com/czlonkowski/n8n-mcp/pull/908)). `N8NMCPEngine.healthCheck()` returned `2.24.1` regardless of the installed version; it now reports the package version. The HTTP server's response logging reads `writableEnded` instead of the deprecated `finished`.
+
+### Changed
+
+- Round-trip tests for GET→UPDATE workflow writes ([#925](https://github.com/czlonkowski/n8n-mcp/pull/925), [#433](https://github.com/czlonkowski/n8n-mcp/issues/433)): unit tests for the cleaners and integration tests against a live instance for the spread-a-GET-into-an-update patterns the n8n API is particular about.
+
 ## [2.80.1] - 2026-09-03
 
 ### Fixed
