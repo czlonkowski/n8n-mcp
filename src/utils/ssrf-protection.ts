@@ -423,8 +423,11 @@ export class SSRFProtection {
     }
 
     // Check if target is localhost
+    // The literal check is shared with validateUrlSync; the resolved address keeps the narrower
+    // test it always had, so a DNS name that resolves to 0.0.0.0 stays refused under moderate.
     const isLocalhost = SSRFProtection.isLoopbackHost(hostname) ||
-                        SSRFProtection.isLoopbackHost(resolvedIP);
+                        resolvedIP === '::1' ||
+                        resolvedIP.startsWith('127.');
 
     // MODE: strict - Block localhost and private IPs
     if (mode === 'strict' && isLocalhost) {
