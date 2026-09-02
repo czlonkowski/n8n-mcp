@@ -112,6 +112,15 @@ describe('agent call defaults and aliases (#1051)', () => {
       expect(result.message).toContain('recent executions');
     });
 
+    it('treats a blank id as absent and a blank workflowId as unscoped', async () => {
+      const result = await server.testExecuteTool('n8n_executions', { action: 'get', id: '   ', workflowId: '  ' });
+
+      expect(handlerMocks.handleGetExecution).not.toHaveBeenCalled();
+      expect(handlerMocks.handleListExecutions).toHaveBeenCalledTimes(1);
+      expect(result.message).toContain('recent executions');
+      expect(result.message).not.toContain('executions of workflow');
+    });
+
     it('does not decorate a failed listing with the fallback note', async () => {
       handlerMocks.handleListExecutions.mockResolvedValue({ success: false, error: 'n8n API not configured' });
 
@@ -132,6 +141,8 @@ describe('agent call defaults and aliases (#1051)', () => {
 
     it('keeps delete strict about id', async () => {
       await expect(server.testExecuteTool('n8n_executions', { action: 'delete', workflowId: 'wf1' }))
+        .rejects.toThrow('id is required for action=delete');
+      await expect(server.testExecuteTool('n8n_executions', { action: 'delete', id: '   ' }))
         .rejects.toThrow('id is required for action=delete');
       expect(handlerMocks.handleDeleteExecution).not.toHaveBeenCalled();
       expect(handlerMocks.handleListExecutions).not.toHaveBeenCalled();

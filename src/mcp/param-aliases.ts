@@ -108,7 +108,10 @@ export function suggestExecutionsAction(action: string): string | undefined {
  * and a numeric value has to be accepted here.
  */
 export function withWorkflowIdAlias<T extends Record<string, unknown>>(args: T): T {
-  if (typeof args.workflowId === 'string' && args.workflowId.trim() !== '') {
+  const workflowIdMissing = args.workflowId === undefined || args.workflowId === null
+    || (typeof args.workflowId === 'string' && args.workflowId.trim() === '');
+  if (!workflowIdMissing) {
+    // A non-string workflowId is left for validation to reject rather than overwritten.
     return args;
   }
   const id = typeof args.id === 'number' ? String(args.id) : args.id;
@@ -116,4 +119,9 @@ export function withWorkflowIdAlias<T extends Record<string, unknown>>(args: T):
     return args;
   }
   return { ...args, workflowId: id };
+}
+
+/** True when the value is a string with content once trimmed. */
+export function hasText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '';
 }

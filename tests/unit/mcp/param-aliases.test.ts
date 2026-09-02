@@ -5,6 +5,7 @@ vi.mock('../../../src/utils/logger', () => ({
 }));
 
 import {
+  hasText,
   resolveGetNodeAliases,
   suggestExecutionsAction,
   withWorkflowIdAlias,
@@ -100,6 +101,10 @@ describe('withWorkflowIdAlias', () => {
     expect(withWorkflowIdAlias({ id: 'other', workflowId: 'wf-1' })).toEqual({ id: 'other', workflowId: 'wf-1' });
   });
 
+  it('leaves a non-string workflowId for validation instead of overwriting it', () => {
+    expect(withWorkflowIdAlias({ workflowId: 123, id: 'wf-1' })).toEqual({ workflowId: 123, id: 'wf-1' });
+  });
+
   it('treats a blank workflowId as absent', () => {
     expect(withWorkflowIdAlias({ id: 'wf-1', workflowId: '   ' })).toEqual({ id: 'wf-1', workflowId: 'wf-1' });
   });
@@ -119,5 +124,17 @@ describe('withWorkflowIdAlias', () => {
     const args = { id: 'wf-1' };
     withWorkflowIdAlias(args);
     expect(args).toEqual({ id: 'wf-1' });
+  });
+});
+
+describe('hasText', () => {
+  it('is true only for a string with content once trimmed', () => {
+    expect(hasText('wf-1')).toBe(true);
+    expect(hasText(' x ')).toBe(true);
+    expect(hasText('')).toBe(false);
+    expect(hasText('   ')).toBe(false);
+    expect(hasText(undefined)).toBe(false);
+    expect(hasText(null)).toBe(false);
+    expect(hasText(42)).toBe(false);
   });
 });

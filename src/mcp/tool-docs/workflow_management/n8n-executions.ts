@@ -37,7 +37,7 @@ export const n8nExecutionsDoc: ToolDocumentation = {
 - Token-efficient (80-90% smaller than full mode)`,
     parameters: {
       action: { type: 'string', required: false, description: 'Operation: "get", "list" (default), or "delete". "get" without an id lists executions instead' },
-      id: { type: 'string', required: false, description: 'Execution ID (required for action=get or action=delete)' },
+      id: { type: 'string', required: false, description: 'Execution ID. Required for action=delete; for action=get, omitting it lists executions instead' },
       mode: { type: 'string', required: false, description: 'For action=get: "preview", "summary" (default), "filtered", "full", "error"' },
       nodeNames: { type: 'array', required: false, description: 'For action=get with mode=filtered: Filter to specific nodes by name' },
       itemsLimit: { type: 'number', required: false, description: 'For action=get with mode=filtered: Items per node (0=structure, 2=default, -1=unlimited)' },

@@ -487,7 +487,7 @@ export const n8nManagementTools: ToolDefinition[] = [
         // For action='get' and action='delete'
         id: {
           type: 'string',
-          description: 'Execution ID (required for action=get or action=delete)'
+          description: 'Execution ID. Required for action=delete; for action=get, omitting it lists executions instead'
         },
         // For action='get' - detail level
         mode: {

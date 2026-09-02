@@ -27,7 +27,7 @@ import {
 import { makeToolsN8nFriendly } from './tools-n8n-friendly';
 import { getWorkflowExampleString } from './workflow-examples';
 import { logger } from '../utils/logger';
-import { resolveGetNodeAliases, suggestExecutionsAction, withWorkflowIdAlias } from './param-aliases';
+import { hasText, resolveGetNodeAliases, suggestExecutionsAction, withWorkflowIdAlias } from './param-aliases';
 import { installStdioGuard } from '../utils/stdio-guard';
 import { summarizeToolCallArgs } from '../utils/redaction';
 import { NodeRepository } from '../database/node-repository';
@@ -1304,7 +1304,7 @@ export class N8NDocumentationMCPServer {
         validationResult = { valid: true, errors: [] };
         break;
       case 'n8n_test_workflow':
-        validationResult = typeof args.workflowId === 'string' && args.workflowId.trim() !== ''
+        validationResult = hasText(args.workflowId)
           ? { valid: true, errors: [] }
           : {
               valid: false,
@@ -1607,7 +1607,7 @@ export class N8NDocumentationMCPServer {
     }
     const result = await n8nHandlers.handleListExecutions(args, this.instanceContext);
     if (!result.success) return result;
-    const scope = args.workflowId ? `executions of workflow ${args.workflowId}` : 'recent executions';
+    const scope = hasText(args.workflowId) ? `executions of workflow ${args.workflowId}` : 'recent executions';
     return {
       ...result,
       message: `action=get was called without an execution id, so ${scope} were listed instead. Pass id to get one execution.`
@@ -1846,14 +1846,14 @@ export class N8NDocumentationMCPServer {
         const execAction = String(resolveRequestedOperation(name, args));
         switch (execAction) {
           case 'get':
-            if (!args.id) {
+            if (!hasText(args.id)) {
               return this.listExecutionsInsteadOfGet(args);
             }
             return n8nHandlers.handleGetExecution(args, this.instanceContext);
           case 'list':
             return n8nHandlers.handleListExecutions(args, this.instanceContext);
           case 'delete':
-            if (!args.id) {
+            if (!hasText(args.id)) {
               throw new Error('id is required for action=delete');
             }
             return n8nHandlers.handleDeleteExecution(args, this.instanceContext);
