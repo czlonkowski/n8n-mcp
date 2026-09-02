@@ -95,17 +95,17 @@ const PRIVATE_IP_RANGES = [
 
 export class SSRFProtection {
   /**
-   * Whether a bracket-stripped host is a loopback/localhost target.
+   * Whether a bracket-stripped host is a loopback target.
    *
    * Shared by {@link validateUrlSync} and {@link validateResolvedAddress} so
-   * both validators agree on what `moderate` allows. Without it the two
-   * disagreed on literals: `http://localhost` passed the sync check while
-   * `http://127.0.0.1` (same host, same mode) was refused as a private IP.
+   * both agree on what `moderate` allows. Before #1033 they disagreed on
+   * literals: `http://localhost` passed the sync check while the same host
+   * spelled `http://127.0.0.1` was refused as a private IP.
    *
-   * The whole of 127.0.0.0/8 is loopback, not just `127.0.0.1`, but the
-   * prefix test is gated on {@link isIPv4} so a DNS name like
-   * `127.example.com` is never mistaken for a literal (same reasoning as the
-   * PRIVATE_IP_RANGES gate added for #984).
+   * All of 127.0.0.0/8 is loopback, not just `127.0.0.1`, but the prefix test
+   * is gated on {@link isIPv4} so the DNS name `127.example.com` is not
+   * mistaken for a literal (same reasoning as the #984 gate on
+   * PRIVATE_IP_RANGES).
    */
   private static isLoopbackHost(host: string): boolean {
     return LOCALHOST_PATTERNS.has(host) || (isIPv4(host) && host.startsWith('127.'));
@@ -424,7 +424,7 @@ export class SSRFProtection {
 
     // Check if target is localhost
     const isLocalhost = SSRFProtection.isLoopbackHost(hostname) ||
-                      SSRFProtection.isLoopbackHost(resolvedIP);
+                        SSRFProtection.isLoopbackHost(resolvedIP);
 
     // MODE: strict - Block localhost and private IPs
     if (mode === 'strict' && isLocalhost) {
@@ -632,11 +632,10 @@ export class SSRFProtection {
       return { valid: false, reason: 'Localhost access is blocked in strict mode' };
     }
 
-    // MODE: moderate - allow localhost, block everything else private.
-    // Must run before the PRIVATE_IP_RANGES and IPv6 gates below, which both
-    // cover loopback (127.0.0.0/8, ::1) and would otherwise refuse the
-    // literals that `moderate` exists to permit. This mirrors the ordering in
-    // validateResolvedAddress so the sync and async validators agree.
+    // MODE: moderate - Allow localhost, block private IPs. Must run before the
+    // PRIVATE_IP_RANGES and IPv6 gates below, which also cover loopback
+    // (127.0.0.0/8, ::1) and would otherwise refuse the literals moderate
+    // exists to permit. Same ordering as validateResolvedAddress.
     if (mode === 'moderate' && isLocalhost) {
       return { valid: true };
     }

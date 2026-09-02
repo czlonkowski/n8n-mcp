@@ -1212,7 +1212,7 @@ describe('SSRFProtection', () => {
 
     it('pinned lookup ignores subsequent dns.lookup answers', async () => {
       // Validator DNS answer (the "good" IP). Subsequent dns.lookup calls
-      // simulate an attacker-controlled resolver flipping to a private IP,
+      // simulate an attacker-controlled resolver flipping to a private IP;
       // the pinned agent's lookup must never consult them.
       let dnsCalls = 0;
       vi.mocked(dns.lookup).mockImplementation(async () => {
