@@ -18,7 +18,11 @@ import {
 } from './breaking-changes-registry';
 
 export interface DetectedChange {
+  /** Path from the workflow node root, e.g. "parameters.sendBody" or "webhookId" */
   propertyName: string;
+  /** For registry entries: the transition the change belongs to */
+  fromVersion?: string;
+  toVersion?: string;
   changeType: 'added' | 'removed' | 'renamed' | 'type_changed' | 'requirement_changed' | 'default_changed';
   isBreaking: boolean;
   oldValue?: any;
@@ -98,6 +102,8 @@ export class BreakingChangeDetector {
 
     return registryChanges.map(change => ({
       propertyName: change.propertyName,
+      fromVersion: change.fromVersion,
+      toVersion: change.toVersion,
       changeType: change.changeType,
       isBreaking: change.isBreaking,
       oldValue: change.oldValue,
@@ -128,9 +134,10 @@ export class BreakingChangeDetector {
 
     const changes: DetectedChange[] = [];
 
-    // Compare properties schemas
-    const oldProps = this.flattenProperties(oldVersionData.propertiesSchema || []);
-    const newProps = this.flattenProperties(newVersionData.propertiesSchema || []);
+    // Stored schemas describe node.parameters; paths are node-root relative
+    // like the registry's, so migrations resolve against the right object.
+    const oldProps = this.flattenProperties(oldVersionData.propertiesSchema || [], 'parameters');
+    const newProps = this.flattenProperties(newVersionData.propertiesSchema || [], 'parameters');
 
     // Detect added properties
     for (const propName of Object.keys(newProps)) {
@@ -145,14 +152,10 @@ export class BreakingChangeDetector {
           newValue: prop.type || 'unknown',
           migrationHint: isRequired
             ? `Property "${propName}" is now required in v${toVersion}. Provide a value to prevent validation errors.`
-            : `Property "${propName}" was added in v${toVersion}. Optional parameter, safe to ignore if not needed.`,
-          autoMigratable: !isRequired, // Can auto-add with default if not required
-          migrationStrategy: !isRequired
-            ? {
-                type: 'add_property',
-                defaultValue: prop.default || null
-              }
-            : undefined,
+            : `Property "${propName}" was added in v${toVersion}. Optional; n8n applies its default when it is not set.`,
+          // An optional property needs no migration: n8n falls back to its
+          // default, so there is nothing to write. No strategy means no-op.
+          autoMigratable: !isRequired,
           severity: isRequired ? 'HIGH' : 'LOW',
           source: 'dynamic'
         });
@@ -162,27 +165,60 @@ export class BreakingChangeDetector {
     // Detect removed properties
     for (const propName of Object.keys(oldProps)) {
       if (!newProps[propName]) {
+        // A schema diff cannot tell a dropped property from a renamed one, so a
+        // configured value is never deleted automatically; the registry carries
+        // the removals that are known to be safe.
         changes.push({
           propertyName: propName,
           changeType: 'removed',
-          isBreaking: true, // Removal is always breaking
+          isBreaking: true,
           oldValue: oldProps[propName].type || 'unknown',
-          migrationHint: `Property "${propName}" was removed in v${toVersion}. Remove this property from your configuration.`,
-          autoMigratable: true, // Can auto-remove
-          migrationStrategy: {
-            type: 'remove_property'
-          },
+          migrationHint: `Property "${propName}" no longer exists in v${toVersion}. If it is set, move its value to the replacement property before upgrading.`,
+          autoMigratable: false,
           severity: 'MEDIUM',
           source: 'dynamic'
         });
       }
     }
 
-    // Detect requirement changes
+    // Detect changes to properties present in both versions
     for (const propName of Object.keys(newProps)) {
       if (oldProps[propName]) {
-        const oldRequired = oldProps[propName].required === true;
-        const newRequired = newProps[propName].required === true;
+        const oldProp = oldProps[propName];
+        const newProp = newProps[propName];
+
+        if (oldProp.type && newProp.type && oldProp.type !== newProp.type) {
+          changes.push({
+            propertyName: propName,
+            changeType: 'type_changed',
+            isBreaking: true,
+            oldValue: oldProp.type,
+            newValue: newProp.type,
+            migrationHint: `Property "${propName}" changed type from ${oldProp.type} to ${newProp.type} in v${toVersion}. Review the configured value.`,
+            autoMigratable: false,
+            severity: 'HIGH',
+            source: 'dynamic'
+          });
+        } else if (
+          oldProp.default !== undefined &&
+          newProp.default !== undefined &&
+          JSON.stringify(oldProp.default) !== JSON.stringify(newProp.default)
+        ) {
+          changes.push({
+            propertyName: propName,
+            changeType: 'default_changed',
+            isBreaking: false,
+            oldValue: oldProp.default,
+            newValue: newProp.default,
+            migrationHint: `Default of "${propName}" changed in v${toVersion}. Nodes that relied on the old default now behave differently unless the value is set explicitly.`,
+            autoMigratable: false,
+            severity: 'LOW',
+            source: 'dynamic'
+          });
+        }
+
+        const oldRequired = oldProp.required === true;
+        const newRequired = newProp.required === true;
 
         if (oldRequired !== newRequired) {
           changes.push({
@@ -219,9 +255,17 @@ export class BreakingChangeDetector {
 
       flat[fullPath] = prop;
 
-      // Recursively flatten nested options
-      if (prop.options && Array.isArray(prop.options)) {
+      // Only structural containers hold nested properties: a collection lists
+      // them in `options`, a fixedCollection groups them in `options[].values`.
+      // For every other type (`options`, `multiOptions`, `hidden`, ...) the
+      // `options` array holds enum values a workflow cannot set individually.
+      if (prop.type === 'collection' && Array.isArray(prop.options)) {
         Object.assign(flat, this.flattenProperties(prop.options, fullPath));
+      } else if (prop.type === 'fixedCollection' && Array.isArray(prop.options)) {
+        for (const group of prop.options) {
+          if (!group?.name || !Array.isArray(group.values)) continue;
+          Object.assign(flat, this.flattenProperties(group.values, `${fullPath}.${group.name}`));
+        }
       }
     }
 
@@ -307,8 +351,8 @@ export class BreakingChangeDetector {
    * Quick check: does this upgrade have breaking changes?
    */
   hasBreakingChanges(nodeType: string, fromVersion: string, toVersion: string): boolean {
-    const registryChanges = getBreakingChangesForNode(nodeType, fromVersion, toVersion);
-    return registryChanges.length > 0;
+    if (getBreakingChangesForNode(nodeType, fromVersion, toVersion).length > 0) return true;
+    return this.detectDynamicChanges(nodeType, fromVersion, toVersion).some(c => c.isBreaking);
   }
 
   /**

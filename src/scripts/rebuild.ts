@@ -5,7 +5,7 @@
  */
 import { createDatabaseAdapter } from '../database/database-adapter';
 import { N8nNodeLoader } from '../loaders/node-loader';
-import { NodeParser, ParsedNode } from '../parsers/node-parser';
+import { NodeParser, ParsedNode, ParsedNodeVersion } from '../parsers/node-parser';
 import { DocsMapper } from '../mappers/docs-mapper';
 import { NodeRepository } from '../database/node-repository';
 import { ToolVariantGenerator } from '../services/tool-variant-generator';
@@ -34,7 +34,14 @@ async function rebuild() {
   // part of the installed n8n packages, so a full wipe would drop them on every
   // rebuild and force a manual backup/restore. Scoping the delete to core/base
   // nodes lets them survive the rebuild automatically.
+  // Version rows first: node_versions cascades from nodes only when the adapter
+  // enforces foreign keys, which the sql.js fallback does not.
+  db.exec(`DELETE FROM node_versions WHERE node_type IN (
+    SELECT node_type FROM nodes WHERE is_community = 0 OR is_community IS NULL
+  )`);
   db.exec('DELETE FROM nodes WHERE is_community = 0 OR is_community IS NULL');
+  // Retired in 2.78.0: version comparisons diff the stored schemas instead
+  db.exec('DROP TABLE IF EXISTS version_property_changes');
   console.log('🗑️  Cleared core/base nodes (community nodes preserved)\n');
   
   // Load all nodes
@@ -51,12 +58,18 @@ async function rebuild() {
     withProperties: 0,
     withOperations: 0,
     withDocs: 0,
-    toolVariants: 0
+    toolVariants: 0,
+    versionRows: 0
   };
   
   // Process each node (documentation fetching must be outside transaction due to async)
   console.log('🔄 Processing nodes...');
-  const processedNodes: Array<{ parsed: ParsedNode; docs: string | undefined; nodeName: string }> = [];
+  const processedNodes: Array<{
+    parsed: ParsedNode;
+    docs: string | undefined;
+    nodeName: string;
+    versions: ParsedNodeVersion[];
+  }> = [];
   
   for (const { packageName, nodeName, NodeClass } of nodes) {
     try {
@@ -77,6 +90,9 @@ async function rebuild() {
       const docs = await mapper.fetchDocumentation(parsed.nodeType);
       parsed.documentation = docs || undefined;
 
+      // Every typeVersion n8n accepts for this node, for version history and schema diffs
+      const versions = parser.parseVersions(NodeClass, packageName);
+
       // Generate Tool variant for nodes with usableAsTool: true
       if (parsed.isAITool && !parsed.isTrigger) {
         const toolVariant = toolVariantGenerator.generateToolVariant(parsed);
@@ -88,13 +104,15 @@ async function rebuild() {
           processedNodes.push({
             parsed: toolVariant,
             docs: undefined, // Tool variants don't have separate docs
-            nodeName: `${nodeName}Tool`
+            nodeName: `${nodeName}Tool`,
+            // Version rows live on the base node; the repository resolves Tool variants to it
+            versions: []
           });
           stats.toolVariants++;
         }
       }
 
-      processedNodes.push({ parsed, docs: docs || undefined, nodeName });
+      processedNodes.push({ parsed, docs: docs || undefined, nodeName, versions });
     } catch (error) {
       stats.failed++;
       const errorMessage = (error as Error).message;
@@ -106,10 +124,31 @@ async function rebuild() {
   console.log(`\n💾 Saving ${processedNodes.length} processed nodes to database...`);
   
   let saved = 0;
-  for (const { parsed, docs, nodeName } of processedNodes) {
+  for (const { parsed, docs, nodeName, versions } of processedNodes) {
     try {
-      repository.saveNode(parsed);
+      // A node and its version rows land together or not at all
+      db.transaction(() => {
+        repository.saveNode(parsed);
+        for (const version of versions) {
+          repository.saveNodeVersion({
+            nodeType: version.nodeType,
+            version: version.version,
+            packageName: version.packageName,
+            displayName: version.displayName,
+            description: version.description,
+            category: version.category,
+            isCurrentMax: version.isCurrentMax,
+            propertiesSchema: version.properties,
+            operations: version.operations,
+            credentialsRequired: version.credentials,
+            outputs: version.outputs,
+            addedProperties: version.addedProperties,
+            deprecatedProperties: version.deprecatedProperties
+          });
+        }
+      });
       saved++;
+      stats.versionRows += versions.length;
       
       // Update statistics
       stats.successful++;
@@ -174,6 +213,19 @@ async function rebuild() {
   console.log(`   Failed: ${stats.failed}`);
   console.log(`   AI Tools: ${stats.aiTools}`);
   console.log(`   Tool Variants: ${stats.toolVariants}`);
+  console.log(`   Version rows: ${stats.versionRows}`);
+
+  // Deleting and re-inserting every core node leaves free pages behind;
+  // reclaim them so the committed file reflects its content.
+  db.exec('VACUUM');
+
+  // Every node with version rows must mark exactly one current version
+  const inconsistent = db.prepare(`
+    SELECT node_type FROM node_versions GROUP BY node_type HAVING SUM(is_current_max) != 1
+  `).all() as Array<{ node_type: string }>;
+  if (inconsistent.length > 0) {
+    throw new Error(`Version rows without exactly one current version: ${inconsistent.map(r => r.node_type).join(', ')}`);
+  }
   console.log(`   Triggers: ${stats.triggers}`);
   console.log(`   Webhooks: ${stats.webhooks}`);
   console.log(`   With Properties: ${stats.withProperties}`);

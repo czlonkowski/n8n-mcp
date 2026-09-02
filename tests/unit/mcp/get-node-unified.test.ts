@@ -146,42 +146,6 @@ describe('Unified get_node Tool', () => {
         JSON.stringify(['oldAuth']),
         JSON.stringify(['newAuth'])
       );
-
-      // Add property change data for version comparison
-      const changeInsertStmt = db.prepare(`
-        INSERT INTO version_property_changes (
-          node_type, from_version, to_version, property_name,
-          change_type, is_breaking, old_value, new_value,
-          migration_hint, auto_migratable, migration_strategy
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      changeInsertStmt.run(
-        'nodes-base.httpRequest',
-        '4.1',
-        '4.2',
-        'authentication',
-        'type_changed',
-        1,
-        'basic',
-        'oauth2',
-        'Update authentication configuration',
-        0,
-        null
-      );
-      changeInsertStmt.run(
-        'nodes-base.httpRequest',
-        '4.1',
-        '4.2',
-        'timeout',
-        'added',
-        0,
-        null,
-        '30000',
-        null,
-        1,
-        'default_value'
-      );
     }
   });
 
@@ -604,6 +568,12 @@ describe('Unified get_node Tool', () => {
       expect(result.toVersion).toBe('4.2');
     });
 
+    it('should reject a version that is not recorded for the node', async () => {
+      await expect(
+        (server as any).getNode('nodes-base.httpRequest', 'standard', 'compare', false, false, '9', '4.2')
+      ).rejects.toThrow(/version "9" is not a recorded version of nodes-base\.httpRequest \(recorded: (4\.1, 4\.2|4\.2, 4\.1)\)/);
+    });
+
     it('should return change details in compare mode', async () => {
       const result = await (server as any).getNode(
         'nodes-base.httpRequest',
@@ -706,7 +676,8 @@ describe('Unified get_node Tool', () => {
         '4.1'
       );
 
-      expect(result.toVersion).toBe('latest');
+      // Resolves to the current max version seeded above rather than the literal 'latest'
+      expect(result.toVersion).toBe('4.2');
     });
   });
 

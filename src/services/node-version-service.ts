@@ -6,6 +6,7 @@
  */
 
 import { NodeRepository } from '../database/node-repository';
+import { normalizeNodeVersion } from '../parsers/node-parser';
 import { BreakingChangeDetector } from './breaking-change-detector';
 
 export interface NodeVersion {
@@ -325,8 +326,8 @@ export class NodeVersionService {
    * Check if a specific version exists for a node
    */
   versionExists(nodeType: string, version: string): boolean {
-    const versions = this.getAvailableVersions(nodeType);
-    return versions.some(v => v.version === version);
+    const wanted = normalizeNodeVersion(version);
+    return this.getAvailableVersions(nodeType).some(v => normalizeNodeVersion(v.version) === wanted);
   }
 
   /**

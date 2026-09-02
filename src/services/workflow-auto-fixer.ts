@@ -1196,6 +1196,15 @@ export class WorkflowAutoFixer {
           latestVersion
         );
 
+        // Changes the migration could not apply need a person; the
+        // version-migration pass documents them instead of an update.
+        if (!migrationResult.success) {
+          logger.info(`Skipping automatic upgrade for ${node.name}: manual migration steps remain`, {
+            remainingIssues: migrationResult.remainingIssues.length
+          });
+          continue;
+        }
+
         // Create fix operation
         fixes.push({
           node: node.name,

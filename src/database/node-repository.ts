@@ -1,7 +1,9 @@
+import * as zlib from 'zlib';
 import { DatabaseAdapter } from './database-adapter';
-import { ParsedNode } from '../parsers/node-parser';
+import { ParsedNode, normalizeNodeVersion } from '../parsers/node-parser';
 import { SQLiteStorageService } from '../services/sqlite-storage-service';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
+import { ToolVariantGenerator } from '../services/tool-variant-generator';
 import { logger } from '../utils/logger';
 
 // Default retention window for workflow version backups (days). Configurable
@@ -882,7 +884,7 @@ export class NodeRepository {
       versionData.description || null,
       versionData.category || null,
       versionData.isCurrentMax ? 1 : 0,
-      versionData.propertiesSchema ? JSON.stringify(versionData.propertiesSchema) : null,
+      versionData.propertiesSchema ? this.compressJson(versionData.propertiesSchema) : null,
       versionData.operations ? JSON.stringify(versionData.operations) : null,
       versionData.credentialsRequired ? JSON.stringify(versionData.credentialsRequired) : null,
       versionData.outputs ? JSON.stringify(versionData.outputs) : null,
@@ -897,29 +899,41 @@ export class NodeRepository {
   /**
    * Get all available versions for a specific node type
    */
-  getNodeVersions(nodeType: string): any[] {
+  /**
+   * Version rows are recorded for base nodes only. A generated Tool variant
+   * accepts the same typeVersions as its base node, so a type without rows of
+   * its own resolves to the base. Real nodes whose name ends in "Tool"
+   * (mcpClientTool, agentTool) have their own rows and are never redirected.
+   */
+  private versionLookupType(nodeType: string): string {
     const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
+    const baseType = ToolVariantGenerator.getBaseNodeType(normalizedType);
+    if (!baseType) return normalizedType;
+    const own = this.db.prepare(`SELECT 1 FROM node_versions WHERE node_type = ? LIMIT 1`).get(normalizedType);
+    return own ? normalizedType : baseType;
+  }
 
+  getNodeVersions(nodeType: string): any[] {
     const rows = this.db.prepare(`
       SELECT * FROM node_versions
       WHERE node_type = ?
-      ORDER BY version DESC
-    `).all(normalizedType) as any[];
+    `).all(this.versionLookupType(nodeType)) as any[];
 
-    return rows.map(row => this.parseNodeVersionRow(row));
+    // Versions are stored as text; order numerically, newest first
+    return rows
+      .map(row => this.parseNodeVersionRow(row))
+      .sort((a, b) => Number(b.version) - Number(a.version));
   }
 
   /**
    * Get the latest (current max) version for a node type
    */
   getLatestNodeVersion(nodeType: string): any | null {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-
     const row = this.db.prepare(`
       SELECT * FROM node_versions
       WHERE node_type = ? AND is_current_max = 1
       LIMIT 1
-    `).get(normalizedType) as any;
+    `).get(this.versionLookupType(nodeType)) as any;
 
     if (!row) return null;
     return this.parseNodeVersionRow(row);
@@ -929,118 +943,14 @@ export class NodeRepository {
    * Get a specific version of a node
    */
   getNodeVersion(nodeType: string, version: string): any | null {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-
+    // Rows store versions the way workflows do ("1", "4.1"); accept "1.0" style input too
     const row = this.db.prepare(`
       SELECT * FROM node_versions
       WHERE node_type = ? AND version = ?
-    `).get(normalizedType, version) as any;
+    `).get(this.versionLookupType(nodeType), normalizeNodeVersion(version)) as any;
 
     if (!row) return null;
     return this.parseNodeVersionRow(row);
-  }
-
-  /**
-   * Save a property change between versions
-   */
-  savePropertyChange(changeData: {
-    nodeType: string;
-    fromVersion: string;
-    toVersion: string;
-    propertyName: string;
-    changeType: 'added' | 'removed' | 'renamed' | 'type_changed' | 'requirement_changed' | 'default_changed';
-    isBreaking?: boolean;
-    oldValue?: string;
-    newValue?: string;
-    migrationHint?: string;
-    autoMigratable?: boolean;
-    migrationStrategy?: any;
-    severity?: 'LOW' | 'MEDIUM' | 'HIGH';
-  }): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO version_property_changes (
-        node_type, from_version, to_version, property_name, change_type,
-        is_breaking, old_value, new_value, migration_hint, auto_migratable,
-        migration_strategy, severity
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    stmt.run(
-      changeData.nodeType,
-      changeData.fromVersion,
-      changeData.toVersion,
-      changeData.propertyName,
-      changeData.changeType,
-      changeData.isBreaking ? 1 : 0,
-      changeData.oldValue || null,
-      changeData.newValue || null,
-      changeData.migrationHint || null,
-      changeData.autoMigratable ? 1 : 0,
-      changeData.migrationStrategy ? JSON.stringify(changeData.migrationStrategy) : null,
-      changeData.severity || 'MEDIUM'
-    );
-  }
-
-  /**
-   * Get property changes between two versions
-   */
-  getPropertyChanges(nodeType: string, fromVersion: string, toVersion: string): any[] {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-
-    const rows = this.db.prepare(`
-      SELECT * FROM version_property_changes
-      WHERE node_type = ? AND from_version = ? AND to_version = ?
-      ORDER BY severity DESC, property_name
-    `).all(normalizedType, fromVersion, toVersion) as any[];
-
-    return rows.map(row => this.parsePropertyChangeRow(row));
-  }
-
-  /**
-   * Get all breaking changes for upgrading from one version to another
-   * Can handle multi-step upgrades (e.g., 1.0 -> 2.0 via 1.5)
-   */
-  getBreakingChanges(nodeType: string, fromVersion: string, toVersion?: string): any[] {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-
-    let sql = `
-      SELECT * FROM version_property_changes
-      WHERE node_type = ? AND is_breaking = 1
-    `;
-    const params: any[] = [normalizedType];
-
-    if (toVersion) {
-      // Get changes between specific versions
-      sql += ` AND from_version >= ? AND to_version <= ?`;
-      params.push(fromVersion, toVersion);
-    } else {
-      // Get all breaking changes from this version onwards
-      sql += ` AND from_version >= ?`;
-      params.push(fromVersion);
-    }
-
-    sql += ` ORDER BY from_version, to_version, severity DESC`;
-
-    const rows = this.db.prepare(sql).all(...params) as any[];
-    return rows.map(row => this.parsePropertyChangeRow(row));
-  }
-
-  /**
-   * Get auto-migratable changes for a version upgrade
-   */
-  getAutoMigratableChanges(nodeType: string, fromVersion: string, toVersion: string): any[] {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-
-    const rows = this.db.prepare(`
-      SELECT * FROM version_property_changes
-      WHERE node_type = ?
-        AND from_version = ?
-        AND to_version = ?
-        AND auto_migratable = 1
-      ORDER BY severity DESC
-    `).all(normalizedType, fromVersion, toVersion) as any[];
-
-    return rows.map(row => this.parsePropertyChangeRow(row));
   }
 
   /**
@@ -1048,10 +958,9 @@ export class NodeRepository {
    * Distinguishes "no known changes" from "no data" for get_node version modes.
    */
   hasVersionMetadata(nodeType: string): boolean {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
     const row = this.db.prepare(`
       SELECT 1 FROM node_versions WHERE node_type = ? LIMIT 1
-    `).get(normalizedType) as any;
+    `).get(this.versionLookupType(nodeType)) as any;
     return !!row;
   }
 
@@ -1093,7 +1002,7 @@ export class NodeRepository {
       description: row.description,
       category: row.category,
       isCurrentMax: Number(row.is_current_max) === 1,
-      propertiesSchema: row.properties_schema ? this.safeJsonParse(row.properties_schema, []) : null,
+      propertiesSchema: row.properties_schema ? this.decompressJson(row.properties_schema, []) : null,
       operations: row.operations ? this.safeJsonParse(row.operations, []) : null,
       credentialsRequired: row.credentials_required ? this.safeJsonParse(row.credentials_required, []) : null,
       outputs: row.outputs ? this.safeJsonParse(row.outputs, null) : null,
@@ -1107,25 +1016,25 @@ export class NodeRepository {
   }
 
   /**
-   * Parse property change row from database
+   * Per-version schemas repeat most of the nodes table, so they are stored
+   * gzip-compressed and base64-encoded (the same layout templates use) to keep
+   * the bundled database small. Plain JSON is still accepted on read.
    */
-  private parsePropertyChangeRow(row: any): any {
-    return {
-      id: row.id,
-      nodeType: row.node_type,
-      fromVersion: row.from_version,
-      toVersion: row.to_version,
-      propertyName: row.property_name,
-      changeType: row.change_type,
-      isBreaking: Number(row.is_breaking) === 1,
-      oldValue: row.old_value,
-      newValue: row.new_value,
-      migrationHint: row.migration_hint,
-      autoMigratable: Number(row.auto_migratable) === 1,
-      migrationStrategy: row.migration_strategy ? this.safeJsonParse(row.migration_strategy, null) : null,
-      severity: row.severity,
-      createdAt: row.created_at
-    };
+  private compressJson(value: unknown): string {
+    return zlib.gzipSync(JSON.stringify(value)).toString('base64');
+  }
+
+  private decompressJson(stored: string, fallback: any): any {
+    const trimmed = stored.trimStart();
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      return this.safeJsonParse(stored, fallback);
+    }
+    try {
+      return JSON.parse(zlib.gunzipSync(Buffer.from(stored, 'base64')).toString('utf8'));
+    } catch (error) {
+      logger.warn('Failed to decompress stored schema', { error: (error as Error).message });
+      return fallback;
+    }
   }
 
   // ========================================

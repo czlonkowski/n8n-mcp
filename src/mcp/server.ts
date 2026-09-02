@@ -55,6 +55,8 @@ import {
   logProtocolNegotiation,
   STANDARD_PROTOCOL_VERSION
 } from '../utils/protocol-version';
+import { BreakingChangeDetector, VersionUpgradeAnalysis } from '../services/breaking-change-detector';
+import { normalizeNodeVersion } from '../parsers/node-parser';
 import { InstanceContext } from '../types/instance-context';
 import type { AdditionalTool, AdditionalToolContext } from '../types/additional-tools';
 import { telemetry } from '../telemetry';
@@ -202,6 +204,7 @@ export class N8NDocumentationMCPServer {
   private server: Server;
   private db: DatabaseAdapter | null = null;
   private repository: NodeRepository | null = null;
+  private breakingChangeDetector: BreakingChangeDetector | null = null;
   private templateService: TemplateService | null = null;
   private initialized: Promise<void>;
   private cache = new SimpleCache();
@@ -3497,38 +3500,113 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
   /**
    * Get complete version history for a node
    */
-  private getVersionHistory(nodeType: string): any {
+  private async getVersionHistory(nodeType: string): Promise<any> {
     if (!this.repository!.hasVersionMetadata(nodeType)) {
+      // The rebuild records rows only for nodes with more than one typeVersion.
+      // A node with a single scalar version has a complete history of one entry.
+      const node = this.repository!.getNode(nodeType);
+      if (node && node.isVersioned === false && node.version) {
+        return {
+          nodeType,
+          available: true,
+          totalVersions: 1,
+          versions: [{
+            version: String(node.version),
+            isCurrent: true,
+            hasBreakingChanges: false,
+            breakingChangesCount: 0,
+            deprecatedProperties: [],
+            addedProperties: []
+          }]
+        };
+      }
       return this.versionMetadataUnavailable(nodeType, { totalVersions: 0, versions: [] });
     }
 
+    // Newest first, as stored; breaking changes are analyzed against the
+    // previous (older) version so the flags describe the step into each version.
     const versions = this.repository!.getNodeVersions(nodeType);
+    const entries = [];
+    for (let i = 0; i < versions.length; i++) {
+      const v = versions[i];
+      const previous = versions[i + 1];
+      const breakingCount = previous
+        ? (await this.analyzeVersionUpgrade(nodeType, previous.version, v.version))
+            .changes.filter(c => c.isBreaking).length
+        : 0;
+      entries.push({
+        version: v.version,
+        isCurrent: v.isCurrentMax,
+        hasBreakingChanges: breakingCount > 0,
+        breakingChangesCount: breakingCount,
+        deprecatedProperties: v.deprecatedProperties || [],
+        addedProperties: v.addedProperties || []
+      });
+    }
 
     return {
       nodeType,
       available: true,
-      totalVersions: versions.length,
-      versions: versions.map(v => ({
-        version: v.version,
-        isCurrent: v.isCurrentMax,
-        minimumN8nVersion: v.minimumN8nVersion,
-        releasedAt: v.releasedAt,
-        hasBreakingChanges: (v.breakingChanges || []).length > 0,
-        breakingChangesCount: (v.breakingChanges || []).length,
-        deprecatedProperties: v.deprecatedProperties || [],
-        addedProperties: v.addedProperties || []
-      }))
+      totalVersions: entries.length,
+      versions: entries
     };
+  }
+
+  /**
+   * Analyze an upgrade with the same service the autofixer uses: the curated
+   * breaking-changes registry plus a diff of the property schemas stored for
+   * each version. Any two recorded versions can be compared directly.
+   */
+  private async analyzeVersionUpgrade(
+    nodeType: string,
+    fromVersion: string,
+    toVersion?: string
+  ): Promise<VersionUpgradeAnalysis> {
+    const from = normalizeNodeVersion(fromVersion);
+    const to = normalizeNodeVersion(toVersion ?? this.defaultTargetVersion(nodeType, from));
+    for (const version of [from, to]) {
+      if (!this.repository!.getNodeVersion(nodeType, version)) {
+        const known = this.repository!.getNodeVersions(nodeType).map(v => v.version).join(', ');
+        throw new Error(
+          `get_node: version "${version}" is not a recorded version of ${nodeType} (recorded: ${known})`
+        );
+      }
+    }
+
+    // The registry is keyed by workflow-format types (n8n-nodes-base.x); the
+    // repository normalizes back to its own form for schema lookups.
+    this.breakingChangeDetector ??= new BreakingChangeDetector(this.repository!);
+    return this.breakingChangeDetector.analyzeVersionUpgrade(
+      NodeTypeNormalizer.toWorkflowFormat(nodeType),
+      from,
+      to
+    );
+  }
+
+  /**
+   * Without an explicit target, compare against the version n8n gives new nodes
+   * (`is_current_max`). A source newer than that, such as a beta version, is
+   * compared against the newest recorded version instead of a downgrade.
+   */
+  private defaultTargetVersion(nodeType: string, fromVersion: string): string {
+    const current = this.repository!.getLatestNodeVersion(nodeType)?.version
+      ?? this.repository!.getNode(nodeType)?.version;
+    if (!current) {
+      throw new Error('No target version available');
+    }
+    if (Number(fromVersion) <= Number(current)) return current;
+    const newest = this.repository!.getNodeVersions(nodeType)[0]?.version;
+    return newest ?? current;
   }
 
   /**
    * Compare two versions of a node
    */
-  private compareVersions(
+  private async compareVersions(
     nodeType: string,
     fromVersion: string,
     toVersion?: string
-  ): any {
+  ): Promise<any> {
     if (!this.repository!.hasVersionMetadata(nodeType)) {
       return this.versionMetadataUnavailable(nodeType, {
         fromVersion,
@@ -3538,27 +3616,16 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
       });
     }
 
-    const latest = this.repository!.getLatestNodeVersion(nodeType);
-    const targetVersion = toVersion || latest?.version;
-
-    if (!targetVersion) {
-      throw new Error('No target version available');
-    }
-
-    const changes = this.repository!.getPropertyChanges(
-      nodeType,
-      fromVersion,
-      targetVersion
-    );
+    const analysis = await this.analyzeVersionUpgrade(nodeType, fromVersion, toVersion);
 
     return {
       nodeType,
       available: true,
-      fromVersion,
-      toVersion: targetVersion,
-      totalChanges: changes.length,
-      breakingChanges: changes.filter(c => c.isBreaking).length,
-      changes: changes.map(c => ({
+      fromVersion: analysis.fromVersion,
+      toVersion: analysis.toVersion,
+      totalChanges: analysis.changes.length,
+      breakingChanges: analysis.changes.filter(c => c.isBreaking).length,
+      changes: analysis.changes.map(c => ({
         property: c.propertyName,
         changeType: c.changeType,
         isBreaking: c.isBreaking,
@@ -3566,7 +3633,8 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         oldValue: c.oldValue,
         newValue: c.newValue,
         migrationHint: c.migrationHint,
-        autoMigratable: c.autoMigratable
+        autoMigratable: c.autoMigratable,
+        source: c.source
       }))
     };
   }
@@ -3574,11 +3642,11 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
   /**
    * Get breaking changes between versions
    */
-  private getBreakingChanges(
+  private async getBreakingChanges(
     nodeType: string,
     fromVersion: string,
     toVersion?: string
-  ): any {
+  ): Promise<any> {
     if (!this.repository!.hasVersionMetadata(nodeType)) {
       // Critical: do NOT return upgradeSafe: true when we have no data.
       // Agents rely on this field to decide whether to proceed with an upgrade.
@@ -3590,40 +3658,39 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
       });
     }
 
-    const breakingChanges = this.repository!.getBreakingChanges(
-      nodeType,
-      fromVersion,
-      toVersion
-    );
+    const analysis = await this.analyzeVersionUpgrade(nodeType, fromVersion, toVersion);
+    const breakingChanges = analysis.changes.filter(c => c.isBreaking);
 
     return {
       nodeType,
       available: true,
-      fromVersion,
-      toVersion: toVersion || 'latest',
+      fromVersion: analysis.fromVersion,
+      toVersion: analysis.toVersion,
       totalBreakingChanges: breakingChanges.length,
       changes: breakingChanges.map(c => ({
-        fromVersion: c.fromVersion,
-        toVersion: c.toVersion,
+        fromVersion: c.fromVersion ?? analysis.fromVersion,
+        toVersion: c.toVersion ?? analysis.toVersion,
         property: c.propertyName,
         changeType: c.changeType,
         severity: c.severity,
         migrationHint: c.migrationHint,
         oldValue: c.oldValue,
-        newValue: c.newValue
+        newValue: c.newValue,
+        source: c.source
       })),
-      upgradeSafe: breakingChanges.length === 0
+      upgradeSafe: breakingChanges.length === 0,
+      recommendations: analysis.recommendations
     };
   }
 
   /**
    * Get auto-migratable changes between versions
    */
-  private getMigrations(
+  private async getMigrations(
     nodeType: string,
     fromVersion: string,
     toVersion: string
-  ): any {
+  ): Promise<any> {
     if (!this.repository!.hasVersionMetadata(nodeType)) {
       return this.versionMetadataUnavailable(nodeType, {
         fromVersion,
@@ -3634,32 +3701,24 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
       });
     }
 
-    const migrations = this.repository!.getAutoMigratableChanges(
-      nodeType,
-      fromVersion,
-      toVersion
-    );
-
-    const allChanges = this.repository!.getPropertyChanges(
-      nodeType,
-      fromVersion,
-      toVersion
-    );
+    const analysis = await this.analyzeVersionUpgrade(nodeType, fromVersion, toVersion);
+    const migrations = analysis.changes.filter(c => c.autoMigratable);
 
     return {
       nodeType,
       available: true,
-      fromVersion,
-      toVersion,
+      fromVersion: analysis.fromVersion,
+      toVersion: analysis.toVersion,
       autoMigratableChanges: migrations.length,
-      totalChanges: allChanges.length,
+      totalChanges: analysis.changes.length,
       migrations: migrations.map(m => ({
         property: m.propertyName,
         changeType: m.changeType,
         migrationStrategy: m.migrationStrategy,
-        severity: m.severity
+        severity: m.severity,
+        source: m.source
       })),
-      requiresManualMigration: migrations.length < allChanges.length
+      requiresManualMigration: analysis.manualRequiredCount > 0
     };
   }
 

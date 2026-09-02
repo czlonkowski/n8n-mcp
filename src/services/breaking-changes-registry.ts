@@ -197,17 +197,7 @@ export function getBreakingChangesForNode(
   fromVersion: string,
   toVersion: string
 ): BreakingChange[] {
-  return BREAKING_CHANGES_REGISTRY.filter(change => {
-    // Match exact node type or wildcard (*)
-    const nodeMatches = change.nodeType === nodeType || change.nodeType === '*';
-
-    // Check if version range matches
-    const versionMatches =
-      compareVersions(fromVersion, change.fromVersion) >= 0 &&
-      compareVersions(toVersion, change.toVersion) <= 0;
-
-    return nodeMatches && versionMatches && change.isBreaking;
-  });
+  return getAllChangesForNode(nodeType, fromVersion, toVersion).filter(change => change.isBreaking);
 }
 
 /**
@@ -219,10 +209,14 @@ export function getAllChangesForNode(
   toVersion: string
 ): BreakingChange[] {
   return BREAKING_CHANGES_REGISTRY.filter(change => {
+    // Match exact node type or wildcard (*)
     const nodeMatches = change.nodeType === nodeType || change.nodeType === '*';
+
+    // An upgrade crosses every registry transition that lies inside the
+    // requested range, so 1 -> 2.1 includes both 1 -> 2 and 2 -> 2.1.
     const versionMatches =
-      compareVersions(fromVersion, change.fromVersion) >= 0 &&
-      compareVersions(toVersion, change.toVersion) <= 0;
+      compareVersions(change.fromVersion, fromVersion) >= 0 &&
+      compareVersions(change.toVersion, toVersion) <= 0;
 
     return nodeMatches && versionMatches;
   });

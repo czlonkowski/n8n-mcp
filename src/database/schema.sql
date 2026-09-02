@@ -199,39 +199,6 @@ CREATE INDEX IF NOT EXISTS idx_version_node_type ON node_versions(node_type);
 CREATE INDEX IF NOT EXISTS idx_version_current_max ON node_versions(is_current_max);
 CREATE INDEX IF NOT EXISTS idx_version_composite ON node_versions(node_type, version);
 
--- Version property changes for detailed migration tracking
--- Records specific property-level changes between versions
-CREATE TABLE IF NOT EXISTS version_property_changes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  node_type TEXT NOT NULL,
-  from_version TEXT NOT NULL,             -- Version where change occurred (e.g., "1.0")
-  to_version TEXT NOT NULL,               -- Target version (e.g., "1.1")
-  property_name TEXT NOT NULL,            -- Property path (e.g., "parameters.inputFieldMapping")
-  change_type TEXT NOT NULL CHECK(change_type IN (
-    'added',                              -- Property added (may be required)
-    'removed',                            -- Property removed/deprecated
-    'renamed',                            -- Property renamed
-    'type_changed',                       -- Property type changed
-    'requirement_changed',                -- Required → Optional or vice versa
-    'default_changed'                     -- Default value changed
-  )),
-  is_breaking INTEGER DEFAULT 0,          -- 1 if this is a breaking change
-  old_value TEXT,                         -- For renamed/type_changed: old property name or type
-  new_value TEXT,                         -- For renamed/type_changed: new property name or type
-  migration_hint TEXT,                    -- Human-readable migration guidance
-  auto_migratable INTEGER DEFAULT 0,      -- 1 if can be automatically migrated
-  migration_strategy TEXT,                -- JSON: strategy for auto-migration
-  severity TEXT CHECK(severity IN ('LOW', 'MEDIUM', 'HIGH')), -- Impact severity
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (node_type, from_version) REFERENCES node_versions(node_type, version) ON DELETE CASCADE
-);
-
--- Indexes for property change queries
-CREATE INDEX IF NOT EXISTS idx_prop_changes_node ON version_property_changes(node_type);
-CREATE INDEX IF NOT EXISTS idx_prop_changes_versions ON version_property_changes(node_type, from_version, to_version);
-CREATE INDEX IF NOT EXISTS idx_prop_changes_breaking ON version_property_changes(is_breaking);
-CREATE INDEX IF NOT EXISTS idx_prop_changes_auto ON version_property_changes(auto_migratable);
-
 -- Workflow versions table for rollback and version history tracking
 -- Stores full workflow snapshots before modifications for guaranteed reversibility
 -- Auto-prunes to 10 versions per workflow to prevent memory leaks

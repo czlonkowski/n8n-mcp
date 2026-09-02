@@ -203,7 +203,7 @@ describe('BreakingChangeDetector', () => {
 
       const addedChange = result.changes.find(c => c.changeType === 'added');
       expect(addedChange).toBeDefined();
-      expect(addedChange?.propertyName).toBe('newProp');
+      expect(addedChange?.propertyName).toBe('parameters.newProp');
       expect(addedChange?.source).toBe('dynamic');
     });
 
@@ -257,9 +257,10 @@ describe('BreakingChangeDetector', () => {
 
       const removedChange = result.changes.find(c => c.changeType === 'removed');
       expect(removedChange).toBeDefined();
-      expect(removedChange?.propertyName).toBe('oldProp');
+      expect(removedChange?.propertyName).toBe('parameters.oldProp');
       expect(removedChange?.isBreaking).toBe(true);
-      expect(removedChange?.autoMigratable).toBe(true);
+      // Schema diffs cannot tell a removal from a rename, so nothing is deleted automatically
+      expect(removedChange?.autoMigratable).toBe(false);
     });
 
     it('should detect requirement changes', async () => {
