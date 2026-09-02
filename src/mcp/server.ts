@@ -678,8 +678,10 @@ export class N8NDocumentationMCPServer {
       const param = cloned.inputSchema?.properties?.[paramName];
       if (param?.enum) {
         param.enum = (param.enum as string[]).filter(v => !ops.has(v.toLowerCase()));
+        let defaultRemoved = false;
         if (typeof param.default === 'string' && ops.has(param.default.toLowerCase())) {
           delete param.default;
+          defaultRemoved = true;
         }
         if (param.enum.length === 0) {
           logger.warn(
@@ -690,7 +692,8 @@ export class N8NDocumentationMCPServer {
         }
         if (param.description) {
           const disabledList = [...ops].join(', ');
-          param.description = `${param.description} (disabled by server policy: ${disabledList})`;
+          param.description = `${param.description} (disabled by server policy: ${disabledList}`
+            + `${defaultRemoved ? '; no default, pass a value' : ''})`;
         }
       }
 

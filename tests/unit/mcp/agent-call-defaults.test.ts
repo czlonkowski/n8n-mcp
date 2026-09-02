@@ -173,6 +173,7 @@ describe('agent call defaults and aliases (#1051)', () => {
       const action = filtered.get('n8n_executions').inputSchema.properties.action;
       expect(action.enum).toEqual(['get', 'delete']);
       expect(action.default).toBeUndefined();
+      expect(action.description).toContain('disabled by server policy: list; no default, pass a value)');
 
       const untouched = (server as any).buildFilteredToolDefinitions(new Map([['n8n_executions', new Set(['delete'])]]));
       expect(untouched.get('n8n_executions').inputSchema.properties.action.default).toBe('list');
