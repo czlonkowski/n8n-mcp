@@ -58,12 +58,9 @@ function writableShape(workflow: Workflow): Record<string, unknown> {
     (workflow.nodes ?? []).filter(node => !node.webhookId).map(node => node.id),
   );
   const cleaned = cleanWorkflowForUpdate(structuredClone(workflow)) as Record<string, unknown>;
-  const nodes = cleaned.nodes;
-  if (Array.isArray(nodes)) {
-    for (const node of nodes) {
-      if (node && typeof node === 'object' && generated.has(node.id)) {
-        delete (node as Record<string, unknown>).webhookId;
-      }
+  if (Array.isArray(cleaned.nodes)) {
+    for (const node of cleaned.nodes) {
+      if (generated.has(node.id)) delete node.webhookId;
     }
   }
   return cleaned;

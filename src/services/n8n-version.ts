@@ -283,19 +283,17 @@ export function settingsRejectionLadder(settings: unknown): string[][] {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return [];
   const keys = Object.keys(settings as Record<string, unknown>);
   const known = (key: string) => Object.prototype.hasOwnProperty.call(WORKFLOW_SETTINGS_PROPERTIES, key);
+  const since = (key: string) => WORKFLOW_SETTINGS_PROPERTIES[key].since;
 
-  const steps: string[][] = [];
   const unknown = keys.filter(key => !known(key));
-  if (unknown.length > 0) steps.push(unknown);
+  const newestFirst = keys
+    .filter(key => known(key) && compareVersions(since(key), SETTINGS_LADDER_FLOOR) > 0)
+    .sort((a, b) => compareVersions(since(b), since(a)));
 
-  keys
-    .filter(known)
-    .map(key => ({ key, since: WORKFLOW_SETTINGS_PROPERTIES[key].since }))
-    .filter(({ since }) => compareVersions(since, SETTINGS_LADDER_FLOOR) > 0)
-    .sort((a, b) => compareVersions(b.since, a.since))
-    .forEach(({ key }) => steps.push([key]));
-
-  return steps;
+  return [
+    ...(unknown.length > 0 ? [unknown] : []),
+    ...newestFirst.map(key => [key]),
+  ];
 }
 
 // Export version thresholds for testing

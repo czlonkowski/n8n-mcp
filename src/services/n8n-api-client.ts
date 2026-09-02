@@ -634,10 +634,10 @@ export class N8nApiClient {
     send: (body: Record<string, unknown>) => Promise<Workflow>,
     options: WorkflowWriteOptions
   ): Promise<Workflow> {
-    const remembered = [...this.rejectedSettings].filter(key => {
-      const settings = payload.settings as Record<string, unknown> | undefined;
-      return settings !== undefined && Object.prototype.hasOwnProperty.call(settings, key);
-    });
+    const settings = payload.settings as Record<string, unknown> | undefined;
+    const remembered = settings
+      ? [...this.rejectedSettings].filter(key => Object.prototype.hasOwnProperty.call(settings, key))
+      : [];
     let body = withoutSettings(payload, remembered);
     if (remembered.length > 0) options.onWarning?.(settingsRejectedWarning(remembered));
 
@@ -647,7 +647,7 @@ export class N8nApiClient {
       try {
         const result = await this.sendWorkflowWriteWithGroupFallback(body, send, options);
         if (dropped.length > 0) {
-          dropped.forEach(key => this.rejectedSettings.add(key));
+          for (const key of dropped) this.rejectedSettings.add(key);
           options.onWarning?.(settingsRejectedWarning(dropped));
         }
         return result;

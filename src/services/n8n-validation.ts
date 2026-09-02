@@ -11,7 +11,9 @@ import {
 
 // Zod schemas for n8n API validation
 
-export const workflowNodeSchema = z.preprocess(normalizeMcpWorkflowNode, z.object({
+// The writable node shape, kept separate from the preprocess wrapper so the write allowlist
+// below can be derived from its keys instead of being maintained as a second list.
+const workflowNodeObjectSchema = z.object({
   id: z.string(),
   name: z.string(),
   type: z.string(),
@@ -34,33 +36,12 @@ export const workflowNodeSchema = z.preprocess(normalizeMcpWorkflowNode, z.objec
   alwaysOutputData: z.boolean().optional(),
   executeOnce: z.boolean().optional(),
   webhookId: z.string().optional(),
-}));
+});
 
-/**
- * Properties accepted by n8n's Public API write schema for a node.
- * MUST stay in sync with `workflowNodeSchema` above.
- * Used to strip unknown properties returned by GET that PUT/PATCH rejects.
- */
-const ALLOWED_NODE_PROPERTIES = new Set([
-  'id',
-  'name',
-  'type',
-  'typeVersion',
-  'position',
-  'parameters',
-  'credentials',
-  'disabled',
-  'notes',
-  'notesInFlow',
-  'continueOnFail',
-  'onError',
-  'retryOnFail',
-  'maxTries',
-  'waitBetweenTries',
-  'alwaysOutputData',
-  'executeOnce',
-  'webhookId',
-]);
+export const workflowNodeSchema = z.preprocess(normalizeMcpWorkflowNode, workflowNodeObjectSchema);
+
+/** Properties accepted by n8n's Public API write schema for a node. */
+const ALLOWED_NODE_PROPERTIES = new Set(Object.keys(workflowNodeObjectSchema.shape));
 
 /**
  * Strip unknown properties from a single node so it conforms to n8n's write schema.
@@ -68,17 +49,8 @@ const ALLOWED_NODE_PROPERTIES = new Set([
  * PUT/PATCH rejects with "must NOT have additional properties".
  */
 export function cleanNodeForApi(node: WorkflowNode): WorkflowNode {
-  const cleaned: Partial<WorkflowNode> = {};
-  for (const key of Object.keys(node)) {
-    if (ALLOWED_NODE_PROPERTIES.has(key)) {
-      (cleaned as any)[key] = (node as any)[key];
-    }
-  }
-  // position is required; ensure it survives even if the set above drifts
-  if (!cleaned.position && node.position) {
-    cleaned.position = node.position;
-  }
-  return cleaned as WorkflowNode;
+  const cleaned = Object.entries(node).filter(([key]) => ALLOWED_NODE_PROPERTIES.has(key));
+  return Object.fromEntries(cleaned) as WorkflowNode;
 }
 
 // Connection array schema used by all connection types
