@@ -3702,7 +3702,10 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     }
 
     const analysis = await this.analyzeVersionUpgrade(nodeType, fromVersion, toVersion);
-    const migrations = analysis.changes.filter(c => c.autoMigratable);
+    // Only changes with a strategy are applied by NodeMigrationService; an
+    // optional added property is auto-migratable because nothing needs writing.
+    const migrations = analysis.changes.filter(c => c.autoMigratable && c.migrationStrategy);
+    const noActionRequired = analysis.changes.filter(c => c.autoMigratable && !c.migrationStrategy).length;
 
     return {
       nodeType,
@@ -3710,6 +3713,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
       fromVersion: analysis.fromVersion,
       toVersion: analysis.toVersion,
       autoMigratableChanges: migrations.length,
+      noActionRequired,
       totalChanges: analysis.changes.length,
       migrations: migrations.map(m => ({
         property: m.propertyName,

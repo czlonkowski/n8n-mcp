@@ -175,6 +175,18 @@ describe('NodeParser.parseVersions', () => {
     expect(filterPropertiesForVersion(props, 'beta')).toBe(props);
   });
 
+  it('skips version keys a numeric typeVersion can never select', () => {
+    class Odd {
+      description = { name: 'odd', displayName: 'Odd', group: ['transform'] };
+      nodeVersions = {
+        1: { description: { name: 'odd', displayName: 'Odd', version: 1, properties: [] } },
+        beta: { description: { name: 'odd', displayName: 'Odd', version: 'beta', properties: [] } }
+      };
+      currentVersion = 1;
+    }
+    expect(parser.parseVersions(Odd as any, 'n8n-nodes-base').map(v => v.version)).toEqual(['1']);
+  });
+
   it('records nothing for a node with a single scalar version', () => {
     expect(parser.parseVersions(FakeScalarVersionNode as any, 'n8n-nodes-base')).toEqual([]);
   });
@@ -226,10 +238,14 @@ describe('version rows through the repository', () => {
   it('resolves Tool variants to the base node\'s version rows', () => {
     saveAll();
 
-    // A real node whose name ends in Tool keeps its own rows
-    db.nodeRepository.saveNode(createTestNode({ nodeType: 'nodes-base.realTool', displayName: 'Real Tool', version: '1', isVersioned: true }));
-    db.nodeRepository.saveNodeVersion({ nodeType: 'nodes-base.realTool', version: '1', packageName: 'n8n-nodes-base', displayName: 'Real Tool', isCurrentMax: true });
-    expect(db.nodeRepository.getNodeVersions('nodes-base.realTool').map(v => v.version)).toEqual(['1']);
+    // Only a generated variant (is_tool_variant + tool_variant_of) is redirected
+    db.nodeRepository.saveNode(createTestNode({
+      nodeType: 'nodes-base.fakeVersionedTool', displayName: 'Fake Versioned Tool', version: '2',
+      isVersioned: true, isToolVariant: true, toolVariantOf: 'nodes-base.fakeVersioned'
+    }));
+    // A real node whose name merely ends in Tool keeps its own (here: absent) rows
+    db.nodeRepository.saveNode(createTestNode({ nodeType: 'nodes-base.realTool', displayName: 'Real Tool', version: '1', isVersioned: false }));
+    expect(db.nodeRepository.hasVersionMetadata('nodes-base.realTool')).toBe(false);
 
     expect(db.nodeRepository.hasVersionMetadata('nodes-base.fakeVersionedTool')).toBe(true);
     expect(db.nodeRepository.getNodeVersions('nodes-base.fakeVersionedTool').map(v => v.version)).toEqual(['3', '2.1', '2', '1']);

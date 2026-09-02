@@ -117,19 +117,21 @@ export class NodeParser {
     const instance = instantiateNode(nodeClass) as any;
     const nodeVersions = instance?.nodeVersions ?? (nodeClass as any).nodeVersions;
 
+    // A workflow's typeVersion is a number, so only numeric versions are reachable
     const entries = new Map<string, any>();
+    const record = (version: unknown, description: any) => {
+      if (description && Number.isFinite(Number(version))) {
+        entries.set(normalizeNodeVersion(version), description);
+      }
+    };
     if (nodeVersions && typeof nodeVersions === 'object') {
       for (const [key, implementation] of Object.entries<any>(nodeVersions)) {
-        if (implementation?.description) {
-          entries.set(normalizeNodeVersion(key), implementation.description);
-        }
+        record(key, implementation?.description);
       }
     } else {
       const declared = (base as any).version;
       if (!Array.isArray(declared)) return [];
-      for (const version of declared) {
-        entries.set(normalizeNodeVersion(version), base);
-      }
+      for (const version of declared) record(version, base);
     }
 
     // Keys are numeric strings after normalizeNodeVersion, and n8n's typeVersion

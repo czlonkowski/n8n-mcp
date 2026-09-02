@@ -3,7 +3,6 @@ import { DatabaseAdapter } from './database-adapter';
 import { ParsedNode, normalizeNodeVersion } from '../parsers/node-parser';
 import { SQLiteStorageService } from '../services/sqlite-storage-service';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
-import { ToolVariantGenerator } from '../services/tool-variant-generator';
 import { logger } from '../utils/logger';
 
 // Default retention window for workflow version backups (days). Configurable
@@ -901,16 +900,16 @@ export class NodeRepository {
    */
   /**
    * Version rows are recorded for base nodes only. A generated Tool variant
-   * accepts the same typeVersions as its base node, so a type without rows of
-   * its own resolves to the base. Real nodes whose name ends in "Tool"
-   * (mcpClientTool, agentTool) have their own rows and are never redirected.
+   * accepts the same typeVersions as its base node, so it resolves to the base
+   * recorded in `tool_variant_of`. Real nodes whose name ends in "Tool"
+   * (mcpClientTool, agentTool) are not variants and keep their own lookups.
    */
   private versionLookupType(nodeType: string): string {
     const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-    const baseType = ToolVariantGenerator.getBaseNodeType(normalizedType);
-    if (!baseType) return normalizedType;
-    const own = this.db.prepare(`SELECT 1 FROM node_versions WHERE node_type = ? LIMIT 1`).get(normalizedType);
-    return own ? normalizedType : baseType;
+    const row = this.db.prepare(`
+      SELECT tool_variant_of FROM nodes WHERE node_type = ? AND is_tool_variant = 1
+    `).get(normalizedType) as { tool_variant_of?: string } | undefined;
+    return row?.tool_variant_of || normalizedType;
   }
 
   getNodeVersions(nodeType: string): any[] {
