@@ -1265,6 +1265,7 @@ describe('WorkflowSanitizer', () => {
       const params = single('n8n-nodes-base.httpRequest', {
         URLs: 'https://a.example.com',
         url2: 'https://b.example.com',
+        accessTokenUrl: 'https://auth.example.com/oauth/token',
         ACCESSTOKEN: 'abcdefghijklmnopqrstuvwx',
         auth: 'abcdefghijklmnopqrstuvwx',
         sshKey: 'abcdefghijklmnopqrstuvwx',
@@ -1273,6 +1274,7 @@ describe('WorkflowSanitizer', () => {
       });
       expect(params.URLs).toBe('[REDACTED_URL]');
       expect(params.url2).toBe('[REDACTED_URL]');
+      expect(params.accessTokenUrl).toBe('[REDACTED_URL]');
       expect(params.ACCESSTOKEN).toBe('[REDACTED]');
       expect(params.auth).toBe('[REDACTED]');
       expect(params.sshKey).toBe('[REDACTED]');

@@ -484,18 +484,17 @@ export class WorkflowSanitizer {
     if (last === 'id' || this.COUNT_WORDS.has(last)) {
       return 'none';
     }
-    if (
-      last === 'auth' ||
-      this.SECRET_KEYS.has(joined) ||
-      words.some((word) => this.SECRET_KEY_WORDS.has(word)) ||
-      this.SECRET_KEY_COMPOUNDS.some((compound) => joined.includes(compound))
-    ) {
-      return 'secret';
-    }
+    // A URL that also names a secret (`accessTokenUrl`, `authorizationUrl`)
+    // is an endpoint and keeps the URL placeholder.
     if (words.some((word) => this.URL_KEY_WORDS.has(word))) {
       return 'url';
     }
-    if (words.some((word) => this.TOPOLOGY_KEY_WORDS.has(word))) {
+    if (
+      last === 'auth' ||
+      this.SECRET_KEYS.has(joined) ||
+      words.some((word) => this.SECRET_KEY_WORDS.has(word) || this.TOPOLOGY_KEY_WORDS.has(word)) ||
+      this.SECRET_KEY_COMPOUNDS.some((compound) => joined.includes(compound))
+    ) {
       return 'secret';
     }
     return 'none';
