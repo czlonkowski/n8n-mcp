@@ -46,7 +46,7 @@ import {
   ProjectSummary,
   Project,
 } from '../types/n8n-api';
-import { enrichUnknownPropertyError, handleN8nApiError, logN8nError, N8nApiError, N8nValidationError } from '../utils/n8n-errors';
+import { enrichUnknownPropertyError, handleN8nApiError, isUnknownSettingsPropertyError, logN8nError, N8nApiError, N8nValidationError } from '../utils/n8n-errors';
 import { encodeApiPathSegment } from '../utils/validation-schemas';
 import { cleanWorkflowForCreate, cleanWorkflowForUpdate } from './n8n-validation';
 import {
@@ -60,6 +60,7 @@ import {
   fetchN8nVersion,
   cleanSettingsForVersion,
   getCachedVersion,
+  settingsRejectionLadder,
   versionAtLeast,
 } from './n8n-version';
 import type { PinnedAgents } from '../utils/ssrf-protection';
@@ -81,6 +82,9 @@ const GROUPS_UNSUPPORTED_WARNING =
   'This n8n version does not support canvas groups (added in 2.28); the workflow was saved without them.';
 const GROUP_DESCRIPTIONS_UNSUPPORTED_WARNING =
   'This n8n version does not support canvas group descriptions (added in 2.32); the descriptions were not saved.';
+const settingsRejectedWarning = (keys: string[]) =>
+  `This n8n version rejects the workflow settings ${keys.join(', ')}; the workflow was saved without them ` +
+  '(values already stored on the instance are unchanged). Upgrade n8n to set them.';
 
 /**
  * Statuses that mean "this instance does not serve that route". A router without the route may
@@ -128,6 +132,16 @@ function withoutNodeGroups(payload: Record<string, unknown>): Record<string, unk
   return rest;
 }
 
+/** The payload with the given settings keys removed. An emptied object gets the minimal default n8n accepts (#431). */
+function withoutSettings(payload: Record<string, unknown>, keys: Iterable<string>): Record<string, unknown> {
+  const drop = new Set(keys);
+  const settings = payload.settings as Record<string, unknown> | undefined;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return payload;
+  const kept = Object.fromEntries(Object.entries(settings).filter(([key]) => !drop.has(key)));
+  if (Object.keys(kept).length === Object.keys(settings).length) return payload;
+  return { ...payload, settings: Object.keys(kept).length > 0 ? kept : { executionOrder: 'v1' } };
+}
+
 /** Options for workflow writes that carry canvas groups. */
 export interface WorkflowWriteOptions {
   /**
@@ -163,6 +177,8 @@ export class N8nApiClient {
    * group would permanently disable groups for the instance. Per-client, which is per-instance.
    */
   private groupSupport = { groups: true, descriptions: true };
+  /** Settings keys this instance has rejected as unknown; stripped from later writes with a warning. */
+  private rejectedSettings = new Set<string>();
   /**
    * Whether this instance is known to serve the modern publish/unpublish routes. Positive-only,
    * and per-client, which is per-instance: it is set when the instance proves the routes exist
@@ -587,7 +603,7 @@ export class N8nApiClient {
       }
     };
     try {
-      return await this.sendWorkflowWriteWithGroupFallback(payload, trackedSend, options);
+      return await this.sendWorkflowWriteWithSettingsFallback(payload, trackedSend, options);
     } catch (error) {
       const apiError = handleN8nApiError(error);
       const enriched = enrichUnknownPropertyError(apiError, sentBodies.get(apiError) ?? payload);
@@ -599,6 +615,48 @@ export class N8nApiClient {
         });
       }
       throw enriched;
+    }
+  }
+
+  /**
+   * Send a workflow write, dropping settings properties the instance rejects as unknown.
+   *
+   * Settings are forwarded untouched by default (see SETTINGS_PASS_THROUGH_FLOOR): our table
+   * trails n8n, and a property dropped up front is dropped silently. The cost of forwarding is
+   * a 400 whose AJV message names the path but not the key, so this ladder finds the key the
+   * only way it can, by retrying without candidates in the order settingsRejectionLadder gives.
+   * Every drop is reported through onWarning and remembered for this client's lifetime, so a
+   * session that has learnt the instance's schema stops paying the probe. The bound is the
+   * ladder length; a write that still fails after it surfaces the last rejection.
+   */
+  private async sendWorkflowWriteWithSettingsFallback(
+    payload: Record<string, unknown>,
+    send: (body: Record<string, unknown>) => Promise<Workflow>,
+    options: WorkflowWriteOptions
+  ): Promise<Workflow> {
+    const remembered = [...this.rejectedSettings].filter(key => {
+      const settings = payload.settings as Record<string, unknown> | undefined;
+      return settings !== undefined && Object.prototype.hasOwnProperty.call(settings, key);
+    });
+    let body = withoutSettings(payload, remembered);
+    if (remembered.length > 0) options.onWarning?.(settingsRejectedWarning(remembered));
+
+    const steps = settingsRejectionLadder(body.settings);
+    const dropped: string[] = [];
+    for (let step = 0; ; step++) {
+      try {
+        const result = await this.sendWorkflowWriteWithGroupFallback(body, send, options);
+        if (dropped.length > 0) {
+          dropped.forEach(key => this.rejectedSettings.add(key));
+          options.onWarning?.(settingsRejectedWarning(dropped));
+        }
+        return result;
+      } catch (error) {
+        const apiError = handleN8nApiError(error);
+        if (!isUnknownSettingsPropertyError(apiError) || step >= steps.length) throw apiError;
+        body = withoutSettings(body, steps[step]);
+        dropped.push(...steps[step]);
+      }
     }
   }
 

@@ -263,6 +263,41 @@ export function cleanSettingsForVersion(
   return cleaned;
 }
 
+/**
+ * Instances below this version still report their version, so {@link cleanSettingsForVersion}
+ * filters for them precisely. The rejection ladder only needs to cover what arrived later.
+ */
+const SETTINGS_LADDER_FLOOR: SettingsVersion = { major: 1, minor: 119, patch: 0 };
+
+/**
+ * Which settings keys to drop, and in what order, when n8n rejects a write with
+ * `request/body/settings must NOT have additional properties` and does not name the key.
+ *
+ * Each returned step is one retry. Keys absent from our settings table go first, together: the
+ * usual cause is an instance whose GET echoes a property its write schema does not accept, and
+ * one we have never heard of is the likeliest candidate. Known keys follow one at a time from
+ * newest to oldest, since the instance evidently predates at least one of them. Keys that
+ * predate the floor are never dropped here; an instance that old is handled by version.
+ */
+export function settingsRejectionLadder(settings: unknown): string[][] {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return [];
+  const keys = Object.keys(settings as Record<string, unknown>);
+  const known = (key: string) => Object.prototype.hasOwnProperty.call(WORKFLOW_SETTINGS_PROPERTIES, key);
+
+  const steps: string[][] = [];
+  const unknown = keys.filter(key => !known(key));
+  if (unknown.length > 0) steps.push(unknown);
+
+  keys
+    .filter(known)
+    .map(key => ({ key, since: WORKFLOW_SETTINGS_PROPERTIES[key].since }))
+    .filter(({ since }) => compareVersions(since, SETTINGS_LADDER_FLOOR) > 0)
+    .sort((a, b) => compareVersions(b.since, a.since))
+    .forEach(({ key }) => steps.push([key]));
+
+  return steps;
+}
+
 // Export version thresholds for testing
 export const VERSION_THRESHOLDS = {
   EXECUTION_ORDER: { major: 1, minor: 37, patch: 0 },

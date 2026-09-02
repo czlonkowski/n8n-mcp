@@ -152,6 +152,18 @@ function folderPlacementHint(error: N8nApiError): string {
  * The two shapes are matched exactly (`body must NOT` / `body/settings must NOT`) so deeper
  * paths like `body/nodes/0` — which do name their offending segment — stay untouched.
  */
+/**
+ * Whether n8n refused a workflow write because `settings` carried a property its Public API
+ * schema does not know. Matches only the settings-level path; a top-level or nested rejection
+ * (`body`, `body/nodes/0`, `body/nodeGroups/0`) is a different problem with a different fix.
+ */
+export function isUnknownSettingsPropertyError(error: unknown): boolean {
+  const apiError = error as { statusCode?: number; message?: string; details?: unknown } | null;
+  if (!apiError || apiError.statusCode !== 400) return false;
+  const haystack = `${apiError.message ?? ''} ${safeStringify(apiError.details)}`;
+  return /body\/settings must NOT have additional propert/i.test(haystack);
+}
+
 export function enrichUnknownPropertyError(
   error: N8nApiError,
   sentBody: Record<string, unknown>

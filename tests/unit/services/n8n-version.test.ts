@@ -11,6 +11,7 @@ import {
   getCachedVersion,
   fetchN8nVersion,
   VERSION_THRESHOLDS,
+  settingsRejectionLadder,
 } from '@/services/n8n-version';
 import type { N8nVersionInfo } from '@/types/n8n-api';
 import type { PinnedAgents } from '@/utils/ssrf-protection';
@@ -534,5 +535,35 @@ describe('n8n-version', () => {
       expect(cleaned).not.toHaveProperty('callerPolicy');
       expect(cleaned).not.toHaveProperty('availableInMCP');
     });
+  });
+});
+
+describe('settingsRejectionLadder', () => {
+  it('drops keys outside the settings table first, together, then known keys newest first', () => {
+    const steps = settingsRejectionLadder({
+      executionOrder: 'v1',
+      callerPolicy: 'workflowsFromSameOwner',
+      customTelemetryTags: { team: 'ops' },
+      timeSavedMode: 'fixed',
+      redactionPolicy: 'strict',
+      addedLastWeek: true,
+      addedYesterday: 1,
+    });
+
+    expect(steps).toEqual([
+      ['addedLastWeek', 'addedYesterday'],
+      ['timeSavedMode'],
+      ['redactionPolicy'],
+      ['customTelemetryTags'],
+    ]);
+  });
+
+  it('never offers keys that predate 1.119.0, which version detection still covers', () => {
+    expect(settingsRejectionLadder({ executionOrder: 'v1', timezone: 'UTC', callerPolicy: 'any' })).toEqual([]);
+  });
+
+  it('is empty for missing or malformed settings', () => {
+    expect(settingsRejectionLadder(undefined)).toEqual([]);
+    expect(settingsRejectionLadder(['not', 'an', 'object'])).toEqual([]);
   });
 });

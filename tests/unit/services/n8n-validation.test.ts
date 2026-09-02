@@ -965,6 +965,9 @@ describe('n8n-validation', () => {
         expect(cleaned.id).toBe('n1');
       });
 
+    });
+
+    describe('GET→UPDATE round-trips (Issue #433)', () => {
       // ====================================================================
       // Issue #433 — GET→spread→UPDATE patterns (unit-level, always run in CI)
       //
@@ -1082,20 +1085,21 @@ describe('n8n-validation', () => {
         expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
       });
 
-      it('should default settings when only unknown settings properties remain (Issue #433)', () => {
+      it('should forward settings properties it does not know, so a newer n8n can accept them', () => {
+        // The settings table trails n8n's releases; filtering here dropped redactionPolicy for two
+        // months. Unknown keys reach the instance, and N8nApiClient retries without them only
+        // when the instance rejects them.
         const cleaned = cleanWorkflowForUpdate({
-          name: 'Filtered Settings',
+          name: 'Forwarded Settings',
           nodes: [],
           connections: {},
           settings: {
-            totallyUnknownSetting: true,
-            anotherGarbageField: 42,
+            executionOrder: 'v1',
+            settingAddedNextWeek: true,
           },
         } as any);
 
-        expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
-        expect(cleaned.settings).not.toHaveProperty('totallyUnknownSetting');
-        expect(cleaned.settings).not.toHaveProperty('anotherGarbageField');
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1', settingAddedNextWeek: true });
       });
     });
   });
