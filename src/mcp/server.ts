@@ -12,6 +12,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolDefinition } from '../types';
 import { existsSync, readFileSync, promises as fs } from 'fs';
 import path from 'path';
+import { inspect } from 'util';
 import { n8nDocumentationToolsFinal } from './tools';
 import { UIAppRegistry } from './ui';
 import { SkillResourceRegistry } from './skills';
@@ -55,7 +56,16 @@ import {
   logProtocolNegotiation,
   STANDARD_PROTOCOL_VERSION
 } from '../utils/protocol-version';
-import { InstanceContext } from '../types/instance-context';
+import { InstanceContext, getInstanceScopeId } from '../types/instance-context';
+import {
+  boundToolResult,
+  ArtifactHandleError,
+  describeResponseArtifact,
+  queryResponseArtifact,
+  queryResponseArtifactTool,
+  ResponseControlError,
+  serializeToolText,
+} from '../services/mcp-response-bounding';
 import type { AdditionalTool, AdditionalToolContext } from '../types/additional-tools';
 import { telemetry } from '../telemetry';
 import { EarlyErrorLogger } from '../telemetry/early-error-logger';
@@ -85,6 +95,47 @@ const STDIO_MAX_BUFFER_SIZE = Math.max(
   parseInt(process.env.N8N_MCP_STDIO_MAX_BUFFER_SIZE || '', 10) || 64 * 1024 * 1024
 );
 
+function artifactQueryErrorResult(error: ResponseControlError | ArtifactHandleError, args: any): any {
+  const code = error instanceof ResponseControlError
+    ? error.code
+    : error.reason === 'invalid_cursor' ? 'INVALID_RESPONSE_CURSOR' : 'INVALID_ARTIFACT_HANDLE';
+  const rawMessage = error.message || 'Invalid response artifact query';
+  const message = rawMessage.length <= 4096
+    ? rawMessage
+    : `${rawMessage.slice(0, 4060)}… [error message truncated]`;
+  const artifactId = typeof args?.artifactId === 'string'
+    && /^[A-Za-z0-9_-]{20,100}$/.test(args.artifactId)
+    ? args.artifactId
+    : 'unknown';
+  const responsePath = typeof args?.responsePath === 'string' && args.responsePath.length <= 1000
+    ? args.responsePath
+    : '';
+  const responseMeta = {
+    contractVersion: 3,
+    truncated: false,
+    complete: false,
+    truncationReason: null,
+    returnedCount: 0,
+    totalCount: null,
+    remainingCount: null,
+    nextCursor: null,
+    serializedBytes: 0,
+    warning: message,
+  };
+  const structuredContent = {
+    artifactId,
+    responsePath,
+    response: { error: { code, message } },
+    responseMeta,
+  };
+  responseMeta.serializedBytes = Buffer.byteLength(serializeToolText(structuredContent), 'utf8');
+  return {
+    isError: true,
+    content: [{ type: 'text' as const, text: message }],
+    structuredContent,
+  };
+}
+
 /**
  * Escape a string for safe use as a literal inside `new RegExp(...)`.
  *
@@ -96,6 +147,30 @@ const STDIO_MAX_BUFFER_SIZE = Math.max(
  */
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Last-resort serializer for results JSON.stringify refuses (circular references,
+ * BigInt). Produces something a model can actually read instead of "[object Object]".
+ */
+function safeSerialize(value: unknown): string {
+  const seen = new WeakSet<object>();
+  try {
+    return JSON.stringify(
+      value,
+      (_key, inner) => {
+        if (typeof inner === 'bigint') return `${inner.toString()}n`;
+        if (inner && typeof inner === 'object') {
+          if (seen.has(inner as object)) return '[circular reference]';
+          seen.add(inner as object);
+        }
+        return inner;
+      },
+      2,
+    ) ?? String(value);
+  } catch {
+    return inspect(value, { depth: 4, maxArrayLength: 20, maxStringLength: 1000, breakLength: 120 });
+  }
 }
 
 interface NodeRow {
@@ -334,6 +409,7 @@ export class N8NDocumentationMCPServer {
     const builtInToolNames = new Set([
       ...n8nDocumentationToolsFinal.map(tool => tool.name),
       ...n8nManagementTools.map(tool => tool.name),
+      queryResponseArtifactTool.name,
     ]);
 
     for (const additionalTool of additionalTools) {
@@ -367,10 +443,15 @@ export class N8NDocumentationMCPServer {
    * Used by the arg preprocessing pipeline so additional tools receive the
    * same client-bug coercion and schema validation as built-ins.
    */
-  private findToolSchema(name: string): { name: string; inputSchema?: any } | undefined {
-    return n8nDocumentationToolsFinal.find(t => t.name === name)
-      ?? n8nManagementTools.find(t => t.name === name)
-      ?? this.additionalToolsByName.get(name)?.tool;
+  private findToolSchema(name: string): { name: string; inputSchema?: any; outputSchema?: any } | undefined {
+    const documentationTool = n8nDocumentationToolsFinal.find(t => t.name === name);
+    if (documentationTool) return documentationTool;
+
+    const managementTool = n8nManagementTools.find(t => t.name === name);
+    if (managementTool) return managementTool;
+
+    if (name === queryResponseArtifactTool.name) return queryResponseArtifactTool;
+    return this.additionalToolsByName.get(name)?.tool;
   }
 
   /**
@@ -770,6 +851,9 @@ export class N8NDocumentationMCPServer {
 
       // Combine documentation tools with management tools if API is configured
       let tools = [...enabledDocTools];
+      if (!disabledTools.has(queryResponseArtifactTool.name)) {
+        tools.push(queryResponseArtifactTool as ToolDefinition);
+      }
 
       // Check if n8n API tools should be available
       // 1. Environment variables (backward compatibility)
@@ -973,7 +1057,7 @@ export class N8NDocumentationMCPServer {
         // SECURITY (GHSA-wg4g-395p-mqv3): log metadata only, not raw arg values.
         logger.debug(`Executing tool: ${name}`, summarizeToolCallArgs(processedArgs));
         const startTime = Date.now();
-        const result = await this.executeTool(name, processedArgs);
+        let result = await this.executeTool(name, processedArgs);
         const duration = Date.now() - startTime;
         logger.debug(`Tool ${name} executed successfully`);
 
@@ -990,35 +1074,46 @@ export class N8NDocumentationMCPServer {
         this.previousTool = name;
         this.previousToolTimestamp = Date.now();
 
-        if (isAdditionalTool) {
-          // Host controls the response shape.
-          return result;
+        const owner = this.instanceContext ? getInstanceScopeId(this.instanceContext) : 'default-instance';
+        const originalResult = result;
+        result = boundToolResult(name, result, owner);
+
+        if (isAdditionalTool && result === originalResult) {
+          // Preserve a host tool's valid compact MCP response shape.
+          return this.ensureTextContent(name, result);
         }
         
         // Ensure the result is properly formatted for MCP
         let responseText: string;
         let structuredContent: any = null;
+        const toolDefinition = this.findToolSchema(name);
+        const artifact = result && typeof result === 'object'
+          ? (result as any).responseMeta?.artifact
+          : undefined;
         
+        let serializationFailed = false;
         try {
-          // For validation tools, check if we should use structured content
-          if (name.startsWith('validate_') && typeof result === 'object' && result !== null) {
-            // Clean up the result to ensure it matches the outputSchema
-            const cleanResult = this.sanitizeValidationResult(result, name);
+          if ((toolDefinition?.outputSchema || name.startsWith('validate_'))
+            && typeof result === 'object' && result !== null) {
+            // Validation tools require their historical cleanup; every other schema-backed
+            // tool already constructs its canonical wire object directly.
+            const cleanResult = name.startsWith('validate_')
+              ? this.sanitizeValidationResult(result, name)
+              : result;
             structuredContent = cleanResult;
-            responseText = JSON.stringify(cleanResult, null, 2);
+            responseText = serializeToolText(cleanResult);
           } else {
-            responseText = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+            responseText = typeof result === 'string' ? result : serializeToolText(result);
+            // An artifact-backed envelope is already bounded. Expose it structurally even
+            // though heterogeneous origin tools cannot advertise one conditional schema.
+            if (artifact) structuredContent = result;
           }
         } catch (jsonError) {
           logger.warn(`Failed to stringify tool result for ${name}:`, jsonError);
-          responseText = String(result);
-        }
-        
-        // Validate response size (n8n might have limits)
-        if (responseText.length > 1000000) { // 1MB limit
-          logger.warn(`Tool ${name} response is very large (${responseText.length} chars), truncating`);
-          responseText = responseText.substring(0, 999000) + '\n\n[Response truncated due to size limits]';
-          structuredContent = null; // Don't use structured content for truncated responses
+          // String(result) on an object yields "[object Object]" — a payload-shaped
+          // non-payload, previously returned without isError.
+          responseText = safeSerialize(result);
+          serializationFailed = true;
         }
         
         // Build MCP response with strict schema compliance
@@ -1032,8 +1127,24 @@ export class N8NDocumentationMCPServer {
         };
         
         // For tools with outputSchema, structuredContent is REQUIRED by MCP spec
-        if (name.startsWith('validate_') && structuredContent !== null) {
+        if (structuredContent !== null) {
           mcpResponse.structuredContent = structuredContent;
+        }
+
+        if (artifact && typeof artifact.id === 'string') {
+          mcpResponse.content.push({
+            type: 'resource_link',
+            uri: `artifact://n8n-mcp/${artifact.id}`,
+            name: `response-artifact-${artifact.id}`,
+            title: 'Bounded response artifact descriptor',
+            description: 'Descriptor only; use query_response_artifact to inspect stored values.',
+            mimeType: 'application/json',
+            size: artifact.byteLength,
+          });
+        }
+
+        if (serializationFailed) {
+          mcpResponse.isError = true;
         }
 
         return mcpResponse;
@@ -1059,6 +1170,11 @@ export class N8NDocumentationMCPServer {
         // Update previous tool tracking (even for failed tools)
         this.previousTool = name;
         this.previousToolTimestamp = Date.now();
+
+        if (name === queryResponseArtifactTool.name
+          && (error instanceof ResponseControlError || error instanceof ArtifactHandleError)) {
+          return artifactQueryErrorResult(error, processedArgs);
+        }
 
         if (isAdditionalTool) {
           // Host controls error response shape. Skip the n8n-specific guidance
@@ -1141,9 +1257,30 @@ export class N8NDocumentationMCPServer {
       resourceTemplates: SkillResourceRegistry.getTemplates(),
     }));
 
-    // Handle ReadResource for UI apps and skill markdown
+    // Handle ReadResource for UI apps, skill markdown, and descriptor-only artifacts.
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       const uri = request.params.uri;
+
+      if (uri.startsWith('artifact://n8n-mcp/')) {
+        const artifactMatch = uri.match(/^artifact:\/\/n8n-mcp\/([A-Za-z0-9_-]{20,100})$/);
+        if (!artifactMatch) throw new Error('Artifact resource is unavailable for this caller');
+        try {
+          const owner = this.instanceContext ? getInstanceScopeId(this.instanceContext) : 'default-instance';
+          const descriptor = describeResponseArtifact(artifactMatch[1], owner);
+          const text = serializeToolText(descriptor);
+          if (Buffer.byteLength(text) > 8 * 1024) {
+            throw new Error('Artifact descriptor exceeded its 8 KiB safety limit');
+          }
+          return {
+            contents: [{ uri, mimeType: 'application/json', text }],
+          };
+        } catch (error) {
+          if (error instanceof ArtifactHandleError) {
+            throw new Error('Artifact resource is unavailable for this caller');
+          }
+          throw error;
+        }
+      }
 
       const uiMatch = uri.match(/^ui:\/\/n8n-mcp\/(.+)$/);
       if (uiMatch) {
@@ -1172,6 +1309,28 @@ export class N8NDocumentationMCPServer {
 
       throw new Error(`Unknown resource URI: ${uri}`);
     });
+  }
+
+  /**
+   * Guards the host-tool passthrough. A host handler returns its own MCP response
+   * shape, and nothing previously checked that each content block's `text` was a
+   * string — an object there reaches the client as "[object Object]", because that is
+   * what a JS host renders when it stringifies a non-string. Coerce it to readable
+   * JSON instead of trusting the shape.
+   */
+  private ensureTextContent(toolName: string, result: any): any {
+    if (!result || typeof result !== 'object' || !Array.isArray(result.content)) return result;
+    let repaired = false;
+    const content = result.content.map((block: any) => {
+      if (block && block.type === 'text' && typeof block.text !== 'string') {
+        repaired = true;
+        return { ...block, text: safeSerialize(block.text) };
+      }
+      return block;
+    });
+    if (!repaired) return result;
+    logger.warn(`Host tool "${toolName}" returned a non-string text content block; serialized it instead.`);
+    return { ...result, content };
   }
 
   /**
@@ -1576,6 +1735,31 @@ export class N8NDocumentationMCPServer {
   async executeTool(name: string, args: any): Promise<any> {
     // Ensure args is an object and validate it
     args = args || {};
+
+    if (name === queryResponseArtifactTool.name) {
+      if (!args.artifactId || typeof args.artifactId !== 'string') {
+        throw new ResponseControlError('INVALID_RESPONSE_CONTROLS', 'artifactId is required');
+      }
+      if (args.responsePath !== undefined && typeof args.responsePath !== 'string') {
+        throw new ResponseControlError(
+          'INVALID_RESPONSE_CONTROLS',
+          'responsePath must be an RFC 6901 string when provided',
+        );
+      }
+      const owner = this.instanceContext ? getInstanceScopeId(this.instanceContext) : 'default-instance';
+      return queryResponseArtifact(
+        args.artifactId,
+        args.responsePath,
+        args.fields,
+        args.filters,
+        args.pageSize ?? 20,
+        args.cursor,
+        owner,
+        args.describe === true,
+        args.objectMode,
+        args.textSearch,
+      );
+    }
 
     // Defense in depth: This should never be reached since CallToolRequestSchema
     // handler already checks disabled tools (line 514-528), but we guard here

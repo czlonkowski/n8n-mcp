@@ -121,7 +121,7 @@ When working with Code nodes, always start by calling the relevant guide:
    - validate_node({nodeType: "nodes-base.slack", config: {...}}) - Full validation with errors/warnings/suggestions
    - validate_workflow({workflow: {...}}) - Validate entire workflow
 
-## Tool Categories (28 Tools Total)
+## Tool Categories (29 Tools Total)
 
 **Meta Tools** (1 tool)
 - tools_documentation - Get documentation for any MCP tool (this tool)
@@ -172,11 +172,16 @@ When working with Code nodes, always start by calling the relevant guide:
 - n8n_explore_node_resources - Resolve dynamic dropdown/resource-locator options (Slack channels, Google Sheets tabs, etc.) using a real credential (requires N8N_MCP_ACCESS_TOKEN)
 - n8n_list_catalog - List instance-level projects or tags, with an official-MCP fallback when team projects need it
 
+**Large-Result Tools** (1 tool)
+When a result is too large for context it is stored as an artifact and the response carries a handle in responseMeta.artifact.
+- query_response_artifact - Query structured JSON inside an artifact with strict camelCase arguments. Start with describe=true, then filter, project, page matching results, or use bounded literal textSearch. pageSize is 1-100; continue with responseMeta.nextCursor as cursor
+
 ## Performance Characteristics
 - Instant (<10ms): search_nodes, get_node (minimal/standard)
 - Fast (<100ms): validate_node, get_template
 - Moderate (100-500ms): validate_workflow, get_node (full detail)
 - Network-dependent: All n8n_* tools
+- Local artifact analysis: query_response_artifact
 
 For comprehensive documentation on any tool:
 tools_documentation({topic: "tool_name", depth: "full"})${buildDisabledOpsOverviewSection(disabledToolOps)}`;

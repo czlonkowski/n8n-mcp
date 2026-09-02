@@ -67,6 +67,66 @@ Want to use n8n-MCP with your n8n instance? Check out our comprehensive [n8n Dep
 - Cloud deployment on Hetzner, AWS, and other providers
 - Troubleshooting and security best practices
 
+### Bounded MCP responses
+
+Compact JSON tool results stay inline up to a conservative 32 KiB budget. Larger workflow,
+execution, documentation, and host-injected tool results return a compact
+preview capped at 8 KiB plus `responseMeta.artifact`. Prefer `query_response_artifact` to
+select, filter, project, search, and paginate structured JSON without loading the full
+artifact into model context. Artifact query paths use RFC 6901. Exact document
+pointers win; when one is missing and the advertised `responseRoot` is non-empty,
+the same pointer is tried once beneath that root and the canonical path is reported
+as `responseMeta.inferredResponsePath`. Projected fields accept either root names
+such as `id` or pointers such as `/status/name`. Nested paths must begin with
+`/`; `status/name` means one literal root key, not a nested lookup. When fields
+or filters target an object containing exactly one array child,
+the query selects that collection and reports its pointer as
+`responseMeta.inferredResponsePath`; ambiguous objects still require a
+more specific path. Use
+`objectMode: "entries"` to query keyed objects (including native n8n connection
+maps) as `{key, value}` rows; filters can then select several keys in one call.
+`describe: true` pages shape metadata and returns absolute child pointers for
+objects. `textSearch` performs bounded literal search across large string values.
+Artifact-query arguments are strict camelCase: `artifactId`, `responsePath`,
+`fields`, `filters`, `pageSize`, `cursor`, `describe`, `objectMode`, and
+`textSearch`. `pageSize` accepts 1-100 only. To continue beyond 100 matching
+items, pass `responseMeta.nextCursor` as `cursor` and keep every other query-view
+argument unchanged; snake_case variants are rejected.
+Query pages use response contract version 3 and do not repeat
+the full artifact descriptor minted by the originating tool. The full serialized MCP result is capped at
+128 KiB, artifacts are capped at 50 MiB, expire after 24 hours, and are pruned
+at a 1 GiB quota.
+
+`query_response_artifact` advertises an MCP output schema and returns the same bounded
+JSON as compact text and `structuredContent`. When an originating call creates an
+artifact, its result also includes an `artifact://n8n-mcp/{artifactId}` resource link.
+Reading that link returns at most 8 KiB of metadata and query guidance; it never returns
+the stored provider payload. Ephemeral artifacts are not added to `resources/list`.
+Caller-correctable path, control, cursor, and handle failures also use the output
+schema with `isError: true` and a stable error code. Internal storage, corruption,
+and hard-limit failures remain server errors instead of being hidden as input mistakes.
+
+Every bounded result reports `responseMeta.complete`, returned/total/remaining
+counts, and an opaque next cursor. A compact preview is never exhaustive when
+`complete` is false, even if an upstream payload says it is on its last page.
+Request another semantic page only when the current page did not answer the question.
+Structured cursors are signed and bound to
+the artifact, instance scope, and exact query view.
+
+`n8n_executions({action: "list"})` defaults to 20 records. Existing execution
+detail modes and their explicit limits remain compatible; any oversized result
+is moved behind an artifact reference. `n8n_get_workflow` still defaults to
+`full`: small workflows stay inline, while large workflows return their topology
+and an artifact reference. Explicit workflow modes remain backward compatible.
+
+By default, artifacts use the container-local `/tmp/n8n-mcp-artifacts` directory.
+This is usually appropriate for the 24-hour cache: a container restart discards
+outstanding artifact IDs, and callers can repeat the original read. To preserve
+artifacts across restarts, opt in with `MCP_RESPONSE_ARTIFACT_ROOT` pointing to a
+private persistent directory and set `MCP_RESPONSE_CURSOR_KEY` to a stable secret
+so existing page cursors remain valid. Persistence is not required for bounded
+responses or artifact paging.
+
 ### Cloudflare Access Authentication
 
 If your n8n instance sits behind Cloudflare Access (Zero Trust), provide your service token so n8n-MCP can authenticate:

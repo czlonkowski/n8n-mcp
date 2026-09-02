@@ -2220,7 +2220,7 @@ export async function handleListExecutions(args: unknown, context?: InstanceCont
     const input = listExecutionsSchema.parse(args || {});
     
     const response = await client.listExecutions({
-      limit: input.limit || 100,
+      limit: input.limit || 20,
       cursor: input.cursor,
       workflowId: input.workflowId,
       projectId: input.projectId,

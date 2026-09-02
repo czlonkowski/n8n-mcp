@@ -19,6 +19,7 @@ import { logger } from './utils/logger';
 import { AuthManager, buildBearerChallenge } from './utils/auth';
 import { PROJECT_VERSION } from './utils/version';
 import { isN8nApiConfigured } from './config/n8n-api';
+import { serializeToolText } from './services/mcp-response-bounding';
 import dotenv from 'dotenv';
 import { readFileSync } from 'fs';
 import { getStartupBaseUrl, formatEndpointUrls, detectBaseUrl } from './utils/url-detector';
@@ -438,9 +439,10 @@ export async function startFixedHTTPServer() {
                 const result = await mcpServer.executeTool(toolName, toolArgs);
 
                 // Convert result to JSON text for content field
-                let responseText = JSON.stringify(result, null, 2);
+                let responseText = serializeToolText(result);
 
-                // Build MCP-compliant response with structuredContent for validation tools
+                // Build MCP-compliant response. Schema-backed tools always include
+                // structuredContent; compact text remains the compatibility representation.
                 const mcpResult: MCPToolResponse = {
                   content: [
                     {
@@ -450,9 +452,11 @@ export async function startFixedHTTPServer() {
                   ]
                 };
 
-                // Add structuredContent for validation tools (they have outputSchema)
-                // Apply 1MB safety limit to prevent memory issues (matches STDIO server behavior)
-                if (toolName.startsWith('validate_')) {
+                const toolDefinition = (mcpServer as any).findToolSchema?.(toolName);
+                const hasStructuredOutput = toolName.startsWith('validate_') || !!toolDefinition?.outputSchema;
+
+                // Apply 1MB safety limit to prevent memory issues (matches STDIO server behavior).
+                if (hasStructuredOutput) {
                   const resultSize = responseText.length;
 
                   if (resultSize > 1000000) {

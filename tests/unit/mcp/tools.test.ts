@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { n8nDocumentationToolsFinal } from '@/mcp/tools';
+import { n8nManagementTools } from '@/mcp/tools-n8n-manager';
 import { z } from 'zod';
 
 describe('n8nDocumentationToolsFinal', () => {
@@ -42,6 +43,13 @@ describe('n8nDocumentationToolsFinal', () => {
         expect(() => {
           jsonSchemaValidator.parse(tool.inputSchema);
         }).not.toThrow();
+      });
+    });
+
+    it('uses camelCase for every public top-level input', () => {
+      [...n8nDocumentationToolsFinal, ...n8nManagementTools].forEach(tool => {
+        const propertyNames = Object.keys(tool.inputSchema.properties ?? {});
+        expect(propertyNames.filter(name => name.includes('_')), tool.name).toEqual([]);
       });
     });
   });

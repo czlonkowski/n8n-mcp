@@ -48,7 +48,7 @@ export const n8nExecutionsDoc: ToolDocumentation = {
       fetchWorkflow: { type: 'boolean', required: false, description: 'For action=get with mode=error: Fetch workflow for accurate upstream detection (default: true)' },
       workflowId: { type: 'string', required: false, description: 'For action=list: Filter by workflow ID' },
       status: { type: 'string', required: false, description: 'For action=list: Filter by status ("success", "error", "waiting")' },
-      limit: { type: 'number', required: false, description: 'For action=list: Number of results (1-100, default: 100)' },
+      limit: { type: 'number', required: false, description: 'For action=list: Number of results (1-100, default: 20)' },
       cursor: { type: 'string', required: false, description: 'For action=list: Pagination cursor from previous response' },
       projectId: { type: 'string', required: false, description: 'For action=list: Filter by project ID (enterprise)' },
       includeData: { type: 'boolean', required: false, description: 'For action=list: Include execution data (default: false)' }
@@ -97,7 +97,7 @@ export const n8nExecutionsDoc: ToolDocumentation = {
     ],
     pitfalls: [
       'Requires N8N_API_URL and N8N_API_KEY configured',
-      'mode="full" can return very large responses for complex workflows',
+      'mode="full" can produce a large artifact for complex workflows; prefer summary, error, or filtered mode, then use query_response_artifact for any stored JSON',
       'mode="error" fetches workflow by default (adds ~50-100ms), disable with fetchWorkflow=false',
       'Execution must exist or returns 404',
       'Delete is permanent - cannot undo'

@@ -29,6 +29,14 @@ class TestableN8NMCPServer extends N8NDocumentationMCPServer {
     }
     return handler({ method: 'tools/call', params: { name, arguments: args } }, {});
   }
+
+  public testEnsureTextContent(name: string, result: unknown): any {
+    return (this as any).ensureTextContent(name, result);
+  }
+
+  public stubExecuteTool(result: unknown): void {
+    (this as any).executeTool = vi.fn().mockResolvedValue(result);
+  }
 }
 
 describe('Additional tools hook', () => {
@@ -194,6 +202,90 @@ describe('Additional tools hook', () => {
     // The response must be exactly what the handler returned — not wrapped in
     // another content array as built-in tools are.
     expect(result).toEqual(handlerResult);
+  });
+
+  it('serializes non-string text blocks returned by a host tool', async () => {
+    const additionalTools: AdditionalTool[] = [
+      {
+        tool: {
+          name: 'host_structured_text',
+          description: 'Returns a non-string text block',
+          inputSchema: { type: 'object', properties: {} },
+        },
+        handler: vi.fn().mockResolvedValue({
+          content: [
+            { type: 'text', text: { id: 'instance-1', active: true } },
+            { type: 'text', text: 'already-valid' },
+          ],
+        }),
+      },
+    ];
+
+    const server = new TestableN8NMCPServer(undefined, undefined, { additionalTools });
+    const result = await server.simulateToolCallRequest('host_structured_text', {});
+
+    expect(JSON.parse(result.content[0].text)).toEqual({ id: 'instance-1', active: true });
+    expect(result.content[1].text).toBe('already-valid');
+  });
+
+  it('makes circular, bigint, and throwing values readable in host text blocks', () => {
+    const server = new TestableN8NMCPServer();
+    const circular: Record<string, unknown> = { count: 12n };
+    circular.self = circular;
+
+    const repaired = server.testEnsureTextContent('host_complex_text', {
+      content: [{ type: 'text', text: circular }],
+    });
+    expect(repaired.content[0].text).toContain('12n');
+    expect(repaired.content[0].text).toContain('[circular reference]');
+
+    const throwing = {
+      value: 'still-readable',
+      toJSON: () => { throw new Error('cannot serialize'); },
+    };
+    const fallback = server.testEnsureTextContent('host_throwing_text', {
+      content: [{ type: 'text', text: throwing }],
+    });
+    expect(fallback.content[0].text).toContain('still-readable');
+
+    expect(server.testEnsureTextContent('host_plain_value', 'plain')).toBe('plain');
+  });
+
+  it('marks a self-bounded tool response as an error when normal serialization fails', async () => {
+    const server = new TestableN8NMCPServer();
+    const circular: Record<string, unknown> = { value: 'recoverable' };
+    circular.self = circular;
+    server.stubExecuteTool(circular);
+
+    const result = await server.simulateToolCallRequest('query_response_artifact', {
+      artifactId: 'a'.repeat(20),
+      responsePath: '',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('recoverable');
+    expect(result.content[0].text).toContain('[circular reference]');
+  });
+
+  it('serializes sanitized validation results as structured content', async () => {
+    const server = new TestableN8NMCPServer();
+    server.stubExecuteTool({
+      nodeType: 'n8n-nodes-base.code',
+      displayName: 'Code',
+      valid: true,
+      missingRequiredFields: [],
+    });
+
+    const result = await server.simulateToolCallRequest('validate_node_minimal', {
+      nodeType: 'n8n-nodes-base.code',
+      config: {},
+    });
+
+    expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
+    expect(result.structuredContent).toMatchObject({
+      nodeType: 'n8n-nodes-base.code',
+      valid: true,
+    });
   });
 
   it('handler rejection returns a plain isError response without n8n-specific guidance', async () => {

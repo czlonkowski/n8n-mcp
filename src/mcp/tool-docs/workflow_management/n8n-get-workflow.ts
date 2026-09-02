@@ -9,7 +9,7 @@ export const n8nGetWorkflowDoc: ToolDocumentation = {
     example: 'n8n_get_workflow({id: "workflow_123", mode: "structure"})',
     performance: 'Fast (50-200ms)',
     tips: [
-      'mode="full" (default): Draft workflow + metadata (heavy activeVersion payload stripped, activeVersionId pointer retained)',
+      'mode="full" (default): Draft workflow + metadata; large results include a pageable artifact reference',
       'mode="details": Full workflow + execution stats',
       'mode="active": Published graph that is actually running (errors if workflow was never activated)',
       'mode="structure": Just nodes and connections (topology)',
@@ -21,7 +21,7 @@ export const n8nGetWorkflowDoc: ToolDocumentation = {
     description: `**Draft vs published.** n8n keeps a draft (the workflow body's nodes/connections — what you see in the editor) and an active version (the published graph that actually runs). Saving in the editor updates the draft; publishing promotes it to the active version. The two diverge whenever there are unpublished edits. Older n8n versions don't have this split — \`workflow.nodes\` is the only graph.
 
 **Modes:**
-- full (default): Draft workflow with all metadata. The heavy nested \`activeVersion\` payload is omitted to keep responses small, but \`activeVersionId\` is preserved so callers know whether a published version exists.
+- full (default): Draft workflow with all metadata. The heavy nested \`activeVersion\` payload is omitted to keep responses small, but \`activeVersionId\` is preserved so callers know whether a published version exists. Oversized results return a structure summary plus \`responseMeta.artifact\` for the complete JSON.
 - details: Full draft + execution statistics (success/error counts, last execution time)
 - active: The published (running) graph. On older n8n versions that don't have the draft/publish split, falls back to \`workflow.nodes\` when \`active: true\` so the mode stays usable across n8n versions. Returns \`code: 'NO_ACTIVE_VERSION'\` only for inactive workflows that were never published.
 - structure: Nodes and connections only - useful for topology analysis
@@ -29,7 +29,7 @@ export const n8nGetWorkflowDoc: ToolDocumentation = {
 - minimal: Just id, name, active status, and tags - fastest response`,
     parameters: {
       id: { type: 'string', required: true, description: 'Workflow ID to retrieve' },
-      mode: { type: 'string', required: false, description: 'Detail level: "full" (default), "details", "active", "structure", "filtered", "minimal"' },
+      mode: { type: 'string', required: false, description: 'Detail level: "full" (default), "details", "active", "structure", "filtered", or "minimal". Oversized output is pageable through responseMeta.artifact.' },
       nodeNames: { type: 'array', required: false, description: 'Required when mode="filtered". Node names or node IDs to return with full config. Discover node names cheaply with mode="structure" first.' }
     },
     returns: `Depends on mode:
@@ -42,7 +42,7 @@ export const n8nGetWorkflowDoc: ToolDocumentation = {
 
 Canvas groups (n8n 2.28+) appear as \`nodeGroups: [{id, name, nodeIds, description?}]\` when the workflow has any. \`full\`/\`details\` return the draft's groups; \`active\` returns the published version's own groups, not the draft's.`,
     examples: [
-      '// Get draft workflow (default)\nn8n_get_workflow({id: "abc123"})',
+      '// Get the draft automatically, with an artifact fallback when large\nn8n_get_workflow({id: "abc123"})',
       '// Get draft + execution stats\nn8n_get_workflow({id: "abc123", mode: "details"})',
       '// Get the published/running graph\nn8n_get_workflow({id: "abc123", mode: "active"})',
       '// Get just the topology\nn8n_get_workflow({id: "abc123", mode: "structure"})',
@@ -69,7 +69,7 @@ Canvas groups (n8n 2.28+) appear as \`nodeGroups: [{id, name, nodeIds, descripti
       'Use mode="minimal" when listing or checking status',
       'Use mode="structure" for workflow analysis or cloning',
       'Use mode="structure" to discover node names, then mode="filtered" to read a specific heavy node',
-      'Use mode="full" (default) when editing the draft',
+      'Use mode="full" (default) when editing the draft; oversized output remains available through its artifact reference',
       'Use mode="active" when you need to reason about what is actually running, not what is being edited',
       'Use mode="details" for debugging execution issues',
       'Validate workflow after retrieval if planning modifications'

@@ -37,11 +37,9 @@ export interface ToolDefinition {
     required?: string[];
     additionalProperties?: boolean | Record<string, any>;
   };
-  outputSchema?: {
-    type: string;
+  outputSchema?: Record<string, any> & {
+    type: 'object';
     properties: Record<string, any>;
-    required?: string[];
-    additionalProperties?: boolean | Record<string, any>;
   };
   /** Tool behavior hints for AI assistants */
   annotations?: ToolAnnotations;

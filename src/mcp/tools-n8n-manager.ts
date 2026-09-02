@@ -100,7 +100,7 @@ export const n8nManagementTools: ToolDefinition[] = [
   },
   {
     name: 'n8n_get_workflow',
-    description: `Get workflow by ID with different detail levels. n8n has a draft/publish model: the workflow body holds the draft (latest edits); use mode='active' to see the published graph that is actually running. Modes: 'full' (draft + metadata), 'details' (full + execution stats), 'active' (published graph only), 'structure' (nodes/connections topology), 'filtered' (full config of only the nodes named in nodeNames - use to read one heavy node without the whole workflow), 'minimal' (id/name/active/tags).`,
+    description: `Get workflow by ID with bounded output. With mode omitted, small workflows are returned in full; large workflows return a compact structure plus responseMeta.artifact for the full JSON. The compact structure is a RESHAPED preview whose nesting differs from the artifact, so query the pointers in responseMeta.artifact.primaryPaths rather than pointers copied from the preview. Artifact handles are valid until the MCP server restarts, and at most 24 hours; re-run this tool to mint a new one. Explicit modes remain available: 'full', 'details', 'active', 'structure', 'filtered', and 'minimal'.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -112,7 +112,7 @@ export const n8nManagementTools: ToolDefinition[] = [
           type: 'string',
           enum: ['full', 'details', 'structure', 'minimal', 'active', 'filtered'],
           default: 'full',
-          description: 'Detail level: full=draft + metadata (activeVersionId pointer kept, heavy activeVersion payload stripped), details=full+execution stats, active=published graph (errors if workflow has no live version), structure=nodes/connections topology, filtered=full config of only the nodes listed in nodeNames, minimal=metadata only'
+          description: 'Detail level: full=draft + metadata, details=full+execution stats, active=published graph, structure=topology, filtered=selected nodes, minimal=metadata only. Oversized results return a compact summary plus a pageable artifact.'
         },
         nodeNames: {
           type: 'array',
@@ -129,10 +129,8 @@ export const n8nManagementTools: ToolDefinition[] = [
       idempotentHint: true,
       openWorldHint: true,
     },
-    // Claude Code default per-tool cap is 25k tokens; raise it so large but legitimate
-    // workflows still come back inline rather than being persisted to a disk file the model
-    // cannot read. The protocol ceiling is 500k chars; we leave ~10% headroom for the
-    // MCP/JSON-RPC envelope wrapping our payload. See code.claude.com/docs/en/mcp.
+    // Retained from #786 as defense in depth for Claude hosts. The server-side
+    // response bouncer normally keeps this result far below the host ceiling.
     _meta: {
       'anthropic/maxResultSizeChars': 450000,
     },
@@ -474,7 +472,7 @@ export const n8nManagementTools: ToolDefinition[] = [
   },
   {
     name: 'n8n_executions',
-    description: `Manage workflow executions: get details, list, or delete. Use action='get' with id for execution details, action='list' for listing executions, action='delete' to remove execution record.`,
+    description: `Manage workflow executions: get details, list, or delete. Use action='get' with id for execution details, action='list' for listing executions, action='delete' to remove execution record. Large results return a compact preview plus responseMeta.artifact holding the full JSON; the preview is RESHAPED, so query the pointers in responseMeta.artifact.primaryPaths rather than pointers copied from the preview. Artifact handles are valid until the MCP server restarts, and at most 24 hours; re-run this tool to mint a new one.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -527,7 +525,7 @@ export const n8nManagementTools: ToolDefinition[] = [
         // For action='list'
         limit: {
           type: 'number',
-          description: 'For action=list: number of executions to return (1-100, default: 100)'
+          description: 'For action=list: number of executions to return (1-100, default: 20)'
         },
         cursor: {
           type: 'string',
