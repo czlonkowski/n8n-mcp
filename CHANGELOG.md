@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.80.0] - 2026-09-03
+
+### Fixed
+
+- **The two SSRF validators agree on loopback literals under `WEBHOOK_SECURITY_MODE=moderate`** ([#1033](https://github.com/czlonkowski/n8n-mcp/issues/1033), [#1040](https://github.com/czlonkowski/n8n-mcp/pull/1040)). The synchronous check that gates `x-n8n-url` and the instance URL accepted `http://localhost:5678` in moderate mode but refused `http://127.0.0.1:5678` as a private address, while the DNS-resolving check used for webhook triggers accepted both. A shared loopback test now drives both validators, so `localhost`, any `127.0.0.0/8` literal, `0.0.0.0` and `[::1]` are treated alike: allowed in moderate, refused in strict. The resolved-address check keeps its previous narrower rule, so a DNS name that resolves to `0.0.0.0` is still refused. Cloud metadata endpoints and IPv6 tunneling prefixes are checked before the moderate allowance in both validators, as before. The `SECURITY_HARDENING.md` row for the mode lists the accepted spellings.
+
 ## [2.79.1] - 2026-09-03
 
 ### Fixed
