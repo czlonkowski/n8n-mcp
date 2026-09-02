@@ -801,7 +801,8 @@ describe('WorkflowSanitizer', () => {
             jsCode:
               "const KEY = 'sk-proj-HjL38eurXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';\n" +
               "const SUPA = 'sb_secret_8vSVYqplak7kizRcykjm0w_Xb2fObQ5x';\n" +
-              "const E = 'jane.doe@example.org'; const P = '+1-604-555-1234';"
+              "const E = 'jane.doe@example.org'; const P = '+1-604-555-1234';\n" +
+              "const H = { auth: 'Bearer abc123def456' };"
           },
         }],
         connections: {},
@@ -1035,14 +1036,16 @@ describe('WorkflowSanitizer', () => {
       expect(out).toContain('a1b2c3d4-1234-5678-9abc-123456789012');
     });
   });
+
   describe('non-secret workflow structure survives (n8n-mcp-backend#151)', () => {
     const NODE_ID = '6f1a2b3c-4d5e-4f60-8a9b-0c1d2e3f4a5b';
 
-    const single = (type: string, parameters: Record<string, unknown>) =>
-      WorkflowSanitizer.sanitizeWorkflow({
+    function single(type: string, parameters: Record<string, unknown>): Record<string, any> {
+      return WorkflowSanitizer.sanitizeWorkflow({
         nodes: [{ id: '1', name: 'N', type, position: [0, 0], typeVersion: 1, parameters }],
         connections: {},
-      }).nodes[0].parameters as any;
+      }).nodes[0].parameters;
+    }
 
     it('keeps the HTTP Request authentication enum trio while still redacting the url', () => {
       const params = single('n8n-nodes-base.httpRequest', {
@@ -1228,15 +1231,118 @@ describe('WorkflowSanitizer', () => {
       expect(out).not.toContain('user:password');
     });
 
+    it('redacts Basic credentials in code but not the word Basic in prose', () => {
+      const jsCode = "const h = { Authorization: 'Basic dXNlcjpwYXNzd29yZDEyMzQ1Ng==' }; // Basic Authentication is required";
+      const out = single('n8n-nodes-base.code', { jsCode }).jsCode;
+      expect(out).toBe("const h = { Authorization: 'Basic [REDACTED]' }; // Basic Authentication is required");
+    });
+
+    it('redacts digit-poor secrets: prefixed provider keys and alphanumeric 32+ runs', () => {
+      const jsCode =
+        "const g = 'AIzatwwFK8DstRByGGbAz8iyqzuQUCWoRzzeoPs';\n" +
+        "const o = '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';\n" +
+        "const a = 'FOcPUbwmE4plrUXSUPettrUNRi8BwjjCeZyNqZci';\n" +
+        "const b = 'HVJZfVOUYqJb9qTP8dpDKxpsqCXzIxTe';";
+      const out = single('n8n-nodes-base.code', { jsCode }).jsCode;
+      for (const leak of ['AIzatwwFK8', 'GOCSPX-mhYU', 'FOcPUbwmE4', 'HVJZfVOUYq']) {
+        expect(out).not.toContain(leak);
+      }
+      expect(out).toContain("const g = '[REDACTED_API_TOKEN]'");
+      expect(out).toContain("const a = '[REDACTED_TOKEN]'");
+    });
+
+    it('redacts the value of a patchNodeField operation on a secret field', () => {
+      const ops = [
+        { type: 'patchNodeField', nodeName: 'HTTP', field: 'parameters.apiKey', value: 'AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf' },
+        { type: 'patchNodeField', nodeName: 'HTTP', field: 'parameters.method', value: 'POST' },
+      ];
+      const out = WorkflowSanitizer.sanitizeTelemetryObject<typeof ops>(ops);
+      expect(out[0].value).toBe('[REDACTED]');
+      expect(out[1].value).toBe('POST');
+    });
+
+    it('classifies acronym plurals, numbered keys, all-caps keys and exact secret keys', () => {
+      const params = single('n8n-nodes-base.httpRequest', {
+        URLs: 'https://a.example.com',
+        url2: 'https://b.example.com',
+        ACCESSTOKEN: 'abcdefghijklmnopqrstuvwx',
+        auth: 'abcdefghijklmnopqrstuvwx',
+        sshKey: 'abcdefghijklmnopqrstuvwx',
+        genericAuthType: 'httpBasicAuth',
+        curlCommand: 'curl https://c.example.com',
+      });
+      expect(params.URLs).toBe('[REDACTED_URL]');
+      expect(params.url2).toBe('[REDACTED_URL]');
+      expect(params.ACCESSTOKEN).toBe('[REDACTED]');
+      expect(params.auth).toBe('[REDACTED]');
+      expect(params.sshKey).toBe('[REDACTED]');
+      expect(params.genericAuthType).toBe('httpBasicAuth');
+      expect(params.curlCommand).toBe('curl https://c.example.com');
+    });
+
+    it('redacts a resource locator in url mode and ignores __rl without a mode', () => {
+      const params = single('n8n-nodes-base.googleSheets', {
+        sheet: { __rl: true, mode: 'url', value: 'https://docs.google.com/spreadsheets/d/1AbCdEf/edit?key=SEcretKeyNoDigitsHere' },
+        bogus: { __rl: true, value: 'AbCdEf0123456789AbCdEf0123456789AbCd' },
+      });
+      expect(params.sheet).toEqual({ __rl: true, mode: 'url', value: '[REDACTED_URL]' });
+      expect(params.bogus).toEqual({ __rl: true, value: '[REDACTED_TOKEN]' });
+    });
+
+    it('redacts Slack, Discord and upper-case webhook URLs and query-string secrets in free text', () => {
+      const params = single('n8n-nodes-base.set', {
+        // Assembled at runtime so the fixture does not trip push protection.
+        slack: `post to https://hooks.slack.com/${['services', 'T00000000', 'B00000000', 'AbCdEfGhIjKlMnOpQrStUvWx'].join('/')} now`,
+        discord: 'https://discord.com/api/webhooks/1234567890/AbCdEfGhIjKlMnOpQrStUvWxYz-_0123456789abcdefghijklmnopqrstu',
+        upper: 'HTTPS://N8N.EXAMPLE.COM/WEBHOOK/abc and HTTPS://alice:shortsecret@localhost/path',
+        error: 'Request failed: https://api.customer.example/v1/tenants/acme?access_token=short-secret&page=2',
+      });
+      expect(params.slack).toBe('post to [REDACTED_WEBHOOK] now');
+      expect(params.discord).toBe('[REDACTED_WEBHOOK]');
+      expect(params.upper).toBe('[REDACTED_WEBHOOK] and [REDACTED_URL_WITH_AUTH]/path');
+      expect(params.error).toBe('Request failed: https://api.customer.example/v1/tenants/acme?access_token=[REDACTED]&page=2');
+    });
+
+    it('does not let the URL-with-auth pattern run across statements on one line', () => {
+      const jsCode = 'const base = "https://host:"; notify("x@y.com"); const db = "postgres://u:p@h/db";';
+      expect(single('n8n-nodes-base.code', { jsCode }).jsCode)
+        .toBe('const base = "https://host:"; notify("[REDACTED_EMAIL]"); const db = "[REDACTED_URL_WITH_AUTH]";');
+    });
+
+    it('keeps model names, count keys, id keys and typed flags under secret or URL-named keys', () => {
+      const params = single('n8n-nodes-base.httpRequest', {
+        model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+        maxTokenLimit: 4000,
+        apiKeyId: 'connector-id',
+        certificateId: 'certificate-guid',
+        previewUrl: false,
+        returnImageUrls: true,
+        urls: ['={{ $json.url }}', 'https://a.example.com'],
+        fields: [{ name: 'token_length', value: 500 }, { name: 'X-Auth', value: 'abcdefghijklmnopqrstuv' }],
+        values: ['Bearer abc123def456', 'user@example.com', 'plain'],
+      });
+      expect(params.model).toBe('meta-llama/llama-4-maverick-17b-128e-instruct');
+      expect(params.maxTokenLimit).toBe(4000);
+      expect(params.apiKeyId).toBe('connector-id');
+      expect(params.certificateId).toBe('certificate-guid');
+      expect(params.previewUrl).toBe(false);
+      expect(params.returnImageUrls).toBe(true);
+      expect(params.urls).toEqual(['[REDACTED_URL]', '[REDACTED_URL]']);
+      expect(params.fields).toEqual([{ name: 'token_length', value: 500 }, { name: 'X-Auth', value: '[REDACTED]' }]);
+      expect(params.values).toEqual(['Bearer [REDACTED]', '[REDACTED_EMAIL]', 'plain']);
+    });
+
     it('keeps Bearer expressions and template references, redacting only literal tokens', () => {
       const params = single('n8n-nodes-base.httpRequest', {
         expression: '=Bearer {{ $json.config.bearerToken }}',
         template: 'Bearer ${token}',
         literal: 'Bearer abc123def456',
+        dollar: 'Bearer abc$SUP3RSECRETTAIL0123456789',
       });
       expect(params.expression).toBe('=Bearer {{ $json.config.bearerToken }}');
       expect(params.template).toBe('Bearer ${token}');
       expect(params.literal).toBe('Bearer [REDACTED]');
+      expect(params.dollar).toBe('Bearer [REDACTED]');
     });
   });
 });
