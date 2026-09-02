@@ -40,7 +40,7 @@ export const n8nExecutionsDoc: ToolDocumentation = {
       id: { type: 'string', required: false, description: 'Execution ID. Required for action=delete; for action=get, omitting it lists executions instead' },
       mode: { type: 'string', required: false, description: 'For action=get: "preview", "summary" (default), "filtered", "full", "error"' },
       nodeNames: { type: 'array', required: false, description: 'For action=get with mode=filtered: Filter to specific nodes by name' },
-      itemsLimit: { type: 'number', required: false, description: 'For action=get with mode=filtered: Items per node (0=structure, 2=default, -1=unlimited)' },
+      itemsLimit: { type: 'number', required: false, description: 'For action=get with mode=summary or filtered: Items per node (0=structure, 2=default, -1=unlimited); applies to input data too when includeInputData is set' },
       includeInputData: { type: 'boolean', required: false, description: 'For action=get: Include input data in addition to output (default: false)' },
       errorItemsLimit: { type: 'number', required: false, description: 'For action=get with mode=error: Sample items from upstream (default: 2, max: 100)' },
       includeStackTrace: { type: 'boolean', required: false, description: 'For action=get with mode=error: Include full stack trace (default: false, shows truncated)' },

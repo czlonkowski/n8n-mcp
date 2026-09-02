@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { countRunItems, firstRunItem, mergeRunBranches, sampleRunItems, totalExecutionTime } from '@/services/execution-run-data';
 import {
   generatePreview,
   filterExecutionData,
@@ -791,7 +792,7 @@ describe('ExecutionProcessor - AI Agent sub-node connection types', () => {
     expect(nodeData?.data?.input?.[0]?.[0]?.json?.messages?.[0]).toBe('System: hi');
   });
 
-  it('should not conflate ai_* and main data when both happen to be present', () => {
+  it('counts both connection types when a run populates more than one', () => {
     const execution = createMockExecution({
       nodeData: {
         'Mixed Node': [
@@ -852,7 +853,7 @@ describe('ExecutionProcessor - multi-run nodes', () => {
 
     const result = filterExecutionData(execution, { mode: 'full' });
     const nodeData = result.nodes?.['Chat Model'];
-    const flat = nodeData?.data?.output.flat() ?? [];
+    const flat = nodeData?.data?.output?.flat() ?? [];
 
     expect(nodeData?.itemsOutput).toBe(2);
     expect(flat).toHaveLength(2);
@@ -867,7 +868,7 @@ describe('ExecutionProcessor - multi-run nodes', () => {
 
     const result = filterExecutionData(execution, { mode: 'filtered', itemsLimit: 1 });
     const nodeData = result.nodes?.['Chat Model'];
-    const flat = nodeData?.data?.output.flat() ?? [];
+    const flat = nodeData?.data?.output?.flat() ?? [];
 
     expect(nodeData?.itemsOutput).toBe(2);
     expect(nodeData?.data?.metadata.truncated).toBe(true);
@@ -912,5 +913,97 @@ describe('ExecutionProcessor - multi-run nodes', () => {
 
     expect(preview.nodes['Chat Model'].itemCounts.output).toBe(1);
     expect(preview.nodes['Chat Model'].dataStructure).toHaveProperty('json');
+  });
+});
+
+describe('execution-run-data helpers', () => {
+  const run = (data: Record<string, unknown>, executionTime?: number) => ({ startTime: 0, executionTime, data });
+
+  it('keeps branches of different connection types apart across runs', () => {
+    const merged = mergeRunBranches([
+      run({ main: [[{ json: { a: 1 } }]], ai_tool: [[{ json: { b: 2 } }]] }),
+      run({ ai_tool: [[{ json: { c: 3 } }]] }),
+    ]);
+
+    expect(merged).toEqual([[{ json: { a: 1 } }], [{ json: { b: 2 } }, { json: { c: 3 } }]]);
+  });
+
+  it('preserves a null port and fills it from a later run', () => {
+    expect(mergeRunBranches([run({ main: [[{ json: { a: 1 } }], null] })])).toEqual([[{ json: { a: 1 } }], null]);
+    expect(
+      mergeRunBranches([run({ main: [null, null] }), run({ main: [null, [{ json: { b: 2 } }]] })])
+    ).toEqual([null, [{ json: { b: 2 } }]]);
+  });
+
+  it('caps each merged branch without changing which items come first', () => {
+    const merged = mergeRunBranches(
+      [run({ main: [[1, 2, 3]] }), run({ main: [[4, 5]] })],
+      'data',
+      4
+    );
+
+    expect(merged).toEqual([[1, 2, 3, 4]]);
+  });
+
+  it('merges a branch too large to spread into a call', () => {
+    const big = Array.from({ length: 200_000 }, (_, i) => i);
+
+    expect(mergeRunBranches([run({ main: [big] }), run({ main: [big] })])[0]).toHaveLength(400_000);
+  });
+
+  it('counts every port and type, and samples from the first branch that has items', () => {
+    const runs = [
+      run({ main: [[{ json: { a: 1 } }]], ai_tool: [[{ json: { b: 2 } }]] }),
+      run({ ai_tool: [[{ json: { c: 3 } }]] }),
+    ];
+    expect(countRunItems(runs)).toBe(3);
+    expect(sampleRunItems(runs)).toEqual([{ json: { a: 1 } }]);
+
+    // An IF node that only emitted on its false branch still counts and yields a sample
+    const ifNode = [run({ main: [[], [{ json: { no: true } }]] })];
+    expect(countRunItems(ifNode)).toBe(1);
+    expect(sampleRunItems(ifNode)).toEqual([{ json: { no: true } }]);
+  });
+
+  it('finds the first item without merging and sums execution time across runs', () => {
+    const runs = [run({ main: [null, []] }, 500), run({ ai_tool: [[{ json: { x: 1 } }]] }, 1200)];
+
+    expect(firstRunItem(runs)).toEqual({ json: { x: 1 } });
+    expect(totalExecutionTime(runs)).toBe(1700);
+    expect(totalExecutionTime([run({ main: [[]] })])).toBeUndefined();
+  });
+});
+
+describe('ExecutionProcessor - input truncation', () => {
+  it('applies the item limit to inputs and reports their own metadata', () => {
+    const prompts = Array.from({ length: 5 }, (_, i) => ({ json: { prompt: `turn ${i}` } }));
+    const execution = createMockExecution({
+      nodeData: {
+        'Chat Model': [
+          { startTime: 0, executionTime: 1, inputOverride: { ai_languageModel: [prompts] }, data: { ai_languageModel: [[{ json: { text: 'a' } }]] } },
+        ],
+      },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'filtered', itemsLimit: 2, includeInputData: true });
+    const node = result.nodes?.['Chat Model'];
+
+    expect(node?.data?.input).toEqual([prompts.slice(0, 2)]);
+    expect(node?.data?.inputMetadata).toEqual({ totalItems: 5, itemsShown: 2, truncated: true });
+    expect(node?.itemsInput).toBe(5);
+    expect(result.summary?.hasMoreData).toBe(true);
+  });
+});
+
+describe('ExecutionProcessor - structure-only mode with no items', () => {
+  it('does not report more data for a node that produced nothing', () => {
+    const execution = createMockExecution({
+      nodeData: { Empty: [{ startTime: 0, executionTime: 1, data: { main: [[]] } }] },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'filtered', itemsLimit: 0 });
+
+    expect(result.nodes?.Empty?.data?.metadata).toEqual({ totalItems: 0, itemsShown: 0, truncated: false });
+    expect(result.summary?.hasMoreData).toBe(false);
   });
 });

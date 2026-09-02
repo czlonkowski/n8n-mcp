@@ -598,9 +598,16 @@ export interface FilteredNodeData {
   status: 'success' | 'error';
   error?: string;
   data?: {
-    input?: any[][];
-    output?: any[][];
+    /** Branches are `null` where n8n recorded no data on that port. */
+    input?: Array<any[] | null>;
+    output?: Array<any[] | null>;
     metadata: {
+      totalItems: number;
+      itemsShown: number;
+      truncated: boolean;
+    };
+    /** In summary and filtered modes, with `input`: inputs obey the same item limit, since AI sub-nodes fill them with whole prompts. */
+    inputMetadata?: {
       totalItems: number;
       itemsShown: number;
       truncated: boolean;

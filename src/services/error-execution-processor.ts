@@ -18,6 +18,14 @@ import {
   ErrorSuggestion,
 } from '../types/n8n-api';
 import { logger } from '../utils/logger';
+import {
+  countRunItems,
+  getRunError,
+  latestStartTime,
+  hasRunOutputData,
+  sampleRunItems,
+  totalExecutionTime,
+} from './execution-run-data';
 
 /**
  * Options for error processing
@@ -31,83 +39,6 @@ export interface ErrorProcessorOptions {
 
 // Constants
 const MAX_STACK_LINES = 3;
-
-/**
- * Extract per-branch item arrays from a task-data connections object
- * (e.g. `run.data`). Regular nodes populate `main`, but LangChain AI
- * Agent sub-nodes (Chat Model, Output Parser, Tool, Memory, etc.) use
- * special `ai_*` connection types instead. A node's task data only ever
- * populates one of these keys, so merging all of them is equivalent to
- * "whichever one this node uses".
- */
-function extractConnectionBranches(connections: unknown): unknown[][] {
-  const branches: unknown[][] = [];
-
-  if (!connections || typeof connections !== 'object') {
-    return branches;
-  }
-
-  for (const value of Object.values(connections as Record<string, unknown>)) {
-    if (Array.isArray(value)) {
-      for (const branch of value) {
-        branches.push(Array.isArray(branch) ? branch : []);
-      }
-    }
-  }
-
-  return branches;
-}
-
-/**
- * Whether a node's runData entry has any connection-type data at all
- * (as opposed to genuinely having zero items in an existing branch).
- */
-function nodeHasConnectionData(nodeData: unknown): boolean {
-  if (!Array.isArray(nodeData)) return false;
-  return nodeData.some(run => extractConnectionBranches(run?.data).length > 0);
-}
-
-/**
- * Get a node's first-branch output items, merged across every run in
- * run order.
- *
- * A node's runData entry is an array of runs, not a single run: nodes
- * invoked more than once within an execution (e.g. an AI Agent's Chat
- * Model, called once to decide to call a tool and again to produce the
- * final answer) get one array entry per invocation. Reading only
- * `nodeData[0]` silently drops every later invocation's data.
- */
-function getAllRunsOutputItems(nodeData: unknown): unknown[] {
-  const merged: unknown[] = [];
-  if (!Array.isArray(nodeData)) return merged;
-
-  for (const run of nodeData) {
-    const branches = extractConnectionBranches(run?.data);
-    if (branches[0]) {
-      merged.push(...branches[0]);
-    }
-  }
-
-  return merged;
-}
-
-/**
- * Find the error from a node's runs, if any. A node invoked multiple
- * times only fails on one of its runs, and the last run with an error is
- * the one that actually stopped the branch, so it wins over any earlier
- * error.
- */
-function getAnyRunError(nodeData: unknown): any {
-  if (!Array.isArray(nodeData)) return undefined;
-
-  let found: any;
-  for (const run of nodeData) {
-    if (run?.error) {
-      found = run.error;
-    }
-  }
-  return found;
-}
 
 /**
  * Keys that could enable prototype pollution attacks
@@ -207,9 +138,9 @@ function extractPrimaryError(
   const errorNode = error?.node as Record<string, unknown> | undefined;
   const nodeName = (errorNode?.name as string) || lastNode || 'Unknown';
 
-  // Also check runData for node-level errors, across every run of the node
+  // Also check runData for node-level errors
   const nodeRunData = runData[nodeName];
-  const nodeError = getAnyRunError(nodeRunData);
+  const nodeError = getRunError(nodeRunData);
 
   const stackTrace = (error?.stack || nodeError?.stack) as string | undefined;
 
@@ -254,12 +185,13 @@ function extractUpstreamContext(
     .filter(([name, data]) => {
       if (name === errorNodeName) return false;
       const runs = data as any[];
-      return getAllRunsOutputItems(runs).length > 0 && !getAnyRunError(runs);
+      return countRunItems(runs) > 0 && !getRunError(runs);
     })
     .map(([name, data]) => ({
       name,
-      executionTime: (data as any[])?.[0]?.executionTime || 0,
-      startTime: (data as any[])?.[0]?.startTime || 0
+      executionTime: totalExecutionTime(data) ?? 0,
+      // The most recent run decides recency for a node that ran more than once
+      startTime: latestStartTime(data)
     }))
     .sort((a, b) => b.startTime - a.startTime);
 
@@ -329,18 +261,19 @@ function extractNodeOutput(
   itemsLimit: number
 ): ErrorAnalysis['upstreamContext'] | undefined {
   const nodeData = runData[nodeName];
-  if (!nodeHasConnectionData(nodeData)) return undefined;
-  const items = getAllRunsOutputItems(nodeData);
+  if (!hasRunOutputData(nodeData)) return undefined;
 
-  // Sanitize sample items to remove sensitive data (flat, run-ordered
-  // across every invocation of the node)
+  // Merge only the samples; the count covers every port and comes from a pass that copies nothing.
+  const items = sampleRunItems(nodeData, Math.max(itemsLimit, 1));
+
+  // Sanitize sample items to remove sensitive data
   const rawSamples = items.slice(0, itemsLimit);
   const sanitizedSamples = rawSamples.map((item: unknown) => sanitizeData(item));
 
   return {
     nodeName,
     nodeType: '', // Will be enriched if workflow available
-    itemCount: items.length,
+    itemCount: countRunItems(nodeData),
     sampleItems: sanitizedSamples,
     dataStructure: extractStructure(items[0])
   };
@@ -364,14 +297,14 @@ function buildExecutionPath(
     for (const nodeName of upstreamNodes) {
       const nodeData = runData[nodeName];
       const runs = nodeData as any[] | undefined;
-      const hasError = getAnyRunError(runs);
-      const itemCount = getAllRunsOutputItems(runs).length;
+      const hasError = getRunError(runs);
+      const itemCount = countRunItems(runs);
 
       path.push({
         nodeName,
         status: hasError ? 'error' : (runs ? 'success' : 'skipped'),
         itemCount,
-        executionTime: runs?.[0]?.executionTime
+        executionTime: totalExecutionTime(runs)
       });
     }
 
@@ -381,7 +314,7 @@ function buildExecutionPath(
       nodeName: errorNodeName,
       status: 'error',
       itemCount: 0,
-      executionTime: errorNodeData?.[0]?.executionTime
+      executionTime: totalExecutionTime(errorNodeData)
     });
   } else {
     // Without workflow, list all executed nodes by execution order (best effort)
@@ -389,16 +322,16 @@ function buildExecutionPath(
       .map(([name, data]) => ({
         name,
         data: data as any[],
-        startTime: (data as any[])?.[0]?.startTime || 0
+        startTime: latestStartTime(data)
       }))
       .sort((a, b) => a.startTime - b.startTime);
 
     for (const { name, data } of nodesByTime) {
       path.push({
         nodeName: name,
-        status: getAnyRunError(data) ? 'error' : 'success',
-        itemCount: getAllRunsOutputItems(data).length,
-        executionTime: data?.[0]?.executionTime
+        status: getRunError(data) ? 'error' : 'success',
+        itemCount: countRunItems(data),
+        executionTime: totalExecutionTime(data)
       });
     }
   }
@@ -419,7 +352,7 @@ function findAdditionalErrors(
     if (nodeName === primaryErrorNode) continue;
 
     const runs = data as any[];
-    const error = getAnyRunError(runs);
+    const error = getRunError(runs);
     if (error) {
       additional.push({
         nodeName,

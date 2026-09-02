@@ -25,6 +25,14 @@ import {
 } from '../types/n8n-api';
 import { logger } from '../utils/logger';
 import { processErrorExecution } from './error-execution-processor';
+import {
+  extractConnectionBranches,
+  firstRunItem,
+  getRunError,
+  mergeRunBranches,
+  totalExecutionTime,
+  type RunBranch,
+} from './execution-run-data';
 
 /**
  * Size estimation and threshold constants
@@ -106,117 +114,6 @@ function estimateDataSize(data: unknown): number {
 }
 
 /**
- * Extract per-branch item arrays from a task-data connections object
- * (e.g. `run.data` or `run.inputOverride`).
- *
- * Regular nodes connect via the `main` connection type, but LangChain
- * AI Agent sub-nodes (Chat Model, Output Parser, Tool, Memory, etc.)
- * connect via special `ai_*` connection types (ai_languageModel,
- * ai_outputParser, ai_tool, ai_memory, ai_embedding, ...) instead of
- * `main`. A node's task data only ever populates one of these keys, so
- * merging all of them is equivalent to "whichever one this node uses".
- */
-function extractConnectionBranches(connections: unknown): unknown[][] {
-  const branches: unknown[][] = [];
-
-  if (!connections || typeof connections !== 'object') {
-    return branches;
-  }
-
-  for (const value of Object.values(connections as Record<string, unknown>)) {
-    if (Array.isArray(value)) {
-      for (const branch of value) {
-        branches.push(Array.isArray(branch) ? branch : []);
-      }
-    }
-  }
-
-  return branches;
-}
-
-/**
- * Get a run's output data across `main` and any `ai_*` connection types.
- */
-function getRunOutputData(run: any): unknown[][] {
-  return extractConnectionBranches(run?.data);
-}
-
-/**
- * Get a run's input data (n8n stores this under `inputOverride`, keyed by
- * connection type, mirroring the `data` field's shape).
- */
-function getRunInputData(run: any): unknown[][] {
-  return extractConnectionBranches(run?.inputOverride);
-}
-
-/**
- * Merge per-branch item arrays across every run of a node, aligned by
- * branch/port index, in run order.
- *
- * A node's `runData` entry is an array of runs, not a single run: nodes
- * invoked more than once within an execution (e.g. an AI Agent's Chat
- * Model, called once to decide to call a tool and again to produce the
- * final answer) get one array entry per invocation. Reading only
- * `nodeData[0]` silently drops every later invocation's data - this
- * merges branch[i] of every run into a single flat, run-ordered branch[i],
- * so `itemsLimit` truncation still behaves like "first N items overall".
- */
-function mergeRunsByBranch(nodeData: unknown, selector: (run: any) => unknown[][]): unknown[][] {
-  const merged: unknown[][] = [];
-
-  if (!Array.isArray(nodeData)) {
-    return merged;
-  }
-
-  for (const run of nodeData) {
-    const branches = selector(run);
-    branches.forEach((items, branchIndex) => {
-      if (!merged[branchIndex]) {
-        merged[branchIndex] = [];
-      }
-      merged[branchIndex].push(...items);
-    });
-  }
-
-  return merged;
-}
-
-/**
- * Get output data across `main`/`ai_*` connection types AND across every
- * run of the node (see {@link mergeRunsByBranch}).
- */
-function getAllRunsOutputData(nodeData: unknown): unknown[][] {
-  return mergeRunsByBranch(nodeData, getRunOutputData);
-}
-
-/**
- * Get input data (`inputOverride`) across every run of the node.
- */
-function getAllRunsInputData(nodeData: unknown): unknown[][] {
-  return mergeRunsByBranch(nodeData, getRunInputData);
-}
-
-/**
- * Find the error from a node's runs, if any. A node invoked multiple times
- * only fails on one of its runs, and n8n does not necessarily record that
- * as the first one - the last run with an error is the one that actually
- * stopped the branch, so it wins over any earlier error.
- */
-function getAnyRunError(nodeData: unknown): unknown {
-  if (!Array.isArray(nodeData)) {
-    return undefined;
-  }
-
-  let found: unknown;
-  for (const run of nodeData) {
-    if (run?.error) {
-      found = run.error;
-    }
-  }
-  return found;
-}
-
-/**
  * Count items in execution data
  */
 function countItems(nodeData: unknown): { input: number; output: number } {
@@ -227,11 +124,11 @@ function countItems(nodeData: unknown): { input: number; output: number } {
   }
 
   for (const run of nodeData) {
-    for (const output of getRunOutputData(run)) {
-      counts.output += output.length;
+    for (const output of extractConnectionBranches(run?.data)) {
+      counts.output += output?.length ?? 0;
     }
-    for (const input of getRunInputData(run)) {
-      counts.input += input.length;
+    for (const input of extractConnectionBranches(run?.inputOverride)) {
+      counts.input += input?.length ?? 0;
     }
   }
 
@@ -274,13 +171,11 @@ export function generatePreview(execution: Execution): {
     const nodeData = runData[nodeName];
     const itemCounts = countItems(nodeData);
 
-    // Extract structure from the first available output item across all runs
+    // Structure of the first output item any run produced
     let dataStructure: Record<string, unknown> = {};
-    if (Array.isArray(nodeData) && nodeData.length > 0) {
-      const firstItem = getAllRunsOutputData(nodeData)?.[0]?.[0];
-      if (firstItem) {
-        dataStructure = extractStructure(firstItem) as Record<string, unknown>;
-      }
+    const firstItem = firstRunItem(nodeData);
+    if (firstItem) {
+      dataStructure = extractStructure(firstItem) as Record<string, unknown>;
     }
 
     const nodeSize = estimateDataSize(nodeData);
@@ -292,15 +187,10 @@ export function generatePreview(execution: Execution): {
       estimatedSizeKB: nodeSize,
     };
 
-    // Check for errors
-    if (Array.isArray(nodeData)) {
-      for (const run of nodeData) {
-        if (run.error) {
-          nodePreview.status = 'error';
-          nodePreview.error = extractErrorMessage(run.error);
-          break;
-        }
-      }
+    const runError = getRunError(nodeData);
+    if (runError) {
+      nodePreview.status = 'error';
+      nodePreview.error = extractErrorMessage(runError);
     }
 
     preview.nodes[nodeName] = nodePreview;
@@ -362,33 +252,38 @@ function generateRecommendation(
  * Truncate items array with metadata
  */
 function truncateItems(
-  items: unknown[][],
-  limit: number
+  items: RunBranch[],
+  limit: number,
+  knownTotal?: number
 ): {
-  truncated: unknown[][];
+  truncated: RunBranch[];
   metadata: { totalItems: number; itemsShown: number; truncated: boolean };
 } {
   if (!Array.isArray(items) || items.length === 0) {
     return {
       truncated: items || [],
       metadata: {
-        totalItems: 0,
+        totalItems: knownTotal ?? 0,
         itemsShown: 0,
-        truncated: false,
+        truncated: (knownTotal ?? 0) > 0,
       },
     };
   }
 
-  let totalItems = 0;
-  for (const output of items) {
-    if (Array.isArray(output)) {
-      totalItems += output.length;
+  // `knownTotal` lets the caller pass branches merged only up to the limit.
+  let totalItems = knownTotal ?? 0;
+  if (knownTotal === undefined) {
+    for (const output of items) {
+      if (Array.isArray(output)) {
+        totalItems += output.length;
+      }
     }
   }
 
   // Special case: limit = 0 means structure only
   if (limit === 0) {
     const structureOnly = items.map(output => {
+      if (output === null) return null;
       if (!Array.isArray(output) || output.length === 0) {
         return [];
       }
@@ -400,7 +295,7 @@ function truncateItems(
       metadata: {
         totalItems,
         itemsShown: 0,
-        truncated: true,
+        truncated: totalItems > 0,
       },
     };
   }
@@ -418,7 +313,7 @@ function truncateItems(
   }
 
   // Apply limit
-  const result: unknown[][] = [];
+  const result: RunBranch[] = [];
   let itemsShown = 0;
 
   for (const output of items) {
@@ -566,49 +461,40 @@ export function filterExecutionData(
       continue;
     }
 
-    // Node-level metadata (executionTime) still comes from the first run;
-    // item data and error status are aggregated across every run below,
-    // since a node invoked multiple times in one execution (e.g. an AI
-    // Agent's Chat Model, called once to decide to call a tool and again
-    // to produce the final answer) produces one runData entry per call.
-    const firstRun = nodeData[0];
+    // Every field aggregates across all runs of the node.
     const itemCounts = countItems(nodeData);
     totalItems += itemCounts.output;
 
     const nodeResult: FilteredNodeData = {
-      executionTime: firstRun.executionTime,
+      executionTime: totalExecutionTime(nodeData),
       itemsInput: itemCounts.input,
       itemsOutput: itemCounts.output,
       status: 'success',
     };
 
-    // Check for errors across all runs, not just the first
-    const runError = getAnyRunError(nodeData);
+    const runError = getRunError(nodeData);
     if (runError) {
       nodeResult.status = 'error';
       nodeResult.error = extractErrorMessage(runError);
     }
 
-    // Handle full mode - include all data
+    // Merge only as many items per branch as will be shown; the counts above supply the totals.
+    // Structure-only (limit 0) still needs the first item of each branch.
+    const maxPerBranch = mode === 'full' || itemsLimit < 0 ? -1 : Math.max(itemsLimit, 1);
+    const outputData = mergeRunBranches(nodeData, 'data', maxPerBranch);
+
     if (mode === 'full') {
       nodeResult.data = {
-        output: getAllRunsOutputData(nodeData),
+        output: outputData,
         metadata: {
           totalItems: itemCounts.output,
           itemsShown: itemCounts.output,
           truncated: false,
         },
       };
-
-      const inputData = getAllRunsInputData(nodeData);
-      if (includeInputData && inputData.length > 0) {
-        nodeResult.data.input = inputData;
-      }
     } else {
-      // Summary or filtered mode - apply limits (flat, run-ordered across
-      // every invocation of the node)
-      const outputData = getAllRunsOutputData(nodeData);
-      const { truncated, metadata } = truncateItems(outputData, itemsLimit);
+      // Summary or filtered mode - apply item limits
+      const { truncated, metadata } = truncateItems(outputData, itemsLimit, itemCounts.output);
 
       if (metadata.truncated) {
         hasMoreData = true;
@@ -618,10 +504,19 @@ export function filterExecutionData(
         output: truncated,
         metadata,
       };
+    }
 
-      const inputData = getAllRunsInputData(nodeData);
-      if (includeInputData && inputData.length > 0) {
+    if (includeInputData && itemCounts.input > 0) {
+      const inputData = mergeRunBranches(nodeData, 'inputOverride', maxPerBranch);
+      if (mode === 'full') {
         nodeResult.data.input = inputData;
+      } else {
+        const { truncated, metadata } = truncateItems(inputData, itemsLimit, itemCounts.input);
+        if (metadata.truncated) {
+          hasMoreData = true;
+        }
+        nodeResult.data.input = truncated;
+        nodeResult.data.inputMetadata = metadata;
       }
     }
 
