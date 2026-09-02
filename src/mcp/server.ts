@@ -3351,7 +3351,9 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     }
 
     if (!validModes.includes(mode)) {
-      throw new Error(`get_node: Invalid mode "${mode}". Valid options: ${validModes.join(', ')}`);
+      // docs and search_properties are dispatched before this method; list them so the
+      // error names every mode the tool accepts.
+      throw new Error(`get_node: Invalid mode "${mode}". Valid options: info, docs, search_properties, ${validModes.slice(1).join(', ')}`);
     }
 
     const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);

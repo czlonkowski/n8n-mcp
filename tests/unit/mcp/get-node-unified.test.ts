@@ -254,7 +254,7 @@ describe('Unified get_node Tool', () => {
     });
 
     it('still rejects values that are not aliases', async () => {
-      await expect(call({ mode: 'schema' })).rejects.toThrow('Invalid mode "schema"');
+      await expect(call({ mode: 'schema' })).rejects.toThrow('Invalid mode "schema". Valid options: info, docs, search_properties, versions, compare, breaking, migrations');
       await expect(call({ detail: 'huge' })).rejects.toThrow('Invalid detail level "huge"');
       await expect(call({ mode: 42 })).rejects.toThrow('Invalid mode "42"');
     });
