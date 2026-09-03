@@ -750,6 +750,25 @@ describe('N8nApiClient', () => {
       expect(warnings.join(' ')).toContain('mysteryKey, timeSavedMode');
     });
 
+    it('remembers only what n8n named or the single guess the success followed', async () => {
+      // The AJV ladder first guesses mysteryKey (the only unknown key) and is still rejected;
+      // n8n then names redactionPolicy, and the write succeeds without it.
+      mockAxiosInstance.put
+        .mockRejectedValueOnce(badRequest('request/body/settings must NOT have additional properties'))
+        .mockRejectedValueOnce(badRequest("request/body/settings Unrecognized key(s) in object: 'redactionPolicy'"))
+        .mockResolvedValue({ data: { id: '123' } });
+      const settings = { executionOrder: 'v1', timeSavedMode: 'fixed', mysteryKey: 1, redactionPolicy: 'strict' };
+
+      await client.updateWorkflow('123', workflowWith(settings));
+      await client.updateWorkflow('123', workflowWith(settings));
+
+      // Only redactionPolicy is remembered: n8n named it. mysteryKey was a guess the success did
+      // not follow, so it is sent again rather than stripped on suspicion.
+      expect(mockAxiosInstance.put).toHaveBeenCalledTimes(4);
+      const secondWriteBody = mockAxiosInstance.put.mock.calls[3][1];
+      expect(secondWriteBody.settings).toEqual({ executionOrder: 'v1', timeSavedMode: 'fixed', mysteryKey: 1 });
+    });
+
     it('ignores a named key that is not in the payload and falls back to the ladder', async () => {
       mockAxiosInstance.post
         .mockRejectedValueOnce(badRequest("request/body/settings Unrecognized key(s) in object: 'notSent'"))

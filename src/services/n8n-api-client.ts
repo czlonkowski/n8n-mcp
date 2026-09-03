@@ -651,7 +651,10 @@ export class N8nApiClient {
 
     const steps = settingsRejectionLadder(body.settings);
     const dropped: string[] = [];
-    const certain: string[] = [];
+    // Keys n8n itself named are proven. A ladder guess is proven only if the write succeeded
+    // right after it and it dropped a single key; earlier guesses may have been innocent.
+    const namedByN8n: string[] = [];
+    let lastGuess: string[] = [];
     // Bound: a retry either consumes a ladder step or removes a named key, so both counts cap it.
     const settingsKeys = () => Object.keys((body.settings as object | undefined) ?? {});
     const maxSettingsRetries = steps.length + settingsKeys().length;
@@ -659,6 +662,7 @@ export class N8nApiClient {
       try {
         const result = await this.sendWorkflowWriteWithGroupFallback(body, send, options);
         if (dropped.length > 0) {
+          const certain = lastGuess.length === 1 ? [...namedByN8n, ...lastGuess] : namedByN8n;
           for (const key of certain) this.rejectedSettings.add(key);
           options.onWarning?.(settingsRejectedWarning(dropped));
         }
@@ -666,15 +670,23 @@ export class N8nApiClient {
       } catch (error) {
         const apiError = handleN8nApiError(error);
         if (!isUnknownSettingsPropertyError(apiError) || retries++ >= maxSettingsRetries) throw apiError;
-        // A wording that names the keys settles the matter in one retry and each key is
-        // certain; the AJV wording does not, so the ladder guesses one step at a time and
-        // only a step that dropped a single key is certain. Only keys actually in the payload
-        // count; a name n8n reports that is not there would be a retry without progress.
+        // A wording that names the keys settles the matter in one retry; the AJV wording does
+        // not, so the ladder guesses one step at a time. Only keys still in the payload count:
+        // a name n8n reports that is not there, or a ladder step already emptied by a named
+        // retry, would be a retry without progress.
         const present = new Set(settingsKeys());
         const named = unknownSettingsKeysNamedBy(apiError).filter(key => present.has(key));
-        const drop = named.length > 0 ? named : step < steps.length ? steps[step++] : [];
+        let drop = named;
+        while (drop.length === 0 && step < steps.length) {
+          drop = steps[step++].filter(key => present.has(key));
+        }
         if (drop.length === 0) throw apiError;
-        if (named.length > 0 || drop.length === 1) certain.push(...drop);
+        if (named.length > 0) {
+          namedByN8n.push(...named);
+          lastGuess = [];
+        } else {
+          lastGuess = drop;
+        }
         body = withoutSettings(body, drop);
         dropped.push(...drop);
       }

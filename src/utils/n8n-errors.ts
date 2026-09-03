@@ -223,22 +223,21 @@ export function enrichUnknownPropertyError(
         : undefined;
 
   const parts: string[] = [];
-  if (settingsLevel) {
+  if (named) {
+    // Nothing to inventory or report: n8n said which key it refused.
+    parts.push(`n8n identified the rejected property: ${named}.`);
+  } else if (settingsLevel) {
     const settings = sentBody.settings;
     const sentKeys =
       settings && typeof settings === 'object' && !Array.isArray(settings)
         ? Object.keys(settings)
         : [];
     parts.push(`Settings keys sent: ${sentKeys.join(', ') || '(none)'}.`);
-    if (named) {
-      parts.push(`n8n identified the rejected property: ${named}.`);
-    } else {
-      const unknown = sentKeys.filter(
-        key => !Object.prototype.hasOwnProperty.call(WORKFLOW_SETTINGS_PROPERTIES, key)
-      );
-      if (unknown.length > 0) {
-        parts.push(`Not in n8n-mcp's known settings table: ${unknown.join(', ')}.`);
-      }
+    const unknown = sentKeys.filter(
+      key => !Object.prototype.hasOwnProperty.call(WORKFLOW_SETTINGS_PROPERTIES, key)
+    );
+    if (unknown.length > 0) {
+      parts.push(`Not in n8n-mcp's known settings table: ${unknown.join(', ')}.`);
     }
     parts.push(
       'This usually means the instance stores a setting its Public API write schema rejects ' +
@@ -247,9 +246,6 @@ export function enrichUnknownPropertyError(
     );
   } else {
     parts.push(`Top-level keys sent: ${Object.keys(sentBody).join(', ') || '(none)'}.`);
-    if (named) {
-      parts.push(`n8n identified the rejected property: ${named}.`);
-    }
     parts.push(
       "One of these keys is not accepted by this instance's Public API write schema. " +
         'Please report the offending key at https://github.com/czlonkowski/n8n-mcp/issues.'
