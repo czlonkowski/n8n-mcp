@@ -176,6 +176,28 @@ function createMockWorkflow(options?: {
  * Core Functionality Tests
  */
 describe('ErrorExecutionProcessor - Core Functionality', () => {
+  it('should not invent Unknown error on a successful execution (#1065)', () => {
+    const execution = createMockExecution({
+      errorNode: 'Last Node',
+      hasExecutionError: false,
+      runData: {
+        Trigger: createSuccessfulNodeData(1),
+        'Process Data': createSuccessfulNodeData(5),
+        'Last Node': createSuccessfulNodeData(2),
+      },
+    });
+    execution.status = ExecutionStatus.SUCCESS;
+
+    const result = processErrorExecution(execution, { includeExecutionPath: true });
+
+    expect(result.success).toBe(true);
+    expect(result.primaryError.message).toBe('No error found in this execution');
+    expect(result.primaryError.errorType).toBe('None');
+    expect(result.primaryError.nodeName).toBe('Last Node');
+    expect(result.executionPath?.every(step => step.status !== 'error')).toBe(true);
+    expect(result.suggestions?.[0].title).toBe('Nothing to diagnose');
+  });
+
   it('should extract primary error information', () => {
     const execution = createMockExecution({
       errorNode: 'HTTP Request',
