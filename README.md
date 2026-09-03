@@ -8,6 +8,7 @@
 [![n8n version](https://img.shields.io/badge/n8n-2.36.4-orange.svg)](https://github.com/n8n-io/n8n)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fczlonkowski%2Fn8n--mcp-green.svg)](https://github.com/czlonkowski/n8n-mcp/pkgs/container/n8n-mcp)
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/n8n-mcp?referralCode=n8n-mcp)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/czlonkowski/n8n-mcp)
 
 A Model Context Protocol (MCP) server that provides AI assistants with comprehensive access to n8n node documentation, properties, and operations. Deploy in minutes to give Claude and other AI assistants deep knowledge about n8n's 2,616 workflow automation nodes (832 core + 1,784 community).
 
@@ -57,7 +58,7 @@ AI results can be unpredictable. Protect your work!
 
 Just sign up, get your API key, and connect your MCP client.
 
-**Want to self-host?** See the [Self-Hosting Guide](./docs/SELF_HOSTING.md) for npx, Docker, Railway, and local installation options.
+**Want to self-host?** See the [Self-Hosting Guide](./docs/SELF_HOSTING.md) for npx, Docker, Railway, Render, and local installation options.
 
 ## n8n Integration
 
@@ -440,7 +441,8 @@ Combine with a read-only n8n API key (Settings → API in your n8n instance) for
 
 ## Documentation
 
-- [Self-Hosting Guide](./docs/SELF_HOSTING.md) - npx, Docker, Railway, and local installation
+- [Self-Hosting Guide](./docs/SELF_HOSTING.md) - npx, Docker, Railway, Render, and local installation
+- [Render Deployment](./docs/RENDER_DEPLOYMENT.md) - Blueprint (`render.yaml`) on [Render](https://render.com/)
 - [Security & Hardening](./docs/SECURITY_HARDENING.md) - Trust model, hardening options, workflow restrictions
 - [n8n Deployment Guide](./docs/N8N_DEPLOYMENT.md) - Production deployment with n8n
 - [Database Configuration](./docs/DATABASE_CONFIGURATION.md) - SQLite adapters and memory optimization
