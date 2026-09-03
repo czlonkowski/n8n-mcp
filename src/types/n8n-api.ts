@@ -619,6 +619,12 @@ export interface FilteredNodeData {
 
 // Error Mode Types
 export interface ErrorAnalysis {
+  /**
+   * True when error mode was requested but the execution has no error to
+   * diagnose (status success, no resultData.error, no node-level error).
+   */
+  success?: boolean;
+
   // Primary error information
   primaryError: {
     message: string;

@@ -91,6 +91,31 @@ export function processErrorExecution(
   const runData = resultData?.runData as Record<string, any> || {};
   const lastNode = resultData?.lastNodeExecuted;
 
+  if (!hasDiagnosableError(error, runData)) {
+    const executionPath = includeExecutionPath
+      ? buildObservedExecutionPath(runData)
+      : undefined;
+    return {
+      success: true,
+      primaryError: {
+        message: 'No error found in this execution',
+        errorType: 'None',
+        nodeName: lastNode || '',
+        nodeType: '',
+      },
+      executionPath,
+      suggestions: [
+        {
+          type: 'investigate',
+          title: 'Nothing to diagnose',
+          description:
+            'This execution has no error payload and no node-level error. Use summary or filtered mode to inspect outputs, or pick an execution whose status is error.',
+          confidence: 'high',
+        },
+      ],
+    };
+  }
+
   // 1. Extract primary error info
   const primaryError = extractPrimaryError(error, lastNode, runData, includeStackTrace);
 
@@ -123,6 +148,48 @@ export function processErrorExecution(
     additionalErrors: additionalErrors.length > 0 ? additionalErrors : undefined,
     suggestions: suggestions.length > 0 ? suggestions : undefined
   };
+}
+
+/**
+ * True when there is a real error payload or a node-level error.
+ * A successful execution with only lastNodeExecuted must not invent one.
+ */
+function hasDiagnosableError(
+  error: Record<string, unknown> | undefined,
+  runData: Record<string, any>
+): boolean {
+  if (error && (error.message || error.node || error.stack || error.name)) {
+    return true;
+  }
+  for (const data of Object.values(runData)) {
+    if (getRunError(data)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Path of nodes that actually ran, with their real status.
+ * Does not mark the last node as failed.
+ */
+function buildObservedExecutionPath(
+  runData: Record<string, any>
+): ErrorAnalysis['executionPath'] {
+  const nodesByTime = Object.entries(runData)
+    .map(([name, data]) => ({
+      name,
+      data: data as any[],
+      startTime: latestStartTime(data),
+    }))
+    .sort((a, b) => a.startTime - b.startTime);
+
+  return nodesByTime.map(({ name, data }) => ({
+    nodeName: name,
+    status: getRunError(data) ? 'error' : 'success',
+    itemCount: countRunItems(data),
+    executionTime: totalExecutionTime(data),
+  }));
 }
 
 /**

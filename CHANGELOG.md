@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`n8n_executions` `mode=error` no longer invents "Unknown error" on a successful run** ([#1065](https://github.com/czlonkowski/n8n-mcp/issues/1065)). When the execution has no `resultData.error` and no node-level error, error mode now reports `success: true` with a "nothing to diagnose" note instead of blaming the last node.
+
 ## [2.82.1] - 2026-09-03
 
 ### Fixed
