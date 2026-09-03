@@ -162,7 +162,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "@n8n/n8n-nodes-langchain": "2.37.3",
-    "@supabase/supabase-js": "^2.57.4",
+    "@supabase/supabase-js": ">=2.57.4 <2.110.0",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "express-rate-limit": "^7.1.5",
