@@ -431,3 +431,49 @@ describe('Error message integration', () => {
     expect(noExecutionMessage).toContain("mode='preview'");
   });
 });
+
+describe('unknownSettingsKeysNamedBy', () => {
+  const load = () => import('../../../src/utils/n8n-errors');
+
+  it('parses the keys from the zod wording n8n 2.37 uses on create', async () => {
+    const { unknownSettingsKeysNamedBy, isUnknownSettingsPropertyError } = await load();
+    const error = { statusCode: 400, message: "request/body/settings Unrecognized key(s) in object: 'a', 'b_c'" };
+
+    expect(isUnknownSettingsPropertyError(error)).toBe(true);
+    expect(unknownSettingsKeysNamedBy(error)).toEqual(['a', 'b_c']);
+  });
+
+  it('reads only the settings-level list when a nodes-level rejection sits in the same text', async () => {
+    const { unknownSettingsKeysNamedBy } = await load();
+    const error = {
+      statusCode: 400,
+      message: "request/body/nodes/0 Unrecognized key(s) in object: 'foo', request/body/settings Unrecognized key(s) in object: 'bar'",
+    };
+
+    expect(unknownSettingsKeysNamedBy(error)).toEqual(['bar']);
+  });
+
+  it('names the key in the enriched top-level message instead of asking for a report', async () => {
+    const { enrichUnknownPropertyError, N8nApiError } = await load();
+    const error = new N8nApiError("request/body Unrecognized key(s) in object: 'foo'", 400);
+
+    const enriched = enrichUnknownPropertyError(error, { name: 'x', foo: 1 });
+
+    expect(enriched.message).toContain('n8n identified the rejected property: foo');
+  });
+
+  it('does not double the keys when the details echo the same message', async () => {
+    const { unknownSettingsKeysNamedBy } = await load();
+    const message = "request/body/settings Unrecognized key(s) in object: 'a', 'b'";
+
+    expect(unknownSettingsKeysNamedBy({ statusCode: 400, message, details: { message } })).toEqual(['a', 'b']);
+  });
+
+  it('names nothing for the AJV wording, and rejects other paths and statuses', async () => {
+    const { unknownSettingsKeysNamedBy, isUnknownSettingsPropertyError } = await load();
+
+    expect(unknownSettingsKeysNamedBy({ statusCode: 400, message: 'request/body/settings must NOT have additional properties' })).toEqual([]);
+    expect(isUnknownSettingsPropertyError({ statusCode: 400, message: "request/body/nodes/0 Unrecognized key(s) in object: 'foo'" })).toBe(false);
+    expect(isUnknownSettingsPropertyError({ statusCode: 500, message: "request/body/settings Unrecognized key(s) in object: 'a'" })).toBe(false);
+  });
+});

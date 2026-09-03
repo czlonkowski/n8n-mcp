@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.81.1] - 2026-09-03
+
+### Fixed
+
+- **Unknown-settings retry also recognises the wording n8n 2.37 uses on create.** n8n 2.37 validates `POST /workflows` with a different validator, which rejects an unknown settings key as `request/body/settings Unrecognized key(s) in object: 'key'` instead of AJV's `must NOT have additional properties`; `PUT` keeps the AJV wording. The retry added in 2.81.0 matched only the AJV text, so on 2.37 a create carrying such a key still failed with the 400. Both wordings are recognised now, and because the new one names the keys, the client drops exactly those in a single retry and remembers them, instead of probing candidates one at a time. The canvas-group fallback and the error enrichment for unnamed rejections accept the new wording as well.
+
 ## [2.81.0] - 2026-09-03
 
 ### Added
