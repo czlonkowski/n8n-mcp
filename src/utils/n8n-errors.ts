@@ -141,7 +141,6 @@ function folderPlacementHint(error: N8nApiError): string {
   return ' Note: workflow folder placement (parentFolderId) requires n8n 2.32 or later - retry without parentFolderId, or upgrade the instance.';
 }
 
-/** AJV's rejection of an unknown key inside `settings`, which never names the key itself. */
 /**
  * n8n rejects an unknown settings key in one of two wordings, depending on the endpoint and
  * version: AJV's `request/body/settings must NOT have additional properties` (update, and
@@ -161,11 +160,6 @@ const parseUnrecognizedKeys = (haystack: string, path: string): string[] => {
 };
 
 /**
- * Whether n8n refused a workflow write because `settings` carried a property its Public API
- * schema does not know. Matches only the settings-level path; a top-level or nested rejection
- * (`body`, `body/nodes/0`, `body/nodeGroups/0`) is a different problem with a different fix.
- */
-/**
  * The settings keys an unknown-key rejection names, when the wording names them (zod).
  * Empty for the AJV wording, which leaves the caller to find the key by retrying.
  */
@@ -176,6 +170,11 @@ export function unknownSettingsKeysNamedBy(error: unknown): string[] {
   return parseUnrecognizedKeys(haystack, 'body/settings');
 }
 
+/**
+ * Whether n8n refused a workflow write because `settings` carried a property its Public API
+ * schema does not know, in either wording. Matches only the settings-level path; a top-level or
+ * nested rejection (`body`, `body/nodes/0`, `body/nodeGroups/0`) is a different problem.
+ */
 export function isUnknownSettingsPropertyError(error: unknown): boolean {
   const apiError = error as { statusCode?: number; message?: string; details?: unknown } | null;
   if (!apiError || apiError.statusCode !== 400) return false;
