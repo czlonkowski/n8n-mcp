@@ -6,7 +6,7 @@
   "description": "MCP server providing AI assistants with comprehensive access to n8n node documentation and workflow management capabilities",
   "author": {
     "name": "Romuald Członkowski",
-    "url": "https://www.aiadvisors.pl/en"
+    "url": "https://aiadvisors.pl/en"
   },
   "repository": {
     "type": "git",

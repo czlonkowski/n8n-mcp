@@ -71,7 +71,7 @@ function buildManifest() {
       'documentation and workflow management capabilities',
     author: {
       name: 'Romuald Członkowski',
-      url: 'https://www.aiadvisors.pl/en',
+      url: 'https://aiadvisors.pl/en',
     },
     repository: {
       type: 'git',

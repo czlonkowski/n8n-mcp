@@ -34,6 +34,8 @@ n8n-MCP serves as a bridge between n8n's workflow automation platform and AI mod
 
 **n8n-mcp** started as a personal tool but now helps tens of thousands of developers automate their workflows efficiently. Maintaining and developing this project competes with my paid work. Your sponsorship helps me dedicate focused time to new features, respond quickly to issues, keep documentation up-to-date, and ensure compatibility with latest n8n releases. **[Become a sponsor](https://github.com/sponsors/czlonkowski)**
 
+> 💼 **Need it built for you?** Work with [AiAdvisors — n8n automation audits, builds, and operations](https://aiadvisors.pl/en), run by the author of n8n-mcp and n8n-skills.
+
 ## Important Safety Warning
 
 **NEVER edit your production workflows directly with AI!** Always:
@@ -472,4 +474,4 @@ See [Acknowledgments](./docs/ACKNOWLEDGMENTS.md) for credits and template attrib
 
 > 💼 **Need it built for you?**
 >
-> Work with [AiAdvisors](https://www.aiadvisors.pl/en) — automation audits, builds, and operations by the team behind n8n-mcp and n8n-skills.
+> Work with [AiAdvisors — n8n automation audits, builds, and operations](https://aiadvisors.pl/en), run by the author of n8n-mcp and n8n-skills.
