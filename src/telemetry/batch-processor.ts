@@ -52,7 +52,7 @@ export class TelemetryBatchProcessor {
     rateLimitHits: 0
   };
   private flushTimes: number[] = [];
-  private deadLetterQueue: (TelemetryEvent | WorkflowTelemetry | WorkflowMutationRecord)[] = [];
+  private deadLetterQueue: (TelemetryEvent | WorkflowTelemetry)[] = [];
   private readonly maxDeadLetterSize = 100;
   // Track event listeners for proper cleanup to prevent memory leaks
   private eventListeners: {
@@ -335,6 +335,7 @@ export class TelemetryBatchProcessor {
     try {
       // Batch mutations
       const batches = this.createBatches(mutations, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
+      let allBatchesSent = true;
 
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
@@ -366,14 +367,19 @@ export class TelemetryBatchProcessor {
           this.metrics.eventsTracked += batch.length;
           this.metrics.batchesSent++;
         } else {
-          const unsent = this.addUnsentBatchesToDeadLetterQueue(batches, batchIndex);
-          this.metrics.eventsFailed += unsent.itemCount;
-          this.metrics.batchesFailed += unsent.batchCount;
-          return false;
+          // A mutation batch that failed here is dropped, never parked in the
+          // dead letter queue. The timeout in executeWithTimeout is a race, so
+          // the insert usually commits after it fires; replaying the batch on
+          // every later flush wrote the same rows once a minute for days. The
+          // remaining batches are independent and still get their attempt.
+          this.metrics.eventsFailed += batch.length;
+          this.metrics.eventsDropped += batch.length;
+          this.metrics.batchesFailed++;
+          allBatchesSent = false;
         }
       }
 
-      return true;
+      return allBatchesSent;
     } catch (error) {
       logger.error('Failed to flush mutations with details:', {
         errorMsg: error instanceof Error ? error.message : String(error),
@@ -455,7 +461,7 @@ export class TelemetryBatchProcessor {
    * Preserve the failed batch and every later batch that was not attempted.
    */
   private addUnsentBatchesToDeadLetterQueue<
-    T extends TelemetryEvent | WorkflowTelemetry | WorkflowMutationRecord
+    T extends TelemetryEvent | WorkflowTelemetry
   >(batches: T[][], failedBatchIndex: number): { itemCount: number; batchCount: number } {
     const unsentBatches = batches.slice(failedBatchIndex);
     const unsentItems = unsentBatches.flat();
@@ -470,7 +476,7 @@ export class TelemetryBatchProcessor {
   /**
    * Add failed items to dead letter queue
    */
-  private addToDeadLetterQueue(items: (TelemetryEvent | WorkflowTelemetry | WorkflowMutationRecord)[]): void {
+  private addToDeadLetterQueue(items: (TelemetryEvent | WorkflowTelemetry)[]): void {
     for (const item of items) {
       this.deadLetterQueue.push(item);
 
@@ -496,13 +502,11 @@ export class TelemetryBatchProcessor {
 
     const events: TelemetryEvent[] = [];
     const workflows: WorkflowTelemetry[] = [];
-    const mutations: WorkflowMutationRecord[] = [];
 
-    // Separate events, workflows, and mutations
+    // Separate events and workflows. Mutations are never parked here: a
+    // replayed mutation duplicates a row that most likely already exists.
     for (const item of this.deadLetterQueue) {
-      if ('workflowHashBefore' in item) {
-        mutations.push(item as WorkflowMutationRecord);
-      } else if ('workflow_hash' in item) {
+      if ('workflow_hash' in item) {
         workflows.push(item as WorkflowTelemetry);
       } else {
         events.push(item as TelemetryEvent);
@@ -518,9 +522,6 @@ export class TelemetryBatchProcessor {
     }
     if (workflows.length > 0) {
       await this.flushWorkflows(workflows);
-    }
-    if (mutations.length > 0) {
-      await this.flushMutations(mutations);
     }
   }
 

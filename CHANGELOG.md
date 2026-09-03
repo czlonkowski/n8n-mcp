@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.82.1] - 2026-09-03
+
+### Fixed
+
+- **A workflow mutation whose telemetry insert timed out is no longer replayed from the dead letter queue.** The client-side timeout is a race, not an abort, so the insert usually committed after it fired; the batch was then parked and re-sent on every later flush, which wrote the same rows once a minute for as long as the process lived. In the 24 hours before this fix, 15 installations produced 84% of all `workflow_mutations` rows this way. A failed mutation batch is now counted as dropped and the remaining batches still get their single attempt; events and workflow snapshots keep the retry path. The telemetry database drops a second row for the same mutation `session_id` as well, which covers processes still running older versions.
+
 ## [2.82.0] - 2026-09-03
 
 ### Changed
