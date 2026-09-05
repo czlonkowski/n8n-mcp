@@ -302,6 +302,30 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
     errors.push('Workflow must have at least one node');
   }
 
+  // Validate node shapes before graph checks inspect names, types, or parameters.
+  if (workflow.nodes) {
+    if (!Array.isArray(workflow.nodes)) {
+      errors.push('Workflow nodes must be an array');
+      return errors;
+    }
+
+    const nodes: WorkflowNode[] = [];
+    for (const [index, node] of workflow.nodes.entries()) {
+      try {
+        nodes.push(validateWorkflowNode(node));
+      } catch (error) {
+        errors.push(`Invalid node at index ${index}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+
+    if (nodes.length !== workflow.nodes.length) {
+      return errors;
+    }
+
+    // Use normalized fields without changing the caller's workflow.
+    workflow = { ...workflow, nodes };
+  }
+
   // Check if workflow has only non-executable nodes (sticky notes)
   if (workflow.nodes && workflow.nodes.length > 0) {
     const hasExecutableNodes = workflow.nodes.some(node => !isNonExecutableNode(node.type));
@@ -397,20 +421,13 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
     }
   }
 
-  // Validate nodes
+  // Check for common node type mistakes after node shapes have been validated.
   if (workflow.nodes) {
     workflow.nodes.forEach((node, index) => {
-      try {
-        validateWorkflowNode(node);
-        
-        // Additional check for common node type mistakes
-        if (node.type.startsWith('nodes-base.')) {
-          errors.push(`Invalid node type "${node.type}" at index ${index}. Use "n8n-nodes-base.${node.type.substring(11)}" instead.`);
-        } else if (!node.type.includes('.')) {
-          errors.push(`Invalid node type "${node.type}" at index ${index}. Node types must include package prefix (e.g., "n8n-nodes-base.webhook").`);
-        }
-      } catch (error) {
-        errors.push(`Invalid node at index ${index}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      if (node.type.startsWith('nodes-base.')) {
+        errors.push(`Invalid node type "${node.type}" at index ${index}. Use "n8n-nodes-base.${node.type.substring(11)}" instead.`);
+      } else if (!node.type.includes('.')) {
+        errors.push(`Invalid node type "${node.type}" at index ${index}. Node types must include package prefix (e.g., "n8n-nodes-base.webhook").`);
       }
     });
   }

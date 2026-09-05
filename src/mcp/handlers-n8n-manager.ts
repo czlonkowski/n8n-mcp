@@ -632,7 +632,8 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
     // Proactively detect SHORT form node types (common mistake)
     const shortFormErrors: string[] = [];
     input.nodes?.forEach((node: any, index: number) => {
-      if (node.type?.startsWith('nodes-base.') || node.type?.startsWith('nodes-langchain.')) {
+      if (typeof node?.type === 'string' &&
+          (node.type.startsWith('nodes-base.') || node.type.startsWith('nodes-langchain.'))) {
         const fullForm = node.type.startsWith('nodes-base.')
           ? node.type.replace('nodes-base.', 'n8n-nodes-base.')
           : node.type.replace('nodes-langchain.', '@n8n/n8n-nodes-langchain.');
