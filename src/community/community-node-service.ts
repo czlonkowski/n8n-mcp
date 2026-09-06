@@ -153,6 +153,24 @@ export class CommunityNodeService {
       }
     }
 
+    // Step 3: Sync specific high-quality packages (Feishu nodes)
+    const specificPackages = [
+      'n8n-nodes-feishu-lark',
+      'n8n-nodes-feishu-lite'
+    ];
+    logger.info(`Syncing ${specificPackages.length} specific high-quality packages...`);
+    try {
+      const specificResult = await this.syncSpecificPackages(specificPackages, progressCallback, options.skipExisting);
+      // Add to npm result since they're from npm registry
+      result.npm.fetched += specificResult.fetched;
+      result.npm.saved += specificResult.saved;
+      result.npm.skipped += specificResult.skipped;
+      result.npm.errors.push(...specificResult.errors);
+    } catch (error: any) {
+      logger.error('Failed to sync specific packages:', error);
+      result.npm.errors.push(`Specific packages sync failed: ${error.message}`);
+    }
+
     result.duration = Date.now() - startTime;
     logger.info(
       `Community node sync complete in ${(result.duration / 1000).toFixed(1)}s: ` +
@@ -649,6 +667,62 @@ export class CommunityNodeService {
    */
   getCommunityStats(): CommunityStats {
     return this.repository.getCommunityStats();
+  }
+
+  /**
+   * Sync specific community packages by name.
+   * Used for high-quality community nodes that should always be included.
+   *
+   * @param packageNames Array of npm package names to sync
+   * @param progressCallback Optional callback for progress updates
+   * @param skipExisting Skip packages already in database
+   * @returns Sync result with fetched, saved, skipped counts
+   */
+  async syncSpecificPackages(
+    packageNames: string[],
+    progressCallback?: (message: string, current: number, total: number) => void,
+    skipExisting?: boolean
+  ): Promise<SyncResult['npm']> {
+    const result = { fetched: 0, saved: 0, skipped: 0, errors: [] as string[] };
+
+    // Fetch specific packages
+    const packages = await this.fetcher.fetchSpecificPackages(packageNames, progressCallback);
+    result.fetched = packages.length;
+
+    if (packages.length === 0) {
+      logger.warn('No specific packages returned');
+      return result;
+    }
+
+    logger.info(`Processing ${packages.length} specific packages...`);
+
+    for (const pkg of packages) {
+      try {
+        const packageName = pkg.package.name;
+
+        // Skip if already exists and skipExisting is true
+        if (skipExisting && this.repository.hasNodeByNpmPackage(packageName)) {
+          result.skipped++;
+          continue;
+        }
+
+        // Convert to ParsedNode format
+        const parsedNode = this.npmPackageToParsedNode(pkg);
+
+        // Save to database
+        this.repository.saveNode(parsedNode);
+        result.saved++;
+
+        if (progressCallback) {
+          progressCallback(`Saving specific packages`, result.saved + result.skipped, packages.length);
+        }
+      } catch (error: any) {
+        result.errors.push(`Error saving ${pkg.package.name}: ${error.message}`);
+      }
+    }
+
+    logger.info(`Specific packages: ${result.saved} saved, ${result.skipped} skipped`);
+    return result;
   }
 
   /**

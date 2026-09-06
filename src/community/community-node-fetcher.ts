@@ -526,6 +526,87 @@ export class CommunityNodeFetcher {
     );
   }
 
+  /**
+   * Fetch specific community packages by name.
+   * Used for high-quality community nodes that should always be included.
+   *
+   * @param packageNames Array of npm package names to fetch
+   * @param progressCallback Optional callback for progress updates
+   * @returns Array of npm search results for the specified packages
+   */
+  async fetchSpecificPackages(
+    packageNames: string[],
+    progressCallback?: (message: string, current: number, total: number) => void
+  ): Promise<NpmSearchResult[]> {
+    const results: NpmSearchResult[] = [];
+    const total = packageNames.length;
+
+    logger.info(`Fetching ${total} specific community packages...`);
+
+    for (let i = 0; i < packageNames.length; i++) {
+      const packageName = packageNames[i];
+
+      // Validate package name
+      if (!this.validatePackageName(packageName)) {
+        logger.warn(`Invalid package name rejected: ${packageName}`);
+        continue;
+      }
+
+      logger.info(`Fetching specific package: ${packageName}`);
+
+      // Fetch package.json from npm registry
+      const packageJson = await this.fetchPackageJson(packageName);
+
+      if (packageJson) {
+        // Create a search result object compatible with NpmSearchResult
+        const searchResult: NpmSearchResult = {
+          package: {
+            name: packageJson.name || packageName,
+            version: packageJson.version || packageJson['dist-tags']?.latest || '0.0.0',
+            description: packageJson.description || '',
+            keywords: packageJson.keywords || [],
+            date: packageJson.time?.modified || new Date().toISOString(),
+            links: {
+              npm: `https://www.npmjs.com/package/${packageName}`,
+              homepage: packageJson.homepage,
+              repository: typeof packageJson.repository === 'string'
+                ? packageJson.repository
+                : packageJson.repository?.url,
+            },
+            author: packageJson.author,
+            publisher: packageJson._npmUser,
+            maintainers: packageJson.maintainers || [],
+          },
+          score: {
+            final: 1.0, // High score for manually specified packages
+            detail: {
+              quality: 1.0,
+              popularity: 1.0,
+              maintenance: 1.0,
+            },
+          },
+          searchScore: 1.0,
+        };
+
+        results.push(searchResult);
+      } else {
+        logger.warn(`Failed to fetch package: ${packageName}`);
+      }
+
+      if (progressCallback) {
+        progressCallback(`Fetching specific packages`, i + 1, total);
+      }
+
+      // Rate limiting
+      if (i < packageNames.length - 1) {
+        await this.sleep(FETCH_CONFIG.RATE_LIMIT_DELAY);
+      }
+    }
+
+    logger.info(`Fetched ${results.length}/${total} specific packages successfully`);
+    return results;
+  }
+
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
