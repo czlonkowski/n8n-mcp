@@ -96,6 +96,7 @@
     "test:docker:security": "./scripts/test-docker-config.sh security",
     "mine:patterns": "tsx src/scripts/mine-workflow-patterns.ts",
     "sanitize:templates": "node dist/scripts/sanitize-templates.js",
+    "db:compact": "node dist/scripts/compact-node-database.js",
     "db:rebuild": "node dist/scripts/rebuild-database.js",
     "db:init": "node -e \"new (require('./dist/services/sqlite-storage-service').SQLiteStorageService)(); console.log('Database initialized')\"",
     "docs:rebuild": "ts-node src/scripts/rebuild-database.ts",

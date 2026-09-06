@@ -1,3 +1,4 @@
+import { gzipSync } from 'node:zlib';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NodeRepository } from '@/database/node-repository';
 import { DatabaseAdapter } from '@/database/database-adapter';
@@ -88,7 +89,7 @@ describe('NodeRepository - Outputs Handling', () => {
         0, // hasToolVariant
         '3', // version
         null, // documentation
-        JSON.stringify([], null, 2), // properties
+        gzipSync('[]').toString('base64'), // properties
         JSON.stringify([], null, 2), // operations
         JSON.stringify([], null, 2), // credentials
         JSON.stringify(outputs, null, 2), // outputs
