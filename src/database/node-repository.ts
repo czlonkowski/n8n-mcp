@@ -1,4 +1,4 @@
-import * as zlib from 'zlib';
+import { compressJson, CompressedJsonReader } from './compressed-json';
 import { DatabaseAdapter } from './database-adapter';
 import { ParsedNode, normalizeNodeVersion } from '../parsers/node-parser';
 import { SQLiteStorageService } from '../services/sqlite-storage-service';
@@ -25,6 +25,7 @@ export interface CommunityNodeFields {
 
 export class NodeRepository {
   private db: DatabaseAdapter;
+  private readonly schemaReader = new CompressedJsonReader();
   
   constructor(dbOrService: DatabaseAdapter | SQLiteStorageService) {
     if (dbOrService instanceof SQLiteStorageService) {
@@ -108,7 +109,7 @@ export class NodeRepository {
       node.hasToolVariant ? 1 : 0,
       node.version,
       node.documentation || null,
-      JSON.stringify(node.properties, null, 2),
+      compressJson(node.properties),
       JSON.stringify(node.operations, null, 2),
       JSON.stringify(node.credentials, null, 2),
       node.outputs ? JSON.stringify(node.outputs, null, 2) : null,
@@ -397,7 +398,7 @@ export class NodeRepository {
       toolVariantOf: row.tool_variant_of || null,
       hasToolVariant: Number(row.has_tool_variant) === 1,
       version: row.version,
-      properties: this.safeJsonParse(row.properties_schema, []),
+      properties: this.decompressJson(row.properties_schema, []),
       operations: this.safeJsonParse(row.operations, []),
       credentials: this.safeJsonParse(row.credentials_required, []),
       hasDocumentation: !!row.documentation,
@@ -883,7 +884,7 @@ export class NodeRepository {
       versionData.description || null,
       versionData.category || null,
       versionData.isCurrentMax ? 1 : 0,
-      versionData.propertiesSchema ? this.compressJson(versionData.propertiesSchema) : null,
+      versionData.propertiesSchema ? compressJson(versionData.propertiesSchema) : null,
       versionData.operations ? JSON.stringify(versionData.operations) : null,
       versionData.credentialsRequired ? JSON.stringify(versionData.credentialsRequired) : null,
       versionData.outputs ? JSON.stringify(versionData.outputs) : null,
@@ -1015,21 +1016,35 @@ export class NodeRepository {
   }
 
   /**
-   * Per-version schemas repeat most of the nodes table, so they are stored
-   * gzip-compressed and base64-encoded (the same layout templates use) to keep
-   * the bundled database small. Plain JSON is still accepted on read.
+   * Migrate legacy schemas, including preserved community nodes, in one
+   * transaction. Do not rewrite rows that are already compressed. Operations
+   * stay plain JSON because the external-content FTS5 index reads that column.
    */
-  private compressJson(value: unknown): string {
-    return zlib.gzipSync(JSON.stringify(value)).toString('base64');
+  compressNodeSchemas(): number {
+    return this.db.transaction(() => {
+      const rows = this.db.prepare(
+        'SELECT node_type, properties_schema FROM nodes WHERE properties_schema IS NOT NULL'
+      ).all() as Array<{ node_type: string; properties_schema: string }>;
+      let compressed = 0;
+      for (const row of rows) {
+        if (row.properties_schema.startsWith('H4sI')) continue;
+        // Parse strictly: a migration must fail without changing any rows if
+        // stored data is invalid, rather than silently replacing it with [].
+        try {
+          this.db.prepare('UPDATE nodes SET properties_schema = ? WHERE node_type = ?')
+            .run(compressJson(JSON.parse(row.properties_schema)), row.node_type);
+        } catch (error) {
+          throw new Error(`Could not compress schema for ${row.node_type}: ${(error as Error).message}`);
+        }
+        compressed++;
+      }
+      return compressed;
+    });
   }
 
   private decompressJson(stored: string, fallback: any): any {
-    const trimmed = stored.trimStart();
-    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-      return this.safeJsonParse(stored, fallback);
-    }
     try {
-      return JSON.parse(zlib.gunzipSync(Buffer.from(stored, 'base64')).toString('utf8'));
+      return this.schemaReader.parse(stored);
     } catch (error) {
       logger.warn('Failed to decompress stored schema', { error: (error as Error).message });
       return fallback;

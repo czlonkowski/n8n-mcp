@@ -1,3 +1,4 @@
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NodeRepository } from '../../../src/database/node-repository';
 import { DatabaseAdapter, PreparedStatement, RunResult } from '../../../src/database/database-adapter';
@@ -116,7 +117,7 @@ describe('NodeRepository - Core Functionality', () => {
         0, // hasToolVariant
         '1.0',
         'HTTP Request documentation',
-        JSON.stringify([{ name: 'url', type: 'string' }], null, 2),
+        gzipSync(JSON.stringify([{ name: 'url', type: 'string' }])).toString('base64'),
         JSON.stringify([{ name: 'execute', displayName: 'Execute' }], null, 2),
         JSON.stringify([{ name: 'httpBasicAuth' }], null, 2),
         null, // outputs
@@ -404,7 +405,7 @@ describe('NodeRepository - Core Functionality', () => {
       const runCall = stmt?.run.mock.lastCall;
       const savedProperties = runCall?.[15]; // was 12, now 15 after 3 new columns
 
-      expect(savedProperties).toBe(JSON.stringify(largeProperties, null, 2));
+      expect(JSON.parse(gunzipSync(Buffer.from(savedProperties!, 'base64')).toString('utf8'))).toEqual(largeProperties);
     });
     
     it('should handle boolean conversion for integer fields', () => {

@@ -10,6 +10,7 @@ import { DocsMapper } from '../mappers/docs-mapper';
 import { NodeRepository } from '../database/node-repository';
 import { ToolVariantGenerator } from '../services/tool-variant-generator';
 import { TemplateSanitizer } from '../utils/template-sanitizer';
+import { compactNodeDatabase } from './compact-node-database';
 import { assertCoreNodesPresent } from './core-node-check';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -215,10 +216,6 @@ async function rebuild() {
   console.log(`   Tool Variants: ${stats.toolVariants}`);
   console.log(`   Version rows: ${stats.versionRows}`);
 
-  // Deleting and re-inserting every core node leaves free pages behind;
-  // reclaim them so the committed file reflects its content.
-  db.exec('VACUUM');
-
   // Every node with version rows must mark exactly one current version
   const inconsistent = db.prepare(`
     SELECT node_type FROM node_versions GROUP BY node_type HAVING SUM(is_current_max) != 1
@@ -259,9 +256,13 @@ async function rebuild() {
     console.log('   No templates found in database');
   }
   
+  try {
+    const { compressed, bytes } = compactNodeDatabase(db);
+    console.log(`   Compressed ${compressed} preserved schemas; database: ${(bytes / 1024 / 1024).toFixed(2)} MiB`);
+  } finally {
+    db.close();
+  }
   console.log('\n✨ Rebuild complete!');
-  
-  db.close();
 }
 
 // Expected minimum based on n8n v1.123.4 AI-capable nodes

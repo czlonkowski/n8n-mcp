@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   has_tool_variant INTEGER DEFAULT 0, -- For base nodes: 1 if Tool variant exists
   version TEXT,
   documentation TEXT,
-  properties_schema TEXT,
+  properties_schema TEXT, -- gzip + base64 JSON; legacy plain JSON accepted on read
   operations TEXT,
   credentials_required TEXT,
   outputs TEXT, -- JSON array of output definitions

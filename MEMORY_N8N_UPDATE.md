@@ -38,6 +38,13 @@ node dist/scripts/generate-community-docs.js --summary-only --skip-existing-summ
 # For vLLM with thinking models, the code auto-sends chat_template_kwargs: {enable_thinking: false}
 # Context length needed: 8K minimum (README truncated to 6000 chars, output max 2000 tokens)
 
+# Compact the final catalog after community/docs updates. This migrates any
+# legacy plain schemas, runs VACUUM, and fails if the database is >= 80 MiB.
+# npm run rebuild also performs this check automatically.
+# Migrating the bundled FTS5 catalog requires better-sqlite3; sql.js remains
+# supported for runtime reads and catalogs without FTS5.
+npm run db:compact
+
 # 7. Create feature branch
 git checkout -b update/n8n-X.X.X
 

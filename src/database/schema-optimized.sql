@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   is_versioned INTEGER DEFAULT 0,
   version TEXT,
   documentation TEXT,
-  properties_schema TEXT,
+  properties_schema TEXT, -- gzip + base64 JSON; legacy plain JSON accepted on read
   operations TEXT,
   credentials_required TEXT,
   -- New columns for source code storage
