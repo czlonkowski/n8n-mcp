@@ -60,7 +60,7 @@ export N8N_MODE=true
 export MCP_MODE=http                       # Required for HTTP mode
 export N8N_API_URL=http://localhost:5678  # Your n8n instance URL
 export N8N_API_KEY=your-api-key-here       # Your n8n API key
-export WEBHOOK_SECURITY_MODE=moderate      # Required when N8N_API_URL is localhost or RFC1918
+export WEBHOOK_SECURITY_MODE=moderate      # Required when N8N_API_URL is localhost (use 'permissive' for RFC1918)
 export MCP_AUTH_TOKEN=test-token-minimum-32-chars-long
 export AUTH_TOKEN=test-token-minimum-32-chars-long  # Same value as MCP_AUTH_TOKEN
 export PORT=3001
@@ -87,7 +87,7 @@ curl http://localhost:3001/mcp
 | `MCP_MODE` | Yes | Enables HTTP mode for n8n MCP Client | `http` |
 | `N8N_API_URL` | Yes* | URL of your n8n instance | `http://localhost:5678` |
 | `N8N_API_KEY` | Yes* | n8n API key for workflow management | `n8n_api_xxx...` |
-| `WEBHOOK_SECURITY_MODE` | No | SSRF gate (`strict` default, `moderate`, `permissive`). Set to `moderate` when `N8N_API_URL` is localhost or an RFC1918 host on the same network. | `moderate` |
+| `WEBHOOK_SECURITY_MODE` | No | SSRF gate (`strict` default, `moderate`, `permissive`). Set to `moderate` when `N8N_API_URL` is localhost. Set to `permissive` when `N8N_API_URL` is an RFC1918 host (e.g. `192.168.x.x`, `10.x.x.x`). | `moderate` |
 | `MCP_AUTH_TOKEN` | Yes | Authentication token for MCP requests (min 32 chars) | `secure-random-32-char-token` |
 | `AUTH_TOKEN` | Yes | **MUST match MCP_AUTH_TOKEN exactly** | `secure-random-32-char-token` |
 | `PORT` | No | Port for the HTTP server | `3000` (default) |
