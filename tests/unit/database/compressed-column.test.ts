@@ -9,8 +9,9 @@ import {
   isCompressedColumn,
 } from '../../../src/database/compressed-column';
 
-const longText = (seed: string, length = COMPRESSION_MIN_LENGTH * 4) =>
-  seed.repeat(Math.ceil(length / seed.length)).slice(0, length);
+function longText(seed: string, length = COMPRESSION_MIN_LENGTH * 4): string {
+  return seed.repeat(Math.ceil(length / seed.length)).slice(0, length);
+}
 
 describe('compressed-column', () => {
   describe('compressColumnText', () => {

@@ -20,27 +20,27 @@ console.log('=== Schema Coverage Audit ===\n');
 
 type NodeRow = { node_type: string; display_name: string; properties_schema: string | null };
 
-const hasResourceLocator = (properties: unknown): boolean =>
-  JSON.stringify(properties).includes('resourceLocator');
-const hasModes = (properties: unknown): boolean => JSON.stringify(properties).includes('modes');
-
 const rows = db
   .prepare('SELECT node_type, display_name, properties_schema FROM nodes')
   .all() as NodeRow[];
 
-const resourceLocatorNodes = rows
-  .map(row => ({ ...row, properties: decompressColumnJson(row.properties_schema ?? '[]', []) }))
-  .filter(row => hasResourceLocator(row.properties));
+// Inflate each schema once and match on its JSON text, the way the SQL LIKE predicates used to.
+const nodes = rows.map(row => ({
+  nodeType: row.node_type,
+  displayName: row.display_name,
+  schema: JSON.stringify(decompressColumnJson(row.properties_schema ?? '[]', [])),
+}));
 
-const withModes = resourceLocatorNodes.filter(row => hasModes(row.properties));
-const withoutModes = resourceLocatorNodes.filter(row => !hasModes(row.properties));
+const resourceLocatorNodes = nodes.filter(node => node.schema.includes('resourceLocator'));
+const withModes = resourceLocatorNodes.filter(node => node.schema.includes('modes'));
+const withoutModes = resourceLocatorNodes.filter(node => !node.schema.includes('modes'));
 
 console.log(`Nodes with resourceLocator properties: ${resourceLocatorNodes.length}`);
 console.log(`Nodes with modes defined: ${withModes.length}`);
 
 console.log(`\nSample nodes WITHOUT modes (showing 10):`);
 withoutModes.slice(0, 10).forEach(node => {
-  console.log(`  - ${node.display_name} (${node.node_type})`);
+  console.log(`  - ${node.displayName} (${node.nodeType})`);
 });
 
 // Calculate coverage percentage
@@ -52,7 +52,7 @@ console.log(`\nSchema coverage: ${coverage.toFixed(1)}% of resourceLocator nodes
 
 console.log('\nSample nodes WITH modes (showing 5):');
 withModes.slice(0, 5).forEach(node => {
-  console.log(`  - ${node.display_name} (${node.node_type})`);
+  console.log(`  - ${node.displayName} (${node.nodeType})`);
 });
 
 // Summary

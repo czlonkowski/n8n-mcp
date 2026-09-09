@@ -1,11 +1,10 @@
 import { DatabaseAdapter } from './database-adapter';
 import {
+  COMPRESSION_MIN_LENGTH,
   compressColumnJson,
   compressColumnText,
   decompressColumnJson,
   decompressColumnText,
-  isCompressedColumn,
-  COMPRESSION_MIN_LENGTH,
 } from './compressed-column';
 import { ParsedNode, normalizeNodeVersion } from '../parsers/node-parser';
 import { SQLiteStorageService } from '../services/sqlite-storage-service';
@@ -115,8 +114,8 @@ export class NodeRepository {
       node.hasToolVariant ? 1 : 0,
       node.version,
       node.documentation || null,
-      // Stored gzip+base64 above COMPRESSION_MIN_LENGTH (#1067). `operations` stays plain
-      // because nodes_fts indexes it.
+      // properties_schema is stored gzip+base64 above COMPRESSION_MIN_LENGTH (#1067);
+      // operations below stays plain because nodes_fts indexes it.
       compressColumnJson(node.properties),
       JSON.stringify(node.operations, null, 2),
       JSON.stringify(node.credentials, null, 2),
@@ -786,14 +785,16 @@ export class NodeRepository {
    * Idempotent: rows already compressed or below the size threshold are left alone.
    */
   compressStoredColumns(): { rewritten: number } {
-    const rows = this.db.prepare(`
-      SELECT node_type, properties_schema, npm_readme FROM nodes
-      WHERE length(properties_schema) >= ? OR length(npm_readme) >= ?
-    `).all(COMPRESSION_MIN_LENGTH, COMPRESSION_MIN_LENGTH) as Array<{
+    type BulkColumnRow = {
       node_type: string;
       properties_schema: string | null;
       npm_readme: string | null;
-    }>;
+    };
+
+    const rows = this.db.prepare(`
+      SELECT node_type, properties_schema, npm_readme FROM nodes
+      WHERE length(properties_schema) >= ? OR length(npm_readme) >= ?
+    `).all(COMPRESSION_MIN_LENGTH, COMPRESSION_MIN_LENGTH) as BulkColumnRow[];
 
     const update = this.db.prepare(
       'UPDATE nodes SET properties_schema = ?, npm_readme = ? WHERE node_type = ?'
@@ -801,6 +802,8 @@ export class NodeRepository {
     let rewritten = 0;
     this.transaction(() => {
       for (const row of rows) {
+        // A NULL column stays NULL; compressColumnText() returns anything already
+        // compressed, or below the threshold, unchanged.
         const packedSchema = row.properties_schema && compressColumnText(row.properties_schema);
         const packedReadme = row.npm_readme && compressColumnText(row.npm_readme);
         if (packedSchema === row.properties_schema && packedReadme === row.npm_readme) continue;

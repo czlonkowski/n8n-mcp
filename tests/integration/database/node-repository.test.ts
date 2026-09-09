@@ -680,11 +680,10 @@ describe('NodeRepository Integration Tests', () => {
     }));
     const longReadme = '# Community node\n\nInstall with `npm install`.\n'.repeat(60);
 
-    const rawColumns = (nodeType: string) =>
-      db.prepare('SELECT properties_schema, npm_readme FROM nodes WHERE node_type = ?').get(nodeType) as {
-        properties_schema: string;
-        npm_readme: string | null;
-      };
+    type RawColumns = { properties_schema: string; npm_readme: string | null };
+
+    const rawColumns = (nodeType: string): RawColumns =>
+      db.prepare('SELECT properties_schema, npm_readme FROM nodes WHERE node_type = ?').get(nodeType) as RawColumns;
 
     it('stores a large properties schema gzip-compressed and reads it back intact', () => {
       const node = { ...createParsedNode(MOCK_NODES.webhook), properties: largeProperties };
