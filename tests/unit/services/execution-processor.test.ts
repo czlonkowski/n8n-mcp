@@ -429,6 +429,20 @@ describe('ExecutionProcessor - Modes', () => {
     expect(result.nodes?.['HTTP Request']?.data?.metadata.itemsShown).toBe(2);
   });
 
+  it('should fall back to summary mode for successful executions requested in error mode', () => {
+    const execution = createMockExecution({
+      nodeData: {
+        'HTTP Request': createNodeData(2),
+      },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'error' });
+
+    expect(result.mode).toBe('summary');
+    expect(result.errorInfo).toBeUndefined();
+    expect(result.nodes?.['HTTP Request']).toBeDefined();
+  });
+
   it('should handle filtered mode', () => {
     const execution = createMockExecution({
       nodeData: {
