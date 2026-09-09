@@ -66,6 +66,16 @@ describe('compressed-column', () => {
       expect(stored).not.toBe(long);
       expect(decompressColumnText(stored)).toBe(long);
     });
+
+    it('does not truncate canonical base64 whose tail gzip would ignore as zero padding', () => {
+      // 'AABh' decodes to bytes gunzip skips after a complete member.
+      const text = gzipSync('payload').toString('base64') + 'AABh';
+      expect(decompressColumnText(text)).toBe(text);
+
+      const long = text.repeat(Math.ceil(COMPRESSION_MIN_LENGTH / text.length) + 1);
+      expect(decompressColumnText(long)).toBe(long);
+      expect(decompressColumnText(compressColumnText(long))).toBe(long);
+    });
   });
 
   describe('compressColumnJson / decompressColumnJson', () => {

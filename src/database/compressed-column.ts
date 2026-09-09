@@ -37,7 +37,11 @@ function inflate(value: string): string | null {
     return null;
   }
   try {
-    return zlib.gunzipSync(Buffer.from(value, 'base64')).toString('utf8');
+    const bytes = Buffer.from(value, 'base64');
+    const { buffer, engine } = zlib.gunzipSync(bytes, { info: true });
+    // gzip tolerates trailing zero bytes after a member; a value the writer produced has none,
+    // so anything left unconsumed means this is not a compressed column.
+    return engine.bytesWritten === bytes.length ? buffer.toString('utf8') : null;
   } catch {
     return null;
   }
