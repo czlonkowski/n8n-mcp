@@ -730,11 +730,26 @@ describe('NodeRepository Integration Tests', () => {
       const small = createParsedNode(MOCK_NODES.webhook);
       repository.saveNode(small);
 
+      // Pretty-printed it crosses the threshold, compact it does not: the repack must apply
+      // the threshold to the compact form saveNode() writes, so this row stays plain.
+      const mediumProperties = Array.from({ length: 25 }, (_, i) => ({ name: `f${i}`, type: 'string' }));
+      const prettyMedium = JSON.stringify(mediumProperties, null, 2);
+      expect(prettyMedium.length).toBeGreaterThanOrEqual(1024);
+      expect(JSON.stringify(mediumProperties).length).toBeLessThan(1024);
+      db.prepare(`
+        INSERT INTO nodes (node_type, package_name, display_name, description, category, development_style,
+          is_ai_tool, is_trigger, is_webhook, is_versioned, version, properties_schema, operations, credentials_required)
+        VALUES ('n8n-nodes-legacy.medium', 'n8n-nodes-legacy', 'Medium', 'Pretty-printed but small', 'automation',
+          'programmatic', 0, 0, 0, 1, '1', ?, '[]', '[]')
+      `).run(prettyMedium);
+
       const before = repository.getNode('n8n-nodes-legacy.plain');
       expect(before.properties).toEqual(largeProperties);
       expect(before.npmReadme).toBe(longReadme);
 
-      expect(repository.compressStoredColumns()).toEqual({ rewritten: 1 });
+      expect(repository.compressStoredColumns()).toEqual({ rewritten: 2 });
+      expect(rawColumns('n8n-nodes-legacy.medium').properties_schema).toBe(JSON.stringify(mediumProperties));
+      expect(repository.getNode('n8n-nodes-legacy.medium').properties).toEqual(mediumProperties);
 
       // The UPDATE fires the nodes_fts update trigger; the index must still match the row.
       const ftsHits = db.prepare("SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH 'compression'").all() as Array<{ rowid: number }>;

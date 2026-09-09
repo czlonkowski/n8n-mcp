@@ -4,6 +4,7 @@ import {
   compressColumnText,
   decompressColumnJson,
   decompressColumnText,
+  isCompressedColumn,
 } from './compressed-column';
 import { ParsedNode, normalizeNodeVersion } from '../parsers/node-parser';
 import { SQLiteStorageService } from '../services/sqlite-storage-service';
@@ -800,9 +801,9 @@ export class NodeRepository {
     let rewritten = 0;
     this.transaction(() => {
       for (const row of rows) {
-        // A NULL column stays NULL; compressColumnText() returns anything already
-        // compressed, or below the threshold, unchanged.
-        const packedSchema = row.properties_schema && compressColumnText(row.properties_schema);
+        // A NULL column stays NULL; the pack helpers return anything already compressed,
+        // or below the threshold, unchanged.
+        const packedSchema = row.properties_schema && this.repackStoredJson(row.properties_schema);
         const packedReadme = row.npm_readme && compressColumnText(row.npm_readme);
         if (packedSchema === row.properties_schema && packedReadme === row.npm_readme) continue;
         // Prepared per row: the sql.js adapter frees a statement after its first run().
@@ -813,6 +814,21 @@ export class NodeRepository {
       }
     });
     return { rewritten };
+  }
+
+  /**
+   * The stored form saveNode() would write for a legacy JSON column: compact JSON, then the
+   * size threshold. Rows written before this change are pretty-printed, and applying the
+   * threshold to that whitespace would compress schemas the writer keeps plain. A value that
+   * is not JSON is kept as the text it is.
+   */
+  private repackStoredJson(stored: string): string {
+    if (isCompressedColumn(stored)) return stored;
+    try {
+      return compressColumnJson(JSON.parse(stored));
+    } catch {
+      return compressColumnText(stored);
+    }
   }
 
   /**
