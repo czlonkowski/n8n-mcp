@@ -227,17 +227,6 @@ async function rebuild() {
   // reclaim them so the committed file reflects its content.
   db.exec('VACUUM');
 
-  // The database is committed to git; GitHub rejects files over 100 MiB outright.
-  const sizeMiB = fs.statSync(dbPath).size / (1024 * 1024);
-  const sizeLabel = `${sizeMiB.toFixed(1)} MiB`;
-  console.log(`   Database size: ${sizeLabel}`);
-  if (sizeMiB >= 100) {
-    throw new Error(`data/nodes.db is ${sizeLabel}, over GitHub's 100 MiB file limit; it cannot be pushed`);
-  }
-  if (sizeMiB >= 90) {
-    console.warn(`⚠️  data/nodes.db is ${sizeLabel}, within 10 MiB of GitHub's 100 MiB file limit`);
-  }
-
   // Every node with version rows must mark exactly one current version
   const inconsistent = db.prepare(`
     SELECT node_type FROM node_versions GROUP BY node_type HAVING SUM(is_current_max) != 1
@@ -279,8 +268,28 @@ async function rebuild() {
   }
   
   console.log('\n✨ Rebuild complete!');
-  
+
   db.close();
+
+  // After close: the sql.js adapter writes the file only when it closes, so an earlier
+  // stat would see the previous file or none at all.
+  checkDatabaseSize(dbPath);
+}
+
+// The database is committed to git; GitHub rejects files over 100 MiB outright.
+const GITHUB_FILE_LIMIT_MIB = 100;
+const SIZE_WARNING_MIB = 90;
+
+function checkDatabaseSize(dbPath: string): void {
+  const sizeMiB = fs.statSync(dbPath).size / (1024 * 1024);
+  const sizeLabel = `${sizeMiB.toFixed(1)} MiB`;
+  console.log(`   Database size: ${sizeLabel}`);
+  if (sizeMiB >= GITHUB_FILE_LIMIT_MIB) {
+    throw new Error(`${dbPath} is ${sizeLabel}, over GitHub's ${GITHUB_FILE_LIMIT_MIB} MiB file limit; it cannot be pushed`);
+  }
+  if (sizeMiB >= SIZE_WARNING_MIB) {
+    console.warn(`⚠️  ${dbPath} is ${sizeLabel}, within ${GITHUB_FILE_LIMIT_MIB - SIZE_WARNING_MIB} MiB of GitHub's ${GITHUB_FILE_LIMIT_MIB} MiB file limit`);
+  }
 }
 
 // Expected minimum based on n8n v1.123.4 AI-capable nodes

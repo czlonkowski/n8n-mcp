@@ -37,6 +37,13 @@ describe('compressed-column', () => {
       const stored = compressColumnText(longText('readme '));
       expect(compressColumnText(stored)).toBe(stored);
     });
+
+    it('compresses long text that merely starts with the gzip prefix and reads it back', () => {
+      const text = longText('H4sI is how this README starts. ');
+      const stored = compressColumnText(text);
+      expect(stored).not.toBe(text);
+      expect(decompressColumnText(stored)).toBe(text);
+    });
   });
 
   describe('decompressColumnText', () => {

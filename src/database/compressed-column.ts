@@ -26,12 +26,23 @@ export function isCompressedColumn(value: unknown): value is string {
   return typeof value === 'string' && value.startsWith(GZIP_BASE64_PREFIX);
 }
 
+/** The inflated text, or null when the value does not carry the prefix or does not inflate. */
+function inflate(value: string): string | null {
+  if (!isCompressedColumn(value)) return null;
+  try {
+    return zlib.gunzipSync(Buffer.from(value, 'base64')).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Returns the value to store for a text column: the text itself when it is short or already
- * compressed, otherwise its gzip base64 form.
+ * compressed, otherwise its gzip base64 form. "Already compressed" means the value inflates,
+ * so text that merely starts with the prefix is compressed like any other and reads back intact.
  */
 export function compressColumnText(text: string): string {
-  if (text.length < COMPRESSION_MIN_LENGTH || isCompressedColumn(text)) return text;
+  if (text.length < COMPRESSION_MIN_LENGTH || inflate(text) !== null) return text;
   return zlib.gzipSync(text).toString('base64');
 }
 
@@ -41,14 +52,12 @@ export function compressColumnText(text: string): string {
  */
 export function decompressColumnText(stored: string): string {
   if (!isCompressedColumn(stored)) return stored;
-  try {
-    return zlib.gunzipSync(Buffer.from(stored, 'base64')).toString('utf8');
-  } catch (error) {
-    logger.warn('Stored column carries the gzip prefix but did not inflate; returning it unchanged', {
-      error: (error as Error).message,
-    });
+  const text = inflate(stored);
+  if (text === null) {
+    logger.warn('Stored column carries the gzip prefix but did not inflate; returning it unchanged');
     return stored;
   }
+  return text;
 }
 
 /** Serialises a value compactly and returns the form to store for it. */

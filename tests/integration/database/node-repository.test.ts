@@ -735,6 +735,12 @@ describe('NodeRepository Integration Tests', () => {
       expect(before.npmReadme).toBe(longReadme);
 
       expect(repository.compressStoredColumns()).toEqual({ rewritten: 1 });
+
+      // The UPDATE fires the nodes_fts update trigger; the index must still match the row.
+      const ftsHits = db.prepare("SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH 'compression'").all() as Array<{ rowid: number }>;
+      const legacyRowid = (db.prepare("SELECT rowid FROM nodes WHERE node_type = 'n8n-nodes-legacy.plain'").get() as { rowid: number }).rowid;
+      expect(ftsHits.map(hit => hit.rowid)).toEqual([legacyRowid]);
+      expect(() => db.prepare("INSERT INTO nodes_fts(nodes_fts, rank) VALUES('integrity-check', 1)").run()).not.toThrow();
       const stored = rawColumns('n8n-nodes-legacy.plain');
       expect(isCompressedColumn(stored.properties_schema)).toBe(true);
       expect(isCompressedColumn(stored.npm_readme)).toBe(true);

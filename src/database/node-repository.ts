@@ -1,6 +1,5 @@
 import { DatabaseAdapter } from './database-adapter';
 import {
-  COMPRESSION_MIN_LENGTH,
   compressColumnJson,
   compressColumnText,
   decompressColumnJson,
@@ -791,14 +790,13 @@ export class NodeRepository {
       npm_readme: string | null;
     };
 
+    // No size filter in SQL: SQLite's length() counts characters and the threshold counts
+    // UTF-16 units, so the two disagree on astral text. compressColumnText() decides per row.
     const rows = this.db.prepare(`
       SELECT node_type, properties_schema, npm_readme FROM nodes
-      WHERE length(properties_schema) >= ? OR length(npm_readme) >= ?
-    `).all(COMPRESSION_MIN_LENGTH, COMPRESSION_MIN_LENGTH) as BulkColumnRow[];
+      WHERE properties_schema IS NOT NULL OR npm_readme IS NOT NULL
+    `).all() as BulkColumnRow[];
 
-    const update = this.db.prepare(
-      'UPDATE nodes SET properties_schema = ?, npm_readme = ? WHERE node_type = ?'
-    );
     let rewritten = 0;
     this.transaction(() => {
       for (const row of rows) {
@@ -807,7 +805,10 @@ export class NodeRepository {
         const packedSchema = row.properties_schema && compressColumnText(row.properties_schema);
         const packedReadme = row.npm_readme && compressColumnText(row.npm_readme);
         if (packedSchema === row.properties_schema && packedReadme === row.npm_readme) continue;
-        update.run(packedSchema, packedReadme, row.node_type);
+        // Prepared per row: the sql.js adapter frees a statement after its first run().
+        this.db.prepare(
+          'UPDATE nodes SET properties_schema = ?, npm_readme = ? WHERE node_type = ?'
+        ).run(packedSchema, packedReadme, row.node_type);
         rewritten++;
       }
     });
