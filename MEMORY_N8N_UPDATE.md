@@ -38,6 +38,14 @@ node dist/scripts/generate-community-docs.js --summary-only --skip-existing-summ
 # For vLLM with thinking models, the code auto-sends chat_template_kwargs: {enable_thinking: false}
 # Context length needed: 8K minimum (README truncated to 6000 chars, output max 2000 tokens)
 
+# 6b. Check the database size (GitHub rejects files over 100 MiB; the push fails with a bare
+# "pre-receive hook declined"). The rebuild already runs VACUUM, prints the size and throws at
+# 100 MiB, but fetch:community and the docs generators write rows after it, so check again:
+sqlite3 data/nodes.db 'VACUUM'
+ls -l data/nodes.db | awk '{ printf "%.1f MiB\n", $5 / 1048576 }'   # must be well under 100 (MiB, not MB)
+# Bulk columns (nodes.properties_schema, nodes.npm_readme, node_versions.properties_schema)
+# are stored gzip+base64 (#1067); `node dist/scripts/rebuild.js` rewrites any plain rows.
+
 # 7. Create feature branch
 git checkout -b update/n8n-X.X.X
 

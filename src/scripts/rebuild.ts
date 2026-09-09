@@ -170,6 +170,14 @@ async function rebuild() {
   console.log(`💾 Save completed: ${saved} nodes saved successfully`);
 
   // Rebuild FTS5 index to guarantee consistency.
+  // Community rows survive the rebuild untouched, so rows written before bulk columns
+  // were compressed (#1067) are rewritten here; core rows were already saved compressed.
+  // Runs before the FTS rebuild so the update trigger cannot leave the index out of step.
+  const { rewritten } = repository.compressStoredColumns();
+  if (rewritten > 0) {
+    console.log(`\n📦 Compressed bulk columns on ${rewritten} previously plain node row(s)`);
+  }
+
   // The content-synced FTS5 table (content=nodes) can accumulate stale rowid
   // references when rows are deleted and re-inserted during a rebuild cycle.
   // An explicit rebuild re-indexes all current rows from the nodes table.
@@ -218,6 +226,16 @@ async function rebuild() {
   // Deleting and re-inserting every core node leaves free pages behind;
   // reclaim them so the committed file reflects its content.
   db.exec('VACUUM');
+
+  // The database is committed to git; GitHub rejects files over 100 MiB outright.
+  const sizeMiB = fs.statSync(dbPath).size / 1048576;
+  console.log(`   Database size: ${sizeMiB.toFixed(1)} MiB`);
+  if (sizeMiB >= 100) {
+    throw new Error(`data/nodes.db is ${sizeMiB.toFixed(1)} MiB, over GitHub's 100 MiB file limit; it cannot be pushed`);
+  }
+  if (sizeMiB >= 90) {
+    console.warn(`⚠️  data/nodes.db is ${sizeMiB.toFixed(1)} MiB, within 10 MiB of GitHub's 100 MiB file limit`);
+  }
 
   // Every node with version rows must mark exactly one current version
   const inconsistent = db.prepare(`

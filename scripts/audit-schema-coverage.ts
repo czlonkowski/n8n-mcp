@@ -4,75 +4,64 @@
  * Audits the database to determine how many nodes have complete schema information
  * for resourceLocator mode validation. This helps assess the coverage of our
  * schema-driven validation approach.
+ *
+ * properties_schema is stored gzip-compressed (see src/database/compressed-column.ts),
+ * so the rows are decoded here instead of matched with SQL LIKE.
  */
 
 import Database from 'better-sqlite3';
 import path from 'path';
+import { decompressColumnJson } from '../src/database/compressed-column';
 
 const dbPath = path.join(__dirname, '../data/nodes.db');
 const db = new Database(dbPath, { readonly: true });
 
 console.log('=== Schema Coverage Audit ===\n');
 
-// Query 1: How many nodes have resourceLocator properties?
-const totalResourceLocator = db.prepare(`
-  SELECT COUNT(*) as count FROM nodes
-  WHERE properties_schema LIKE '%resourceLocator%'
-`).get() as { count: number };
+type NodeRow = { node_type: string; display_name: string; properties_schema: string | null };
 
-console.log(`Nodes with resourceLocator properties: ${totalResourceLocator.count}`);
+const hasResourceLocator = (properties: unknown): boolean =>
+  JSON.stringify(properties).includes('resourceLocator');
+const hasModes = (properties: unknown): boolean => JSON.stringify(properties).includes('modes');
 
-// Query 2: Of those, how many have modes defined?
-const withModes = db.prepare(`
-  SELECT COUNT(*) as count FROM nodes
-  WHERE properties_schema LIKE '%resourceLocator%'
-    AND properties_schema LIKE '%modes%'
-`).get() as { count: number };
+const rows = db
+  .prepare('SELECT node_type, display_name, properties_schema FROM nodes')
+  .all() as NodeRow[];
 
-console.log(`Nodes with modes defined: ${withModes.count}`);
+const resourceLocatorNodes = rows
+  .map(row => ({ ...row, properties: decompressColumnJson(row.properties_schema ?? '[]', []) }))
+  .filter(row => hasResourceLocator(row.properties));
 
-// Query 3: Which nodes have resourceLocator but NO modes?
-const withoutModes = db.prepare(`
-  SELECT node_type, display_name
-  FROM nodes
-  WHERE properties_schema LIKE '%resourceLocator%'
-    AND properties_schema NOT LIKE '%modes%'
-  LIMIT 10
-`).all() as Array<{ node_type: string; display_name: string }>;
+const withModes = resourceLocatorNodes.filter(row => hasModes(row.properties));
+const withoutModes = resourceLocatorNodes.filter(row => !hasModes(row.properties));
+
+console.log(`Nodes with resourceLocator properties: ${resourceLocatorNodes.length}`);
+console.log(`Nodes with modes defined: ${withModes.length}`);
 
 console.log(`\nSample nodes WITHOUT modes (showing 10):`);
-withoutModes.forEach(node => {
+withoutModes.slice(0, 10).forEach(node => {
   console.log(`  - ${node.display_name} (${node.node_type})`);
 });
 
 // Calculate coverage percentage
-const coverage = totalResourceLocator.count > 0
-  ? (withModes.count / totalResourceLocator.count) * 100
+const coverage = resourceLocatorNodes.length > 0
+  ? (withModes.length / resourceLocatorNodes.length) * 100
   : 0;
 
 console.log(`\nSchema coverage: ${coverage.toFixed(1)}% of resourceLocator nodes have modes defined`);
 
-// Query 4: Get some examples of nodes WITH modes for verification
 console.log('\nSample nodes WITH modes (showing 5):');
-const withModesExamples = db.prepare(`
-  SELECT node_type, display_name
-  FROM nodes
-  WHERE properties_schema LIKE '%resourceLocator%'
-    AND properties_schema LIKE '%modes%'
-  LIMIT 5
-`).all() as Array<{ node_type: string; display_name: string }>;
-
-withModesExamples.forEach(node => {
+withModes.slice(0, 5).forEach(node => {
   console.log(`  - ${node.display_name} (${node.node_type})`);
 });
 
 // Summary
 console.log('\n=== Summary ===');
-console.log(`Total nodes in database: ${db.prepare('SELECT COUNT(*) as count FROM nodes').get() as any as { count: number }.count}`);
-console.log(`Nodes with resourceLocator: ${totalResourceLocator.count}`);
-console.log(`Nodes with complete mode schemas: ${withModes.count}`);
-console.log(`Nodes without mode schemas: ${totalResourceLocator.count - withModes.count}`);
-console.log(`\nImplication: Schema-driven validation will apply to ${withModes.count} nodes.`);
-console.log(`For the remaining ${totalResourceLocator.count - withModes.count} nodes, validation will be skipped (graceful degradation).`);
+console.log(`Total nodes in database: ${rows.length}`);
+console.log(`Nodes with resourceLocator: ${resourceLocatorNodes.length}`);
+console.log(`Nodes with complete mode schemas: ${withModes.length}`);
+console.log(`Nodes without mode schemas: ${withoutModes.length}`);
+console.log(`\nImplication: Schema-driven validation will apply to ${withModes.length} nodes.`);
+console.log(`For the remaining ${withoutModes.length} nodes, validation will be skipped (graceful degradation).`);
 
 db.close();

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import Database from 'better-sqlite3';
 import { PropertyFilter } from '@/services/property-filter';
+import { decompressColumnJson } from '@/database/compressed-column';
 
 const props = [
   { name: 'user', displayName: 'User', type: 'options', typeOptions: { loadOptionsMethod: 'getUsers' }, default: '' },
@@ -79,7 +80,7 @@ describe('PropertyFilter essentials for nodes-base.slack (real database)', () =>
     try {
       const row = db.prepare("SELECT properties_schema FROM nodes WHERE node_type = 'nodes-base.slack'").get() as { properties_schema: string } | undefined;
       expect(row).toBeDefined();
-      const props = JSON.parse(row!.properties_schema);
+      const props = decompressColumnJson(row!.properties_schema, []);
       const schemaNames = new Set(props.map((p: any) => p.name));
 
       // ESSENTIAL_PROPERTIES is a private static field; reach in for this
