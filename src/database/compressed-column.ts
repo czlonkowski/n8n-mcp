@@ -26,9 +26,16 @@ export function isCompressedColumn(value: unknown): value is string {
   return typeof value === 'string' && value.startsWith(GZIP_BASE64_PREFIX);
 }
 
-/** The inflated text, or null when the value does not carry the prefix or does not inflate. */
+// Buffer.from(value, 'base64') stops at the first character outside the alphabet and ignores
+// the rest, so a plain README that opens with a gzip base64 blob and continues with Markdown
+// would otherwise inflate to just the blob. Only a value that is base64 end to end is inflated.
+const CANONICAL_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/** The inflated text, or null when the value is not a compressed column end to end. */
 function inflate(value: string): string | null {
-  if (!isCompressedColumn(value)) return null;
+  if (!isCompressedColumn(value) || value.length % 4 !== 0 || !CANONICAL_BASE64.test(value)) {
+    return null;
+  }
   try {
     return zlib.gunzipSync(Buffer.from(value, 'base64')).toString('utf8');
   } catch {

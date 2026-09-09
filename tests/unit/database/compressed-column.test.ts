@@ -55,6 +55,17 @@ describe('compressed-column', () => {
     it('returns the raw value when it carries the gzip prefix but does not inflate', () => {
       expect(decompressColumnText('H4sI is how this README starts')).toBe('H4sI is how this README starts');
     });
+
+    it('does not truncate plain text that opens with a gzip blob and continues with Markdown', () => {
+      // Buffer.from(_, 'base64') would stop at the newline and inflate only the blob.
+      const text = gzipSync('example payload').toString('base64') + '\n\n# Usage\n\nPaste the blob above.';
+      expect(decompressColumnText(text)).toBe(text);
+
+      const long = text + '\n' + longText('More documentation. ');
+      const stored = compressColumnText(long);
+      expect(stored).not.toBe(long);
+      expect(decompressColumnText(stored)).toBe(long);
+    });
   });
 
   describe('compressColumnJson / decompressColumnJson', () => {
