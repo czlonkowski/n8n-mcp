@@ -108,6 +108,19 @@ describe('compressed-column', () => {
       expect(decompressColumnJson('not json at all', null)).toBeNull();
     });
 
+    it('returns the fallback for a NULL, empty, or JSON-null column', () => {
+      expect(decompressColumnJson(null, [])).toEqual([]);
+      expect(decompressColumnJson(undefined, [])).toEqual([]);
+      expect(decompressColumnJson('', [])).toEqual([]);
+      expect(decompressColumnJson('null', [])).toEqual([]);
+    });
+
+    it('stores a value JSON cannot represent as JSON null', () => {
+      expect(compressColumnJson(undefined)).toBe('null');
+      expect(compressColumnJson(() => 1)).toBe('null');
+      expect(decompressColumnJson(compressColumnJson(undefined), [])).toEqual([]);
+    });
+
     it('returns the fallback when the inflated text is not JSON', () => {
       const stored = gzipSync('not json').toString('base64');
       expect(isCompressedColumn(stored)).toBe(true);

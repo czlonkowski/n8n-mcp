@@ -70,25 +70,29 @@ export function decompressColumnText(stored: string): string {
   if (!isCompressedColumn(stored)) return stored;
   const text = inflate(stored);
   if (text === null) {
-    logger.warn('Stored column carries the gzip prefix but did not inflate; returning it unchanged');
+    // Plain text that happens to start with the prefix is valid data, so this is not a warning.
+    logger.debug('Stored column carries the gzip prefix but is not a compressed column; returning it unchanged');
     return stored;
   }
   return text;
 }
 
-/** Serialises a value compactly and returns the form to store for it. */
+/**
+ * Serialises a value compactly and returns the form to store for it. A value JSON cannot
+ * represent (undefined, a function, a symbol) is stored as JSON null.
+ */
 export function compressColumnJson(value: unknown): string {
-  return compressColumnText(JSON.stringify(value));
+  return compressColumnText(JSON.stringify(value) ?? 'null');
 }
 
 /**
  * Parses a JSON column, inflating it first when it was compressed. Returns `fallback` when the
- * value is neither valid JSON nor a compressed form of it.
+ * column is NULL, empty, JSON null, or neither valid JSON nor a compressed form of it.
  */
-export function decompressColumnJson(stored: string, fallback: any): any {
-  const text = decompressColumnText(stored);
+export function decompressColumnJson(stored: string | null | undefined, fallback: any): any {
+  if (typeof stored !== 'string' || stored === '') return fallback;
   try {
-    return JSON.parse(text);
+    return JSON.parse(decompressColumnText(stored)) ?? fallback;
   } catch {
     return fallback;
   }
