@@ -114,13 +114,13 @@ export class NodeRepository {
       node.hasToolVariant ? 1 : 0,
       node.version,
       node.documentation || null,
-      // properties_schema is stored gzip+base64 above COMPRESSION_MIN_LENGTH (#1067);
-      // operations below stays plain because nodes_fts indexes it.
+      // properties_schema is stored gzip+base64 above COMPRESSION_MIN_LENGTH (#1067). The JSON
+      // columns below stay plain, compact: nodes_fts indexes operations, and none are large.
       compressColumnJson(node.properties),
-      JSON.stringify(node.operations, null, 2),
-      JSON.stringify(node.credentials, null, 2),
-      node.outputs ? JSON.stringify(node.outputs, null, 2) : null,
-      node.outputNames ? JSON.stringify(node.outputNames, null, 2) : null,
+      JSON.stringify(node.operations),
+      JSON.stringify(node.credentials),
+      node.outputs ? JSON.stringify(node.outputs) : null,
+      node.outputNames ? JSON.stringify(node.outputNames) : null,
       // Community node fields
       node.isCommunity ? 1 : 0,
       node.isVerified ? 1 : 0,

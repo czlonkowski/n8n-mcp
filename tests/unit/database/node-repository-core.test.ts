@@ -118,8 +118,8 @@ describe('NodeRepository - Core Functionality', () => {
         '1.0',
         'HTTP Request documentation',
         JSON.stringify([{ name: 'url', type: 'string' }]), // compact; gzip+base64 once large (#1067)
-        JSON.stringify([{ name: 'execute', displayName: 'Execute' }], null, 2),
-        JSON.stringify([{ name: 'httpBasicAuth' }], null, 2),
+        JSON.stringify([{ name: 'execute', displayName: 'Execute' }]),
+        JSON.stringify([{ name: 'httpBasicAuth' }]),
         null, // outputs
         null, // outputNames
         0, // isCommunity
