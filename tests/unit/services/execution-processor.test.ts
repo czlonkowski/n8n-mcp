@@ -443,6 +443,24 @@ describe('ExecutionProcessor - Modes', () => {
     expect(result.nodes?.['HTTP Request']).toBeDefined();
   });
 
+  it('should keep error mode for successful executions with a node error', () => {
+    const execution = createMockExecution({
+      nodeData: {
+        'Failed Node': createNodeData(1, true),
+        'Later Node': createNodeData(1),
+      },
+    });
+    execution.data!.resultData!.lastNodeExecuted = 'Later Node';
+
+    const result = filterExecutionData(execution, { mode: 'error' });
+
+    expect(result.mode).toBe('error');
+    expect(result.errorInfo?.primaryError).toMatchObject({
+      nodeName: 'Failed Node',
+      message: 'Node error',
+    });
+  });
+
   it('should handle filtered mode', () => {
     const execution = createMockExecution({
       nodeData: {
