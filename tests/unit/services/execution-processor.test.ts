@@ -508,8 +508,9 @@ describe('ExecutionProcessor - Edge Cases', () => {
       stoppedAt: '2024-01-01T10:00:05.000Z',
     };
 
-    const result = filterExecutionData(execution, { mode: 'summary' });
+    const result = filterExecutionData(execution, { mode: 'error' });
 
+    expect(result.mode).toBe('summary');
     expect(result.summary?.totalNodes).toBe(0);
     expect(result.summary?.executedNodes).toBe(0);
   });
