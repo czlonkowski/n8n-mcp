@@ -653,10 +653,16 @@ export class WorkflowValidator {
           '@version': node.typeVersion || 1,
           ...node.parameters
         };
+        const versionProperties = nodeInfo.isVersioned && node.typeVersion != null
+          ? this.nodeRepository.getNodeVersion(normalizedType, String(node.typeVersion))?.propertiesSchema
+          : null;
+        const properties = versionProperties && nodeInfo.isToolVariant
+          ? [...nodeInfo.properties.filter((property: any) => property.name === 'toolDescription'), ...versionProperties]
+          : versionProperties || nodeInfo.properties;
         const nodeValidation = this.nodeValidator.validateWithMode(
           node.type,
           paramsWithVersion,
-          nodeInfo.properties || [],
+          properties || [],
           'operation',
           profile as any
         );
