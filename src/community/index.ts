@@ -24,6 +24,13 @@ export {
   DocumentationSummary,
   DocumentationSummarySchema,
   createDocumentationGenerator,
+  resolveProviderPreset,
+  LLM_PROVIDER_PRESETS,
+  LLMProviderPreset,
+  LLMProviderModel,
+  LLMThinkingMode,
+  LLMRegion,
+  ResolvedProviderPreset,
 } from './documentation-generator';
 
 export {
