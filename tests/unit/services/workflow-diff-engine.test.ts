@@ -296,12 +296,13 @@ describe('WorkflowDiffEngine', () => {
     // The shape check must not require position: a batch may add a node and place it with a
     // later moveNode. Only the post-apply structure check knows whether one ever arrived.
     it('should accept an addNode without position when a later moveNode supplies it', async () => {
+      // No cast: AddNodeOperation declares position optional precisely because of this batch.
       const request: WorkflowDiffRequest = {
         id: 'test-workflow',
         operations: [
           { type: 'addNode', node: { name: 'Late Position', type: 'n8n-nodes-base.noOp' } },
           { type: 'moveNode', nodeName: 'Late Position', position: [900, 400] },
-        ] as unknown as WorkflowDiffOperation[]
+        ]
       };
 
       const result = await diffEngine.applyDiff(baseWorkflow, request);

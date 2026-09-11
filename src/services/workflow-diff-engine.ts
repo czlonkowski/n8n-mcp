@@ -1120,7 +1120,10 @@ export class WorkflowDiffEngine {
       name: operation.node.name,
       type: operation.node.type,
       typeVersion: operation.node.typeVersion || 1,
-      position: operation.node.position,
+      // Carried through as-is, including absent: a batch may place the node with a later
+      // moveNode, and a node that never receives a position is reported by the post-apply
+      // structure validation rather than defaulted to a silent [0, 0].
+      position: operation.node.position as [number, number],
       parameters: operation.node.parameters || {},
       credentials: operation.node.credentials,
       disabled: operation.node.disabled,
