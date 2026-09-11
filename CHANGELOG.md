@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.84.2] - 2026-09-11
+
+### Fixed
+
+- **A malformed `addNode` payload in `n8n_update_partial_workflow` is rejected as an operation error instead of a TypeError** ([#1092](https://github.com/czlonkowski/n8n-mcp/issues/1092)). The diff request schema types an operation's `node` as `z.any()` — it has to, because the addNode contract is looser than n8n's node schema (`applyAddNode` fills in `id`, `typeVersion` and `parameters`) — so a string, a `null`, or a node whose `name` or `type` was not a string reached `validateAddNode` and blew up on `normalizeNodeName(node.name)` or `node.type.includes(...)`. The engine caught it and returned `Diff engine error: node.type.includes is not a function` against operation index `-1`: the same non-actionable shape that [#1071](https://github.com/czlonkowski/n8n-mcp/issues/1071) fixed for `n8n_create_workflow`, in the tool that gets the most writes. The two fields the validator and the appliers dereference are now checked first, so the caller gets `addNode requires a string "type" on the node, received a number` against the operation that carried it.
+
 ## [2.84.0] - 2026-09-09
 
 ### Changed

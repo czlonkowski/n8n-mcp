@@ -183,6 +183,14 @@ function countOccurrences(str: string, search: string): number {
   return count;
 }
 
+/** Names the type of a rejected value for an error message: "a string", "null", "an array". */
+function describeValueType(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'nothing';
+  if (Array.isArray(value)) return 'an array';
+  return `a ${typeof value}`;
+}
+
 // Fields that hold plain JavaScript: the Code node's jsCode and the legacy
 // Function/FunctionItem nodes' functionCode. Python lives in pythonCode.
 const JS_CODE_FIELD_NAMES = new Set(['jsCode', 'functionCode']);
@@ -656,6 +664,11 @@ export class WorkflowDiffEngine {
   private validateAddNode(workflow: Workflow, operation: AddNodeOperation): string | null {
     const { node } = operation;
 
+    const shapeError = this.validateAddNodeShape(node);
+    if (shapeError) {
+      return shapeError;
+    }
+
     // Check if node with same name already exists (use normalization to prevent collisions)
     const normalizedNewName = this.normalizeNodeName(node.name);
     const duplicate = workflow.nodes.find(n =>
@@ -674,6 +687,31 @@ export class WorkflowDiffEngine {
       return `Invalid node type "${node.type}". Use "n8n-nodes-base.${node.type.substring(11)}" instead`;
     }
     
+    return null;
+  }
+
+  /**
+   * The addNode payload arrives as `z.any()` - the request schema cannot type it, because the
+   * operation's contract is looser than n8n's node schema (applyAddNode fills in `id`,
+   * `typeVersion` and `parameters`). Check the two fields this validator and the appliers
+   * dereference, so a malformed payload becomes an operation error instead of a TypeError
+   * surfacing as "Diff engine error: node.type.includes is not a function" (#1071).
+   */
+  private validateAddNodeShape(node: unknown): string | null {
+    if (node === null || typeof node !== 'object' || Array.isArray(node)) {
+      return `addNode requires a node object, received ${describeValueType(node)}`;
+    }
+
+    const candidate = node as Record<string, unknown>;
+
+    if (typeof candidate.name !== 'string') {
+      return `addNode requires a string "name" on the node, received ${describeValueType(candidate.name)}`;
+    }
+
+    if (typeof candidate.type !== 'string') {
+      return `addNode requires a string "type" on the node, received ${describeValueType(candidate.type)}`;
+    }
+
     return null;
   }
 

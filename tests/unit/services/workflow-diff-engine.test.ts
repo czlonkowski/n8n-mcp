@@ -215,6 +215,57 @@ describe('WorkflowDiffEngine', () => {
       expect(result.errors![0].message).toContain('Use "n8n-nodes-base.');
     });
 
+    it.each([
+      { label: 'a string', node: 'strayString', expected: 'addNode requires a node object, received a string' },
+      { label: 'null', node: null, expected: 'addNode requires a node object, received null' },
+      { label: 'an array', node: [], expected: 'addNode requires a node object, received an array' },
+      { label: 'a number', node: 123, expected: 'addNode requires a node object, received a number' },
+      {
+        label: 'a node with no name',
+        node: { type: 'n8n-nodes-base.code', position: [800, 300] },
+        expected: 'addNode requires a string "name" on the node, received nothing',
+      },
+      {
+        label: 'a node with a non-string name',
+        node: { name: 123, type: 'n8n-nodes-base.code', position: [800, 300] },
+        expected: 'addNode requires a string "name" on the node, received a number',
+      },
+      {
+        label: 'a node with no type',
+        node: { name: 'No Type', position: [800, 300] },
+        expected: 'addNode requires a string "type" on the node, received nothing',
+      },
+      {
+        label: 'a node with a non-string type',
+        node: { name: 'Bad Type', type: 123, position: [800, 300] },
+        expected: 'addNode requires a string "type" on the node, received a number',
+      },
+    ])('should reject $label with a validation error, not a TypeError', async ({ node, expected }) => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'addNode', node } as unknown as AddNodeOperation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].operation).toBe(0);
+      expect(result.errors![0].message).toBe(expected);
+    });
+
+    it('should leave the workflow untouched when an addNode payload is malformed', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'addNode', node: 'strayString' } as unknown as AddNodeOperation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.workflow).toBeUndefined();
+      expect(baseWorkflow.nodes).toHaveLength(3);
+    });
+
     it('should generate node ID if not provided', async () => {
       const operation: AddNodeOperation = {
         type: 'addNode',
