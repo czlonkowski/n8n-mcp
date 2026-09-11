@@ -612,7 +612,14 @@ export function validateConditionNodeStructure(node: WorkflowNode): string[] {
   } else if (node.type === 'n8n-nodes-base.switch') {
     if (typeVersion >= 3.2) {
       const rules = node.parameters?.rules as any;
-      if (rules?.rules && Array.isArray(rules.rules)) {
+
+      // A present collection that is not an array is reported rather than read as zero rules:
+      // the branch-count check in validateWorkflowStructure falls back to an empty array so a
+      // string cannot reach its `.map`, and without this nothing would say why (#1094). An
+      // absent one is left alone - Switch also stores its rules under `values`.
+      if (rules?.rules !== undefined && rules?.rules !== null && !Array.isArray(rules.rules)) {
+        errors.push('rules.rules: rules is not an array');
+      } else if (Array.isArray(rules?.rules)) {
         rules.rules.forEach((rule: any, i: number) => {
           // Report an entry that is not a rule rather than reading `conditions` off it: the
           // branch-count check in validateWorkflowStructure reads these entries too (#1094).

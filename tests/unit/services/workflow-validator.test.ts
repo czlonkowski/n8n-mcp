@@ -1414,6 +1414,28 @@ describe('WorkflowValidator', () => {
         .toEqual(['rules.rules[0]: rule is missing or not an object']);
     });
 
+    it.each([
+      { label: 'a string', rules: 'abc' },
+      { label: 'an object with a length', rules: { length: 2 } },
+    ])('Switch v3.2 with $label as the rules collection → reports it rather than reading zero rules (#1094)', ({ rules }) => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: { rules: { rules } }
+      };
+      expect(validateConditionNodeStructure(node as any))
+        .toEqual(['rules.rules: rules is not an array']);
+    });
+
+    it('Switch v3.2 storing its rules under "values" is left alone', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: { rules: { values: [{ conditions: { conditions: [] } }] } }
+      };
+      expect(validateConditionNodeStructure(node as any)).toEqual([]);
+    });
+
     it('If v2.2 with a null condition entry → reports the missing operator (#1094)', () => {
       const node = {
         id: '1', name: 'IF', type: 'n8n-nodes-base.if', typeVersion: 2.2,
