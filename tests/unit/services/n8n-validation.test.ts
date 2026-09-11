@@ -1157,6 +1157,39 @@ describe('n8n-validation', () => {
         .toEqual(['Workflow nodes must be an array']);
     });
 
+    it('reports a parse failure as one line rather than a serialized Zod issue array', () => {
+      const workflow = {
+        name: 'Malformed node',
+        nodes: [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Invalid Node', 'n8n-nodes-base.set'), type: 123 },
+        ],
+        connections: {},
+      };
+
+      const errors = validateWorkflowStructure(workflow as unknown as Partial<Workflow>);
+
+      expect(errors).toEqual(['Invalid node at index 1: "type": Expected string, received number']);
+    });
+
+    it('names every offending field when a node fails on more than one', () => {
+      const workflow = {
+        name: 'Malformed node',
+        nodes: [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Invalid Node', 'n8n-nodes-base.set'), type: 123, typeVersion: 'two' },
+        ],
+        connections: {},
+      };
+
+      const errors = validateWorkflowStructure(workflow as unknown as Partial<Workflow>);
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('"type"');
+      expect(errors[0]).toContain('"typeVersion"');
+      expect(errors[0]).not.toContain('\n');
+    });
+
     it('uses normalized node fields without mutating the submitted workflow', () => {
       const workflow = {
         name: 'Serialized node',

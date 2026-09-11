@@ -131,6 +131,21 @@ export function validateWorkflowNode(node: unknown): WorkflowNode {
   return workflowNodeSchema.parse(node);
 }
 
+/**
+ * A failed Zod parse carries the whole issue array serialised as JSON in `error.message`,
+ * which reaches MCP clients as a dozen lines per malformed node. Collapse it to one clause
+ * per issue: the offending field, then the reason.
+ */
+function describeNodeParseFailure(error: unknown): string {
+  if (!(error instanceof z.ZodError)) {
+    return error instanceof Error ? error.message : 'Unknown error';
+  }
+
+  return error.issues
+    .map(issue => (issue.path.length > 0 ? `"${issue.path.join('.')}": ${issue.message}` : issue.message))
+    .join('; ');
+}
+
 export function validateWorkflowConnections(connections: unknown): WorkflowConnection {
   return workflowConnectionSchema.parse(connections);
 }
@@ -314,7 +329,7 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
       try {
         nodes.push(validateWorkflowNode(node));
       } catch (error) {
-        errors.push(`Invalid node at index ${index}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        errors.push(`Invalid node at index ${index}: ${describeNodeParseFailure(error)}`);
       }
     }
 
