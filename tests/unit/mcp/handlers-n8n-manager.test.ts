@@ -375,10 +375,16 @@ describe('handlers-n8n-manager', () => {
 
         expect(result.success).toBe(false);
         expect(result.error).toBe('Workflow validation failed');
-        expect(result.details.errors).toEqual(expect.arrayContaining([
-          expect.stringContaining('Invalid connections:'),
-        ]));
         expect(mockApiClient.createWorkflow).not.toHaveBeenCalled();
+
+        // The old trailing parse also produced an "Invalid connections:" line, so matching only
+        // that would pass against the unfixed code. What changed is that the line is collapsed
+        // rather than the Zod issue array serialized as JSON, and that it is the whole answer -
+        // the graph findings computed over the broken connection are gone.
+        const [connectionError, ...rest] = result.details.errors;
+        expect(connectionError).toMatch(/^Invalid connections: /);
+        expect(connectionError).not.toContain('{');
+        expect(rest).toEqual([]);
       });
     });
 

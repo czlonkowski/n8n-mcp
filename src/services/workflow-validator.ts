@@ -196,19 +196,20 @@ function collectMalformedConnectionErrors(connections: Record<string, unknown>):
       // Collected per key so an unknown key can be reported ahead of them - see below.
       const keyErrors: string[] = [];
 
-      // Reported even though nothing dereferences it today: n8n's write schema rejects it, so
-      // staying silent tells the caller a workflow n8n will refuse is fine. No template of the
-      // 2,352 bundled ones carries the shape, so nothing that validates now starts failing.
+      // Reported even though nothing dereferences it today. n8n's own type admits no null here
+      // - `INodeConnections` is `{[key: string]: NodeInputConnections}` and that alias is an
+      // array - so staying silent tells the caller a workflow n8n will refuse is fine. None of
+      // the 2,352 bundled templates carries the shape either.
       if (!Array.isArray(branches)) {
-        keyErrors.push(`Connections for "${sourceName}" output "${outputKey}" must be an array of output branches (received ${describeValueType(branches)}).`);
+        keyErrors.push(`Connections for "${sourceName}" output "${outputKey}" must be an array of output branches (received ${describeValueType(branches)}). One branch per output: [[{"node": "Next Node", "type": "main", "index": 0}]].`);
       }
 
       for (const [branchIndex, branch] of (Array.isArray(branches) ? branches : []).entries()) {
         const branchLabel = `"${sourceName}".${outputKey}[${branchIndex}]`;
 
-        // A nullish branch is tolerated, as it is today: clients write it for an output with
-        // nothing connected, and nothing downstream dereferences it. Every other non-array
-        // shape does get dereferenced.
+        // A nullish branch is tolerated, as it is today, and n8n's type says so outright:
+        // `NodeInputConnections = Array<IConnection[] | null>`. Every other non-array shape
+        // does get dereferenced.
         if (branch === null || branch === undefined) {
           continue;
         }
@@ -222,7 +223,7 @@ function collectMalformedConnectionErrors(connections: Record<string, unknown>):
           const label = `Connection ${branchLabel}[${connectionIndex}]`;
 
           if (!isPlainObject(connection)) {
-            keyErrors.push(`${label} must be an object (received ${describeValueType(connection)}).`);
+            keyErrors.push(`${label} must be an object (received ${describeValueType(connection)}), naming its target: {"node": "Next Node", "type": "main", "index": 0}.`);
             continue;
           }
 
@@ -363,6 +364,9 @@ export class WorkflowValidator {
         // Every pass below reads `connections`, so a malformed one leaves them either throwing
         // or describing a graph the workflow does not have. They sit out while the shape errors
         // stand; the node and group findings above do not read connections and are kept.
+        // `validateConnections: false` does not make the gate optional - checkWorkflowPatterns
+        // runs whatever that option says, and reaches workflowHasErrorHandling, which reads
+        // `connections[name]?.main`.
         if (malformedConnectionErrors.length === 0) {
           // Validate connections if requested
           if (validateConnections) {
