@@ -632,8 +632,8 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
     // Proactively detect SHORT form node types (common mistake)
     const shortFormErrors: string[] = [];
     input.nodes?.forEach((node: any, index: number) => {
-      if (typeof node?.type === 'string' &&
-          (node.type.startsWith('nodes-base.') || node.type.startsWith('nodes-langchain.'))) {
+      if (typeof node?.type !== 'string') return;
+      if (node.type.startsWith('nodes-base.') || node.type.startsWith('nodes-langchain.')) {
         const fullForm = node.type.startsWith('nodes-base.')
           ? node.type.replace('nodes-base.', 'n8n-nodes-base.')
           : node.type.replace('nodes-langchain.', '@n8n/n8n-nodes-langchain.');
@@ -1135,6 +1135,9 @@ export async function handleUpdateWorkflow(
         currentByName.set(node.name, node);
       }
       for (const node of updateData.nodes as any[]) {
+        // Reporting a malformed entry is validateWorkflowStructure's job, below; this loop
+        // only has to survive reaching it.
+        if (!node || typeof node !== 'object') continue;
         const hasCredentials = node.credentials && typeof node.credentials === 'object' && Object.keys(node.credentials).length > 0;
         if (!hasCredentials) {
           const match = (node.id && currentById.get(node.id)) || currentByName.get(node.name);

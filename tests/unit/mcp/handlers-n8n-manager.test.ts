@@ -2218,6 +2218,46 @@ describe('handlers-n8n-manager', () => {
     });
   });
 
+  describe('handleUpdateWorkflow - malformed nodes with the real structure validator (#1071)', () => {
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof import('@/services/n8n-validation')>(
+        '@/services/n8n-validation'
+      );
+      vi.mocked(n8nValidation.validateWorkflowStructure).mockImplementation(actual.validateWorkflowStructure);
+
+      const workflow = createTestWorkflow({
+        id: 'wf-1',
+        nodes: [{ id: 'node-1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [0, 0], parameters: {} }],
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(workflow);
+      mockApiClient.updateWorkflow.mockResolvedValue(workflow);
+    });
+
+    // The credential-preservation merge reads node.credentials off every submitted entry, and
+    // it runs before the validator - so a null entry threw there instead of being reported.
+    it.each([
+      { label: 'null', node: null },
+      { label: 'a string', node: 'strayString' },
+      { label: 'a non-string type', node: { id: '2', name: 'Bad', type: 123, typeVersion: 1, position: [200, 0], parameters: {} } },
+    ])('rejects $label in nodes without calling the update API', async ({ node }) => {
+      const result = await handlers.handleUpdateWorkflow({
+        id: 'wf-1',
+        nodes: [
+          { id: 'node-1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [0, 0], parameters: {} },
+          node,
+        ],
+        connections: {},
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Workflow validation failed');
+      expect(result.details.errors).toEqual(expect.arrayContaining([
+        expect.stringContaining('Invalid node at index 1:'),
+      ]));
+      expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
+    });
+  });
+
   describe('handleUpdateWorkflow - canvas groups', () => {
     const storedGroups = [{ id: 'g1', name: 'Transform', nodeIds: ['node-1'] }];
 

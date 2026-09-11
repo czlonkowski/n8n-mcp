@@ -131,21 +131,6 @@ export function validateWorkflowNode(node: unknown): WorkflowNode {
   return workflowNodeSchema.parse(node);
 }
 
-/**
- * A failed Zod parse carries the whole issue array serialised as JSON in `error.message`,
- * which reaches MCP clients as a dozen lines per malformed node. Collapse it to one clause
- * per issue: the offending field, then the reason.
- */
-function describeNodeParseFailure(error: unknown): string {
-  if (!(error instanceof z.ZodError)) {
-    return error instanceof Error ? error.message : 'Unknown error';
-  }
-
-  return error.issues
-    .map(issue => (issue.path.length > 0 ? `"${issue.path.join('.')}": ${issue.message}` : issue.message))
-    .join('; ');
-}
-
 export function validateWorkflowConnections(connections: unknown): WorkflowConnection {
   return workflowConnectionSchema.parse(connections);
 }
@@ -304,6 +289,21 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
   return cleanedWorkflow as Partial<Workflow>;
 }
 
+/**
+ * A failed Zod parse carries the whole issue array serialised as JSON in `error.message`,
+ * which reaches MCP clients as a dozen lines per malformed node. Collapse it to one clause
+ * per issue: the offending field, then the reason.
+ */
+function describeNodeParseFailure(error: unknown): string {
+  if (!(error instanceof z.ZodError)) {
+    return error instanceof Error ? error.message : 'Unknown error';
+  }
+
+  return error.issues
+    .map(issue => (issue.path.length > 0 ? `"${issue.path.join('.')}": ${issue.message}` : issue.message))
+    .join('; ');
+}
+
 // Validate workflow structure
 export function validateWorkflowStructure(workflow: Partial<Workflow>): string[] {
   const errors: string[] = [];
@@ -325,16 +325,19 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
     }
 
     const nodes: WorkflowNode[] = [];
+    const shapeErrors: string[] = [];
     for (const [index, node] of workflow.nodes.entries()) {
       try {
         nodes.push(validateWorkflowNode(node));
       } catch (error) {
-        errors.push(`Invalid node at index ${index}: ${describeNodeParseFailure(error)}`);
+        shapeErrors.push(`Invalid node at index ${index}: ${describeNodeParseFailure(error)}`);
       }
     }
 
-    if (nodes.length !== workflow.nodes.length) {
-      return errors;
+    // Connectivity computed over a node of unknown shape is misleading, so the shape
+    // errors are the whole answer when there are any.
+    if (shapeErrors.length > 0) {
+      return [...errors, ...shapeErrors];
     }
 
     // Use normalized fields without changing the caller's workflow.
