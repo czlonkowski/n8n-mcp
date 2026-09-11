@@ -111,6 +111,63 @@ export interface WorkflowValidationResult {
   suggestions: string[];
 }
 
+/**
+ * Every pass below reads nodes without checking their shape: `isNonExecutableNode(n.type)`
+ * lowercases the type, `NodeTypeNormalizer` calls `.replace` on it, and the expression checks
+ * walk `parameters`. A malformed entry therefore throws several passes in, and because the
+ * whole run is wrapped in one try/catch the caller gets that TypeError as the only error with
+ * every other check skipped - the same non-actionable failure #1071 reported for the create
+ * path. Report what cannot be inspected instead, before anything inspects it.
+ *
+ * Deliberately narrower than n8n's node schema: this tool validates drafts, so a node with no
+ * `id`, `name` or `typeVersion` must still get its real feedback from the passes below.
+ */
+function describeNodeValueType(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'nothing';
+  if (Array.isArray(value)) return 'an array';
+  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
+}
+
+function collectMalformedNodeErrors(nodes: unknown[]): string[] {
+  const errors: string[] = [];
+
+  nodes.forEach((node, index) => {
+    if (node === null || typeof node !== 'object' || Array.isArray(node)) {
+      errors.push(`Node at index ${index} is not an object (received ${describeNodeValueType(node)}). Each entry in "nodes" must be a node object.`);
+      return;
+    }
+
+    const candidate = node as Record<string, unknown>;
+    const label = typeof candidate.name === 'string' ? `"${candidate.name}"` : `at index ${index}`;
+
+    if (typeof candidate.type !== 'string') {
+      errors.push(`Node ${label} has a non-string "type" (received ${describeNodeValueType(candidate.type)}). Node types are strings such as "n8n-nodes-base.webhook".`);
+    }
+
+    // An absent name is allowed - a draft may not have named the node yet - but a name that is
+    // present has to be a string. An object one throws outright, because the structure checks
+    // index `connections[node.name]` and coercing an object key raises "Cannot convert object
+    // to primitive value"; null, numbers and booleans coerce quietly instead, which is worse,
+    // because the node then silently fails to match any connection.
+    if ('name' in candidate && typeof candidate.name !== 'string') {
+      errors.push(`Node at index ${index} has a non-string "name" (received ${describeNodeValueType(candidate.name)}). Connections reference nodes by name, so names must be strings.`);
+    }
+
+    if (!('parameters' in candidate)) {
+      errors.push(`Node ${label} has no "parameters". Use an empty object if the node takes no parameters.`);
+    } else if (candidate.parameters == null) {
+      // Both nullish values are rejected: they are what the AI-node checks dereference
+      // (`node.parameters.hasOutputParser`, `needsFallback`). Other non-object values are wrong
+      // too but do not throw, and rejecting them would newly fail clients that send
+      // `parameters` serialized - see #1094.
+      errors.push(`Node ${label} has ${candidate.parameters === null ? 'null' : 'undefined'} "parameters". Use an empty object if the node takes no parameters.`);
+    }
+  });
+
+  return errors;
+}
+
 export class WorkflowValidator {
   private currentWorkflow: WorkflowJson | null = null;
   private similarityService: NodeSimilarityService;
@@ -171,6 +228,18 @@ export class WorkflowValidator {
         });
         result.valid = false;
         return result;
+      }
+
+      // Shape check before anything reads a node - see collectMalformedNodeErrors.
+      if (Array.isArray(workflow.nodes)) {
+        const malformedNodeErrors = collectMalformedNodeErrors(workflow.nodes);
+        if (malformedNodeErrors.length > 0) {
+          for (const message of malformedNodeErrors) {
+            result.errors.push({ type: 'error', message });
+          }
+          result.valid = false;
+          return result;
+        }
       }
 
       // Update statistics after null check (exclude sticky notes from counts)

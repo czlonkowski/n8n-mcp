@@ -215,6 +215,102 @@ describe('WorkflowDiffEngine', () => {
       expect(result.errors![0].message).toContain('Use "n8n-nodes-base.');
     });
 
+    it.each([
+      { label: 'a string', node: 'strayString', expected: 'addNode requires a node object, received a string' },
+      { label: 'null', node: null, expected: 'addNode requires a node object, received null' },
+      { label: 'an array', node: [], expected: 'addNode requires a node object, received an array' },
+      { label: 'a number', node: 123, expected: 'addNode requires a node object, received a number' },
+      {
+        label: 'a node with no name',
+        node: { type: 'n8n-nodes-base.code', position: [800, 300] },
+        expected: 'addNode requires a string "name" on the node, received nothing',
+      },
+      {
+        label: 'a node with a non-string name',
+        node: { name: 123, type: 'n8n-nodes-base.code', position: [800, 300] },
+        expected: 'addNode requires a string "name" on the node, received a number',
+      },
+      {
+        label: 'a node with no type',
+        node: { name: 'No Type', position: [800, 300] },
+        expected: 'addNode requires a string "type" on the node, received nothing',
+      },
+      {
+        label: 'a node with a non-string type',
+        node: { name: 'Bad Type', type: 123, position: [800, 300] },
+        expected: 'addNode requires a string "type" on the node, received a number',
+      },
+    ])('should reject $label with a validation error, not a TypeError', async ({ node, expected }) => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'addNode', node } as unknown as AddNodeOperation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].operation).toBe(0);
+      expect(result.errors![0].message).toBe(expected);
+    });
+
+    // The reordering pass that hoists an addNode above an earlier connection operation
+    // inspects node.name/node.id before any validator runs, so a malformed payload has to
+    // survive it - otherwise the operation index is lost and the TypeError comes back.
+    it('should keep the operation index when a connection operation precedes a malformed addNode', async () => {
+      // The connection operation is valid and between existing nodes, so the malformed addNode
+      // is the only thing that can fail - the assertion then pins the guard directly instead of
+      // passing on some earlier error.
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [
+          { type: 'addConnection', source: 'Webhook', target: 'Slack' },
+          { type: 'addNode', node: null },
+        ] as unknown as WorkflowDiffOperation[]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].operation).toBe(1);
+      expect(result.errors![0].message).toBe('addNode requires a node object, received null');
+    });
+
+    it('should report a malformed addNode against its own index alongside other failures', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        continueOnError: true,
+        operations: [
+          { type: 'addConnection', source: 'Webhook', target: 'New Node' },
+          { type: 'addNode', node: null },
+        ] as unknown as WorkflowDiffOperation[]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.errors).toContainEqual(expect.objectContaining({
+        operation: 1,
+        message: 'addNode requires a node object, received null',
+      }));
+    });
+
+    // The shape check must not require position: a batch may add a node and place it with a
+    // later moveNode. Only the post-apply structure check knows whether one ever arrived.
+    it('should accept an addNode without position when a later moveNode supplies it', async () => {
+      // No cast: AddNodeOperation declares position optional precisely because of this batch.
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [
+          { type: 'addNode', node: { name: 'Late Position', type: 'n8n-nodes-base.noOp' } },
+          { type: 'moveNode', nodeName: 'Late Position', position: [900, 400] },
+        ]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      expect(result.workflow!.nodes.find((n: any) => n.name === 'Late Position')!.position).toEqual([900, 400]);
+    });
+
     it('should generate node ID if not provided', async () => {
       const operation: AddNodeOperation = {
         type: 'addNode',
@@ -318,6 +414,75 @@ describe('WorkflowDiffEngine', () => {
   });
 
   describe('UpdateNode Operation', () => {
+    // `updates` and `connections` are z.any() on the wire; a primitive reached the `in`
+    // operator and Object.entries respectively, losing the operation index to the outer catch.
+    it.each([
+      { label: 'a string', updates: 'hello' },
+      { label: 'a number', updates: 7 },
+      { label: 'a boolean', updates: true },
+      { label: 'an array', updates: [] },
+    ])('should reject updates that are $label', async ({ updates }) => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'updateNode', nodeName: 'Webhook', updates } as unknown as UpdateNodeOperation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].operation).toBe(0);
+      expect(result.errors![0].message).toContain("requires 'updates' to be an object");
+    });
+
+    it('should reject a rename to a non-string name', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'updateNode', nodeName: 'Webhook', updates: { name: 123 } } as unknown as UpdateNodeOperation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].operation).toBe(0);
+      expect(result.errors![0].message).toContain("'updates.name' must be a string");
+    });
+
+    it.each([
+      { label: 'a null output map', connections: { Webhook: null }, expected: 'must be an object keyed by output name' },
+      { label: 'a non-array output', connections: { Webhook: { main: 'nope' } }, expected: 'must be an array of output arrays' },
+      { label: 'a non-array connection list', connections: { Webhook: { main: ['nope'] } }, expected: 'must contain arrays of connections' },
+      { label: 'a null connection', connections: { Webhook: { main: [[null]] } }, expected: 'must be an object with a string "node"' },
+    ])('should reject replaceConnections containing $label', async ({ connections, expected }) => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'replaceConnections', connections } as unknown as WorkflowDiffOperation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].operation).toBe(0);
+      expect(result.errors![0].message).toContain(expected);
+    });
+
+    it.each([
+      { label: 'absent', operation: { type: 'replaceConnections' } },
+      { label: 'null', operation: { type: 'replaceConnections', connections: null } },
+      { label: 'a string', operation: { type: 'replaceConnections', connections: 'main' } },
+    ])('should reject replaceConnections whose connections are $label', async ({ operation }) => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [operation as unknown as WorkflowDiffOperation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].operation).toBe(0);
+      expect(result.errors![0].message).toContain("requires a 'connections' object");
+    });
+
+
     it('should update node parameters', async () => {
       const operation: UpdateNodeOperation = {
         type: 'updateNode',

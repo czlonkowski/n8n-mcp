@@ -17,7 +17,10 @@ export interface AddNodeOperation extends DiffOperation {
   node: Partial<WorkflowNode> & {
     name: string; // Name is required
     type: string; // Type is required
-    position: [number, number]; // Position is required
+    // Position is NOT required: a batch may add a node and place it with a later moveNode,
+    // which applies cleanly today. A node that never gets one is caught by the post-apply
+    // structure validation, not by the operation validator.
+    position?: [number, number];
   };
 }
 
