@@ -289,6 +289,21 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
   return cleanedWorkflow as Partial<Workflow>;
 }
 
+/**
+ * A failed Zod parse carries the whole issue array serialised as JSON in `error.message`,
+ * which reaches MCP clients as a dozen lines per malformed node. Collapse it to one clause
+ * per issue: the offending field, then the reason.
+ */
+function describeNodeParseFailure(error: unknown): string {
+  if (!(error instanceof z.ZodError)) {
+    return error instanceof Error ? error.message : 'Unknown error';
+  }
+
+  return error.issues
+    .map(issue => (issue.path.length > 0 ? `"${issue.path.join('.')}": ${issue.message}` : issue.message))
+    .join('; ');
+}
+
 // Validate workflow structure
 export function validateWorkflowStructure(workflow: Partial<Workflow>): string[] {
   const errors: string[] = [];
@@ -300,6 +315,33 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
 
   if (!workflow.nodes || workflow.nodes.length === 0) {
     errors.push('Workflow must have at least one node');
+  }
+
+  // Validate node shapes before graph checks inspect names, types, or parameters.
+  if (workflow.nodes) {
+    if (!Array.isArray(workflow.nodes)) {
+      errors.push('Workflow nodes must be an array');
+      return errors;
+    }
+
+    const nodes: WorkflowNode[] = [];
+    const shapeErrors: string[] = [];
+    for (const [index, node] of workflow.nodes.entries()) {
+      try {
+        nodes.push(validateWorkflowNode(node));
+      } catch (error) {
+        shapeErrors.push(`Invalid node at index ${index}: ${describeNodeParseFailure(error)}`);
+      }
+    }
+
+    // Connectivity computed over a node of unknown shape is misleading, so the shape
+    // errors are the whole answer when there are any.
+    if (shapeErrors.length > 0) {
+      return [...errors, ...shapeErrors];
+    }
+
+    // Use normalized fields without changing the caller's workflow.
+    workflow = { ...workflow, nodes };
   }
 
   // Check if workflow has only non-executable nodes (sticky notes)
@@ -397,20 +439,13 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
     }
   }
 
-  // Validate nodes
+  // Check for common node type mistakes after node shapes have been validated.
   if (workflow.nodes) {
     workflow.nodes.forEach((node, index) => {
-      try {
-        validateWorkflowNode(node);
-        
-        // Additional check for common node type mistakes
-        if (node.type.startsWith('nodes-base.')) {
-          errors.push(`Invalid node type "${node.type}" at index ${index}. Use "n8n-nodes-base.${node.type.substring(11)}" instead.`);
-        } else if (!node.type.includes('.')) {
-          errors.push(`Invalid node type "${node.type}" at index ${index}. Node types must include package prefix (e.g., "n8n-nodes-base.webhook").`);
-        }
-      } catch (error) {
-        errors.push(`Invalid node at index ${index}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      if (node.type.startsWith('nodes-base.')) {
+        errors.push(`Invalid node type "${node.type}" at index ${index}. Use "n8n-nodes-base.${node.type.substring(11)}" instead.`);
+      } else if (!node.type.includes('.')) {
+        errors.push(`Invalid node type "${node.type}" at index ${index}. Node types must include package prefix (e.g., "n8n-nodes-base.webhook").`);
       }
     });
   }
