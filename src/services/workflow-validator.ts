@@ -122,13 +122,19 @@ export interface WorkflowValidationResult {
  * Deliberately narrower than n8n's node schema: this tool validates drafts, so a node with no
  * `id`, `name` or `typeVersion` must still get its real feedback from the passes below.
  */
+function describeNodeValueType(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'nothing';
+  if (Array.isArray(value)) return 'an array';
+  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
+}
+
 function collectMalformedNodeErrors(nodes: unknown[]): string[] {
   const errors: string[] = [];
 
   nodes.forEach((node, index) => {
     if (node === null || typeof node !== 'object' || Array.isArray(node)) {
-      const received = node === null ? 'null' : Array.isArray(node) ? 'an array' : `a ${typeof node}`;
-      errors.push(`Node at index ${index} is not an object (received ${received}). Each entry in "nodes" must be a node object.`);
+      errors.push(`Node at index ${index} is not an object (received ${describeNodeValueType(node)}). Each entry in "nodes" must be a node object.`);
       return;
     }
 
@@ -136,11 +142,26 @@ function collectMalformedNodeErrors(nodes: unknown[]): string[] {
     const label = typeof candidate.name === 'string' ? `"${candidate.name}"` : `at index ${index}`;
 
     if (typeof candidate.type !== 'string') {
-      errors.push(`Node ${label} has a non-string "type" (received ${candidate.type === undefined ? 'nothing' : `a ${typeof candidate.type}`}). Node types are strings such as "n8n-nodes-base.webhook".`);
+      errors.push(`Node ${label} has a non-string "type" (received ${describeNodeValueType(candidate.type)}). Node types are strings such as "n8n-nodes-base.webhook".`);
+    }
+
+    // Only an object name is rejected. The structure checks index `connections[node.name]`,
+    // and coercing an object key throws (`{toString: null}` gives "Cannot convert object to
+    // primitive value"); null, numbers and booleans coerce harmlessly and are already reported
+    // by the passes below, which must keep running - see the "continue validation after
+    // encountering errors" case.
+    if (candidate.name !== null && typeof candidate.name === 'object') {
+      errors.push(`Node at index ${index} has an object "name" (received ${describeNodeValueType(candidate.name)}). Connections reference nodes by name, so names must be strings.`);
     }
 
     if (!('parameters' in candidate)) {
       errors.push(`Node ${label} has no "parameters". Use an empty object if the node takes no parameters.`);
+    } else if (candidate.parameters === null) {
+      // Only null is rejected here: it is what the AI-node checks dereference
+      // (`node.parameters.hasOutputParser`). Other non-object values are wrong too but do not
+      // throw, and rejecting them would newly fail clients that send `parameters` serialized -
+      // see #1094.
+      errors.push(`Node ${label} has null "parameters". Use an empty object if the node takes no parameters.`);
     }
   });
 

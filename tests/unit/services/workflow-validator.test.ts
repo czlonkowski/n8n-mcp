@@ -92,6 +92,11 @@ describe('WorkflowValidator', () => {
         { label: 'a non-string type', node: { ...goodNode, id: '2', name: 'Bad', type: 123 }, expected: /Node "Bad" has a non-string "type"/ },
         { label: 'a missing type', node: { id: '2', name: 'NoType', typeVersion: 2, position: [200, 0], parameters: {} }, expected: /Node "NoType" has a non-string "type" \(received nothing\)/ },
         { label: 'missing parameters', node: { id: '2', name: 'NoParams', type: 'n8n-nodes-base.set', typeVersion: 3, position: [200, 0] }, expected: /Node "NoParams" has no "parameters"/ },
+        // A present name must be a string even though an absent one is allowed: the structure
+        // checks index connections[node.name], which coerces the key.
+        { label: 'an object name', node: { ...goodNode, id: '2', name: { toString: null } }, expected: /Node at index 1 has an object "name" \(received an object\)/ },
+        // null is what the AI-node checks dereference (node.parameters.hasOutputParser).
+        { label: 'null parameters', node: { id: '2', name: 'NullParams', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1, position: [200, 0], parameters: null }, expected: /Node "NullParams" has null "parameters"/ },
       ])('reports $label without leaking a TypeError', async ({ node, expected }) => {
         const workflow = { name: 'Malformed', nodes: [goodNode, node], connections: {} };
 
