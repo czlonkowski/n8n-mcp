@@ -285,6 +285,76 @@ describe('handlers-n8n-manager', () => {
   });
 
   describe('handleCreateWorkflow', () => {
+    describe('malformed nodes with the real structure validator (#1071)', () => {
+      beforeEach(async () => {
+        const actual = await vi.importActual<typeof import('@/services/n8n-validation')>(
+          '@/services/n8n-validation'
+        );
+        vi.mocked(n8nValidation.validateWorkflowStructure).mockImplementation(actual.validateWorkflowStructure);
+      });
+
+      const validNode = {
+        id: '2', name: 'Bad Node', type: 'n8n-nodes-base.set',
+        typeVersion: 1, position: [200, 0], parameters: {},
+      };
+      const cases = [
+        { label: 'null entry', node: null },
+        { label: 'string entry', node: 'strayString' },
+        { label: 'number entry', node: 123 },
+        { label: 'array entry', node: [] },
+        { label: 'missing name', node: { ...validNode, name: undefined } },
+        { label: 'non-string name', node: { ...validNode, name: 123 } },
+        { label: 'missing type', node: { ...validNode, type: undefined } },
+        { label: 'non-string type', node: { ...validNode, type: 123 } },
+      ];
+
+      it.each(cases.flatMap(testCase => [
+        { ...testCase, connected: false },
+        { ...testCase, connected: true },
+      ]))('rejects $label (connected=$connected) before creating a workflow', async ({ node, connected }) => {
+        const input = {
+          name: 'Malformed workflow',
+          nodes: [
+            { ...validNode, id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger' },
+            node,
+          ],
+          connections: connected ? {
+            'Manual Trigger': { main: [[{
+              node: typeof node === 'string' ? node : 'Bad Node', type: 'main', index: 0,
+            }]] },
+          } : {},
+        };
+
+        const result = await handlers.handleCreateWorkflow(input);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toBe('Workflow validation failed');
+        expect(result.details.errors).toEqual(expect.arrayContaining([
+          expect.stringContaining('Invalid node at index 1:'),
+        ]));
+        expect(mockApiClient.createWorkflow).not.toHaveBeenCalled();
+        expect(telemetryMocks.trackWorkflowCreation).toHaveBeenCalledWith(input, false);
+      });
+
+      it('still creates a valid connected workflow', async () => {
+        const input = {
+          name: 'Valid workflow',
+          nodes: [
+            { ...validNode, id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger' },
+            { ...validNode, name: 'Process Data' },
+          ],
+          connections: { 'Manual Trigger': { main: [[{ node: 'Process Data', type: 'main', index: 0 }]] } },
+        };
+        mockApiClient.createWorkflow.mockResolvedValue({ ...input, id: 'created-id', active: false });
+
+        const result = await handlers.handleCreateWorkflow(input);
+
+        expect(result.success).toBe(true);
+        expect(mockApiClient.createWorkflow).toHaveBeenCalledOnce();
+        expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input, expect.any(Object));
+      });
+    });
+
     it('should create workflow successfully', async () => {
       const testWorkflow = createTestWorkflow();
       const input = {
@@ -2145,6 +2215,46 @@ describe('handlers-n8n-manager', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('not configured');
+    });
+  });
+
+  describe('handleUpdateWorkflow - malformed nodes with the real structure validator (#1071)', () => {
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof import('@/services/n8n-validation')>(
+        '@/services/n8n-validation'
+      );
+      vi.mocked(n8nValidation.validateWorkflowStructure).mockImplementation(actual.validateWorkflowStructure);
+
+      const workflow = createTestWorkflow({
+        id: 'wf-1',
+        nodes: [{ id: 'node-1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [0, 0], parameters: {} }],
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(workflow);
+      mockApiClient.updateWorkflow.mockResolvedValue(workflow);
+    });
+
+    // The credential-preservation merge reads node.credentials off every submitted entry, and
+    // it runs before the validator - so a null entry threw there instead of being reported.
+    it.each([
+      { label: 'null', node: null },
+      { label: 'a string', node: 'strayString' },
+      { label: 'a non-string type', node: { id: '2', name: 'Bad', type: 123, typeVersion: 1, position: [200, 0], parameters: {} } },
+    ])('rejects $label in nodes without calling the update API', async ({ node }) => {
+      const result = await handlers.handleUpdateWorkflow({
+        id: 'wf-1',
+        nodes: [
+          { id: 'node-1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [0, 0], parameters: {} },
+          node,
+        ],
+        connections: {},
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Workflow validation failed');
+      expect(result.details.errors).toEqual(expect.arrayContaining([
+        expect.stringContaining('Invalid node at index 1:'),
+      ]));
+      expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
     });
   });
 

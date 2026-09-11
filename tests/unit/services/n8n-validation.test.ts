@@ -1105,6 +1105,115 @@ describe('n8n-validation', () => {
   });
 
   describe('validateWorkflowStructure', () => {
+    describe.each([false, true])('malformed nodes with connections: %s', (connected) => {
+      const validNode = webhookNode('2', 'Invalid Node', 'n8n-nodes-base.set');
+
+      it.each([
+        { label: 'a string', node: 'strayString', field: undefined },
+        { label: 'null', node: null, field: undefined },
+        { label: 'an array', node: [], field: undefined },
+        { label: 'a number', node: 123, field: undefined },
+        { label: 'a missing type', node: { ...validNode, type: undefined }, field: 'type' },
+        { label: 'a numeric type', node: { ...validNode, type: 123 }, field: 'type' },
+        { label: 'an object type', node: { ...validNode, type: {} }, field: 'type' },
+        { label: 'a missing name', node: { ...validNode, name: undefined }, field: 'name' },
+      ])('returns an indexed validation error for $label', ({ node, field }) => {
+        const workflow = {
+          name: 'Malformed node',
+          nodes: [webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'), node],
+          connections: connected ? {
+            Start: { main: [[{ node: 'Invalid Node', type: 'main', index: 0 }]] },
+          } : {},
+        };
+
+        const errors = validateWorkflowStructure(workflow as unknown as Partial<Workflow>);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatch(/^Invalid node at index 1:/);
+        if (field) {
+          expect(errors[0]).toContain(`"${field}"`);
+        }
+      });
+    });
+
+    it('collects all malformed node errors before traversing the workflow', () => {
+      const workflow = {
+        name: 'Multiple malformed nodes',
+        nodes: [null, webhookNode('1', 'Webhook', 'n8n-nodes-base.webhook'), 'strayString'],
+        connections: {},
+      };
+
+      const errors = validateWorkflowStructure(workflow as unknown as Partial<Workflow>);
+
+      expect(errors).toHaveLength(2);
+      expect(errors[0]).toMatch(/^Invalid node at index 0:/);
+      expect(errors[1]).toMatch(/^Invalid node at index 2:/);
+    });
+
+    it('rejects a non-array nodes collection before traversing the workflow', () => {
+      const workflow = { name: 'Invalid collection', nodes: {}, connections: {} };
+
+      expect(validateWorkflowStructure(workflow as unknown as Partial<Workflow>))
+        .toEqual(['Workflow nodes must be an array']);
+    });
+
+    it('reports a parse failure as one line rather than a serialized Zod issue array', () => {
+      const workflow = {
+        name: 'Malformed node',
+        nodes: [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Invalid Node', 'n8n-nodes-base.set'), type: 123 },
+        ],
+        connections: {},
+      };
+
+      const errors = validateWorkflowStructure(workflow as unknown as Partial<Workflow>);
+
+      // The field name is ours; the reason after it is Zod's wording and may change with the
+      // major the MCP SDK resolves, so only the shape of the line is pinned.
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/^Invalid node at index 1: "type": .+/);
+      expect(errors[0]).not.toContain('{');
+    });
+
+    it('names every offending field when a node fails on more than one', () => {
+      const workflow = {
+        name: 'Malformed node',
+        nodes: [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Invalid Node', 'n8n-nodes-base.set'), type: 123, typeVersion: 'two' },
+        ],
+        connections: {},
+      };
+
+      const errors = validateWorkflowStructure(workflow as unknown as Partial<Workflow>);
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('"type"');
+      expect(errors[0]).toContain('"typeVersion"');
+      expect(errors[0]).not.toContain('\n');
+    });
+
+    it('uses normalized node fields without mutating the submitted workflow', () => {
+      const workflow = {
+        name: 'Serialized node',
+        nodes: [JSON.stringify({
+          ...webhookNode('1', 'Webhook', 'n8n-nodes-base.webhook'),
+          typeVersion: '2',
+          position: { '0': '250', '1': '300' },
+          parameters: '{}',
+          // Not declared by the node schema - n8n's GET echoes fields like this, and Zod
+          // strips them. The caller's copy must keep them.
+          issues: { typeUnknown: true },
+        })],
+        connections: {},
+      };
+      const original = JSON.stringify(workflow);
+
+      expect(validateWorkflowStructure(workflow as unknown as Partial<Workflow>)).toEqual([]);
+      expect(JSON.stringify(workflow)).toBe(original);
+    });
+
     it('should return no errors for valid workflow', () => {
       const workflow = new WorkflowBuilder('Valid Workflow')
         .addWebhookNode({ id: 'webhook-1', name: 'Webhook' })
