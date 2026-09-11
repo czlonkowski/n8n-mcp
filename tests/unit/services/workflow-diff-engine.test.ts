@@ -257,10 +257,13 @@ describe('WorkflowDiffEngine', () => {
     // inspects node.name/node.id before any validator runs, so a malformed payload has to
     // survive it - otherwise the operation index is lost and the TypeError comes back.
     it('should keep the operation index when a connection operation precedes a malformed addNode', async () => {
+      // The connection operation is valid and between existing nodes, so the malformed addNode
+      // is the only thing that can fail - the assertion then pins the guard directly instead of
+      // passing on some earlier error.
       const request: WorkflowDiffRequest = {
         id: 'test-workflow',
         operations: [
-          { type: 'addConnection', source: 'Webhook', target: 'New Node' },
+          { type: 'addConnection', source: 'Webhook', target: 'Slack' },
           { type: 'addNode', node: null },
         ] as unknown as WorkflowDiffOperation[]
       };
@@ -268,8 +271,8 @@ describe('WorkflowDiffEngine', () => {
       const result = await diffEngine.applyDiff(baseWorkflow, request);
 
       expect(result.success).toBe(false);
-      expect(result.errors![0].operation).not.toBe(-1);
-      expect(result.errors![0].message).not.toContain('Diff engine error');
+      expect(result.errors![0].operation).toBe(1);
+      expect(result.errors![0].message).toBe('addNode requires a node object, received null');
     });
 
     it('should report a malformed addNode against its own index alongside other failures', async () => {
