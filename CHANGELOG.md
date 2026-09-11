@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.84.0] - 2026-09-09
+
+### Changed
+
+- **Updated n8n to 2.38.x.** n8n-nodes-base 2.37.2 → 2.38.2, n8n-core 2.37.3 → 2.38.2, n8n-workflow 2.37.2 → 2.38.1, @n8n/n8n-nodes-langchain 2.37.3 → 2.38.2. Rebuilt the node database: 2,755 nodes (832 core: 703 from n8n-nodes-base, 129 from @n8n/n8n-nodes-langchain; 1,923 community, 1,591 verified); `node_versions` grew from 623 to 625 rows. The community node refresh saved 154 node rows across 63 packages and dropped 2 rows their packages no longer declare, and README fetching brought the community nodes with a README to 1,911 of 1,923 (22 fetches failed). With the compressed bulk columns from 2.83.0 the database is 63.2 MiB after the rebuild.
+- **n8n 2.38 contract check.** The Public API moved workflow update and delete, and the deprecated activate and deactivate aliases, from the AJV-validated handlers onto the zod-validated controllers that create already used, so `PUT /workflows/{id}` now rejects an unknown settings key with the `Unrecognized key(s) in object` wording that 2.81.1 recognises; the settings and node key sets are unchanged from 2.37 (`check:settings-drift` reports none). The update body now accepts `description`, which n8n-mcp keeps omitting because older versions reject it, and the update response no longer carries `shared`, which n8n-mcp reads only from the list endpoint. `DELETE /workflows/{id}` answers 409 for a published workflow only when the workflow publication service is enabled, which it is not by default. n8n's instance-level MCP server changed only handshake telemetry and the agent tools: saved sub-agents no longer have to be published, and `search_agents` lost its `publishedOnly` argument, which the `n8n_manage_agents` documentation no longer lists. Every management tool family passed a live run against n8n 2.38.5, including the update and delete routes that moved validators and the agents family through the instance-level MCP server, whose served reference already describes sub-agents as saved rather than published.
+
+## [2.83.0] - 2026-09-09
+
+### Changed
+
+- **Bulk columns in the bundled node database are stored gzip-compressed** ([#1067](https://github.com/czlonkowski/n8n-mcp/issues/1067)). `nodes.properties_schema` and `nodes.npm_readme` are written gzip+base64, the layout `templates.workflow_json_compressed` and `node_versions.properties_schema` already used, and decoded in the node repository on read. `data/nodes.db` drops from 98.3 MiB to 62.7 MiB; it had been 1.7 MiB under GitHub's 100 MiB file limit and growing by 1.5 to 2 MiB per n8n minor, so the next n8n update would not have been pushable. Per column: `properties_schema` 30.6 MiB → 3.9 MiB, `npm_readme` 12.4 MiB → 6.1 MiB. Values under 1 KiB stay plain, and plain values written by earlier versions are still read, so an existing database keeps working with this release. `nodes.operations` and `templates.description` stay plain because the FTS indexes tokenise them. Inflating every schema in the database costs 88 ms in total, so there is no cache; `get_node`, `search_nodes` and property search latency are unchanged within noise. `npm run rebuild` repacks the community rows that survive a rebuild, prints the database size after `VACUUM`, and fails at 100 MiB.
+
 ## [2.82.1] - 2026-09-03
 
 ### Fixed

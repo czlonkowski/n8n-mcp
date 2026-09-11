@@ -169,6 +169,14 @@ async function rebuild() {
   
   console.log(`💾 Save completed: ${saved} nodes saved successfully`);
 
+  // Community rows survive the rebuild untouched, so rows written before bulk columns
+  // were compressed (#1067) are rewritten here; core rows were already saved compressed.
+  // Runs before the FTS rebuild so the update trigger cannot leave the index out of step.
+  const { rewritten } = repository.compressStoredColumns();
+  if (rewritten > 0) {
+    console.log(`\n📦 Compressed bulk columns on ${rewritten} previously plain node row(s)`);
+  }
+
   // Rebuild FTS5 index to guarantee consistency.
   // The content-synced FTS5 table (content=nodes) can accumulate stale rowid
   // references when rows are deleted and re-inserted during a rebuild cycle.
@@ -260,8 +268,28 @@ async function rebuild() {
   }
   
   console.log('\n✨ Rebuild complete!');
-  
+
   db.close();
+
+  // After close: the sql.js adapter writes the file only when it closes, so an earlier
+  // stat would see the previous file or none at all.
+  checkDatabaseSize(dbPath);
+}
+
+// The database is committed to git; GitHub rejects files over 100 MiB outright.
+const GITHUB_FILE_LIMIT_MIB = 100;
+const SIZE_WARNING_MIB = 90;
+
+function checkDatabaseSize(dbPath: string): void {
+  const sizeMiB = fs.statSync(dbPath).size / (1024 * 1024);
+  const sizeLabel = `${sizeMiB.toFixed(1)} MiB`;
+  console.log(`   Database size: ${sizeLabel}`);
+  if (sizeMiB >= GITHUB_FILE_LIMIT_MIB) {
+    throw new Error(`${dbPath} is ${sizeLabel}, over GitHub's ${GITHUB_FILE_LIMIT_MIB} MiB file limit; it cannot be pushed`);
+  }
+  if (sizeMiB >= SIZE_WARNING_MIB) {
+    console.warn(`⚠️  ${dbPath} is ${sizeLabel}, within ${GITHUB_FILE_LIMIT_MIB - SIZE_WARNING_MIB} MiB of GitHub's ${GITHUB_FILE_LIMIT_MIB} MiB file limit`);
+  }
 }
 
 // Expected minimum based on n8n v1.123.4 AI-capable nodes

@@ -8,6 +8,7 @@ import { N8nNodeLoader } from '../loaders/node-loader';
 import { NodeParser } from '../parsers/node-parser';
 import { DocsMapper } from '../mappers/docs-mapper';
 import { NodeRepository } from '../database/node-repository';
+import { compressColumnJson } from '../database/compressed-column';
 import { assertCoreNodesPresent } from './core-node-check';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -177,7 +178,7 @@ async function rebuildOptimized() {
         nodeData.isVersioned ? 1 : 0,
         nodeData.version,
         nodeData.documentation,
-        JSON.stringify(nodeData.properties),
+        compressColumnJson(nodeData.properties),
         JSON.stringify(nodeData.operations),
         JSON.stringify(nodeData.credentialsRequired),
         nodeData.nodeSourceCode,

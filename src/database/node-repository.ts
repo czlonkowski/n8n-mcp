@@ -1,5 +1,11 @@
-import * as zlib from 'zlib';
 import { DatabaseAdapter } from './database-adapter';
+import {
+  compressColumnJson,
+  compressColumnText,
+  decompressColumnJson,
+  decompressColumnText,
+  isCompressedColumn,
+} from './compressed-column';
 import { ParsedNode, normalizeNodeVersion } from '../parsers/node-parser';
 import { SQLiteStorageService } from '../services/sqlite-storage-service';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
@@ -108,11 +114,13 @@ export class NodeRepository {
       node.hasToolVariant ? 1 : 0,
       node.version,
       node.documentation || null,
-      JSON.stringify(node.properties, null, 2),
-      JSON.stringify(node.operations, null, 2),
-      JSON.stringify(node.credentials, null, 2),
-      node.outputs ? JSON.stringify(node.outputs, null, 2) : null,
-      node.outputNames ? JSON.stringify(node.outputNames, null, 2) : null,
+      // properties_schema is stored gzip+base64 above COMPRESSION_MIN_LENGTH (#1067). The JSON
+      // columns below stay plain, compact: nodes_fts indexes operations, and none are large.
+      compressColumnJson(node.properties),
+      JSON.stringify(node.operations),
+      JSON.stringify(node.credentials),
+      node.outputs ? JSON.stringify(node.outputs) : null,
+      node.outputNames ? JSON.stringify(node.outputNames) : null,
       // Community node fields
       node.isCommunity ? 1 : 0,
       node.isVerified ? 1 : 0,
@@ -397,7 +405,7 @@ export class NodeRepository {
       toolVariantOf: row.tool_variant_of || null,
       hasToolVariant: Number(row.has_tool_variant) === 1,
       version: row.version,
-      properties: this.safeJsonParse(row.properties_schema, []),
+      properties: decompressColumnJson(row.properties_schema, []),
       operations: this.safeJsonParse(row.operations, []),
       credentials: this.safeJsonParse(row.credentials_required, []),
       hasDocumentation: !!row.documentation,
@@ -413,7 +421,7 @@ export class NodeRepository {
       npmDownloads: row.npm_downloads || 0,
       communityFetchedAt: row.community_fetched_at || null,
       // AI documentation fields
-      npmReadme: row.npm_readme || null,
+      npmReadme: row.npm_readme ? decompressColumnText(row.npm_readme) : null,
       aiDocumentationSummary: row.ai_documentation_summary
         ? this.safeJsonParse(row.ai_documentation_summary, null)
         : null,
@@ -767,7 +775,60 @@ export class NodeRepository {
     const stmt = this.db.prepare(`
       UPDATE nodes SET npm_readme = ? WHERE node_type = ?
     `);
-    stmt.run(readme, nodeType);
+    stmt.run(compressColumnText(readme), nodeType);
+  }
+
+  /**
+   * Rewrites rows whose bulk columns are still stored as plain text into the compressed
+   * layout that saveNode() and updateNodeReadme() write. The rebuild only rewrites core
+   * nodes, so community rows keep whatever layout they were written with until this runs.
+   * Idempotent: rows already compressed or below the size threshold are left alone.
+   */
+  compressStoredColumns(): { rewritten: number } {
+    type BulkColumnRow = {
+      node_type: string;
+      properties_schema: string | null;
+      npm_readme: string | null;
+    };
+
+    // No size filter in SQL: SQLite's length() counts characters and the threshold counts
+    // UTF-16 units, so the two disagree on astral text. compressColumnText() decides per row.
+    const rows = this.db.prepare(`
+      SELECT node_type, properties_schema, npm_readme FROM nodes
+      WHERE properties_schema IS NOT NULL OR npm_readme IS NOT NULL
+    `).all() as BulkColumnRow[];
+
+    let rewritten = 0;
+    this.transaction(() => {
+      for (const row of rows) {
+        // A NULL column stays NULL; the pack helpers return anything already compressed,
+        // or below the threshold, unchanged.
+        const packedSchema = row.properties_schema && this.repackStoredJson(row.properties_schema);
+        const packedReadme = row.npm_readme && compressColumnText(row.npm_readme);
+        if (packedSchema === row.properties_schema && packedReadme === row.npm_readme) continue;
+        // Prepared per row: the sql.js adapter frees a statement after its first run().
+        this.db.prepare(
+          'UPDATE nodes SET properties_schema = ?, npm_readme = ? WHERE node_type = ?'
+        ).run(packedSchema, packedReadme, row.node_type);
+        rewritten++;
+      }
+    });
+    return { rewritten };
+  }
+
+  /**
+   * The stored form saveNode() would write for a legacy JSON column: compact JSON, then the
+   * size threshold. Rows written before this change are pretty-printed, and applying the
+   * threshold to that whitespace would compress schemas the writer keeps plain. A value that
+   * is not JSON is kept as the text it is.
+   */
+  private repackStoredJson(stored: string): string {
+    if (isCompressedColumn(stored)) return stored;
+    try {
+      return compressColumnJson(JSON.parse(stored));
+    } catch {
+      return compressColumnText(stored);
+    }
   }
 
   /**
@@ -883,7 +944,7 @@ export class NodeRepository {
       versionData.description || null,
       versionData.category || null,
       versionData.isCurrentMax ? 1 : 0,
-      versionData.propertiesSchema ? this.compressJson(versionData.propertiesSchema) : null,
+      versionData.propertiesSchema ? compressColumnJson(versionData.propertiesSchema) : null,
       versionData.operations ? JSON.stringify(versionData.operations) : null,
       versionData.credentialsRequired ? JSON.stringify(versionData.credentialsRequired) : null,
       versionData.outputs ? JSON.stringify(versionData.outputs) : null,
@@ -1001,7 +1062,7 @@ export class NodeRepository {
       description: row.description,
       category: row.category,
       isCurrentMax: Number(row.is_current_max) === 1,
-      propertiesSchema: row.properties_schema ? this.decompressJson(row.properties_schema, []) : null,
+      propertiesSchema: row.properties_schema ? decompressColumnJson(row.properties_schema, []) : null,
       operations: row.operations ? this.safeJsonParse(row.operations, []) : null,
       credentialsRequired: row.credentials_required ? this.safeJsonParse(row.credentials_required, []) : null,
       outputs: row.outputs ? this.safeJsonParse(row.outputs, null) : null,
@@ -1012,28 +1073,6 @@ export class NodeRepository {
       releasedAt: row.released_at,
       createdAt: row.created_at
     };
-  }
-
-  /**
-   * Per-version schemas repeat most of the nodes table, so they are stored
-   * gzip-compressed and base64-encoded (the same layout templates use) to keep
-   * the bundled database small. Plain JSON is still accepted on read.
-   */
-  private compressJson(value: unknown): string {
-    return zlib.gzipSync(JSON.stringify(value)).toString('base64');
-  }
-
-  private decompressJson(stored: string, fallback: any): any {
-    const trimmed = stored.trimStart();
-    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-      return this.safeJsonParse(stored, fallback);
-    }
-    try {
-      return JSON.parse(zlib.gunzipSync(Buffer.from(stored, 'base64')).toString('utf8'));
-    } catch (error) {
-      logger.warn('Failed to decompress stored schema', { error: (error as Error).message });
-      return fallback;
-    }
   }
 
   // ========================================

@@ -14,6 +14,7 @@ import {
 } from '../utils/enhanced-documentation-fetcher';
 import { ExampleGenerator } from '../utils/example-generator';
 import { DatabaseAdapter, createDatabaseAdapter } from '../database/database-adapter';
+import { decompressColumnJson } from '../database/compressed-column';
 
 interface NodeInfo {
   nodeType: string;
@@ -612,7 +613,7 @@ CREATE TABLE IF NOT EXISTS extraction_stats (
       requiredScopes: row.required_scopes ? JSON.parse(row.required_scopes) : null,
       exampleWorkflow: row.example_workflow ? JSON.parse(row.example_workflow) : null,
       exampleParameters: row.example_parameters ? JSON.parse(row.example_parameters) : null,
-      propertiesSchema: row.properties_schema ? JSON.parse(row.properties_schema) : null,
+      propertiesSchema: row.properties_schema ? decompressColumnJson(row.properties_schema, null) : null,
       packageName: row.package_name,
       version: row.version,
       codexData: row.codex_data ? JSON.parse(row.codex_data) : null,
