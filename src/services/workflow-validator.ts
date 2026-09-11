@@ -111,6 +111,42 @@ export interface WorkflowValidationResult {
   suggestions: string[];
 }
 
+/**
+ * Every pass below reads nodes without checking their shape: `isNonExecutableNode(n.type)`
+ * lowercases the type, `NodeTypeNormalizer` calls `.replace` on it, and the expression checks
+ * walk `parameters`. A malformed entry therefore throws several passes in, and because the
+ * whole run is wrapped in one try/catch the caller gets that TypeError as the only error with
+ * every other check skipped - the same non-actionable failure #1071 reported for the create
+ * path. Report what cannot be inspected instead, before anything inspects it.
+ *
+ * Deliberately narrower than n8n's node schema: this tool validates drafts, so a node with no
+ * `id`, `name` or `typeVersion` must still get its real feedback from the passes below.
+ */
+function collectMalformedNodeErrors(nodes: unknown[]): string[] {
+  const errors: string[] = [];
+
+  nodes.forEach((node, index) => {
+    if (node === null || typeof node !== 'object' || Array.isArray(node)) {
+      const received = node === null ? 'null' : Array.isArray(node) ? 'an array' : `a ${typeof node}`;
+      errors.push(`Node at index ${index} is not an object (received ${received}). Each entry in "nodes" must be a node object.`);
+      return;
+    }
+
+    const candidate = node as Record<string, unknown>;
+    const label = typeof candidate.name === 'string' ? `"${candidate.name}"` : `at index ${index}`;
+
+    if (typeof candidate.type !== 'string') {
+      errors.push(`Node ${label} has a non-string "type" (received ${candidate.type === undefined ? 'nothing' : `a ${typeof candidate.type}`}). Node types are strings such as "n8n-nodes-base.webhook".`);
+    }
+
+    if (!('parameters' in candidate)) {
+      errors.push(`Node ${label} has no "parameters". Use an empty object if the node takes no parameters.`);
+    }
+  });
+
+  return errors;
+}
+
 export class WorkflowValidator {
   private currentWorkflow: WorkflowJson | null = null;
   private similarityService: NodeSimilarityService;
@@ -171,6 +207,18 @@ export class WorkflowValidator {
         });
         result.valid = false;
         return result;
+      }
+
+      // Shape check before anything reads a node - see collectMalformedNodeErrors.
+      if (Array.isArray(workflow.nodes)) {
+        const malformedNodeErrors = collectMalformedNodeErrors(workflow.nodes);
+        if (malformedNodeErrors.length > 0) {
+          for (const message of malformedNodeErrors) {
+            result.errors.push({ type: 'error', message });
+          }
+          result.valid = false;
+          return result;
+        }
       }
 
       // Update statistics after null check (exclude sticky notes from counts)

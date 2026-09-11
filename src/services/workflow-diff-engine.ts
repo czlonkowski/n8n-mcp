@@ -188,7 +188,7 @@ function describeValueType(value: unknown): string {
   if (value === null) return 'null';
   if (value === undefined) return 'nothing';
   if (Array.isArray(value)) return 'an array';
-  return `a ${typeof value}`;
+  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
 }
 
 /**
@@ -210,6 +210,14 @@ function validateAddNodeShape(node: unknown): string | null {
 
   if (typeof candidate.type !== 'string') {
     return `addNode requires a string "type" on the node, received ${describeValueType(candidate.type)}`;
+  }
+
+  // applyAddNode defaults id, typeVersion and parameters, but not position - an operation
+  // without one builds a node n8n rejects, reported against the post-apply node index with
+  // no operation number attached.
+  const position = candidate.position;
+  if (!Array.isArray(position) || position.length !== 2 || !position.every(value => typeof value === 'number')) {
+    return `addNode requires "position" on the node as [x, y] numbers, received ${describeValueType(position)}`;
   }
 
   return null;
@@ -755,6 +763,12 @@ export class WorkflowDiffEngine {
     // Check for missing required parameter
     if (!operation.updates) {
       return `Missing required parameter 'updates'. The updateNode operation requires an 'updates' object. Correct structure: {type: "updateNode", nodeId: "abc-123" OR nodeName: "My Node", updates: {name: "New Name", "parameters.url": "https://example.com"}}`;
+    }
+
+    // `updates` is z.any() on the wire, and everything below treats it as a record - the
+    // `in` operator a few lines down throws on a primitive (#1092).
+    if (typeof operation.updates !== 'object' || Array.isArray(operation.updates)) {
+      return `The updateNode operation requires 'updates' to be an object of field paths, received ${describeValueType(operation.updates)}. Example: {type: "updateNode", nodeName: "My Node", updates: {"parameters.url": "https://example.com"}}`;
     }
 
     const node = this.findNode(workflow, operation.nodeId, operation.nodeName);
@@ -1876,6 +1890,11 @@ export class WorkflowDiffEngine {
   }
 
   private validateReplaceConnections(workflow: Workflow, operation: ReplaceConnectionsOperation): string | null {
+    // `connections` is z.any() on the wire, and Object.entries below throws on a missing one.
+    if (!operation.connections || typeof operation.connections !== 'object' || Array.isArray(operation.connections)) {
+      return `The replaceConnections operation requires a 'connections' object, received ${describeValueType(operation.connections)}`;
+    }
+
     // Validate that all referenced nodes exist
     const nodeNames = new Set(workflow.nodes.map(n => n.name));
 

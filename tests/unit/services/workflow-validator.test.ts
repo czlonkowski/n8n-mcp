@@ -79,6 +79,45 @@ describe('WorkflowValidator', () => {
       expect(result.statistics.triggerNodes).toBe(1);
     });
 
+    describe('malformed node entries (#1071)', () => {
+      const goodNode = { id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [0, 0] as [number, number], parameters: {} };
+
+      // Before the shape check these threw several passes in, and the single try/catch around
+      // the run turned each one into "Workflow validation failed: <TypeError>" with every
+      // other check skipped.
+      it.each([
+        { label: 'a string', node: 'strayString', expected: /Node at index 1 is not an object \(received a string\)/ },
+        { label: 'null', node: null, expected: /Node at index 1 is not an object \(received null\)/ },
+        { label: 'an array', node: [], expected: /Node at index 1 is not an object \(received an array\)/ },
+        { label: 'a non-string type', node: { ...goodNode, id: '2', name: 'Bad', type: 123 }, expected: /Node "Bad" has a non-string "type"/ },
+        { label: 'a missing type', node: { id: '2', name: 'NoType', typeVersion: 2, position: [200, 0], parameters: {} }, expected: /Node "NoType" has a non-string "type" \(received nothing\)/ },
+        { label: 'missing parameters', node: { id: '2', name: 'NoParams', type: 'n8n-nodes-base.set', typeVersion: 3, position: [200, 0] }, expected: /Node "NoParams" has no "parameters"/ },
+      ])('reports $label without leaking a TypeError', async ({ node, expected }) => {
+        const workflow = { name: 'Malformed', nodes: [goodNode, node], connections: {} };
+
+        const result = await validator.validateWorkflow(workflow as any);
+
+        expect(result.valid).toBe(false);
+        expect(result.errors.some(e => expected.test(e.message))).toBe(true);
+        expect(result.errors.some(e => /Cannot read propert|is not a function|Workflow validation failed:/.test(e.message))).toBe(false);
+      });
+
+      // The gate is deliberately narrower than n8n's node schema: this tool validates drafts,
+      // so an incomplete node must still reach the passes that explain what it is missing.
+      it('still gives a draft node its normal feedback instead of a shape error', async () => {
+        const workflow = {
+          name: 'Draft',
+          nodes: [goodNode, { name: 'Set', type: 'n8n-nodes-base.set', parameters: {} }],
+          connections: { Webhook: { main: [[{ node: 'Set', type: 'main', index: 0 }]] } },
+        };
+
+        const result = await validator.validateWorkflow(workflow as any);
+
+        expect(result.errors.some(e => /is not an object|has a non-string "type"|has no "parameters"/.test(e.message))).toBe(false);
+        expect(result.errors.some(e => /position/i.test(e.message))).toBe(true);
+      });
+    });
+
     it('should validate a workflow with all options disabled', async () => {
       const workflow = createWorkflow('Test Workflow').addWebhookNode({ name: 'Webhook' }).build();
       const result = await validator.validateWorkflow(workflow as any, { validateNodes: false, validateConnections: false, validateExpressions: false });
