@@ -227,6 +227,18 @@ function collectMalformedConnectionErrors(connections: Record<string, unknown>):
           if (typeof connection.node !== 'string') {
             errors.push(`${label} has a non-string "node" (received ${describeValueType(connection.node)}). Connections reference their target node by name.`);
           }
+
+          // `type` and `index` reach code that coerces them - `connection.index < 0`, and the
+          // invalid-type message interpolates the type - and JSON can express an object that
+          // throws "Cannot convert object to primitive value" when coerced. Scalars of the
+          // wrong kind are left to the connection pass, which already reports them.
+          if (connection.type !== null && typeof connection.type === 'object') {
+            errors.push(`${label} has a non-string "type" (received ${describeValueType(connection.type)}). Connection types are strings such as "main".`);
+          }
+
+          if (connection.index !== null && typeof connection.index === 'object') {
+            errors.push(`${label} has a non-numeric "index" (received ${describeValueType(connection.index)}). Output indices are numbers, such as 0.`);
+          }
         }
       }
     }

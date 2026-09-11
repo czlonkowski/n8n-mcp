@@ -145,6 +145,10 @@ describe('WorkflowValidator', () => {
         { label: 'a string branch', connections: { Webhook: { main: ['Set'] } }, expected: /Output branch "Webhook"\.main\[0\] must be an array of connections \(received a string\)/ },
         { label: 'a null connection', connections: { Webhook: { main: [[null]] } }, expected: /Connection "Webhook"\.main\[0\]\[0\] must be an object \(received null\)/ },
         { label: 'a non-string target', connections: { Webhook: { main: [[{ node: 5, type: 'main', index: 0 }]] } }, expected: /Connection "Webhook"\.main\[0\]\[0\] has a non-string "node" \(received a number\)/ },
+        // JSON can express an object that throws when coerced, which is what the connection
+        // pass does to both fields - `connection.index < 0` and the invalid-type message.
+        { label: 'an object type', connections: { Webhook: { main: [[{ node: 'Set', type: { toString: null, valueOf: null }, index: 0 }]] } }, expected: /Connection "Webhook"\.main\[0\]\[0\] has a non-string "type" \(received an object\)/ },
+        { label: 'an object index', connections: { Webhook: { main: [[{ node: 'Set', type: 'main', index: { toString: null, valueOf: null } }]] } }, expected: /Connection "Webhook"\.main\[0\]\[0\] has a non-numeric "index" \(received an object\)/ },
       ])('reports $label without leaking a TypeError', async ({ connections, expected }) => {
         const result = await validate(connections);
 
@@ -196,6 +200,9 @@ describe('WorkflowValidator', () => {
         { label: 'a source that matches no node', connections: { Nowhere: { main: [[{ node: 'Set', type: 'main', index: 0 }]] } } },
         { label: 'an unknown output key', connections: { Webhook: { weird: [[{ node: 'Set', type: 'main', index: 0 }]] } } },
         { label: 'an AI connection type', connections: { Webhook: { ai_tool: [[{ node: 'Set', type: 'ai_tool', index: 0 }]] } } },
+        // Scalars of the wrong kind coerce without throwing, and the connection pass already
+        // reports them - claiming them here would report the same problem twice.
+        { label: 'a numeric type', connections: { Webhook: { main: [[{ node: 'Set', type: 5, index: 0 }]] } } },
       ])('accepts $label, as before', async ({ connections }) => {
         const result = await validate(connections);
 
@@ -1363,6 +1370,9 @@ describe('WorkflowValidator', () => {
     it.each([
       { label: 'a null rule', rule: null },
       { label: 'a string rule', rule: 'Branch 1' },
+      { label: 'a numeric rule', rule: 0 },
+      // typeof [] === 'object', so an array slipped through a plain typeof check.
+      { label: 'an array rule', rule: [] },
     ])('Switch v3.2 with $label → reports the entry instead of dereferencing it (#1094)', ({ rule }) => {
       const node = {
         id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,

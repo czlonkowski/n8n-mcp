@@ -494,11 +494,13 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
     });
 
     const ruleLabel = (rule: any, i: number) =>
-      rule?.outputKey ? `"${rule.outputKey}" (index ${i})` : `Rule ${i}`;
+      typeof rule?.outputKey === 'string' ? `"${rule.outputKey}" (index ${i})` : `Rule ${i}`;
 
     for (const switchNode of switchNodes) {
       const params = switchNode.parameters as any;
-      const rules = params?.rules?.rules || [];
+      // Caller-supplied: a string or an object with a `length` reaches the branch-count read
+      // below and then has no `.map` (#1094). Only an array describes rules.
+      const rules = Array.isArray(params?.rules?.rules) ? params.rules.rules : [];
       const nodeConnections = workflow.connections[switchNode.name];
 
       if (rules.length > 0 && nodeConnections?.main) {
@@ -614,7 +616,7 @@ export function validateConditionNodeStructure(node: WorkflowNode): string[] {
         rules.rules.forEach((rule: any, i: number) => {
           // Report an entry that is not a rule rather than reading `conditions` off it: the
           // branch-count check in validateWorkflowStructure reads these entries too (#1094).
-          if (!rule || typeof rule !== 'object') {
+          if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
             errors.push(`rules.rules[${i}]: rule is missing or not an object`);
             return;
           }

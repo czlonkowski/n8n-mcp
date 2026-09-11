@@ -1201,6 +1201,44 @@ describe('n8n-validation', () => {
         expect(errors.some(error => error.includes('Disconnected nodes'))).toBe(false);
       });
 
+      // `rules` is caller-supplied. A string has the `.length` the branch-count check reads and
+      // no `.map`, and an object label cannot always be coerced into the message (#1094).
+      it.each([
+        { label: 'a string rules collection', rules: 'abc' },
+        { label: 'an object with a length', rules: { length: 2 } },
+        { label: 'a rule whose outputKey cannot be coerced', rules: [{ outputKey: { toString: null, valueOf: null }, conditions: { conditions: [] } }] },
+      ])('does not throw on $label', ({ rules }) => {
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2), parameters: { rules: { rules } } },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }]] },
+        };
+
+        expect(() => validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>))
+          .not.toThrow();
+      });
+
+      it('still counts Switch output branches against its rules', () => {
+        const rule = (outputKey: string) => ({ outputKey, conditions: { conditions: [] } });
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2), parameters: { rules: { rules: [rule('a'), rule('b')] } } },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }]] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e => /has 2 rules \["a" \(index 0\), "b" \(index 1\)\] but only 1 output branch/.test(e))).toBe(true);
+      });
+
       it('still validates a well-formed workflow', () => {
         const errors = validateWorkflowStructure({
           name: 'Valid',
