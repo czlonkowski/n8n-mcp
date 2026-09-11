@@ -291,10 +291,10 @@ export function cleanWorkflowForUpdate(workflow: Workflow): Partial<Workflow> {
 
 /**
  * A failed Zod parse carries the whole issue array serialised as JSON in `error.message`,
- * which reaches MCP clients as a dozen lines per malformed node. Collapse it to one clause
- * per issue: the offending field, then the reason.
+ * which reaches MCP clients as a dozen lines per malformed node or connection. Collapse it
+ * to one clause per issue: the offending field, then the reason.
  */
-function describeNodeParseFailure(error: unknown): string {
+function describeParseFailure(error: unknown): string {
   if (!(error instanceof z.ZodError)) {
     return error instanceof Error ? error.message : 'Unknown error';
   }
@@ -330,7 +330,7 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
       try {
         nodes.push(validateWorkflowNode(node));
       } catch (error) {
-        shapeErrors.push(`Invalid node at index ${index}: ${describeNodeParseFailure(error)}`);
+        shapeErrors.push(`Invalid node at index ${index}: ${describeParseFailure(error)}`);
       }
     }
 
@@ -354,6 +354,16 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
 
   if (!workflow.connections) {
     errors.push('Workflow connections are required');
+  } else {
+    // Same reasoning as the node gate above, one level down: the disconnected-node scan, the
+    // Switch branch counts and the reference checks all walk this object without checking it,
+    // so a malformed source entry throws mid-traversal and escapes the validator (#1094).
+    // Parsing here also normalizes MCP-mangled input, so those checks see the repaired shape.
+    try {
+      workflow = { ...workflow, connections: validateWorkflowConnections(workflow.connections) };
+    } catch (error) {
+      return [...errors, `Invalid connections: ${describeParseFailure(error)}`];
+    }
   }
 
   // Check for minimum viable workflow
@@ -460,15 +470,6 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
     });
   }
 
-  // Validate connections
-  if (workflow.connections) {
-    try {
-      validateWorkflowConnections(workflow.connections);
-    } catch (error) {
-      errors.push(`Invalid connections: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
   // Validate active workflows have activatable triggers
   // NOTE: Since n8n 2.0, executeWorkflowTrigger is now activatable and MUST be activated to work
   if ((workflow as any).active === true && workflow.nodes && workflow.nodes.length > 0) {
@@ -492,6 +493,9 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
       return !mode || mode === 'rules'; // Default mode is 'rules'
     });
 
+    const ruleLabel = (rule: any, i: number) =>
+      rule?.outputKey ? `"${rule.outputKey}" (index ${i})` : `Rule ${i}`;
+
     for (const switchNode of switchNodes) {
       const params = switchNode.parameters as any;
       const rules = params?.rules?.rules || [];
@@ -502,9 +506,7 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
 
         // Switch nodes in "rules" mode need output branches matching rules count
         if (outputBranches !== rules.length) {
-          const ruleNames = rules.map((r: any, i: number) =>
-            r.outputKey ? `"${r.outputKey}" (index ${i})` : `Rule ${i}`
-          ).join(', ');
+          const ruleNames = rules.map(ruleLabel).join(', ');
 
           errors.push(
             `Switch node "${switchNode.name}" has ${rules.length} rules [${ruleNames}] ` +
@@ -523,10 +525,7 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
             .filter((i: number) => i !== -1 && i < rules.length);
 
           if (emptyIndices.length > 0) {
-            const ruleInfo = emptyIndices.map((i: number) => {
-              const rule = rules[i];
-              return rule.outputKey ? `"${rule.outputKey}" (index ${i})` : `Rule ${i}`;
-            }).join(', ');
+            const ruleInfo = emptyIndices.map((i: number) => ruleLabel(rules[i], i)).join(', ');
 
             errors.push(
               `Switch node "${switchNode.name}" has unconnected output${emptyIndices.length !== 1 ? 's' : ''}: ${ruleInfo}. ` +
@@ -613,6 +612,12 @@ export function validateConditionNodeStructure(node: WorkflowNode): string[] {
       const rules = node.parameters?.rules as any;
       if (rules?.rules && Array.isArray(rules.rules)) {
         rules.rules.forEach((rule: any, i: number) => {
+          // Report an entry that is not a rule rather than reading `conditions` off it: the
+          // branch-count check in validateWorkflowStructure reads these entries too (#1094).
+          if (!rule || typeof rule !== 'object') {
+            errors.push(`rules.rules[${i}]: rule is missing or not an object`);
+            return;
+          }
           errors.push(...validateFilterConditionOperators(rule.conditions, `rules.rules[${i}].conditions`));
         });
       }
@@ -628,7 +633,7 @@ function validateFilterConditionOperators(conditions: any, path: string): string
 
   conditions.conditions.forEach((condition: any, i: number) => {
     errors.push(...validateOperatorStructure(
-      condition.operator,
+      condition?.operator,
       `${path}.conditions[${i}].operator`
     ));
   });

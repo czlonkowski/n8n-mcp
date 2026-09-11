@@ -286,6 +286,19 @@ describe('Node Sanitizer', () => {
       expect(condition.operator.type).toBe('string');
       expect(condition.operator.singleValue).toBe(true); // notEmpty is unary
     });
+
+    it('should leave a Switch rule entry that is not an object untouched (#1094)', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: { rules: { rules: [null, 'Branch 1'] } }
+      } as unknown as WorkflowNode;
+
+      const sanitized = sanitizeNode(node);
+
+      // Repairing the entry would hide the malformed payload the validators report.
+      expect((sanitized.parameters.rules as any).rules).toEqual([null, 'Branch 1']);
+    });
   });
 
   describe('validateNodeMetadata', () => {

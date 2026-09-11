@@ -111,6 +111,17 @@ export interface WorkflowValidationResult {
   suggestions: string[];
 }
 
+function describeValueType(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'nothing';
+  if (Array.isArray(value)) return 'an array';
+  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 /**
  * Every pass below reads nodes without checking their shape: `isNonExecutableNode(n.type)`
  * lowercases the type, `NodeTypeNormalizer` calls `.replace` on it, and the expression checks
@@ -122,27 +133,19 @@ export interface WorkflowValidationResult {
  * Deliberately narrower than n8n's node schema: this tool validates drafts, so a node with no
  * `id`, `name` or `typeVersion` must still get its real feedback from the passes below.
  */
-function describeNodeValueType(value: unknown): string {
-  if (value === null) return 'null';
-  if (value === undefined) return 'nothing';
-  if (Array.isArray(value)) return 'an array';
-  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
-}
-
 function collectMalformedNodeErrors(nodes: unknown[]): string[] {
   const errors: string[] = [];
 
   nodes.forEach((node, index) => {
-    if (node === null || typeof node !== 'object' || Array.isArray(node)) {
-      errors.push(`Node at index ${index} is not an object (received ${describeNodeValueType(node)}). Each entry in "nodes" must be a node object.`);
+    if (!isPlainObject(node)) {
+      errors.push(`Node at index ${index} is not an object (received ${describeValueType(node)}). Each entry in "nodes" must be a node object.`);
       return;
     }
 
-    const candidate = node as Record<string, unknown>;
-    const label = typeof candidate.name === 'string' ? `"${candidate.name}"` : `at index ${index}`;
+    const label = typeof node.name === 'string' ? `"${node.name}"` : `at index ${index}`;
 
-    if (typeof candidate.type !== 'string') {
-      errors.push(`Node ${label} has a non-string "type" (received ${describeNodeValueType(candidate.type)}). Node types are strings such as "n8n-nodes-base.webhook".`);
+    if (typeof node.type !== 'string') {
+      errors.push(`Node ${label} has a non-string "type" (received ${describeValueType(node.type)}). Node types are strings such as "n8n-nodes-base.webhook".`);
     }
 
     // An absent name is allowed - a draft may not have named the node yet - but a name that is
@@ -150,20 +153,84 @@ function collectMalformedNodeErrors(nodes: unknown[]): string[] {
     // index `connections[node.name]` and coercing an object key raises "Cannot convert object
     // to primitive value"; null, numbers and booleans coerce quietly instead, which is worse,
     // because the node then silently fails to match any connection.
-    if ('name' in candidate && typeof candidate.name !== 'string') {
-      errors.push(`Node at index ${index} has a non-string "name" (received ${describeNodeValueType(candidate.name)}). Connections reference nodes by name, so names must be strings.`);
+    if ('name' in node && typeof node.name !== 'string') {
+      errors.push(`Node at index ${index} has a non-string "name" (received ${describeValueType(node.name)}). Connections reference nodes by name, so names must be strings.`);
     }
 
-    if (!('parameters' in candidate)) {
+    if (!('parameters' in node)) {
       errors.push(`Node ${label} has no "parameters". Use an empty object if the node takes no parameters.`);
-    } else if (candidate.parameters == null) {
+    } else if (node.parameters == null) {
       // Both nullish values are rejected: they are what the AI-node checks dereference
       // (`node.parameters.hasOutputParser`, `needsFallback`). Other non-object values are wrong
       // too but do not throw, and rejecting them would newly fail clients that send
       // `parameters` serialized - see #1094.
-      errors.push(`Node ${label} has ${candidate.parameters === null ? 'null' : 'undefined'} "parameters". Use an empty object if the node takes no parameters.`);
+      errors.push(`Node ${label} has ${node.parameters === null ? 'null' : 'undefined'} "parameters". Use an empty object if the node takes no parameters.`);
     }
   });
+
+  return errors;
+}
+
+/**
+ * The connection half of the gate above, for the same reason (#1094). The passes that walk
+ * `connections` read the shape without checking it: `validateConnections` calls `Object.entries`
+ * on every source entry, `validateConnectionOutputs` calls `.forEach` on every branch and reads
+ * `.index` off every connection, and expression checking reaches `nodeHasInput` even when
+ * connection validation is switched off. The shapes that happen not to throw are no better: a
+ * local `!Array.isArray` guard skips a null branch in silence, so the caller is told nothing
+ * about a connection n8n will reject.
+ *
+ * Shallower than the write schema in n8n-validation.ts on purpose - connection entries with no
+ * `type` or `index` validate here today, and this tool validates drafts.
+ */
+function collectMalformedConnectionErrors(connections: Record<string, unknown>): string[] {
+  const errors: string[] = [];
+
+  for (const [sourceName, outputs] of Object.entries(connections)) {
+    if (!isPlainObject(outputs)) {
+      errors.push(`Connections for "${sourceName}" must be an object keyed by connection type (received ${describeValueType(outputs)}). Example: {"main": [[{"node": "Next Node", "type": "main", "index": 0}]]}.`);
+      continue;
+    }
+
+    for (const [outputKey, branches] of Object.entries(outputs)) {
+      // Reported even though nothing dereferences it today: n8n's write schema rejects it, so
+      // staying silent tells the caller a workflow n8n will refuse is fine. No template of the
+      // 2,352 bundled ones carries the shape, so nothing that validates now starts failing.
+      if (!Array.isArray(branches)) {
+        errors.push(`Connections for "${sourceName}" output "${outputKey}" must be an array of output branches (received ${describeValueType(branches)}).`);
+        continue;
+      }
+
+      for (const [branchIndex, branch] of branches.entries()) {
+        const branchLabel = `"${sourceName}".${outputKey}[${branchIndex}]`;
+
+        // A nullish branch is tolerated, as it is today: clients write it for an output with
+        // nothing connected, and nothing downstream dereferences it. Every other non-array
+        // shape does get dereferenced.
+        if (branch === null || branch === undefined) {
+          continue;
+        }
+
+        if (!Array.isArray(branch)) {
+          errors.push(`Output branch ${branchLabel} must be an array of connections (received ${describeValueType(branch)}). Each branch holds a list: [{"node": "Next Node", "type": "main", "index": 0}], or [] when nothing is connected.`);
+          continue;
+        }
+
+        for (const [connectionIndex, connection] of branch.entries()) {
+          const label = `Connection ${branchLabel}[${connectionIndex}]`;
+
+          if (!isPlainObject(connection)) {
+            errors.push(`${label} must be an object (received ${describeValueType(connection)}).`);
+            continue;
+          }
+
+          if (typeof connection.node !== 'string') {
+            errors.push(`${label} has a non-string "node" (received ${describeValueType(connection.node)}). Connections reference their target node by name.`);
+          }
+        }
+      }
+    }
+  }
 
   return errors;
 }
@@ -252,62 +319,53 @@ export class WorkflowValidator {
 
       // Only continue if basic structure is valid
       if (workflow.nodes && Array.isArray(workflow.nodes) && workflow.connections && typeof workflow.connections === 'object') {
+        // Shape check before any pass walks a connection - see collectMalformedConnectionErrors.
+        const malformedConnectionErrors = collectMalformedConnectionErrors(workflow.connections);
+        for (const message of malformedConnectionErrors) {
+          result.errors.push({ type: 'error', message, code: 'MALFORMED_CONNECTION' });
+        }
+
         // Validate each node if requested
         if (validateNodes && workflow.nodes.length > 0) {
           await this.validateAllNodes(workflow, result, profile);
-        }
-
-        // Validate connections if requested
-        if (validateConnections) {
-          this.validateConnections(workflow, result, profile);
-        }
-
-        // Validate expressions if requested
-        if (validateExpressions && workflow.nodes.length > 0) {
-          this.validateExpressions(workflow, result, profile);
-        }
-
-        // Check workflow patterns and best practices
-        if (workflow.nodes.length > 0) {
-          this.checkWorkflowPatterns(workflow, result, profile);
         }
 
         // Canvas groups (n8n 2.28+). Reference-level checks only — whether the members form a
         // groupable shape is decided by n8n on write, and it names the group it rejects.
         this.validateNodeGroups(workflow, result);
 
-        // Validate AI-specific nodes (AI Agent, Chat Trigger, AI tools)
-        if (workflow.nodes.length > 0 && hasAINodes(workflow)) {
-          const aiIssues = validateAISpecificNodes(workflow);
-          // Convert AI validation issues to workflow validation format.
-          // info-severity issues are advisories, not defects — route them to
-          // the suggestions channel instead of upgrading them to warnings.
-          for (const issue of aiIssues) {
-            if (issue.severity === 'info') {
-              result.suggestions.push(issue.message);
-              continue;
-            }
-
-            const validationIssue: ValidationIssue = {
-              type: issue.severity === 'error' ? 'error' : 'warning',
-              nodeId: issue.nodeId,
-              nodeName: issue.nodeName,
-              message: issue.message,
-              details: issue.code ? { code: issue.code } : undefined
-            };
-
-            if (issue.severity === 'error') {
-              result.errors.push(validationIssue);
-            } else {
-              result.warnings.push(validationIssue);
-            }
+        // Every pass below reads `connections`, so a malformed one leaves them either throwing
+        // or describing a graph the workflow does not have. They sit out while the shape errors
+        // stand; the node and group findings above do not read connections and are kept.
+        if (malformedConnectionErrors.length === 0) {
+          // Validate connections if requested
+          if (validateConnections) {
+            this.validateConnections(workflow, result, profile);
           }
+
+          // Validate expressions if requested
+          if (validateExpressions && workflow.nodes.length > 0) {
+            this.validateExpressions(workflow, result, profile);
+          }
+
+          // Check workflow patterns and best practices
+          if (workflow.nodes.length > 0) {
+            this.checkWorkflowPatterns(workflow, result, profile);
+          }
+
+          // Validate AI-specific nodes (AI Agent, Chat Trigger, AI tools)
+          if (workflow.nodes.length > 0 && hasAINodes(workflow)) {
+            this.validateAINodes(workflow, result);
+          }
+
+          // Add suggestions based on findings
+          this.generateSuggestions(workflow, result, profile);
         }
 
-        // Add suggestions based on findings
-        this.generateSuggestions(workflow, result, profile);
-
-        // Add AI-specific recovery suggestions if there are errors
+        // Recovery hints only read the error messages collected above, never the workflow, so
+        // they are still offered when the connection shape stopped the passes in between - and
+        // the hint a connection error triggers spells out the [[{node, type, index}]] nesting,
+        // which is the fix for the shape errors this gate reports.
         if (result.errors.length > 0) {
           this.addErrorRecoverySuggestions(result);
         }
@@ -323,6 +381,35 @@ export class WorkflowValidator {
 
     result.valid = result.errors.length === 0;
     return result;
+  }
+
+  /**
+   * Report AI-node problems in workflow validation format.
+   *
+   * info-severity issues are advisories, not defects — route them to the suggestions channel
+   * instead of upgrading them to warnings.
+   */
+  private validateAINodes(workflow: WorkflowJson, result: WorkflowValidationResult): void {
+    for (const issue of validateAISpecificNodes(workflow)) {
+      if (issue.severity === 'info') {
+        result.suggestions.push(issue.message);
+        continue;
+      }
+
+      const validationIssue: ValidationIssue = {
+        type: issue.severity === 'error' ? 'error' : 'warning',
+        nodeId: issue.nodeId,
+        nodeName: issue.nodeName,
+        message: issue.message,
+        details: issue.code ? { code: issue.code } : undefined
+      };
+
+      if (issue.severity === 'error') {
+        result.errors.push(validationIssue);
+      } else {
+        result.warnings.push(validationIssue);
+      }
+    }
   }
 
   /**

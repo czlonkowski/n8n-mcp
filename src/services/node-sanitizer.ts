@@ -96,10 +96,13 @@ function sanitizeFilterBasedNode(
     if (sanitized.rules && typeof sanitized.rules === 'object') {
       const rules = sanitized.rules as any;
       if (rules.rules && Array.isArray(rules.rules)) {
-        rules.rules = rules.rules.map((rule: any) => ({
-          ...rule,
-          conditions: sanitizeFilterConditions(rule.conditions)
-        }));
+        // Leave an entry that is not a rule exactly as it arrived — repairing it would hide
+        // the malformed payload that validation reports (#1094).
+        rules.rules = rules.rules.map((rule: any) =>
+          rule && typeof rule === 'object'
+            ? { ...rule, conditions: sanitizeFilterConditions(rule.conditions) }
+            : rule
+        );
       }
     }
   }
