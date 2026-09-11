@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.84.1] - 2026-09-11
+
+### Fixed
+
+- **A malformed entry in `nodes` is reported as a validation error instead of a TypeError** ([#1071](https://github.com/czlonkowski/n8n-mcp/issues/1071)). A string, a `null`, or a node whose `type` was not a string reached graph traversal before anything checked its shape: `isTriggerNode(node.type)` lowercased `undefined` in the disconnected-node pass, and `n8n_create_workflow`'s short-form type sniff called `startsWith` on a number. Clients got `Cannot read properties of undefined (reading 'toLowerCase')` or `node.type?.startsWith is not a function` — indistinguishable from a broken server, and not actionable without server logs. Every entry in `nodes` is now parsed against the node schema before connectivity is inspected, and the indexed shape errors come back through the existing `Workflow validation failed` response; a non-array `nodes` is rejected the same way. The graph checks run against normalized copies, so a serialized `parameters` or `position` still validates and the submitted workflow is not mutated. `n8n_update_full_workflow` shares the same validator and is covered too. Two consequences worth knowing: a parse failure is now one line (`Invalid node at index 1: "type": Expected string, received number`) rather than the Zod issue array serialized as JSON, and a workflow carrying a malformed node reports only the shape errors, because connectivity computed over a garbage node is misleading. Thanks to @maximilliangrand (Maxim Gagiev) for the fix (#1073).
+
 ## [2.84.0] - 2026-09-09
 
 ### Changed
