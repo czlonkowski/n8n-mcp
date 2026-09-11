@@ -943,6 +943,7 @@ export class WorkflowValidator {
           continue;
         }
 
+        // Belt and braces since the shape gate: a non-array output no longer reaches this pass.
         if (!outputConnections || !Array.isArray(outputConnections)) continue;
 
         // Validate that the source node can actually output ai_tool

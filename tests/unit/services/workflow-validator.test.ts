@@ -209,6 +209,19 @@ describe('WorkflowValidator', () => {
         expect(result.errors.filter(e => e.code === 'MALFORMED_CONNECTION')).toHaveLength(0);
       });
 
+      // Stronger than the code filter above, which a future gate could evade by reporting the
+      // same shapes under a different code: these have to come back clean, full stop.
+      it.each([
+        { label: 'a connection without type or index', connections: { Webhook: { main: [[{ node: 'Set' }]] } } },
+        { label: 'a stringified index', connections: { Webhook: { main: [[{ node: 'Set', type: 'main', index: '0' }]] } } },
+        { label: 'a nullish branch for an unconnected output', connections: { Webhook: { main: [[{ node: 'Set', type: 'main', index: 0 }], null] } } },
+      ])('validates a workflow with $label', async ({ connections }) => {
+        const result = await validate(connections);
+
+        expect(result.errors).toEqual([]);
+        expect(result.valid).toBe(true);
+      });
+
       // Bundled template 6686 keys its connections under "output" AND flattens the branches.
       // Reporting only the nesting would send the caller to fix the wrong thing.
       it('names an invalid output key ahead of the shape errors under it', async () => {
@@ -238,10 +251,18 @@ describe('WorkflowValidator', () => {
         expect(result.errors.some(e => e.code === 'MALFORMED_CONNECTION')).toBe(true);
       });
 
-      it('tags shape errors with a code so they can be told from config errors', async () => {
-        const result = await validate({ Webhook: null });
+      // The code is internal - the MCP response maps errors to {node, message, details} and
+      // drops it, as it does for every other code. What the caller sees is the ordering: the
+      // shape errors are pushed before any pass runs, so they arrive first.
+      it('tags shape errors with a code and reports them ahead of node findings', async () => {
+        const result = await validator.validateWorkflow({
+          name: 'Connections',
+          nodes: [webhook, { ...set, typeVersion: 99 }],
+          connections: { Webhook: null },
+        } as any);
 
         expect(result.errors[0].code).toBe('MALFORMED_CONNECTION');
+        expect(result.errors.at(-1)!.message).toMatch(/typeVersion 99 exceeds/);
       });
     });
 
