@@ -193,15 +193,17 @@ function collectMalformedConnectionErrors(connections: Record<string, unknown>):
     }
 
     for (const [outputKey, branches] of Object.entries(outputs)) {
+      // Collected per key so an unknown key can be reported ahead of them - see below.
+      const keyErrors: string[] = [];
+
       // Reported even though nothing dereferences it today: n8n's write schema rejects it, so
       // staying silent tells the caller a workflow n8n will refuse is fine. No template of the
       // 2,352 bundled ones carries the shape, so nothing that validates now starts failing.
       if (!Array.isArray(branches)) {
-        errors.push(`Connections for "${sourceName}" output "${outputKey}" must be an array of output branches (received ${describeValueType(branches)}).`);
-        continue;
+        keyErrors.push(`Connections for "${sourceName}" output "${outputKey}" must be an array of output branches (received ${describeValueType(branches)}).`);
       }
 
-      for (const [branchIndex, branch] of branches.entries()) {
+      for (const [branchIndex, branch] of (Array.isArray(branches) ? branches : []).entries()) {
         const branchLabel = `"${sourceName}".${outputKey}[${branchIndex}]`;
 
         // A nullish branch is tolerated, as it is today: clients write it for an output with
@@ -212,7 +214,7 @@ function collectMalformedConnectionErrors(connections: Record<string, unknown>):
         }
 
         if (!Array.isArray(branch)) {
-          errors.push(`Output branch ${branchLabel} must be an array of connections (received ${describeValueType(branch)}). Each branch holds a list: [{"node": "Next Node", "type": "main", "index": 0}], or [] when nothing is connected.`);
+          keyErrors.push(`Output branch ${branchLabel} must be an array of connections (received ${describeValueType(branch)}). Each branch holds a list: [{"node": "Next Node", "type": "main", "index": 0}], or [] when nothing is connected.`);
           continue;
         }
 
@@ -220,12 +222,12 @@ function collectMalformedConnectionErrors(connections: Record<string, unknown>):
           const label = `Connection ${branchLabel}[${connectionIndex}]`;
 
           if (!isPlainObject(connection)) {
-            errors.push(`${label} must be an object (received ${describeValueType(connection)}).`);
+            keyErrors.push(`${label} must be an object (received ${describeValueType(connection)}).`);
             continue;
           }
 
           if (typeof connection.node !== 'string') {
-            errors.push(`${label} has a non-string "node" (received ${describeValueType(connection.node)}). Connections reference their target node by name.`);
+            keyErrors.push(`${label} has a non-string "node" (received ${describeValueType(connection.node)}). Connections reference their target node by name.`);
           }
 
           // `type` and `index` reach code that coerces them - `connection.index < 0`, and the
@@ -233,14 +235,26 @@ function collectMalformedConnectionErrors(connections: Record<string, unknown>):
           // throws "Cannot convert object to primitive value" when coerced. Scalars of the
           // wrong kind are left to the connection pass, which already reports them.
           if (connection.type !== null && typeof connection.type === 'object') {
-            errors.push(`${label} has a non-string "type" (received ${describeValueType(connection.type)}). Connection types are strings such as "main".`);
+            keyErrors.push(`${label} has a non-string "type" (received ${describeValueType(connection.type)}). Connection types are strings such as "main".`);
           }
 
           if (connection.index !== null && typeof connection.index === 'object') {
-            errors.push(`${label} has a non-numeric "index" (received ${describeValueType(connection.index)}). Output indices are numbers, such as 0.`);
+            keyErrors.push(`${label} has a non-numeric "index" (received ${describeValueType(connection.index)}). Output indices are numbers, such as 0.`);
           }
         }
       }
+
+      if (keyErrors.length === 0) continue;
+
+      // Telling the caller how to nest a branch under a key that is not a connection type sends
+      // them to fix the wrong thing - bundled template 6686 keys its connections under "output"
+      // with flattened branches, and needs both. validateConnections reports the key itself, but
+      // the errors collected here are what stop it running, so name it here too.
+      if (!VALID_CONNECTION_TYPES.has(outputKey)) {
+        errors.push(`Unknown connection output key "${outputKey}" on node "${sourceName}". Valid keys are: ${[...VALID_CONNECTION_TYPES].join(', ')}.`);
+      }
+
+      errors.push(...keyErrors);
     }
   }
 

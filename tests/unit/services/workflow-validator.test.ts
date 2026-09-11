@@ -209,6 +209,16 @@ describe('WorkflowValidator', () => {
         expect(result.errors.filter(e => e.code === 'MALFORMED_CONNECTION')).toHaveLength(0);
       });
 
+      // Bundled template 6686 keys its connections under "output" AND flattens the branches.
+      // Reporting only the nesting would send the caller to fix the wrong thing.
+      it('names an invalid output key ahead of the shape errors under it', async () => {
+        const result = await validate({ Webhook: { output: [{ node: 'Set', type: 'main', index: 0 }] } });
+
+        const messages = result.errors.map(e => e.message);
+        expect(messages[0]).toMatch(/Unknown connection output key "output" on node "Webhook"/);
+        expect(messages[1]).toMatch(/Output branch "Webhook"\.output\[0\] must be an array of connections/);
+      });
+
       // An unknown key and a missing source are validateConnections' job, and it still gets to
       // do it: the gate does not claim them and does not stop the pass that reports them.
       it.each([
