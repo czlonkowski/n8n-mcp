@@ -94,7 +94,10 @@ describe('WorkflowValidator', () => {
         { label: 'missing parameters', node: { id: '2', name: 'NoParams', type: 'n8n-nodes-base.set', typeVersion: 3, position: [200, 0] }, expected: /Node "NoParams" has no "parameters"/ },
         // A present name must be a string even though an absent one is allowed: the structure
         // checks index connections[node.name], which coerces the key.
-        { label: 'an object name', node: { ...goodNode, id: '2', name: { toString: null } }, expected: /Node at index 1 has an object "name" \(received an object\)/ },
+        { label: 'an object name', node: { ...goodNode, id: '2', name: { toString: null } }, expected: /Node at index 1 has a non-string "name" \(received an object\)/ },
+        { label: 'a numeric name', node: { ...goodNode, id: '2', name: 123 }, expected: /Node at index 1 has a non-string "name" \(received a number\)/ },
+        { label: 'a null name', node: { ...goodNode, id: '2', name: null }, expected: /Node at index 1 has a non-string "name" \(received null\)/ },
+        { label: 'undefined parameters', node: { id: '2', name: 'UndefParams', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1, position: [200, 0], parameters: undefined }, expected: /Node "UndefParams" has undefined "parameters"/ },
         // null is what the AI-node checks dereference (node.parameters.hasOutputParser).
         { label: 'null parameters', node: { id: '2', name: 'NullParams', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1, position: [200, 0], parameters: null }, expected: /Node "NullParams" has null "parameters"/ },
       ])('reports $label without leaking a TypeError', async ({ node, expected }) => {
@@ -504,7 +507,7 @@ describe('WorkflowValidator', () => {
     });
 
     it('should continue validation after encountering errors', async () => {
-      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: null as any, type: 'n8n-nodes-base.set', position: [0, 0], parameters: {} }, { id: '2', name: 'Valid', type: 'n8n-nodes-base.set', position: [100, 0], parameters: {} }, { id: '3', name: 'AlsoValid', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} }], connections: { 'Valid': { main: [[{ node: 'AlsoValid', type: 'main', index: 0 }]] } } } as any);
+      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Unknown Type', type: 'n8n-nodes-base.doesNotExist', position: [0, 0], parameters: {} }, { id: '2', name: 'Valid', type: 'n8n-nodes-base.set', position: [100, 0], parameters: {} }, { id: '3', name: 'AlsoValid', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} }], connections: { 'Valid': { main: [[{ node: 'AlsoValid', type: 'main', index: 0 }]] } } } as any);
       expect(result.errors.length).toBeGreaterThan(0);
       expect(result.statistics.validConnections).toBeGreaterThan(0);
     });

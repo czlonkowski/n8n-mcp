@@ -34,7 +34,7 @@ export const n8nUpdatePartialWorkflowDoc: ToolDocumentation = {
 ## Available Operations:
 
 ### Node Operations (7 types):
-- **addNode**: Add a new node with name, type, and position (required)
+- **addNode**: Add a new node with name and type (required). Position is required too, unless a later operation in the same request supplies it - e.g. addNode followed by moveNode
 - **removeNode**: Remove a node by ID or name
 - **updateNode**: Update node properties using dot notation (e.g., 'parameters.url')
 - **patchNodeField**: Surgically edit string fields using find/replace patches. Strict mode: errors if find string not found, errors if multiple matches (ambiguity) unless replaceAll is set. Supports replaceAll and regex flags.

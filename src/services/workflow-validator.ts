@@ -145,23 +145,23 @@ function collectMalformedNodeErrors(nodes: unknown[]): string[] {
       errors.push(`Node ${label} has a non-string "type" (received ${describeNodeValueType(candidate.type)}). Node types are strings such as "n8n-nodes-base.webhook".`);
     }
 
-    // Only an object name is rejected. The structure checks index `connections[node.name]`,
-    // and coercing an object key throws (`{toString: null}` gives "Cannot convert object to
-    // primitive value"); null, numbers and booleans coerce harmlessly and are already reported
-    // by the passes below, which must keep running - see the "continue validation after
-    // encountering errors" case.
-    if (candidate.name !== null && typeof candidate.name === 'object') {
-      errors.push(`Node at index ${index} has an object "name" (received ${describeNodeValueType(candidate.name)}). Connections reference nodes by name, so names must be strings.`);
+    // An absent name is allowed - a draft may not have named the node yet - but a name that is
+    // present has to be a string. An object one throws outright, because the structure checks
+    // index `connections[node.name]` and coercing an object key raises "Cannot convert object
+    // to primitive value"; null, numbers and booleans coerce quietly instead, which is worse,
+    // because the node then silently fails to match any connection.
+    if ('name' in candidate && typeof candidate.name !== 'string') {
+      errors.push(`Node at index ${index} has a non-string "name" (received ${describeNodeValueType(candidate.name)}). Connections reference nodes by name, so names must be strings.`);
     }
 
     if (!('parameters' in candidate)) {
       errors.push(`Node ${label} has no "parameters". Use an empty object if the node takes no parameters.`);
-    } else if (candidate.parameters === null) {
-      // Only null is rejected here: it is what the AI-node checks dereference
-      // (`node.parameters.hasOutputParser`). Other non-object values are wrong too but do not
-      // throw, and rejecting them would newly fail clients that send `parameters` serialized -
-      // see #1094.
-      errors.push(`Node ${label} has null "parameters". Use an empty object if the node takes no parameters.`);
+    } else if (candidate.parameters == null) {
+      // Both nullish values are rejected: they are what the AI-node checks dereference
+      // (`node.parameters.hasOutputParser`, `needsFallback`). Other non-object values are wrong
+      // too but do not throw, and rejecting them would newly fail clients that send
+      // `parameters` serialized - see #1094.
+      errors.push(`Node ${label} has ${candidate.parameters === null ? 'null' : 'undefined'} "parameters". Use an empty object if the node takes no parameters.`);
     }
   });
 
