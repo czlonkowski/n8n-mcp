@@ -240,19 +240,6 @@ describe('WorkflowDiffEngine', () => {
         node: { name: 'Bad Type', type: 123, position: [800, 300] },
         expected: 'addNode requires a string "type" on the node, received a number',
       },
-      {
-        // applyAddNode defaults id, typeVersion and parameters, but never position - without
-        // this check the operation "succeeds" and the post-apply structure validation reports
-        // it against a node index with no operation number attached.
-        label: 'a node with no position',
-        node: { name: 'No Position', type: 'n8n-nodes-base.code' },
-        expected: 'addNode requires "position" on the node as [x, y] numbers, received nothing',
-      },
-      {
-        label: 'a node with a malformed position',
-        node: { name: 'Bad Position', type: 'n8n-nodes-base.code', position: ['800', '300'] },
-        expected: 'addNode requires "position" on the node as [x, y] numbers, received an array',
-      },
     ])('should reject $label with a validation error, not a TypeError', async ({ node, expected }) => {
       const request: WorkflowDiffRequest = {
         id: 'test-workflow',
@@ -301,6 +288,23 @@ describe('WorkflowDiffEngine', () => {
         operation: 1,
         message: 'addNode requires a node object, received null',
       }));
+    });
+
+    // The shape check must not require position: a batch may add a node and place it with a
+    // later moveNode. Only the post-apply structure check knows whether one ever arrived.
+    it('should accept an addNode without position when a later moveNode supplies it', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [
+          { type: 'addNode', node: { name: 'Late Position', type: 'n8n-nodes-base.noOp' } },
+          { type: 'moveNode', nodeName: 'Late Position', position: [900, 400] },
+        ] as unknown as WorkflowDiffOperation[]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(true);
+      expect(result.workflow!.nodes.find((n: any) => n.name === 'Late Position')!.position).toEqual([900, 400]);
     });
 
     it('should generate node ID if not provided', async () => {
@@ -424,6 +428,37 @@ describe('WorkflowDiffEngine', () => {
       expect(result.success).toBe(false);
       expect(result.errors![0].operation).toBe(0);
       expect(result.errors![0].message).toContain("requires 'updates' to be an object");
+    });
+
+    it('should reject a rename to a non-string name', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'updateNode', nodeName: 'Webhook', updates: { name: 123 } } as unknown as UpdateNodeOperation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].operation).toBe(0);
+      expect(result.errors![0].message).toContain("'updates.name' must be a string");
+    });
+
+    it.each([
+      { label: 'a null output map', connections: { Webhook: null }, expected: 'must be an object keyed by output name' },
+      { label: 'a non-array output', connections: { Webhook: { main: 'nope' } }, expected: 'must be an array of output arrays' },
+      { label: 'a non-array connection list', connections: { Webhook: { main: ['nope'] } }, expected: 'must contain arrays of connections' },
+      { label: 'a null connection', connections: { Webhook: { main: [[null]] } }, expected: 'must be an object with a string "node"' },
+    ])('should reject replaceConnections containing $label', async ({ connections, expected }) => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        operations: [{ type: 'replaceConnections', connections } as unknown as WorkflowDiffOperation]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].operation).toBe(0);
+      expect(result.errors![0].message).toContain(expected);
     });
 
     it.each([

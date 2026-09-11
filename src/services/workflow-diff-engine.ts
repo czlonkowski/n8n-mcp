@@ -212,14 +212,9 @@ function validateAddNodeShape(node: unknown): string | null {
     return `addNode requires a string "type" on the node, received ${describeValueType(candidate.type)}`;
   }
 
-  // applyAddNode defaults id, typeVersion and parameters, but not position - an operation
-  // without one builds a node n8n rejects, reported against the post-apply node index with
-  // no operation number attached.
-  const position = candidate.position;
-  if (!Array.isArray(position) || position.length !== 2 || !position.every(value => typeof value === 'number')) {
-    return `addNode requires "position" on the node as [x, y] numbers, received ${describeValueType(position)}`;
-  }
-
+  // `position` is deliberately NOT required here even though applyAddNode does not default
+  // it: a batch may legitimately add a node and place it with a later moveNode operation.
+  // The post-apply structure check is where a position that never arrives is reported.
   return null;
 }
 
@@ -780,6 +775,10 @@ export class WorkflowDiffEngine {
     // would silently orphan them. Renaming is fine; re-identifying is not.
     if ('id' in operation.updates && operation.updates.id !== node.id) {
       return `Cannot change the id of node "${node.name}": node IDs are immutable because canvas groups and pinned data reference them. Remove and re-add the node instead.`;
+    }
+
+    if ('name' in operation.updates && typeof operation.updates.name !== 'string') {
+      return `Cannot rename node "${node.name}": 'updates.name' must be a string, received ${describeValueType(operation.updates.name)}.`;
     }
 
     // Check for name collision if renaming
@@ -1903,11 +1902,29 @@ export class WorkflowDiffEngine {
         return `Source node not found in connections: ${sourceName}`;
       }
 
+      // The nested shape is as untyped as the root - a null output map or connection entry
+      // read straight through would abort the whole batch as a diff-engine error (#1092).
+      if (!outputs || typeof outputs !== 'object' || Array.isArray(outputs)) {
+        return `Connections for "${sourceName}" must be an object keyed by output name, received ${describeValueType(outputs)}`;
+      }
+
       // outputs is the value from Object.entries, need to iterate its keys
       for (const outputName of Object.keys(outputs)) {
         const connections = outputs[outputName];
+        if (!Array.isArray(connections)) {
+          return `Connections for "${sourceName}" output "${outputName}" must be an array of output arrays, received ${describeValueType(connections)}`;
+        }
+
         for (const conns of connections) {
+          if (!Array.isArray(conns)) {
+            return `Connections for "${sourceName}" output "${outputName}" must contain arrays of connections, received ${describeValueType(conns)}`;
+          }
+
           for (const conn of conns) {
+            if (!conn || typeof conn !== 'object' || typeof conn.node !== 'string') {
+              return `Each connection from "${sourceName}" output "${outputName}" must be an object with a string "node", received ${describeValueType(conn)}`;
+            }
+
             if (!nodeNames.has(conn.node)) {
               return `Target node not found in connections: ${conn.node}`;
             }
