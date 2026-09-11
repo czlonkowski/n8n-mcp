@@ -191,6 +191,30 @@ function describeValueType(value: unknown): string {
   return `a ${typeof value}`;
 }
 
+/**
+ * The addNode payload arrives as `z.any()` - the request schema cannot type it, because the
+ * operation's contract is looser than n8n's node schema (applyAddNode fills in `id`,
+ * `typeVersion` and `parameters`). Check the two fields the validator and the appliers
+ * dereference, so a malformed payload becomes an operation error instead of a TypeError (#1092).
+ */
+function validateAddNodeShape(node: unknown): string | null {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) {
+    return `addNode requires a node object, received ${describeValueType(node)}`;
+  }
+
+  const candidate = node as Record<string, unknown>;
+
+  if (typeof candidate.name !== 'string') {
+    return `addNode requires a string "name" on the node, received ${describeValueType(candidate.name)}`;
+  }
+
+  if (typeof candidate.type !== 'string') {
+    return `addNode requires a string "type" on the node, received ${describeValueType(candidate.type)}`;
+  }
+
+  return null;
+}
+
 // Fields that hold plain JavaScript: the Code node's jsCode and the legacy
 // Function/FunctionItem nodes' functionCode. Python lives in pythonCode.
 const JS_CODE_FIELD_NAMES = new Set(['jsCode', 'functionCode']);
@@ -272,6 +296,14 @@ function operationReferencesAddedNode(
   operation: WorkflowDiffOperation,
   addedNode: AddNodeOperation['node']
 ): boolean {
+  // `node` arrives as z.any() and is not shape-checked until validateAddNode, which runs
+  // after this reordering pass. A malformed payload must not throw here: it carries no
+  // usable name or id, so no operation can reference it, and validateAddNode still reports
+  // it against its own operation index rather than as a diff-engine error (#1092).
+  if (!addedNode || typeof addedNode !== 'object') {
+    return false;
+  }
+
   if (operation.type === 'addConnection') {
     return operation.source === addedNode.name
       || operation.source === addedNode.id
@@ -664,7 +696,7 @@ export class WorkflowDiffEngine {
   private validateAddNode(workflow: Workflow, operation: AddNodeOperation): string | null {
     const { node } = operation;
 
-    const shapeError = this.validateAddNodeShape(node);
+    const shapeError = validateAddNodeShape(node);
     if (shapeError) {
       return shapeError;
     }
@@ -687,31 +719,6 @@ export class WorkflowDiffEngine {
       return `Invalid node type "${node.type}". Use "n8n-nodes-base.${node.type.substring(11)}" instead`;
     }
     
-    return null;
-  }
-
-  /**
-   * The addNode payload arrives as `z.any()` - the request schema cannot type it, because the
-   * operation's contract is looser than n8n's node schema (applyAddNode fills in `id`,
-   * `typeVersion` and `parameters`). Check the two fields this validator and the appliers
-   * dereference, so a malformed payload becomes an operation error instead of a TypeError
-   * surfacing as "Diff engine error: node.type.includes is not a function" (#1071).
-   */
-  private validateAddNodeShape(node: unknown): string | null {
-    if (node === null || typeof node !== 'object' || Array.isArray(node)) {
-      return `addNode requires a node object, received ${describeValueType(node)}`;
-    }
-
-    const candidate = node as Record<string, unknown>;
-
-    if (typeof candidate.name !== 'string') {
-      return `addNode requires a string "name" on the node, received ${describeValueType(candidate.name)}`;
-    }
-
-    if (typeof candidate.type !== 'string') {
-      return `addNode requires a string "type" on the node, received ${describeValueType(candidate.type)}`;
-    }
-
     return null;
   }
 

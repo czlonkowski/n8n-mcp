@@ -253,17 +253,41 @@ describe('WorkflowDiffEngine', () => {
       expect(result.errors![0].message).toBe(expected);
     });
 
-    it('should leave the workflow untouched when an addNode payload is malformed', async () => {
+    // The reordering pass that hoists an addNode above an earlier connection operation
+    // inspects node.name/node.id before any validator runs, so a malformed payload has to
+    // survive it - otherwise the operation index is lost and the TypeError comes back.
+    it('should keep the operation index when a connection operation precedes a malformed addNode', async () => {
       const request: WorkflowDiffRequest = {
         id: 'test-workflow',
-        operations: [{ type: 'addNode', node: 'strayString' } as unknown as AddNodeOperation]
+        operations: [
+          { type: 'addConnection', source: 'Webhook', target: 'New Node' },
+          { type: 'addNode', node: null },
+        ] as unknown as WorkflowDiffOperation[]
       };
 
       const result = await diffEngine.applyDiff(baseWorkflow, request);
 
       expect(result.success).toBe(false);
-      expect(result.workflow).toBeUndefined();
-      expect(baseWorkflow.nodes).toHaveLength(3);
+      expect(result.errors![0].operation).not.toBe(-1);
+      expect(result.errors![0].message).not.toContain('Diff engine error');
+    });
+
+    it('should report a malformed addNode against its own index alongside other failures', async () => {
+      const request: WorkflowDiffRequest = {
+        id: 'test-workflow',
+        continueOnError: true,
+        operations: [
+          { type: 'addConnection', source: 'Webhook', target: 'New Node' },
+          { type: 'addNode', node: null },
+        ] as unknown as WorkflowDiffOperation[]
+      };
+
+      const result = await diffEngine.applyDiff(baseWorkflow, request);
+
+      expect(result.errors).toContainEqual(expect.objectContaining({
+        operation: 1,
+        message: 'addNode requires a node object, received null',
+      }));
     });
 
     it('should generate node ID if not provided', async () => {
