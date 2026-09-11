@@ -1169,7 +1169,11 @@ describe('n8n-validation', () => {
 
       const errors = validateWorkflowStructure(workflow as unknown as Partial<Workflow>);
 
-      expect(errors).toEqual(['Invalid node at index 1: "type": Expected string, received number']);
+      // The field name is ours; the reason after it is Zod's wording and may change with the
+      // major the MCP SDK resolves, so only the shape of the line is pinned.
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/^Invalid node at index 1: "type": .+/);
+      expect(errors[0]).not.toContain('{');
     });
 
     it('names every offending field when a node fails on more than one', () => {
@@ -1198,6 +1202,9 @@ describe('n8n-validation', () => {
           typeVersion: '2',
           position: { '0': '250', '1': '300' },
           parameters: '{}',
+          // Not declared by the node schema - n8n's GET echoes fields like this, and Zod
+          // strips them. The caller's copy must keep them.
+          issues: { typeUnknown: true },
         })],
         connections: {},
       };
