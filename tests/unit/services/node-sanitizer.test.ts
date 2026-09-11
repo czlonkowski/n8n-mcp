@@ -291,13 +291,15 @@ describe('Node Sanitizer', () => {
       const node = {
         id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
         position: [0, 0] as [number, number],
-        parameters: { rules: { rules: [null, 'Branch 1'] } }
+        // The array matters: spreading it yields {conditions: undefined}, which the validators
+        // no longer recognise as malformed — the repair would launder the bad entry.
+        parameters: { rules: { rules: [null, 'Branch 1', []] } }
       } as unknown as WorkflowNode;
 
       const sanitized = sanitizeNode(node);
 
       // Repairing the entry would hide the malformed payload the validators report.
-      expect((sanitized.parameters.rules as any).rules).toEqual([null, 'Branch 1']);
+      expect((sanitized.parameters.rules as any).rules).toEqual([null, 'Branch 1', []]);
     });
   });
 
