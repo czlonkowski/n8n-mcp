@@ -12,19 +12,31 @@ afterAll(() => { if (savedMode === undefined) delete process.env.WEBHOOK_SECURIT
 function spyOnPinnedFetch() {
   const original = SSRFProtection.createPinnedFetch.bind(SSRFProtection);
   let failNext = false;
+  let failNextDelayMs = 0;
   const spy = vi.spyOn(SSRFProtection, 'createPinnedFetch').mockImplementation((addresses) => {
     const real = original(addresses);
     return {
       fetch: (url, init) => {
         // A genuine connection-level error: rejects with no HTTP status, the
         // same shape a socket reset or DNS failure produces.
-        if (failNext) { failNext = false; return Promise.reject(new Error('simulated socket reset')); }
+        if (failNext) {
+          failNext = false;
+          const delayMs = failNextDelayMs;
+          failNextDelayMs = 0;
+          return new Promise((_, reject) => setTimeout(() => reject(new Error('simulated socket reset')), delayMs));
+        }
         return real.fetch(url, init);
       },
       close: () => real.close(),
     };
   });
-  return { spy, breakNextFetch: () => { failNext = true; } };
+  return {
+    spy,
+    breakNextFetch: (delayMs = 0) => {
+      failNext = true;
+      failNextDelayMs = delayMs;
+    },
+  };
 }
 
 describe('N8nOfficialMcpClient', () => {
@@ -334,6 +346,21 @@ describe('N8nOfficialMcpClient', () => {
     }
   });
 
+  it('does not cache a capabilities timeout as an unreachable instance', async () => {
+    fake = await startFakeOfficialMcp({
+      methodDelayMs: { initialize: 100 },
+      tools: [{ name: 'search_agents' }],
+    });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+
+    const timedOut = await client.capabilities(false, { deadlineAt: Date.now() + 50 });
+    expect(timedOut).toMatchObject({ reachable: false, error: 'OFFICIAL_MCP_TIMEOUT' });
+
+    const recovered = await client.capabilities();
+    expect(recovered).toMatchObject({ reachable: true, toolCount: 1 });
+    await client.close();
+  });
+
   // A failed reference must not be cached: an instance whose agents module is
   // still starting would otherwise serve that failure as the guide for the
   // whole success TTL.
@@ -398,6 +425,28 @@ describe('N8nOfficialMcpClient', () => {
     }
   });
 
+  it('does not reset the timeout budget when retrying a connection failure', async () => {
+    fake = await startFakeOfficialMcp({
+      tools: [
+        { name: 'warmup' },
+        { name: 'slow', handler: () => new Promise(resolve => setTimeout(() => resolve({ ok: true }), 100)) },
+      ],
+    });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    const { spy, breakNextFetch } = spyOnPinnedFetch();
+    try {
+      await client.callTool('warmup', {}, { idempotent: true });
+      breakNextFetch(80);
+
+      await expect(client.callTool('slow', {}, { timeoutMs: 150, idempotent: true }))
+        .rejects.toMatchObject({ code: 'OFFICIAL_MCP_TIMEOUT' });
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+      await client.close();
+    }
+  });
+
   // A dead socket does not prove the request never reached n8n: create_agent,
   // publish_agent and call_agent may already have run. Only a call the caller
   // declares idempotent is re-sent.
@@ -456,6 +505,23 @@ describe('N8nOfficialMcpClient', () => {
     if (a.status === 'rejected') expect(a.reason).toMatchObject({ code: 'OFFICIAL_MCP_TIMEOUT' });
     expect(b.status).toBe('fulfilled');
     if (b.status === 'fulfilled') { expect(b.value.isError).toBe(false); expect(b.value.json).toEqual({ ok: true }); }
+    await client.close();
+  });
+
+  it('keeps concurrent connection waits on their own timeout budgets', async () => {
+    fake = await startFakeOfficialMcp({
+      methodDelayMs: { initialize: 100 },
+      tools: [{ name: 'fast' }],
+    });
+    const client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    const [short, long] = await Promise.allSettled([
+      client.callTool('fast', {}, { timeoutMs: 50 }),
+      client.callTool('fast', {}, { timeoutMs: 300 }),
+    ]);
+
+    expect(short.status).toBe('rejected');
+    if (short.status === 'rejected') expect(short.reason).toMatchObject({ code: 'OFFICIAL_MCP_TIMEOUT' });
+    expect(long.status).toBe('fulfilled');
     await client.close();
   });
 

@@ -38,7 +38,11 @@ describe('handleExploreNodeResources', () => {
   it('forwards the validated args and returns data verbatim', async () => {
     const client = fakeClient(['explore_node_resources']); access.getOfficialMcpClient.mockReturnValue(client);
     const r = await handleExploreNodeResources({ ...VALID, filter: 'gen', timeoutMs: 60000 });
-    expect(client.callTool).toHaveBeenCalledWith('explore_node_resources', { ...VALID, filter: 'gen' }, { timeoutMs: 60000, idempotent: true });
+    expect(client.callTool).toHaveBeenCalledWith('explore_node_resources', { ...VALID, filter: 'gen' }, {
+      timeoutMs: 60000,
+      idempotent: true,
+      deadlineAt: expect.any(Number),
+    });
     expect(r).toMatchObject({ success: true, officialTool: 'explore_node_resources', data: { results: [{ value: 'C1' }] } });
   });
   it('OFFICIAL_MCP_TOOL_UNAVAILABLE when the instance lacks the tool', async () => {
@@ -114,7 +118,11 @@ describe('handleListCatalog', () => {
     const client = fakeClient(['search_projects'], { ok: true, data: [{ id: 'p1', name: 'Personal', type: 'personal' }] });
     access.getOfficialMcpClient.mockReturnValue(client);
     const r = await handleListCatalog({ kind: 'projects' });
-    expect(client.callTool).toHaveBeenCalledWith('search_projects', {}, { timeoutMs: 30000, idempotent: true });
+    expect(client.callTool).toHaveBeenCalledWith('search_projects', {}, {
+      timeoutMs: 30000,
+      idempotent: true,
+      deadlineAt: expect.any(Number),
+    });
     expect(r).toMatchObject({ success: true, backend: 'official-mcp', data: { teamProjectsEnabled: false, items: [{ id: 'p1', personal: true }] } });
   });
   it('uses the official teamProjectsEnabled flag when present, even with only a personal project returned', async () => {
@@ -315,6 +323,25 @@ describe('callOfficialTool over the wire', () => {
     await connect([{ name: 'get_workflow_history', handler: () => ({ success: true, workflowId: 'w', versions: [{ id: 1 }], count: 1 }) }]);
     const r: any = await callOfficialTool(undefined, ['get_workflow_history'], { workflowId: 'w' }, 30000, 'workflow_versions', true);
     expect(r).toMatchObject({ success: true, data: { success: true, count: 1 } });
+  });
+
+  it('uses one timeout budget for connection, discovery, and the tool call', async () => {
+    fake = await startFakeOfficialMcp({
+      methodDelayMs: { initialize: 50, 'tools/list': 50 },
+      tools: [{
+        name: 'get_workflow_history',
+        handler: () => new Promise(resolve => setTimeout(
+          () => resolve({ success: true, workflowId: 'w', versions: [], count: 0 }),
+          50,
+        )),
+      }],
+    });
+    client = new N8nOfficialMcpClient({ endpoint: fake.url, token: 'tok' });
+    access.getOfficialMcpClient.mockReturnValue(client);
+
+    const r = await callOfficialTool(undefined, ['get_workflow_history'], { workflowId: 'w' }, 120, 'workflow_versions', true);
+
+    expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_TIMEOUT' });
   });
 
   it('names the minimum n8n version when the instance lacks the tool', async () => {

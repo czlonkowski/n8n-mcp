@@ -94,6 +94,32 @@ export const OFFICIAL_MCP_FAILURE_TTL_MS = 30_000;
 export const OFFICIAL_RESULT_MAX_BYTES = 256 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+function timeoutError(): OfficialMcpError {
+  return new OfficialMcpError('OFFICIAL_MCP_TIMEOUT', 'Request to n8n MCP server timed out');
+}
+
+function remainingTimeout(deadlineAt: number): number {
+  const remaining = deadlineAt - Date.now();
+  if (remaining <= 0) throw timeoutError();
+  return remaining;
+}
+
+/** Bounds one caller's wait without cancelling work shared with other callers. */
+async function waitUntilDeadline<T>(promise: Promise<T>, deadlineAt: number): Promise<T> {
+  const timeoutMs = remainingTimeout(deadlineAt);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(timeoutError()), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** Errors are mapped by transport status first, then by MCP error code; anything else is a transport error. */
 export function mapOfficialTransportError(err: unknown): OfficialMcpError {
   if (err instanceof OfficialMcpError) return err;
@@ -247,51 +273,57 @@ export class N8nOfficialMcpClient {
     this.host = new URL(opts.endpoint).host;
   }
 
-  private async connect(): Promise<Connected> {
+  private async connect(deadlineAt: number): Promise<Connected> {
     // A closed client is terminal: reconnecting here would resurrect a
     // transport the owner already disposed of (an evicted cache entry, a
     // shut-down server).
     if (this.closed) throw new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'Client is closed');
+    remainingTimeout(deadlineAt);
     if (this.client) return { client: this.client, generation: this.generation };
-    if (this.connecting) return this.connecting;
-    const myGeneration = this.generation;
-    this.connecting = (async () => {
-      const validation = await SSRFProtection.validateWebhookUrl(this.endpoint);
-      if (!validation.valid) throw new OfficialMcpError('OFFICIAL_MCP_URL_REJECTED', validation.reason || 'Endpoint rejected');
-      // DNS validation is the first await in this handshake, and close() can
-      // run while it is pending. Check before anything is created: the
-      // post-handshake check below can only tear down a transport that was
-      // already opened, which still sends a request to an instance the owner
-      // has stopped talking to.
-      if (this.closed || this.generation !== myGeneration) {
-        throw new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'Client was closed while connecting');
-      }
-      const addresses = validation.addresses ?? (validation.address ? [{ address: validation.address, family: validation.family as 4 | 6 }] : []);
-      const pinned = SSRFProtection.createPinnedFetch(addresses);
-      const transport = new StreamableHTTPClientTransport(new URL(this.endpoint), {
-        requestInit: { headers: { Authorization: `Bearer ${this.token}` } },
-        fetch: pinned.fetch,
-      });
-      const client = new Client({ name: 'n8n-mcp', version: PROJECT_VERSION }, { capabilities: {}, jsonSchemaValidator: PERMISSIVE_JSON_SCHEMA_VALIDATOR });
-      try {
-        await client.connect(transport, { timeout: DEFAULT_TIMEOUT_MS });
-      } catch (err) {
-        await pinned.close().catch(() => undefined);
-        throw mapOfficialTransportError(err);
-      }
-      if (this.closed || this.generation !== myGeneration) {
-        // close() (or a concurrent reset) ran while this handshake was in
-        // flight. Nothing else references this client/pinned pair, so it
-        // must be torn down here — otherwise the transport and its pinned
-        // undici dispatcher leak.
-        await closeTransport(client, pinned);
-        throw new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'Client was closed while connecting');
-      }
-      this.client = client; this.pinned = pinned; this.hasConnectedSuccessfully = true;
-      logger.debug('Connected to n8n MCP server', { host: this.host });
-      return { client, generation: this.generation };
-    })();
-    try { return await this.connecting; } finally { this.connecting = null; }
+    if (!this.connecting) {
+      const myGeneration = this.generation;
+      const connecting = (async () => {
+        const validation = await SSRFProtection.validateWebhookUrl(this.endpoint);
+        if (!validation.valid) throw new OfficialMcpError('OFFICIAL_MCP_URL_REJECTED', validation.reason || 'Endpoint rejected');
+        // DNS validation is the first await in this handshake, and close() can
+        // run while it is pending. Check before anything is created: the
+        // post-handshake check below can only tear down a transport that was
+        // already opened, which still sends a request to an instance the owner
+        // has stopped talking to.
+        if (this.closed || this.generation !== myGeneration) {
+          throw new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'Client was closed while connecting');
+        }
+        const addresses = validation.addresses ?? (validation.address ? [{ address: validation.address, family: validation.family as 4 | 6 }] : []);
+        const pinned = SSRFProtection.createPinnedFetch(addresses);
+        const transport = new StreamableHTTPClientTransport(new URL(this.endpoint), {
+          requestInit: { headers: { Authorization: `Bearer ${this.token}` } },
+          fetch: pinned.fetch,
+        });
+        const client = new Client({ name: 'n8n-mcp', version: PROJECT_VERSION }, { capabilities: {}, jsonSchemaValidator: PERMISSIVE_JSON_SCHEMA_VALIDATOR });
+        try {
+          await client.connect(transport, { timeout: DEFAULT_TIMEOUT_MS });
+        } catch (err) {
+          await pinned.close().catch(() => undefined);
+          throw mapOfficialTransportError(err);
+        }
+        if (this.closed || this.generation !== myGeneration) {
+          // close() (or a concurrent reset) ran while this handshake was in
+          // flight. Nothing else references this client/pinned pair, so it
+          // must be torn down here, otherwise the transport and its pinned
+          // undici dispatcher leak.
+          await closeTransport(client, pinned);
+          throw new OfficialMcpError('OFFICIAL_MCP_TRANSPORT_ERROR', 'Client was closed while connecting');
+        }
+        this.client = client; this.pinned = pinned; this.hasConnectedSuccessfully = true;
+        logger.debug('Connected to n8n MCP server', { host: this.host });
+        return { client, generation: this.generation };
+      })();
+      this.connecting = connecting;
+      void connecting.finally(() => {
+        if (this.connecting === connecting) this.connecting = null;
+      }).catch(() => undefined);
+    }
+    return waitUntilDeadline(this.connecting, deadlineAt);
   }
 
   /** Discards the stored client/pinned pair, but only if it is still the one identified by `generation` — a stale caller (superseded by a later reset or reconnect) is a no-op. */
@@ -303,14 +335,15 @@ export class N8nOfficialMcpClient {
     await closeTransport(client, pinned);
   }
 
-  async capabilities(force = false): Promise<OfficialMcpCapabilities> {
+  async capabilities(force = false, opts: { deadlineAt?: number } = {}): Promise<OfficialMcpCapabilities> {
     const ttl = this.caps?.reachable === false ? OFFICIAL_MCP_FAILURE_TTL_MS : OFFICIAL_MCP_CACHE_TTL_MS;
     if (!force && this.caps && Date.now() - this.caps.checkedAt < ttl) return this.caps;
+    const deadlineAt = opts.deadlineAt ?? Date.now() + DEFAULT_TIMEOUT_MS;
     let generation: number | undefined;
     try {
-      const connected = await this.connect();
+      const connected = await this.connect(deadlineAt);
       generation = connected.generation;
-      const { tools } = await connected.client.listTools(undefined, { timeout: DEFAULT_TIMEOUT_MS });
+      const { tools } = await connected.client.listTools(undefined, { timeout: remainingTimeout(deadlineAt) });
       const toolNames = tools.map(t => t.name);
       this.caps = { reachable: true, toolCount: toolNames.length, toolNames, agentTools: toolNames.some(n => (AGENT_TOOL_NAMES as readonly string[]).includes(n)), checkedAt: Date.now() };
     } catch (err) {
@@ -320,7 +353,11 @@ export class N8nOfficialMcpClient {
       // callTool), and a protocol error means n8n answered — in both cases
       // the transport is still usable and may be shared with other calls.
       if (mapped.retryable && generation !== undefined) await this.resetTransport(generation);
-      this.caps = { reachable: false, toolCount: 0, toolNames: [], agentTools: false, checkedAt: Date.now(), error: mapped.code };
+      const failure: OfficialMcpCapabilities = { reachable: false, toolCount: 0, toolNames: [], agentTools: false, checkedAt: Date.now(), error: mapped.code };
+      // This deadline belongs to one caller. The shared connection may still
+      // complete for another caller, so a timeout is not endpoint health.
+      if (mapped.code === 'OFFICIAL_MCP_TIMEOUT') return failure;
+      this.caps = failure;
     }
     return this.caps;
   }
@@ -341,13 +378,14 @@ export class N8nOfficialMcpClient {
    * a non-error result with no `structuredContent` on a tool that declares an
    * output schema.
    */
-  async callTool(name: string, args: Record<string, unknown>, opts: { timeoutMs?: number; idempotent?: boolean } = {}): Promise<OfficialToolResult> {
+  async callTool(name: string, args: Record<string, unknown>, opts: { timeoutMs?: number; idempotent?: boolean; deadlineAt?: number } = {}): Promise<OfficialToolResult> {
     const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const deadlineAt = opts.deadlineAt ?? Date.now() + timeout;
     const state: { generation?: number } = {};
     const attempt = async (): Promise<OfficialToolResult> => {
-      const { client, generation } = await this.connect();
+      const { client, generation } = await this.connect(deadlineAt);
       state.generation = generation;
-      const raw = await client.callTool({ name, arguments: args }, undefined, { timeout });
+      const raw = await client.callTool({ name, arguments: args }, undefined, { timeout: remainingTimeout(deadlineAt) });
       return parseResult(raw as any);
     };
     logger.debug('Calling n8n MCP tool', { host: this.host, tool: name });

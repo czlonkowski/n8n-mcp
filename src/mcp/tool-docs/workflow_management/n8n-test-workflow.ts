@@ -131,7 +131,7 @@ Every response states \`method\` and \`backend\` ('public-api' or 'official-mcp'
       timeoutMs: {
         type: 'integer',
         required: false,
-        description: 'Client-side deadline for the official call, 5000-600000 (default: 30000 for prepare, 300000 for pinned/direct)'
+        description: 'Whole-call timeout for the official path, including connection, tool discovery and execution, 5000-600000 (default: 30000 for prepare, 300000 for pinned/direct)'
       }
     },
     returns: `Execution response including:

@@ -37,6 +37,7 @@ export interface FakeOfficialMcpOptions {
   token?: string;
   raw?: { status: number; body: string; contentType?: string };
   jsonRpcError?: FakeJsonRpcError;
+  methodDelayMs?: Partial<Record<string, number>>;
 }
 export interface FakeOfficialMcp {
   url: string;
@@ -125,6 +126,8 @@ export async function startFakeOfficialMcp(opts: FakeOfficialMcpOptions = {}): P
       if (req.method === 'GET') { res.statusCode = 405; res.end(); return; }
       const body = req.method === 'POST' ? await readBody(req) : undefined;
       const rpc = body as { id?: unknown; method?: string } | undefined;
+      const delayMs = rpc?.method ? opts.methodDelayMs?.[rpc.method] : undefined;
+      if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
       if (jsonRpcError && rpc?.method === jsonRpcError.method) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
