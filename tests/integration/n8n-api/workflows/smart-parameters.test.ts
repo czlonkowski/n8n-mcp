@@ -152,9 +152,9 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
       expect(fetchedWorkflow.connections.IF).toBeDefined();
       expect(fetchedWorkflow.connections.IF.main).toBeDefined();
       expect(fetchedWorkflow.connections.IF.main[0]).toBeDefined();
-      expect(fetchedWorkflow.connections.IF.main[0].length).toBe(1);
-      expect(fetchedWorkflow.connections.IF.main[0][0].node).toBe('TrueHandler');
-      expect(fetchedWorkflow.connections.IF.main[0][0].type).toBe('main');
+      expect(fetchedWorkflow.connections.IF.main[0]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.IF.main[0]![0].node).toBe('TrueHandler');
+      expect(fetchedWorkflow.connections.IF.main[0]![0].type).toBe('main');
 
       // Verify false branch (index 1) is empty or undefined
       expect(fetchedWorkflow.connections.IF.main[1] || []).toHaveLength(0);
@@ -258,9 +258,9 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
       expect(fetchedWorkflow.connections.IF).toBeDefined();
       expect(fetchedWorkflow.connections.IF.main).toBeDefined();
       expect(fetchedWorkflow.connections.IF.main[1]).toBeDefined();
-      expect(fetchedWorkflow.connections.IF.main[1].length).toBe(1);
-      expect(fetchedWorkflow.connections.IF.main[1][0].node).toBe('FalseHandler');
-      expect(fetchedWorkflow.connections.IF.main[1][0].type).toBe('main');
+      expect(fetchedWorkflow.connections.IF.main[1]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.IF.main[1]![0].node).toBe('FalseHandler');
+      expect(fetchedWorkflow.connections.IF.main[1]![0].type).toBe('main');
 
       // Verify true branch (index 0) is empty or undefined
       expect(fetchedWorkflow.connections.IF.main[0] || []).toHaveLength(0);
@@ -392,13 +392,13 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
 
       // True branch at index 0
       expect(fetchedWorkflow.connections.IF.main[0]).toBeDefined();
-      expect(fetchedWorkflow.connections.IF.main[0].length).toBe(1);
-      expect(fetchedWorkflow.connections.IF.main[0][0].node).toBe('TrueHandler');
+      expect(fetchedWorkflow.connections.IF.main[0]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.IF.main[0]![0].node).toBe('TrueHandler');
 
       // False branch at index 1
       expect(fetchedWorkflow.connections.IF.main[1]).toBeDefined();
-      expect(fetchedWorkflow.connections.IF.main[1].length).toBe(1);
-      expect(fetchedWorkflow.connections.IF.main[1][0].node).toBe('FalseHandler');
+      expect(fetchedWorkflow.connections.IF.main[1]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.IF.main[1]![0].node).toBe('FalseHandler');
     });
   });
 
@@ -595,18 +595,18 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
 
       // Case 0 at index 0
       expect(fetchedWorkflow.connections.Switch.main[0]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[0].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[0][0].node).toBe('Handler0');
+      expect(fetchedWorkflow.connections.Switch.main[0]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[0]![0].node).toBe('Handler0');
 
       // Case 1 at index 1
       expect(fetchedWorkflow.connections.Switch.main[1]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[1].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[1][0].node).toBe('Handler1');
+      expect(fetchedWorkflow.connections.Switch.main[1]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[1]![0].node).toBe('Handler1');
 
       // Case 2 at index 2
       expect(fetchedWorkflow.connections.Switch.main[2]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[2].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[2][0].node).toBe('Handler2');
+      expect(fetchedWorkflow.connections.Switch.main[2]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[2]![0].node).toBe('Handler2');
     });
   });
 
@@ -730,8 +730,8 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
       expect(fetchedWorkflow.connections.IF).toBeDefined();
       expect(fetchedWorkflow.connections.IF.main).toBeDefined();
       expect(fetchedWorkflow.connections.IF.main[0]).toBeDefined();
-      expect(fetchedWorkflow.connections.IF.main[0].length).toBe(1);
-      expect(fetchedWorkflow.connections.IF.main[0][0].node).toBe('Handler2');
+      expect(fetchedWorkflow.connections.IF.main[0]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.IF.main[0]![0].node).toBe('Handler2');
     });
 
     // ======================================================================
@@ -876,8 +876,8 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
       expect(fetchedWorkflow.connections.Switch).toBeDefined();
       expect(fetchedWorkflow.connections.Switch.main).toBeDefined();
       expect(fetchedWorkflow.connections.Switch.main[1]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[1].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[1][0].node).toBe('NewHandler');
+      expect(fetchedWorkflow.connections.Switch.main[1]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[1]![0].node).toBe('NewHandler');
     });
   });
 
@@ -981,8 +981,8 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
       expect(fetchedWorkflow.connections.IF).toBeDefined();
       expect(fetchedWorkflow.connections.IF.main).toBeDefined();
       expect(fetchedWorkflow.connections.IF.main[1]).toBeDefined();
-      expect(fetchedWorkflow.connections.IF.main[1].length).toBe(1);
-      expect(fetchedWorkflow.connections.IF.main[1][0].node).toBe('Handler');
+      expect(fetchedWorkflow.connections.IF.main[1]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.IF.main[1]![0].node).toBe('Handler');
 
       // Index 0 should be empty
       expect(fetchedWorkflow.connections.IF.main[0] || []).toHaveLength(0);
@@ -1110,8 +1110,8 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
       expect(fetchedWorkflow.connections.Switch).toBeDefined();
       expect(fetchedWorkflow.connections.Switch.main).toBeDefined();
       expect(fetchedWorkflow.connections.Switch.main[2]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[2].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[2][0].node).toBe('Handler');
+      expect(fetchedWorkflow.connections.Switch.main[2]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[2]![0].node).toBe('Handler');
 
       // Index 1 should be empty
       expect(fetchedWorkflow.connections.Switch.main[1] || []).toHaveLength(0);
@@ -1372,8 +1372,8 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
       expect(fetchedWorkflow.connections.Set).toBeDefined();
       expect(fetchedWorkflow.connections.Set.main).toBeDefined();
       expect(fetchedWorkflow.connections.Set.main[0]).toBeDefined();
-      expect(fetchedWorkflow.connections.Set.main[0].length).toBe(1);
-      expect(fetchedWorkflow.connections.Set.main[0][0].node).toBe('Handler');
+      expect(fetchedWorkflow.connections.Set.main[0]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Set.main[0]![0].node).toBe('Handler');
     });
   });
 
@@ -1502,23 +1502,23 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
 
       // case 0: Should still be Handler0
       expect(fetchedWorkflow.connections.Switch.main[0]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[0].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[0][0].node).toBe('Handler0');
+      expect(fetchedWorkflow.connections.Switch.main[0]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[0]![0].node).toBe('Handler0');
 
       // case 1: Should now be NewHandler1 (rewired)
       expect(fetchedWorkflow.connections.Switch.main[1]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[1].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[1][0].node).toBe('NewHandler1');
+      expect(fetchedWorkflow.connections.Switch.main[1]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[1]![0].node).toBe('NewHandler1');
 
       // case 2: Should STILL be Handler2 (index NOT shifted!)
       expect(fetchedWorkflow.connections.Switch.main[2]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[2].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[2][0].node).toBe('Handler2');
+      expect(fetchedWorkflow.connections.Switch.main[2]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[2]![0].node).toBe('Handler2');
 
       // case 3: Should STILL be Handler3 (index NOT shifted!)
       expect(fetchedWorkflow.connections.Switch.main[3]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[3].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[3][0].node).toBe('Handler3');
+      expect(fetchedWorkflow.connections.Switch.main[3]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[3]![0].node).toBe('Handler3');
     });
 
     it('should preserve empty arrays when removing IF node connections', async () => {
@@ -1614,12 +1614,12 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
 
       // Index 0 (true branch): Should be empty array (NOT removed!)
       expect(fetchedWorkflow.connections.IF.main[0]).toBeDefined();
-      expect(fetchedWorkflow.connections.IF.main[0].length).toBe(0);
+      expect(fetchedWorkflow.connections.IF.main[0]!.length).toBe(0);
 
       // Index 1 (false branch): Should STILL be FalseHandler (NOT shifted to index 0!)
       expect(fetchedWorkflow.connections.IF.main[1]).toBeDefined();
-      expect(fetchedWorkflow.connections.IF.main[1].length).toBe(1);
-      expect(fetchedWorkflow.connections.IF.main[1][0].node).toBe('FalseHandler');
+      expect(fetchedWorkflow.connections.IF.main[1]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.IF.main[1]![0].node).toBe('FalseHandler');
     });
 
     it('should preserve indices when removing first case from Switch node', async () => {
@@ -1729,22 +1729,22 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
 
       // case 0: Should be empty array (NOT removed!)
       expect(fetchedWorkflow.connections.Switch.main[0]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[0].length).toBe(0);
+      expect(fetchedWorkflow.connections.Switch.main[0]!.length).toBe(0);
 
       // case 1: Should STILL be Handler1 at index 1 (NOT shifted to 0!)
       expect(fetchedWorkflow.connections.Switch.main[1]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[1].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[1][0].node).toBe('Handler1');
+      expect(fetchedWorkflow.connections.Switch.main[1]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[1]![0].node).toBe('Handler1');
 
       // case 2: Should STILL be Handler2 at index 2 (NOT shifted to 1!)
       expect(fetchedWorkflow.connections.Switch.main[2]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[2].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[2][0].node).toBe('Handler2');
+      expect(fetchedWorkflow.connections.Switch.main[2]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[2]![0].node).toBe('Handler2');
 
       // case 3: Should STILL be FallbackHandler at index 3 (NOT shifted to 2!)
       expect(fetchedWorkflow.connections.Switch.main[3]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[3].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[3][0].node).toBe('FallbackHandler');
+      expect(fetchedWorkflow.connections.Switch.main[3]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[3]![0].node).toBe('FallbackHandler');
     });
 
     it('should preserve indices through sequential operations on Switch node', async () => {
@@ -1867,17 +1867,17 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
 
       // case 0: Should be NewHandler0 (rewired)
       expect(fetchedWorkflow.connections.Switch.main[0]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[0].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[0][0].node).toBe('NewHandler0');
+      expect(fetchedWorkflow.connections.Switch.main[0]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[0]![0].node).toBe('NewHandler0');
 
       // case 1: Should be empty array (removed)
       expect(fetchedWorkflow.connections.Switch.main[1]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[1].length).toBe(0);
+      expect(fetchedWorkflow.connections.Switch.main[1]!.length).toBe(0);
 
       // case 2: Should be NewHandler2 (added)
       expect(fetchedWorkflow.connections.Switch.main[2]).toBeDefined();
-      expect(fetchedWorkflow.connections.Switch.main[2].length).toBe(1);
-      expect(fetchedWorkflow.connections.Switch.main[2][0].node).toBe('NewHandler2');
+      expect(fetchedWorkflow.connections.Switch.main[2]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Switch.main[2]![0].node).toBe('NewHandler2');
     });
 
     it('should preserve indices when rewiring Filter node connections', async () => {
@@ -1980,13 +1980,13 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
 
       // Index 0 (kept items): Should now be NewKeptHandler
       expect(fetchedWorkflow.connections.Filter.main[0]).toBeDefined();
-      expect(fetchedWorkflow.connections.Filter.main[0].length).toBe(1);
-      expect(fetchedWorkflow.connections.Filter.main[0][0].node).toBe('NewKeptHandler');
+      expect(fetchedWorkflow.connections.Filter.main[0]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Filter.main[0]![0].node).toBe('NewKeptHandler');
 
       // Index 1 (discarded items): Should STILL be DiscardedHandler (unchanged)
       expect(fetchedWorkflow.connections.Filter.main[1]).toBeDefined();
-      expect(fetchedWorkflow.connections.Filter.main[1].length).toBe(1);
-      expect(fetchedWorkflow.connections.Filter.main[1][0].node).toBe('DiscardedHandler');
+      expect(fetchedWorkflow.connections.Filter.main[1]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Filter.main[1]![0].node).toBe('DiscardedHandler');
     });
   });
 
@@ -2098,9 +2098,9 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
       expect(fetchedWorkflow.connections.Source2).toBeDefined();
       expect(fetchedWorkflow.connections.Source2.main).toBeDefined();
       expect(fetchedWorkflow.connections.Source2.main[0]).toBeDefined();
-      expect(fetchedWorkflow.connections.Source2.main[0].length).toBe(1);
-      expect(fetchedWorkflow.connections.Source2.main[0][0].node).toBe('Merge');
-      expect(fetchedWorkflow.connections.Source2.main[0][0].index).toBe(1); // STILL index 1!
+      expect(fetchedWorkflow.connections.Source2.main[0]!.length).toBe(1);
+      expect(fetchedWorkflow.connections.Source2.main[0]![0].node).toBe('Merge');
+      expect(fetchedWorkflow.connections.Source2.main[0]![0].index).toBe(1); // STILL index 1!
 
       // Source1 should no longer connect to Merge
       expect(fetchedWorkflow.connections.Source1).toBeUndefined();
@@ -2201,13 +2201,13 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
 
       // Source0 should STILL connect to Merge at targetIndex 0
       expect(fetchedWorkflow.connections.Source0).toBeDefined();
-      expect(fetchedWorkflow.connections.Source0.main[0][0].node).toBe('Merge');
-      expect(fetchedWorkflow.connections.Source0.main[0][0].index).toBe(0); // STILL 0!
+      expect(fetchedWorkflow.connections.Source0.main[0]![0].node).toBe('Merge');
+      expect(fetchedWorkflow.connections.Source0.main[0]![0].index).toBe(0); // STILL 0!
 
       // Source2 should STILL connect to Merge at targetIndex 2 (NOT shifted to 1!)
       expect(fetchedWorkflow.connections.Source2).toBeDefined();
-      expect(fetchedWorkflow.connections.Source2.main[0][0].node).toBe('Merge');
-      expect(fetchedWorkflow.connections.Source2.main[0][0].index).toBe(2); // STILL 2!
+      expect(fetchedWorkflow.connections.Source2.main[0]![0].node).toBe('Merge');
+      expect(fetchedWorkflow.connections.Source2.main[0]![0].index).toBe(2); // STILL 2!
 
       // Source1 should no longer connect to Merge
       expect(fetchedWorkflow.connections.Source1).toBeUndefined();
@@ -2313,13 +2313,13 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
 
       // NewSource1 should now connect to Merge at input 0
       expect(fetchedWorkflow.connections.NewSource1).toBeDefined();
-      expect(fetchedWorkflow.connections.NewSource1.main[0][0].node).toBe('Merge');
-      expect(fetchedWorkflow.connections.NewSource1.main[0][0].index).toBe(0);
+      expect(fetchedWorkflow.connections.NewSource1.main[0]![0].node).toBe('Merge');
+      expect(fetchedWorkflow.connections.NewSource1.main[0]![0].index).toBe(0);
 
       // Source2 should STILL connect to Merge at input 1 (unchanged)
       expect(fetchedWorkflow.connections.Source2).toBeDefined();
-      expect(fetchedWorkflow.connections.Source2.main[0][0].node).toBe('Merge');
-      expect(fetchedWorkflow.connections.Source2.main[0][0].index).toBe(1);
+      expect(fetchedWorkflow.connections.Source2.main[0]![0].node).toBe('Merge');
+      expect(fetchedWorkflow.connections.Source2.main[0]![0].index).toBe(1);
 
       // Source1 should no longer connect to Merge
       expect(fetchedWorkflow.connections.Source1).toBeUndefined();
@@ -2452,16 +2452,16 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
 
       // NewSource1 should connect to Merge at input 0 (rewired)
       expect(fetchedWorkflow.connections.NewSource1).toBeDefined();
-      expect(fetchedWorkflow.connections.NewSource1.main[0][0].node).toBe('Merge');
-      expect(fetchedWorkflow.connections.NewSource1.main[0][0].index).toBe(0);
+      expect(fetchedWorkflow.connections.NewSource1.main[0]![0].node).toBe('Merge');
+      expect(fetchedWorkflow.connections.NewSource1.main[0]![0].index).toBe(0);
 
       // Source2 removed, should not exist
       expect(fetchedWorkflow.connections.Source2).toBeUndefined();
 
       // Source3 should connect to Merge at input 2 (NOT shifted to 1!)
       expect(fetchedWorkflow.connections.Source3).toBeDefined();
-      expect(fetchedWorkflow.connections.Source3.main[0][0].node).toBe('Merge');
-      expect(fetchedWorkflow.connections.Source3.main[0][0].index).toBe(2);
+      expect(fetchedWorkflow.connections.Source3.main[0]![0].node).toBe('Merge');
+      expect(fetchedWorkflow.connections.Source3.main[0]![0].index).toBe(2);
     });
   });
 });

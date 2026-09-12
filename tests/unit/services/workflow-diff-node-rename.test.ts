@@ -808,7 +808,7 @@ describe('WorkflowDiffEngine - Auto-Update Connection References on Node Rename'
       // Original workflow should remain unchanged (the simulated workflow is a copy)
       const httpNode = baseWorkflow.nodes.find((n: WorkflowNode) => n.id === 'http-1');
       expect(httpNode?.name).toBe('HTTP Request');
-      expect(baseWorkflow.connections['Webhook'].main[0][0].node).toBe('HTTP Request');
+      expect(baseWorkflow.connections['Webhook'].main[0]![0].node).toBe('HTTP Request');
     });
   });
 

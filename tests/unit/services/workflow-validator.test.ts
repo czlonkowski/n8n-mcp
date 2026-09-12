@@ -1427,11 +1427,99 @@ describe('WorkflowValidator', () => {
         .toEqual(['rules.rules: rules is not an array']);
     });
 
-    it('Switch v3.2 storing its rules under "values" is left alone', () => {
+    it('Switch v3.2 with well-formed rules under "values" validates clean', () => {
       const node = {
         id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
         position: [0, 0] as [number, number],
         parameters: { rules: { values: [{ conditions: { conditions: [] } }] } }
+      };
+      expect(validateConditionNodeStructure(node as any)).toEqual([]);
+    });
+
+    // `values` is the key n8n reads at 3.2+ and the one 319 of the 448 Switch nodes in the
+    // bundled templates use, so before #1097 none of the checks below ran on a real Switch.
+    it('Switch v3.2 operator under "values" missing its type is reported (#1097)', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: {
+          rules: {
+            values: [{
+              conditions: {
+                conditions: [{ leftValue: '={{ $json.x }}', rightValue: 'a', operator: { operation: 'equals' } }],
+                combinator: 'and'
+              },
+              outputKey: 'Branch 1'
+            }]
+          }
+        }
+      };
+      const errors = validateConditionNodeStructure(node as any);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('rules.values[0].conditions.conditions[0].operator');
+      expect(errors[0]).toContain('missing required field "type"');
+    });
+
+    it('Switch v3.2 operator under "values" naming an operation in the type field is reported (#1097)', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: {
+          rules: {
+            values: [{
+              conditions: {
+                conditions: [{ leftValue: '={{ $json.x }}', operator: { type: 'equals', operation: 'equals' } }],
+                combinator: 'and'
+              }
+            }]
+          }
+        }
+      };
+      const errors = validateConditionNodeStructure(node as any);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('rules.values[0].conditions.conditions[0].operator');
+      expect(errors[0]).toContain('invalid type "equals"');
+    });
+
+    it.each([
+      { label: 'a null rule', rule: null },
+      { label: 'a string rule', rule: 'Branch 1' },
+      { label: 'an array rule', rule: [] },
+    ])('Switch v3.2 with $label under "values" reports the entry instead of accepting it (#1097)', ({ rule }) => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: { rules: { values: [rule] } }
+      };
+      expect(validateConditionNodeStructure(node as any))
+        .toEqual(['rules.values[0]: rule is missing or not an object']);
+    });
+
+    it.each([
+      { label: 'a string', values: 'abc' },
+      { label: 'an object with a length', values: { length: 2 } },
+    ])('Switch v3.2 with $label as the "values" collection is reported (#1097)', ({ values }) => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: { rules: { values } }
+      };
+      expect(validateConditionNodeStructure(node as any))
+        .toEqual(['rules.values: rules is not an array']);
+    });
+
+    // The 5 templates in the bundled corpus that store rules under `rules` are all typeVersion 1,
+    // where that key and its {value2, operation} entries are the correct legacy shape. The 3.2
+    // gate is what keeps them out, so nothing here may start reporting them.
+    it('Switch v1 legacy rules.rules entries are not validated against the v3.2 structure', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 1,
+        position: [0, 0] as [number, number],
+        parameters: {
+          dataType: 'string',
+          value1: '={{ $json.category }}',
+          rules: { rules: [{ value2: 'booking' }, { output: 1, value2: 'pricing' }] }
+        }
       };
       expect(validateConditionNodeStructure(node as any)).toEqual([]);
     });

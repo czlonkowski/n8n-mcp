@@ -62,6 +62,11 @@ export function cleanNodeForApi(node: WorkflowNode): WorkflowNode {
 }
 
 // Connection array schema used by all connection types
+// A null branch is how n8n itself represents an output with nothing wired to it
+// (`NodeInputConnections = Array<IConnection[] | null>`), and its Public API stores one
+// verbatim - verified by POSTing such a workflow to a live instance (#1096). Rejecting it
+// here failed creates that validate_workflow had just passed, with no way for the caller
+// to tell which of the two validators was wrong.
 const connectionArraySchema = z.array(
   z.array(
     z.object({
@@ -69,7 +74,7 @@ const connectionArraySchema = z.array(
       type: z.string(),
       index: z.number(),
     })
-  )
+  ).nullable()
 );
 
 /**
@@ -520,10 +525,13 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
         }
 
         // Check for empty output branches (except trailing ones)
-        const nonEmptyBranches = nodeConnections.main.filter((branch: any[]) => branch.length > 0).length;
+        // A null branch is n8n's own "nothing wired to this output" (#1096) and now survives
+        // the schema above, so it counts as unconnected rather than reaching `.length` on null.
+        const branchSize = (branch: unknown) => (Array.isArray(branch) ? branch.length : 0);
+        const nonEmptyBranches = nodeConnections.main.filter((branch: unknown) => branchSize(branch) > 0).length;
         if (nonEmptyBranches < rules.length) {
           const emptyIndices = nodeConnections.main
-            .map((branch: any[], i: number) => branch.length === 0 ? i : -1)
+            .map((branch: unknown, i: number) => branchSize(branch) === 0 ? i : -1)
             .filter((i: number) => i !== -1 && i < rules.length);
 
           if (emptyIndices.length > 0) {
@@ -613,25 +621,44 @@ export function validateConditionNodeStructure(node: WorkflowNode): string[] {
     if (typeVersion >= 3.2) {
       const rules = node.parameters?.rules as any;
 
-      // A present collection that is not an array is reported rather than read as zero rules:
-      // the branch-count check in validateWorkflowStructure falls back to an empty array so a
-      // string cannot reach its `.map`, and without this nothing would say why (#1094). An
-      // absent one is left alone - Switch also stores its rules under `values`.
-      if (rules?.rules !== undefined && rules?.rules !== null && !Array.isArray(rules.rules)) {
-        errors.push('rules.rules: rules is not an array');
-      } else if (Array.isArray(rules?.rules)) {
-        rules.rules.forEach((rule: any, i: number) => {
-          // Report an entry that is not a rule rather than reading `conditions` off it: the
-          // branch-count check in validateWorkflowStructure reads these entries too (#1094).
-          if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
-            errors.push(`rules.rules[${i}]: rule is missing or not an object`);
-            return;
-          }
-          errors.push(...validateFilterConditionOperators(rule.conditions, `rules.rules[${i}].conditions`));
-        });
-      }
+      // `values` is the key n8n actually reads: the `rules` fixedCollection declares one option
+      // and it is named `values`. Validating only `rules.rules` meant the operator checks below
+      // never ran for 319 of the 448 Switch nodes in the bundled templates (#1097). Both keys are
+      // walked - the legacy one still reaches the branch-count check in validateWorkflowStructure.
+      errors.push(...validateSwitchRuleCollection(rules?.values, 'rules.values'));
+      errors.push(...validateSwitchRuleCollection(rules?.rules, 'rules.rules'));
     }
   }
+
+  return errors;
+}
+
+/**
+ * Validate one Switch rule collection, `rules.values` or the legacy `rules.rules`.
+ *
+ * A present collection that is not an array is reported rather than read as zero rules: the
+ * branch-count check in validateWorkflowStructure falls back to an empty array so a string
+ * cannot reach its `.map`, and without this nothing would say why (#1094). An absent one is
+ * left alone - a Switch carries its rules under one key, not both.
+ */
+function validateSwitchRuleCollection(collection: any, path: string): string[] {
+  const errors: string[] = [];
+
+  if (collection === undefined || collection === null) return errors;
+  if (!Array.isArray(collection)) {
+    errors.push(`${path}: rules is not an array`);
+    return errors;
+  }
+
+  collection.forEach((rule: any, i: number) => {
+    // Report an entry that is not a rule rather than reading `conditions` off it: the
+    // branch-count check in validateWorkflowStructure reads these entries too (#1094).
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
+      errors.push(`${path}[${i}]: rule is missing or not an object`);
+      return;
+    }
+    errors.push(...validateFilterConditionOperators(rule.conditions, `${path}[${i}].conditions`));
+  });
 
   return errors;
 }

@@ -66,7 +66,9 @@ interface WorkflowNode {
 
 interface WorkflowConnection {
   [sourceNode: string]: {
-    [outputType: string]: Array<Array<{ node: string; type: string; index: number }>>;
+    // A null branch is n8n's own "nothing wired to this output" and reaches here from any
+    // workflow read back out of n8n (#1096); collectMalformedConnectionErrors allows it.
+    [outputType: string]: Array<Array<{ node: string; type: string; index: number }> | null>;
   };
 }
 
@@ -992,7 +994,7 @@ export class WorkflowValidator {
    */
   private validateConnectionOutputs(
     sourceName: string,
-    outputs: Array<Array<{ node: string; type: string; index: number }>>,
+    outputs: Array<Array<{ node: string; type: string; index: number }> | null>,
     nodeMap: Map<string, WorkflowNode>,
     nodeIdMap: Map<string, WorkflowNode>,
     result: WorkflowValidationResult,
@@ -1108,7 +1110,7 @@ export class WorkflowValidator {
   private validateErrorOutputConfiguration(
     sourceName: string,
     sourceNode: WorkflowNode,
-    outputs: Array<Array<{ node: string; type: string; index: number }>>,
+    outputs: Array<Array<{ node: string; type: string; index: number }> | null>,
     nodeMap: Map<string, WorkflowNode>,
     result: WorkflowValidationResult,
     profile: string = 'runtime'
@@ -1516,7 +1518,7 @@ export class WorkflowValidator {
    */
   private validateOutputIndexBounds(
     sourceNode: WorkflowNode,
-    outputs: Array<Array<{ node: string; type: string; index: number }>>,
+    outputs: Array<Array<{ node: string; type: string; index: number }> | null>,
     result: WorkflowValidationResult
   ): void {
     const naturalOutputCount = this.getMainOutputCount(sourceNode);
@@ -1534,7 +1536,8 @@ export class WorkflowValidator {
     if (maxOutputIndex >= mainOutputCount) {
       // Only flag if there are actual connections at the out-of-bounds indices
       for (let i = mainOutputCount; i < outputs.length; i++) {
-        if (outputs[i] && outputs[i].length > 0) {
+        const branch = outputs[i];
+        if (branch && branch.length > 0) {
           result.errors.push({
             type: 'error',
             nodeId: sourceNode.id,
@@ -1557,7 +1560,7 @@ export class WorkflowValidator {
    */
   private validateConditionalBranchUsage(
     sourceNode: WorkflowNode,
-    outputs: Array<Array<{ node: string; type: string; index: number }>>,
+    outputs: Array<Array<{ node: string; type: string; index: number }> | null>,
     result: WorkflowValidationResult
   ): void {
     const conditionalInfo = this.getConditionalOutputInfo(sourceNode);

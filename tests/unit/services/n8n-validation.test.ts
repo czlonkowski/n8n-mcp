@@ -297,6 +297,29 @@ describe('n8n-validation', () => {
 
         expect(() => validateWorkflowConnections(invalidConnections)).toThrow();
       });
+
+      // n8n's own type is `Array<IConnection[] | null>` and its Public API stores such a
+      // workflow verbatim (live-verified POST + GET round-trip), so rejecting the null here
+      // failed creates that validate_workflow had just passed (#1096).
+      it('accepts a null output branch, which n8n stores verbatim (#1096)', () => {
+        const connections = {
+          'Start': {
+            main: [[{ node: 'B', type: 'main', index: 0 }], null],
+          },
+        };
+
+        expect(validateWorkflowConnections(connections)).toEqual(connections);
+      });
+
+      it('still throws for a non-null, non-array branch', () => {
+        const connections = {
+          'Start': {
+            main: [[{ node: 'B', type: 'main', index: 0 }], 'nope'],
+          },
+        };
+
+        expect(() => validateWorkflowConnections(connections)).toThrow();
+      });
     });
 
     describe('validateWorkflowSettings', () => {
@@ -1161,7 +1184,7 @@ describe('n8n-validation', () => {
         { label: 'a string source entry', connections: { Start: 'main' }, path: '"Start"' },
         { label: 'an array source entry', connections: { Start: [] }, path: '"Start"' },
         { label: 'a null output map', connections: { Start: { main: null } }, path: '"Start.main"' },
-        { label: 'a null output', connections: { Start: { main: [null] } }, path: '"Start.main.0"' },
+        { label: 'a string output', connections: { Start: { main: ['main'] } }, path: '"Start.main.0"' },
         { label: 'an object output', connections: { Start: { main: [{}] } }, path: '"Start.main.0"' },
         { label: 'a null connection entry', connections: { Start: { main: [[null]] } }, path: '"Start.main.0.0"' },
         { label: 'a non-string target', connections: { Start: { main: [[{ node: 5, type: 'main', index: 0 }]] } }, path: '"Start.main.0.0.node"' },
@@ -1175,6 +1198,43 @@ describe('n8n-validation', () => {
         expect(errors).toHaveLength(1);
         expect(errors[0]).toMatch(/^Invalid connections: /);
         expect(errors[0]).toContain(path);
+      });
+
+      // A null branch is n8n's own "nothing wired to this output" and its API stores one
+      // verbatim (live-verified), so it is data to walk past, not a shape to reject (#1096).
+      it('accepts a null output branch instead of failing the create', () => {
+        const errors = validateWorkflowStructure({
+          name: 'Null branch',
+          nodes: twoNodes(),
+          connections: { Start: { main: [[{ node: 'B', type: 'main', index: 0 }], null] } },
+        } as unknown as Partial<Workflow>);
+
+        expect(errors).toEqual([]);
+      });
+
+      it('counts a null branch as an unconnected Switch output rather than throwing on it', () => {
+        const switchNode: any = {
+          id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+          position: [250, 300] as [number, number],
+          parameters: {
+            rules: {
+              rules: [
+                { conditions: { conditions: [] }, outputKey: 'a' },
+                { conditions: { conditions: [] }, outputKey: 'b' },
+              ],
+            },
+          },
+        };
+
+        const errors = validateWorkflowStructure({
+          name: 'Switch with a null branch',
+          nodes: [switchNode, webhookNode('2', 'B', 'n8n-nodes-base.set')],
+          connections: { Switch: { main: [[{ node: 'B', type: 'main', index: 0 }], null] } },
+        } as unknown as Partial<Workflow>);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('unconnected output');
+        expect(errors[0]).toContain('"b" (index 1)');
       });
 
       it('reports a connection parse failure as one line rather than a serialized Zod issue array', () => {
