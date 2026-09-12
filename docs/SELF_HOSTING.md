@@ -309,6 +309,29 @@ Deploy n8n-MCP to Railway's cloud platform with zero configuration:
 
 > 📚 **For detailed setup instructions, troubleshooting, and configuration examples, see our [Railway Deployment Guide](./RAILWAY_DEPLOYMENT.md)**
 
+## Render Cloud Deployment (Blueprint)
+
+**Prerequisites:** [Render](https://render.com/) account and this repository pushed to GitHub (or GitLab / Bitbucket).
+
+The repo ships a **`render.yaml`** [Blueprint](https://render.com/docs/infrastructure-as-code) so you can provision the Docker web service with consistent env vars and health checks. **Recommended** over manual setup.
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/czlonkowski/n8n-mcp)
+
+**Benefits:**
+
+- **Blueprint / IaC** - Version-controlled service definition next to the application.
+- **HTTPS** - Managed TLS on `*.onrender.com` (or attach a custom domain).
+- **`AUTH_TOKEN`** - Generated or set during deploy for HTTP MCP authentication.
+- **Health checks** - `/health` wired for Render's deploy checks.
+
+**Quick setup:**
+
+1. Click **Deploy to Render** above **or** create a **New Blueprint** and select this repo (Render reads `render.yaml` from the root).
+2. Apply the Blueprint and wait for the Docker build to complete.
+3. Copy the **service URL** and **`AUTH_TOKEN`** from the dashboard; MCP clients use **`https://<your-service>.onrender.com/mcp`** with **`Authorization: Bearer <AUTH_TOKEN>`**.
+
+> 📚 **Full steps, env vars, troubleshooting, and client examples:** [Render Deployment Guide](./RENDER_DEPLOYMENT.md)
+
 **Configuration file locations:**
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
