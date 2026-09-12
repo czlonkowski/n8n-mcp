@@ -905,10 +905,9 @@ export class WorkflowAutoFixer {
         }
 
         // Merge entries into main[index]
-        // The slot can be null: that is n8n's own "nothing wired to this output" and it
-        // survives into a fetched workflow (#1096), where spreading it threw
-        // "nodeConn.main[index] is not iterable" out of n8n_autofix_workflow. Merging into
-        // it is the fix it was asked for, so an empty branch is the right starting point.
+        // The slot can be a null branch (#1096); spreading one threw
+        // "nodeConn.main[index] is not iterable" out of n8n_autofix_workflow. Merging into it
+        // is the fix it was asked for, so an empty branch is the right starting point.
         const hadExisting = Array.isArray(nodeConn['main'][index]) && nodeConn['main'][index].length > 0;
         if (Array.isArray(entries)) {
           for (const outputGroup of entries) {

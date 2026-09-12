@@ -64,11 +64,13 @@ interface WorkflowNode {
   executeOnce?: boolean;
 }
 
+// A null branch is n8n's own "nothing wired to this output" and reaches here from any workflow
+// read back out of n8n (#1096); collectMalformedConnectionErrors allows it.
+type ConnectionBranch = Array<{ node: string; type: string; index: number }> | null;
+
 interface WorkflowConnection {
   [sourceNode: string]: {
-    // A null branch is n8n's own "nothing wired to this output" and reaches here from any
-    // workflow read back out of n8n (#1096); collectMalformedConnectionErrors allows it.
-    [outputType: string]: Array<Array<{ node: string; type: string; index: number }> | null>;
+    [outputType: string]: ConnectionBranch[];
   };
 }
 
@@ -994,7 +996,7 @@ export class WorkflowValidator {
    */
   private validateConnectionOutputs(
     sourceName: string,
-    outputs: Array<Array<{ node: string; type: string; index: number }> | null>,
+    outputs: ConnectionBranch[],
     nodeMap: Map<string, WorkflowNode>,
     nodeIdMap: Map<string, WorkflowNode>,
     result: WorkflowValidationResult,
@@ -1110,7 +1112,7 @@ export class WorkflowValidator {
   private validateErrorOutputConfiguration(
     sourceName: string,
     sourceNode: WorkflowNode,
-    outputs: Array<Array<{ node: string; type: string; index: number }> | null>,
+    outputs: ConnectionBranch[],
     nodeMap: Map<string, WorkflowNode>,
     result: WorkflowValidationResult,
     profile: string = 'runtime'
@@ -1518,7 +1520,7 @@ export class WorkflowValidator {
    */
   private validateOutputIndexBounds(
     sourceNode: WorkflowNode,
-    outputs: Array<Array<{ node: string; type: string; index: number }> | null>,
+    outputs: ConnectionBranch[],
     result: WorkflowValidationResult
   ): void {
     const naturalOutputCount = this.getMainOutputCount(sourceNode);
@@ -1560,7 +1562,7 @@ export class WorkflowValidator {
    */
   private validateConditionalBranchUsage(
     sourceNode: WorkflowNode,
-    outputs: Array<Array<{ node: string; type: string; index: number }> | null>,
+    outputs: ConnectionBranch[],
     result: WorkflowValidationResult
   ): void {
     const conditionalInfo = this.getConditionalOutputInfo(sourceNode);

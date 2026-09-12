@@ -12,6 +12,10 @@
 import { INodeParameters } from 'n8n-workflow';
 import { logger } from '../utils/logger';
 import { WorkflowNode } from '../types/n8n-api';
+import { FILTER_OPERATOR_TYPES } from './n8n-validation';
+
+/** The keys a Switch can carry its rules under: `values` is the live one at 3.2+ (#1097). */
+const SWITCH_RULE_KEYS = ['values', 'rules'] as const;
 
 /** Legacy operator names that n8n no longer recognizes, mapped to their correct names. */
 const OPERATOR_CORRECTIONS: Record<string, string> = {
@@ -99,11 +103,10 @@ function sanitizeFilterBasedNode(
       // n8n reads at 3.2+ and the one most real workflows use (#1097). Sanitizing only `rules`
       // meant an operator the validator now reports under `values` was never repaired on the
       // way in, so the caller was told to retry a payload nothing would fix.
-      if (Array.isArray(rules.values)) {
-        rules.values = rules.values.map(sanitizeSwitchRule);
-      }
-      if (Array.isArray(rules.rules)) {
-        rules.rules = rules.rules.map(sanitizeSwitchRule);
+      for (const key of SWITCH_RULE_KEYS) {
+        if (Array.isArray(rules[key])) {
+          rules[key] = rules[key].map(sanitizeSwitchRule);
+        }
       }
     }
   }
@@ -318,7 +321,7 @@ export function validateNodeMetadata(node: WorkflowNode): string[] {
   // Check Switch node, under both rule keys - `values` is the one n8n reads at 3.2+ (#1097)
   if (node.type === 'n8n-nodes-base.switch') {
     const rules = (node.parameters.rules as any);
-    for (const key of ['values', 'rules'] as const) {
+    for (const key of SWITCH_RULE_KEYS) {
       const collection = rules?.[key];
       if (!Array.isArray(collection)) continue;
 
@@ -368,10 +371,7 @@ function validateOperator(operator: any, path: string): string[] {
 
   if (!operator.type) {
     issues.push(`${path}: missing required field 'type'`);
-    // `any` is in n8n's FilterOperatorType and its runtime short-circuits validation for it.
-    // Kept in step with validateOperatorStructure in n8n-validation.ts, which this now walks
-    // the same rule collections as.
-  } else if (!['string', 'number', 'boolean', 'dateTime', 'array', 'object', 'any'].includes(operator.type)) {
+  } else if (!FILTER_OPERATOR_TYPES.includes(operator.type)) {
     issues.push(`${path}: invalid type "${operator.type}" (must be data type, not operation)`);
   }
 

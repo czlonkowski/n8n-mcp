@@ -190,15 +190,37 @@ function describeValueType(value: unknown): string {
   return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
 }
 
+/** The connections at one output index, or null when nothing is wired to that output (#1096). */
+type ConnectionBranch = WorkflowConnection[string][string][number];
+
 /**
- * n8n represents an output with nothing wired to it as a null branch
- * (`NodeInputConnections = Array<IConnection[] | null>`) and its API stores one verbatim, so
- * any workflow read back can carry one (#1096). Reading a branch through this keeps the walks
- * below off `null.some` and `null.length`, which surfaced as an internal error rather than a
- * diff-engine message.
+ * Read a branch's connections. A null branch is legal n8n data that any workflow read back can
+ * carry (#1096), so the walks below go through this to stay off `null.some` and `null.length` -
+ * which surfaced as an internal error rather than a diff-engine message.
  */
 function branchConnections(branch: unknown): any[] {
   return Array.isArray(branch) ? branch : [];
+}
+
+/**
+ * Filter a branch's connections, leaving a null branch exactly as it arrived: rewriting it to
+ * `[]` would edit an output the operation was never asked to touch.
+ */
+function filterBranch(
+  branch: ConnectionBranch,
+  keep: (conn: NonNullable<ConnectionBranch>[number]) => boolean
+): ConnectionBranch {
+  return Array.isArray(branch) ? branch.filter(keep) : branch;
+}
+
+/**
+ * Drop the trailing branches with nothing wired to them. Intermediate ones stay: a branch's
+ * position in the array is its output index, so dropping one rewires every output after it.
+ */
+function trimTrailingEmptyBranches(branches: ConnectionBranch[]): void {
+  while (branches.length > 0 && branchConnections(branches[branches.length - 1]).length === 0) {
+    branches.pop();
+  }
 }
 
 /**
@@ -1173,15 +1195,12 @@ export class WorkflowDiffEngine {
     // Remove all connections to this node
     for (const [sourceName, sourceConnections] of Object.entries(workflow.connections)) {
       for (const [outputName, outputConns] of Object.entries(sourceConnections)) {
-        sourceConnections[outputName] = outputConns.map(connections =>
-          Array.isArray(connections) ? connections.filter(conn => conn.node !== node.name) : connections
+        sourceConnections[outputName] = outputConns.map(branch =>
+          filterBranch(branch, conn => conn.node !== node.name)
         );
 
-        // Trim trailing empty arrays only (preserve intermediate empty arrays for positional indices)
         const trimmed = sourceConnections[outputName];
-        while (trimmed.length > 0 && branchConnections(trimmed[trimmed.length - 1]).length === 0) {
-          trimmed.pop();
-        }
+        trimTrailingEmptyBranches(trimmed);
 
         if (trimmed.length === 0) {
           delete sourceConnections[outputName];
@@ -1511,15 +1530,12 @@ export class WorkflowDiffEngine {
     if (!connections) return;
 
     // Remove connection from all indices
-    workflow.connections[sourceNode.name][sourceOutput] = connections.map(conns =>
-      Array.isArray(conns) ? conns.filter(conn => conn.node !== targetNode.name) : conns
+    workflow.connections[sourceNode.name][sourceOutput] = connections.map(branch =>
+      filterBranch(branch, conn => conn.node !== targetNode.name)
     );
 
-    // Remove trailing empty arrays only (preserve intermediate empty arrays to maintain indices)
     const outputConnections = workflow.connections[sourceNode.name][sourceOutput];
-    while (outputConnections.length > 0 && branchConnections(outputConnections[outputConnections.length - 1]).length === 0) {
-      outputConnections.pop();
-    }
+    trimTrailingEmptyBranches(outputConnections);
 
     if (outputConnections.length === 0) {
       delete workflow.connections[sourceNode.name][sourceOutput];
@@ -1929,8 +1945,8 @@ export class WorkflowDiffEngine {
         }
 
         for (const conns of connections) {
-          // A null branch is legal n8n data - the API stores one verbatim (#1096) - so a caller
-          // may send back a shape it read from n8n. Only other non-arrays are rejected.
+          // A caller may send back a shape it read from n8n, null branches included (#1096).
+          // Only other non-arrays are rejected.
           if (conns === null) continue;
           if (!Array.isArray(conns)) {
             return `Connections for "${sourceName}" output "${outputName}" must contain arrays of connections, received ${describeValueType(conns)}`;
@@ -2001,22 +2017,17 @@ export class WorkflowDiffEngine {
 
       // Check each connection
       for (const [outputName, connections] of Object.entries(outputs)) {
-        const filteredConnections = connections.map(conns =>
-          Array.isArray(conns)
-            ? conns.filter(conn => {
-                if (!nodeNames.has(conn.node)) {
-                  staleConnections.push({ from: sourceName, to: conn.node });
-                  return false;
-                }
-                return true;
-              })
-            : conns
+        const filteredConnections = connections.map(branch =>
+          filterBranch(branch, conn => {
+            if (!nodeNames.has(conn.node)) {
+              staleConnections.push({ from: sourceName, to: conn.node });
+              return false;
+            }
+            return true;
+          })
         );
 
-        // Trim trailing empty arrays only (preserve intermediate for positional indices)
-        while (filteredConnections.length > 0 && branchConnections(filteredConnections[filteredConnections.length - 1]).length === 0) {
-          filteredConnections.pop();
-        }
+        trimTrailingEmptyBranches(filteredConnections);
 
         if (filteredConnections.length === 0) {
           delete outputs[outputName];
@@ -2077,7 +2088,6 @@ export class WorkflowDiffEngine {
     for (const [sourceName, outputs] of Object.entries(updatedConnections)) {
       // Iterate through all output types (main, error, ai_tool, ai_languageModel, etc.)
       for (const [outputType, connections] of Object.entries(outputs)) {
-        // connections is Array<Array<{node, type, index}>>
         for (let outputIndex = 0; outputIndex < connections.length; outputIndex++) {
           const connectionsAtIndex = branchConnections(connections[outputIndex]);
           for (let connIndex = 0; connIndex < connectionsAtIndex.length; connIndex++) {

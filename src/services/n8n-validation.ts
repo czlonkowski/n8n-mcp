@@ -62,11 +62,9 @@ export function cleanNodeForApi(node: WorkflowNode): WorkflowNode {
 }
 
 // Connection array schema used by all connection types
-// A null branch is how n8n itself represents an output with nothing wired to it
-// (`NodeInputConnections = Array<IConnection[] | null>`), and its Public API stores one
-// verbatim - verified by POSTing such a workflow to a live instance (#1096). Rejecting it
-// here failed creates that validate_workflow had just passed, with no way for the caller
-// to tell which of the two validators was wrong.
+// The Public API stores a null branch verbatim - verified by POSTing such a workflow to a live
+// instance (#1096). Rejecting it here failed creates that validate_workflow had just passed,
+// with no way for the caller to tell which of the two validators was wrong.
 const connectionArraySchema = z.array(
   z.array(
     z.object({
@@ -492,11 +490,7 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
 
   // Validate Switch and IF node connection structures match their rules
   if (workflow.nodes && workflow.connections) {
-    const switchNodes = workflow.nodes.filter(n => {
-      if (n.type !== 'n8n-nodes-base.switch') return false;
-      const mode = (n.parameters as any)?.mode;
-      return !mode || mode === 'rules'; // Default mode is 'rules'
-    });
+    const switchNodes = workflow.nodes.filter(isRulesModeSwitch);
 
     const ruleLabel = (rule: any, i: number) =>
       typeof rule?.outputKey === 'string' ? `"${rule.outputKey}" (index ${i})` : `Rule ${i}`;
@@ -525,8 +519,8 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
         }
 
         // Check for empty output branches (except trailing ones)
-        // A null branch is n8n's own "nothing wired to this output" (#1096) and now survives
-        // the schema above, so it counts as unconnected rather than reaching `.length` on null.
+        // A null branch now survives the schema above (#1096), so it counts as unconnected
+        // rather than reaching `.length` on null.
         const branchSize = (branch: unknown) => (Array.isArray(branch) ? branch.length : 0);
         const nonEmptyBranches = nodeConnections.main.filter((branch: unknown) => branchSize(branch) > 0).length;
         if (nonEmptyBranches < rules.length) {
@@ -617,24 +611,29 @@ export function validateConditionNodeStructure(node: WorkflowNode): string[] {
     if (typeVersion >= 2) {
       errors.push(...validateFilterConditionOperators(node.parameters?.conditions, 'conditions'));
     }
-  } else if (node.type === 'n8n-nodes-base.switch') {
-    // Only "rules" mode routes on conditions; an expression- or json-mode Switch can retain a
-    // stale hidden collection that n8n ignores at runtime. The branch-count check in
-    // validateWorkflowStructure filters on the same thing - these two should agree.
-    const mode = (node.parameters as any)?.mode;
-    if (typeVersion >= 3.2 && (!mode || mode === 'rules')) {
-      const rules = node.parameters?.rules as any;
+  } else if (isRulesModeSwitch(node) && typeVersion >= 3.2) {
+    const rules = node.parameters?.rules as any;
 
-      // `values` is the key n8n actually reads: the `rules` fixedCollection declares one option
-      // and it is named `values`. Validating only `rules.rules` meant the operator checks below
-      // never ran for 319 of the 448 Switch nodes in the bundled templates (#1097). Both keys are
-      // walked - the legacy one still reaches the branch-count check in validateWorkflowStructure.
-      errors.push(...validateSwitchRuleCollection(rules?.values, 'rules.values'));
-      errors.push(...validateSwitchRuleCollection(rules?.rules, 'rules.rules'));
-    }
+    // `values` is the key n8n actually reads: the `rules` fixedCollection declares one option
+    // and it is named `values`. Validating only `rules.rules` meant the operator checks below
+    // never ran for 319 of the 448 Switch nodes in the bundled templates (#1097). Both keys are
+    // walked - the legacy one still reaches the branch-count check in validateWorkflowStructure.
+    errors.push(...validateSwitchRuleCollection(rules?.values, 'rules.values'));
+    errors.push(...validateSwitchRuleCollection(rules?.rules, 'rules.rules'));
   }
 
   return errors;
+}
+
+/**
+ * A Switch that routes on conditions. Expression- and json-mode Switches can retain a stale
+ * hidden rule collection that n8n ignores at runtime, so neither the rule validation nor the
+ * branch-count check in validateWorkflowStructure should read it. Mode defaults to "rules".
+ */
+function isRulesModeSwitch(node: WorkflowNode): boolean {
+  if (node.type !== 'n8n-nodes-base.switch') return false;
+  const mode = (node.parameters as any)?.mode;
+  return !mode || mode === 'rules';
 }
 
 /**
@@ -646,14 +645,10 @@ export function validateConditionNodeStructure(node: WorkflowNode): string[] {
  * left alone - a Switch carries its rules under one key, not both.
  */
 function validateSwitchRuleCollection(collection: any, path: string): string[] {
+  if (collection === undefined || collection === null) return [];
+  if (!Array.isArray(collection)) return [`${path}: rules is not an array`];
+
   const errors: string[] = [];
-
-  if (collection === undefined || collection === null) return errors;
-  if (!Array.isArray(collection)) {
-    errors.push(`${path}: rules is not an array`);
-    return errors;
-  }
-
   collection.forEach((rule: any, i: number) => {
     // Report an entry that is not a rule rather than reading `conditions` off it: the
     // branch-count check in validateWorkflowStructure reads these entries too (#1094).
@@ -686,6 +681,15 @@ export function validateFilterBasedNodeMetadata(node: WorkflowNode): string[] {
 }
 
 /**
+ * The data types a filter operator may declare - n8n's own FilterOperatorType. `any` is in it
+ * and n8n's runtime short-circuits validation for that type (filter-parameter.js:
+ * `if (type === 'any' ...) return {valid: true}`), so reporting it would be a false positive.
+ * None of the 2,352 bundled templates carries one, but #1097 points this check at the key real
+ * workflows use, so the exposure is no longer theoretical.
+ */
+export const FILTER_OPERATOR_TYPES = ['string', 'number', 'boolean', 'dateTime', 'array', 'object', 'any'];
+
+/**
  * Validate operator structure
  * Ensures operator has correct format: {type, operation, singleValue?}
  */
@@ -703,19 +707,12 @@ export function validateOperatorStructure(operator: any, path: string): string[]
       `${path}: missing required field "type". ` +
       'Must be a data type: "string", "number", "boolean", "dateTime", "array", or "object"'
     );
-  } else {
-    // `any` is in n8n's own FilterOperatorType and its runtime short-circuits validation for it
-    // (filter-parameter.js: `if (type === 'any' ...) return {valid: true}`), so reporting it
-    // would be a false positive. None of the 2,352 bundled templates carries one, but #1097
-    // points this check at the key real workflows use, so the exposure is no longer theoretical.
-    const validTypes = ['string', 'number', 'boolean', 'dateTime', 'array', 'object', 'any'];
-    if (!validTypes.includes(operator.type)) {
-      errors.push(
-        `${path}: invalid type "${operator.type}". ` +
-        `Type must be a data type (${validTypes.join(', ')}), not an operation name. ` +
-        'Did you mean to use the "operation" field?'
-      );
-    }
+  } else if (!FILTER_OPERATOR_TYPES.includes(operator.type)) {
+    errors.push(
+      `${path}: invalid type "${operator.type}". ` +
+      `Type must be a data type (${FILTER_OPERATOR_TYPES.join(', ')}), not an operation name. ` +
+      'Did you mean to use the "operation" field?'
+    );
   }
 
   // Check required field: operation
