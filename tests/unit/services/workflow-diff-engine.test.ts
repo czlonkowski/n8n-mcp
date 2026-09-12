@@ -8052,4 +8052,92 @@ describe('WorkflowDiffEngine', () => {
       });
     });
   });
+  // n8n represents an output with nothing wired to it as a null branch and its API stores one
+  // verbatim, so any workflow read back can carry one (#1096). Every walk below used to reach
+  // `null.filter` or `null.length` and surface a TypeError as an internal error.
+  describe('null output branches', () => {
+    const withNullBranch = (main: any[]): Workflow => {
+      const workflow = builder.build() as Workflow;
+      workflow.connections['Webhook'] = { main } as any;
+      return workflow;
+    };
+
+    it('keeps an intermediate null branch while cleanStaleConnections strips stale targets', async () => {
+      const workflow = withNullBranch([
+        null,
+        [
+          { node: 'HTTP Request', type: 'main', index: 0 },
+          { node: 'NonExistentNode', type: 'main', index: 0 },
+        ],
+      ]);
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test-workflow',
+        operations: [{ type: 'cleanStaleConnections' } as CleanStaleConnectionsOperation],
+      });
+
+      expect(result.success).toBe(true);
+      const main = result.workflow!.connections['Webhook']['main'];
+      expect(main[0]).toBeNull();
+      expect(main[1]).toHaveLength(1);
+      expect(main[1]![0].node).toBe('HTTP Request');
+    });
+
+    it('removes a connection from a workflow that carries a null branch', async () => {
+      const workflow = withNullBranch([[{ node: 'HTTP Request', type: 'main', index: 0 }], null]);
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test-workflow',
+        operations: [
+          { type: 'removeConnection', source: 'Webhook', target: 'HTTP Request' } as RemoveConnectionOperation,
+        ],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.workflow!.connections['Webhook']?.['main']).toBeUndefined();
+    });
+
+    it('removes a node referenced alongside a null branch', async () => {
+      const workflow = withNullBranch([null, [{ node: 'HTTP Request', type: 'main', index: 0 }]]);
+
+      const result = await diffEngine.applyDiff(workflow, {
+        id: 'test-workflow',
+        operations: [{ type: 'removeNode', nodeName: 'HTTP Request' } as RemoveNodeOperation],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.workflow!.nodes.find((n: any) => n.name === 'HTTP Request')).toBeUndefined();
+    });
+
+    it('accepts a null branch in a replaceConnections payload', async () => {
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        // Typed, not cast: a null branch has to be expressible through
+        // ReplaceConnectionsOperation, or a TypeScript caller cannot send back a shape it
+        // read from n8n (#1096).
+        operations: [{
+          type: 'replaceConnections',
+          connections: {
+            Webhook: { main: [[{ node: 'HTTP Request', type: 'main', index: 0 }], null] },
+          },
+        } satisfies ReplaceConnectionsOperation],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.workflow!.connections['Webhook']['main'][1]).toBeNull();
+    });
+
+    it('still rejects a non-null, non-array branch in a replaceConnections payload', async () => {
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [{
+          type: 'replaceConnections',
+          connections: { Webhook: { main: ['nope'] } },
+        } as unknown as WorkflowDiffOperation],
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors![0].message).toContain('must contain arrays of connections');
+    });
+  });
 });

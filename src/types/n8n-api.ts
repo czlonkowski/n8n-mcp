@@ -37,11 +37,14 @@ export interface WorkflowNode {
 
 export interface WorkflowConnection {
   [sourceNodeId: string]: {
+    // A null branch is n8n's own "nothing wired to this output", matching its
+    // `NodeInputConnections = Array<IConnection[] | null>`; the Public API stores one
+    // verbatim, so a workflow read back can carry one (#1096).
     [outputType: string]: Array<Array<{
       node: string;
       type: string;
       index: number;
-    }>>;
+    }> | null>;
   };
 }
 

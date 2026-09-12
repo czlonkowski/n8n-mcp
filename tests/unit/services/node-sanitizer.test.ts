@@ -287,6 +287,71 @@ describe('Node Sanitizer', () => {
       expect(condition.operator.singleValue).toBe(true); // notEmpty is unary
     });
 
+    // `values` is the key n8n reads at 3.2+ and the one most real workflows use. Sanitizing only
+    // `rules` meant an operator the condition validator now reports under `values` was never
+    // repaired on the way in, so the caller was told to retry a payload nothing would fix (#1097).
+    it('sanitizes Switch rules stored under "values"', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: {
+          mode: 'rules',
+          rules: {
+            values: [{
+              outputKey: 'has a name',
+              conditions: {
+                conditions: [{
+                  id: 'c1',
+                  leftValue: '={{ $json.name }}',
+                  operator: { type: 'notEmpty' }
+                }]
+              }
+            }]
+          }
+        }
+      } as unknown as WorkflowNode;
+
+      const sanitized = sanitizeNode(node);
+      const rule = (sanitized.parameters.rules as any).values[0];
+
+      expect(rule.conditions.options).toEqual({
+        version: 2,
+        leftValue: '',
+        caseSensitive: true,
+        typeValidation: 'strict'
+      });
+      // The repair that {type: "notEmpty"} gets under `rules` — an operation name moved out of
+      // the type field, with the data type inferred (notEmpty infers "object", see inferDataType).
+      expect(rule.conditions.conditions[0].operator).toMatchObject({
+        type: 'object',
+        operation: 'notEmpty'
+      });
+    });
+
+    it('leaves a non-object entry under "values" untouched, as it does under "rules"', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: { rules: { values: [null, 'Branch 1', []] } }
+      } as unknown as WorkflowNode;
+
+      expect((sanitizeNode(node).parameters.rules as any).values).toEqual([null, 'Branch 1', []]);
+    });
+
+    it('leaves an operator declaring the "any" data type alone', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        // Without `any` in the data-type list, the repair heuristic read it as an operation name
+        // and rewrote this to {type: "string", operation: "any"} - an operation n8n has no such
+        // thing as - which also hid the genuine missing-operation error (#1097).
+        parameters: { mode: 'rules', rules: { values: [{ conditions: { conditions: [{ operator: { type: 'any' } }] } }] } }
+      } as unknown as WorkflowNode;
+
+      const operator = (sanitizeNode(node).parameters.rules as any).values[0].conditions.conditions[0].operator;
+      expect(operator).toEqual({ type: 'any' });
+    });
+
     it('should leave a Switch rule entry that is not an object untouched (#1094)', () => {
       const node = {
         id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
@@ -394,6 +459,41 @@ describe('Node Sanitizer', () => {
       const issues = validateNodeMetadata(node);
 
       expect(issues.some(issue => issue.includes('invalid type "isNotEmpty"'))).toBe(true);
+    });
+
+    it('ignores an array entry under "values", as the other validators do', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        // typeof [] === 'object', so an array slips a plain typeof check; the condition
+        // validator names it precisely, so reporting missing options here is noise (#1097).
+        parameters: { rules: { values: [[]] } }
+      } as unknown as WorkflowNode;
+
+      expect(validateNodeMetadata(node)).toEqual([]);
+    });
+
+    it('accepts n8n\'s "any" operator type, as validateOperatorStructure does', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: {
+          rules: {
+            values: [{
+              outputKey: 'exists',
+              conditions: {
+                options: { version: 2, leftValue: '', caseSensitive: true, typeValidation: 'strict' },
+                conditions: [{
+                  leftValue: '={{ $json.x }}',
+                  operator: { type: 'any', operation: 'exists', singleValue: true }
+                }]
+              }
+            }]
+          }
+        }
+      } as unknown as WorkflowNode;
+
+      expect(validateNodeMetadata(node)).toEqual([]);
     });
 
     it('should detect missing singleValue for unary operators', () => {

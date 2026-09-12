@@ -36,7 +36,6 @@ import {
 } from '../types/workflow-diff';
 import { Workflow, WorkflowNode, WorkflowConnection, WorkflowNodeGroup } from '../types/n8n-api';
 import { Logger } from '../utils/logger';
-import { validateWorkflowNode, validateWorkflowConnections } from './n8n-validation';
 import { GROUP_DESCRIPTION_MAX_LENGTH, repairNodeGroups, toWorkflowNodeGroup } from './node-groups';
 import { sanitizeNode, sanitizeWorkflowNodes } from './node-sanitizer';
 import { isActivatableTrigger } from '../utils/node-type-utils';
@@ -189,6 +188,39 @@ function describeValueType(value: unknown): string {
   if (value === undefined) return 'nothing';
   if (Array.isArray(value)) return 'an array';
   return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
+}
+
+/** The connections at one output index, or null when nothing is wired to that output (#1096). */
+type ConnectionBranch = WorkflowConnection[string][string][number];
+
+/**
+ * Read a branch's connections. A null branch is legal n8n data that any workflow read back can
+ * carry (#1096), so the walks below go through this to stay off `null.some` and `null.length` -
+ * which surfaced as an internal error rather than a diff-engine message.
+ */
+function branchConnections(branch: unknown): any[] {
+  return Array.isArray(branch) ? branch : [];
+}
+
+/**
+ * Filter a branch's connections, leaving a null branch exactly as it arrived: rewriting it to
+ * `[]` would edit an output the operation was never asked to touch.
+ */
+function filterBranch(
+  branch: ConnectionBranch,
+  keep: (conn: NonNullable<ConnectionBranch>[number]) => boolean
+): ConnectionBranch {
+  return Array.isArray(branch) ? branch.filter(keep) : branch;
+}
+
+/**
+ * Drop the trailing branches with nothing wired to them. Intermediate ones stay: a branch's
+ * position in the array is its output index, so dropping one rewires every output after it.
+ */
+function trimTrailingEmptyBranches(branches: ConnectionBranch[]): void {
+  while (branches.length > 0 && branchConnections(branches[branches.length - 1]).length === 0) {
+    branches.pop();
+  }
 }
 
 /**
@@ -735,7 +767,7 @@ export class WorkflowDiffEngine {
     const hasConnections = Object.values(workflow.connections).some(conn => {
       return Object.values(conn).some(outputs => 
         outputs.some(connections => 
-          connections.some(c => c.node === node.name)
+          branchConnections(connections).some(c => c.node === node.name)
         )
       );
     });
@@ -1044,7 +1076,7 @@ export class WorkflowDiffEngine {
     }
 
     const hasConnection = connections.some(conns =>
-      conns.some(c => c.node === targetNode.name)
+      branchConnections(conns).some(c => c.node === targetNode.name)
     );
 
     if (!hasConnection) {
@@ -1163,15 +1195,12 @@ export class WorkflowDiffEngine {
     // Remove all connections to this node
     for (const [sourceName, sourceConnections] of Object.entries(workflow.connections)) {
       for (const [outputName, outputConns] of Object.entries(sourceConnections)) {
-        sourceConnections[outputName] = outputConns.map(connections =>
-          connections.filter(conn => conn.node !== node.name)
+        sourceConnections[outputName] = outputConns.map(branch =>
+          filterBranch(branch, conn => conn.node !== node.name)
         );
 
-        // Trim trailing empty arrays only (preserve intermediate empty arrays for positional indices)
         const trimmed = sourceConnections[outputName];
-        while (trimmed.length > 0 && trimmed[trimmed.length - 1].length === 0) {
-          trimmed.pop();
-        }
+        trimTrailingEmptyBranches(trimmed);
 
         if (trimmed.length === 0) {
           delete sourceConnections[outputName];
@@ -1501,15 +1530,12 @@ export class WorkflowDiffEngine {
     if (!connections) return;
 
     // Remove connection from all indices
-    workflow.connections[sourceNode.name][sourceOutput] = connections.map(conns =>
-      conns.filter(conn => conn.node !== targetNode.name)
+    workflow.connections[sourceNode.name][sourceOutput] = connections.map(branch =>
+      filterBranch(branch, conn => conn.node !== targetNode.name)
     );
 
-    // Remove trailing empty arrays only (preserve intermediate empty arrays to maintain indices)
     const outputConnections = workflow.connections[sourceNode.name][sourceOutput];
-    while (outputConnections.length > 0 && outputConnections[outputConnections.length - 1].length === 0) {
-      outputConnections.pop();
-    }
+    trimTrailingEmptyBranches(outputConnections);
 
     if (outputConnections.length === 0) {
       delete workflow.connections[sourceNode.name][sourceOutput];
@@ -1919,6 +1945,9 @@ export class WorkflowDiffEngine {
         }
 
         for (const conns of connections) {
+          // A caller may send back a shape it read from n8n, null branches included (#1096).
+          // Only other non-arrays are rejected.
+          if (conns === null) continue;
           if (!Array.isArray(conns)) {
             return `Connections for "${sourceName}" output "${outputName}" must contain arrays of connections, received ${describeValueType(conns)}`;
           }
@@ -1950,7 +1979,7 @@ export class WorkflowDiffEngine {
         if (!nodeNames.has(sourceName)) {
           for (const [outputName, connections] of Object.entries(outputs)) {
             for (const conns of connections) {
-              for (const conn of conns) {
+              for (const conn of branchConnections(conns)) {
                 staleConnections.push({ from: sourceName, to: conn.node });
               }
             }
@@ -1958,7 +1987,7 @@ export class WorkflowDiffEngine {
         } else {
           for (const [outputName, connections] of Object.entries(outputs)) {
             for (const conns of connections) {
-              for (const conn of conns) {
+              for (const conn of branchConnections(conns)) {
                 if (!nodeNames.has(conn.node)) {
                   staleConnections.push({ from: sourceName, to: conn.node });
                 }
@@ -1977,7 +2006,7 @@ export class WorkflowDiffEngine {
       if (!nodeNames.has(sourceName)) {
         for (const [outputName, connections] of Object.entries(outputs)) {
           for (const conns of connections) {
-            for (const conn of conns) {
+            for (const conn of branchConnections(conns)) {
               staleConnections.push({ from: sourceName, to: conn.node });
             }
           }
@@ -1988,8 +2017,8 @@ export class WorkflowDiffEngine {
 
       // Check each connection
       for (const [outputName, connections] of Object.entries(outputs)) {
-        const filteredConnections = connections.map(conns =>
-          conns.filter(conn => {
+        const filteredConnections = connections.map(branch =>
+          filterBranch(branch, conn => {
             if (!nodeNames.has(conn.node)) {
               staleConnections.push({ from: sourceName, to: conn.node });
               return false;
@@ -1998,10 +2027,7 @@ export class WorkflowDiffEngine {
           })
         );
 
-        // Trim trailing empty arrays only (preserve intermediate for positional indices)
-        while (filteredConnections.length > 0 && filteredConnections[filteredConnections.length - 1].length === 0) {
-          filteredConnections.pop();
-        }
+        trimTrailingEmptyBranches(filteredConnections);
 
         if (filteredConnections.length === 0) {
           delete outputs[outputName];
@@ -2062,9 +2088,8 @@ export class WorkflowDiffEngine {
     for (const [sourceName, outputs] of Object.entries(updatedConnections)) {
       // Iterate through all output types (main, error, ai_tool, ai_languageModel, etc.)
       for (const [outputType, connections] of Object.entries(outputs)) {
-        // connections is Array<Array<{node, type, index}>>
         for (let outputIndex = 0; outputIndex < connections.length; outputIndex++) {
-          const connectionsAtIndex = connections[outputIndex];
+          const connectionsAtIndex = branchConnections(connections[outputIndex]);
           for (let connIndex = 0; connIndex < connectionsAtIndex.length; connIndex++) {
             const connection = connectionsAtIndex[connIndex];
             // Check if target node was renamed

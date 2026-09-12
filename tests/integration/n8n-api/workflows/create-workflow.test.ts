@@ -225,12 +225,12 @@ describe('Integration: handleCreateWorkflow', () => {
       expect(actual.connections).toBeDefined();
 
       // Verify branching: Webhook -> Set 1 and Set 2
-      const webhookConnections = actual.connections.Webhook.main[0];
+      const webhookConnections = actual.connections.Webhook.main[0]!;
       expect(webhookConnections).toHaveLength(2);
 
       // Verify merging: Set 1 -> Merge (port 0), Set 2 -> Merge (port 1)
-      const set1Connections = actual.connections['Set 1'].main[0];
-      const set2Connections = actual.connections['Set 2'].main[0];
+      const set1Connections = actual.connections['Set 1'].main[0]!;
+      const set2Connections = actual.connections['Set 2'].main[0]!;
 
       expect(set1Connections[0].node).toBe('Merge');
       expect(set1Connections[0].index).toBe(0);
@@ -334,7 +334,7 @@ describe('Integration: handleCreateWorkflow', () => {
 
       // Verify error connection
       expect(actual.connections['HTTP Request'].error).toBeDefined();
-      expect(actual.connections['HTTP Request'].error[0][0].node).toBe('Handle Error');
+      expect(actual.connections['HTTP Request'].error[0]![0].node).toBe('Handle Error');
     });
   });
 

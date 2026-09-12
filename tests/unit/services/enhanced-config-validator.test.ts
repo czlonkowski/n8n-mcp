@@ -33,6 +33,34 @@ describe('EnhancedConfigValidator', () => {
     vi.clearAllMocks();
   });
 
+  describe('Switch rules.values entries', () => {
+    const validateSwitch = (values: unknown[]) =>
+      EnhancedConfigValidator.validateWithMode(
+        'nodes-base.switch',
+        { mode: 'rules', rules: { values } },
+        [{ name: 'rules', type: 'fixedCollection', required: false }],
+        'operation',
+        'ai-friendly'
+      );
+
+    // validateConditionNodeStructure reports these precisely as
+    // "rules.values[i]: rule is missing or not an object"; describing one as a rule missing
+    // its "conditions" property on top of that points at the wrong repair (#1097).
+    it.each([
+      { label: 'null', rule: null },
+      { label: 'a string', rule: 'Branch 1' },
+      { label: 'an array', rule: [] },
+    ])('does not warn about missing rule properties when the entry is $label', ({ rule }) => {
+      const messages = validateSwitch([rule]).warnings.map(w => w.message);
+      expect(messages.filter(m => m.includes('Switch rule'))).toEqual([]);
+    });
+
+    it('still warns about a real rule missing its conditions', () => {
+      const messages = validateSwitch([{ outputKey: 'a' }]).warnings.map(w => w.message);
+      expect(messages.some(m => m.includes('Switch rule 1 is missing "conditions" property'))).toBe(true);
+    });
+  });
+
   describe('validateWithMode', () => {
     it('should validate config with operation awareness', () => {
       const nodeType = 'nodes-base.slack';

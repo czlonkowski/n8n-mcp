@@ -153,8 +153,6 @@ describe('Parameter Validation', () => {
       vi.spyOn(server as any, 'searchTemplates').mockResolvedValue({ templates: [] });
       vi.spyOn(server as any, 'getTemplatesForTask').mockResolvedValue({ templates: [] });
       vi.spyOn(server as any, 'validateWorkflow').mockResolvedValue({ valid: true });
-      vi.spyOn(server as any, 'validateWorkflowConnections').mockResolvedValue({ valid: true });
-      vi.spyOn(server as any, 'validateWorkflowExpressions').mockResolvedValue({ valid: true });
     });
 
     describe('get_node', () => {
