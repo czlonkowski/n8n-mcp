@@ -8112,12 +8112,15 @@ describe('WorkflowDiffEngine', () => {
     it('accepts a null branch in a replaceConnections payload', async () => {
       const result = await diffEngine.applyDiff(baseWorkflow, {
         id: 'test-workflow',
+        // Typed, not cast: a null branch has to be expressible through
+        // ReplaceConnectionsOperation, or a TypeScript caller cannot send back a shape it
+        // read from n8n (#1096).
         operations: [{
           type: 'replaceConnections',
           connections: {
             Webhook: { main: [[{ node: 'HTTP Request', type: 'main', index: 0 }], null] },
           },
-        } as unknown as WorkflowDiffOperation],
+        } satisfies ReplaceConnectionsOperation],
       });
 
       expect(result.success).toBe(true);

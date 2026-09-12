@@ -705,7 +705,7 @@ export function validateOperatorStructure(operator: any, path: string): string[]
   if (!operator.type) {
     errors.push(
       `${path}: missing required field "type". ` +
-      'Must be a data type: "string", "number", "boolean", "dateTime", "array", or "object"'
+      `Must be a data type: ${FILTER_OPERATOR_TYPES.map(t => `"${t}"`).join(', ')}`
     );
   } else if (!FILTER_OPERATOR_TYPES.includes(operator.type)) {
     errors.push(
