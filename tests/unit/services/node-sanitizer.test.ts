@@ -338,6 +338,20 @@ describe('Node Sanitizer', () => {
       expect((sanitizeNode(node).parameters.rules as any).values).toEqual([null, 'Branch 1', []]);
     });
 
+    it('leaves an operator declaring the "any" data type alone', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        // Without `any` in the data-type list, the repair heuristic read it as an operation name
+        // and rewrote this to {type: "string", operation: "any"} - an operation n8n has no such
+        // thing as - which also hid the genuine missing-operation error (#1097).
+        parameters: { mode: 'rules', rules: { values: [{ conditions: { conditions: [{ operator: { type: 'any' } }] } }] } }
+      } as unknown as WorkflowNode;
+
+      const operator = (sanitizeNode(node).parameters.rules as any).values[0].conditions.conditions[0].operator;
+      expect(operator).toEqual({ type: 'any' });
+    });
+
     it('should leave a Switch rule entry that is not an object untouched (#1094)', () => {
       const node = {
         id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
@@ -445,6 +459,18 @@ describe('Node Sanitizer', () => {
       const issues = validateNodeMetadata(node);
 
       expect(issues.some(issue => issue.includes('invalid type "isNotEmpty"'))).toBe(true);
+    });
+
+    it('ignores an array entry under "values", as the other validators do', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        // typeof [] === 'object', so an array slips a plain typeof check; the condition
+        // validator names it precisely, so reporting missing options here is noise (#1097).
+        parameters: { rules: { values: [[]] } }
+      } as unknown as WorkflowNode;
+
+      expect(validateNodeMetadata(node)).toEqual([]);
     });
 
     it('accepts n8n\'s "any" operator type, as validateOperatorStructure does', () => {

@@ -121,6 +121,40 @@ describe('n8n-validation filter rules (false-positive regressions)', () => {
     });
   });
 
+  describe('validateOperatorStructure — a rejected type is described, not coerced', () => {
+    // JSON can express an object that throws "Cannot convert object to primitive value" when
+    // interpolated, which turned a reportable malformed operator into an internal failure.
+    it.each([
+      { label: 'an uncoercible object', type: JSON.parse('{"toString": null, "valueOf": null}'), expected: 'an object' },
+      { label: 'an array', type: [], expected: 'an array' },
+      { label: 'a number', type: 5, expected: 'a number' },
+    ])('operator whose type is $label is reported rather than thrown on', ({ type, expected }) => {
+      const errors = validateOperatorStructure({ type, operation: 'equals' }, 'p');
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain(`invalid type ${expected}`);
+    });
+
+    it('a Switch carrying one is reported through validateConditionNodeStructure', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: {
+          mode: 'rules',
+          rules: {
+            values: [{
+              conditions: {
+                conditions: [{ operator: { type: JSON.parse('{"toString": null, "valueOf": null}'), operation: 'equals' } }]
+              }
+            }]
+          }
+        }
+      };
+      const errors = validateConditionNodeStructure(node as any);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('rules.values[0].conditions.conditions[0].operator');
+    });
+  });
+
   describe('validateConditionNodeStructure — only "rules" mode routes on conditions', () => {
     // The branch-count check in validateWorkflowStructure filters on mode the same way; a
     // Switch flipped to expression or json mode can retain a stale collection n8n ignores.

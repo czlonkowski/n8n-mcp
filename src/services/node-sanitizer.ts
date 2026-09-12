@@ -12,7 +12,7 @@
 import { INodeParameters } from 'n8n-workflow';
 import { logger } from '../utils/logger';
 import { WorkflowNode } from '../types/n8n-api';
-import { FILTER_OPERATOR_TYPES } from './n8n-validation';
+import { FILTER_OPERATOR_TYPES, describeOperatorValue } from './n8n-validation';
 
 /** The keys a Switch can carry its rules under: `values` is the live one at 3.2+ (#1097). */
 const SWITCH_RULE_KEYS = ['values', 'rules'] as const;
@@ -233,8 +233,10 @@ function sanitizeOperator(operator: any): any {
 function isOperationName(value: string): boolean {
   // Operation names are lowercase and don't contain dots
   // Data types are: string, number, boolean, dateTime, array, object
-  const dataTypes = ['string', 'number', 'boolean', 'dateTime', 'array', 'object'];
-  return !dataTypes.includes(value) && /^[a-z][a-zA-Z]*$/.test(value);
+  // FILTER_OPERATOR_TYPES, not a copy: without `any` here the repair below rewrote
+  // {type: "any"} into {type: "string", operation: "any"}, inventing an operation n8n has no
+  // such thing as and hiding the missing-operation error on the way to n8n (#1097).
+  return !FILTER_OPERATOR_TYPES.includes(value) && /^[a-z][a-zA-Z]*$/.test(value);
 }
 
 /**
@@ -327,7 +329,9 @@ export function validateNodeMetadata(node: WorkflowNode): string[] {
 
       for (let i = 0; i < collection.length; i++) {
         const rule = collection[i];
-        if (!rule || typeof rule !== 'object') continue;
+        // typeof [] === 'object', so an array slips a plain typeof check and gets reported as a
+        // rule missing its options - the condition validator already names it precisely (#1097).
+        if (!rule || typeof rule !== 'object' || Array.isArray(rule)) continue;
 
         if (!rule.conditions?.options) {
           issues.push(`Missing rules.${key}[${i}].conditions.options`);
@@ -372,7 +376,7 @@ function validateOperator(operator: any, path: string): string[] {
   if (!operator.type) {
     issues.push(`${path}: missing required field 'type'`);
   } else if (!FILTER_OPERATOR_TYPES.includes(operator.type)) {
-    issues.push(`${path}: invalid type "${operator.type}" (must be data type, not operation)`);
+    issues.push(`${path}: invalid type ${describeOperatorValue(operator.type)} (must be data type, not operation)`);
   }
 
   if (!operator.operation) {
@@ -384,12 +388,12 @@ function validateOperator(operator: any, path: string): string[] {
     if (isUnaryOperator(operator.operation)) {
       // Unary operators MUST have singleValue: true
       if (operator.singleValue !== true) {
-        issues.push(`${path}: unary operator "${operator.operation}" requires singleValue: true`);
+        issues.push(`${path}: unary operator ${describeOperatorValue(operator.operation)} requires singleValue: true`);
       }
     } else {
       // Binary operators should NOT have singleValue
       if (operator.singleValue === true) {
-        issues.push(`${path}: binary operator "${operator.operation}" should not have singleValue: true (only unary operators need this)`);
+        issues.push(`${path}: binary operator ${describeOperatorValue(operator.operation)} should not have singleValue: true (only unary operators need this)`);
       }
     }
   }

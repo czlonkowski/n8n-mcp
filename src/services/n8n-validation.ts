@@ -690,6 +690,20 @@ export function validateFilterBasedNodeMetadata(node: WorkflowNode): string[] {
 export const FILTER_OPERATOR_TYPES = ['string', 'number', 'boolean', 'dateTime', 'array', 'object', 'any'];
 
 /**
+ * Name a rejected operator field for an error message without coercing it. JSON can express an
+ * object that throws `Cannot convert object to primitive value` on interpolation
+ * (`{"toString": null, "valueOf": null}`), which turned a reportable malformed operator into an
+ * internal failure - the defect class 2.84.1 through 2.84.3 closed elsewhere.
+ */
+export function describeOperatorValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'nothing';
+  if (Array.isArray(value)) return 'an array';
+  if (typeof value === 'object') return 'an object';
+  return typeof value === 'string' ? `"${value}"` : `a ${typeof value} (${String(value)})`;
+}
+
+/**
  * Validate operator structure
  * Ensures operator has correct format: {type, operation, singleValue?}
  */
@@ -709,7 +723,7 @@ export function validateOperatorStructure(operator: any, path: string): string[]
     );
   } else if (!FILTER_OPERATOR_TYPES.includes(operator.type)) {
     errors.push(
-      `${path}: invalid type "${operator.type}". ` +
+      `${path}: invalid type ${describeOperatorValue(operator.type)}. ` +
       `Type must be a data type (${FILTER_OPERATOR_TYPES.join(', ')}), not an operation name. ` +
       'Did you mean to use the "operation" field?'
     );
