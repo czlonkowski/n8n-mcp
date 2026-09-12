@@ -136,7 +136,10 @@ function extractPrimaryError(
 ): ErrorAnalysis['primaryError'] {
   // Error info from resultData.error
   const errorNode = error?.node as Record<string, unknown> | undefined;
-  const nodeName = (errorNode?.name as string) || lastNode || 'Unknown';
+  const failedNode = !error
+    ? Object.keys(runData).find(name => getRunError(runData[name]))
+    : undefined;
+  const nodeName = (errorNode?.name as string) || failedNode || lastNode || 'Unknown';
 
   // Also check runData for node-level errors
   const nodeRunData = runData[nodeName];
