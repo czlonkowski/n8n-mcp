@@ -95,21 +95,32 @@ function sanitizeFilterBasedNode(
   if (nodeType === 'n8n-nodes-base.switch' && typeVersion >= 3.2) {
     if (sanitized.rules && typeof sanitized.rules === 'object') {
       const rules = sanitized.rules as any;
-      if (rules.rules && Array.isArray(rules.rules)) {
-        // Leave an entry that is not a rule exactly as it arrived — repairing it would hide
-        // the malformed payload that validation reports (#1094). Arrays are excluded for that
-        // reason and not for a dereference: spreading [] yields {conditions: undefined}, which
-        // validateConditionNodeStructure no longer recognises as malformed.
-        rules.rules = rules.rules.map((rule: any) =>
-          rule && typeof rule === 'object' && !Array.isArray(rule)
-            ? { ...rule, conditions: sanitizeFilterConditions(rule.conditions) }
-            : rule
-        );
+      // Both keys, for the same reason the condition validator walks both: `values` is the one
+      // n8n reads at 3.2+ and the one most real workflows use (#1097). Sanitizing only `rules`
+      // meant an operator the validator now reports under `values` was never repaired on the
+      // way in, so the caller was told to retry a payload nothing would fix.
+      if (Array.isArray(rules.values)) {
+        rules.values = rules.values.map(sanitizeSwitchRule);
+      }
+      if (Array.isArray(rules.rules)) {
+        rules.rules = rules.rules.map(sanitizeSwitchRule);
       }
     }
   }
 
   return sanitized;
+}
+
+/**
+ * Leave an entry that is not a rule exactly as it arrived — repairing it would hide the
+ * malformed payload that validation reports (#1094). Arrays are excluded for that reason and
+ * not for a dereference: spreading [] yields {conditions: undefined}, which
+ * validateConditionNodeStructure no longer recognises as malformed.
+ */
+function sanitizeSwitchRule(rule: any): any {
+  return rule && typeof rule === 'object' && !Array.isArray(rule)
+    ? { ...rule, conditions: sanitizeFilterConditions(rule.conditions) }
+    : rule;
 }
 
 /**
@@ -304,19 +315,24 @@ export function validateNodeMetadata(node: WorkflowNode): string[] {
     }
   }
 
-  // Check Switch node
+  // Check Switch node, under both rule keys - `values` is the one n8n reads at 3.2+ (#1097)
   if (node.type === 'n8n-nodes-base.switch') {
     const rules = (node.parameters.rules as any);
-    if (rules?.rules && Array.isArray(rules.rules)) {
-      for (let i = 0; i < rules.rules.length; i++) {
-        const rule = rules.rules[i];
+    for (const key of ['values', 'rules'] as const) {
+      const collection = rules?.[key];
+      if (!Array.isArray(collection)) continue;
+
+      for (let i = 0; i < collection.length; i++) {
+        const rule = collection[i];
+        if (!rule || typeof rule !== 'object') continue;
+
         if (!rule.conditions?.options) {
-          issues.push(`Missing rules.rules[${i}].conditions.options`);
+          issues.push(`Missing rules.${key}[${i}].conditions.options`);
         } else {
           const required = ['version', 'leftValue', 'typeValidation', 'caseSensitive'];
           for (const field of required) {
             if (!(field in rule.conditions.options)) {
-              issues.push(`Missing rules.rules[${i}].conditions.options.${field}`);
+              issues.push(`Missing rules.${key}[${i}].conditions.options.${field}`);
             }
           }
         }
@@ -326,8 +342,8 @@ export function validateNodeMetadata(node: WorkflowNode): string[] {
           for (let j = 0; j < rule.conditions.conditions.length; j++) {
             const condition = rule.conditions.conditions[j];
             const operatorIssues = validateOperator(
-              condition.operator,
-              `rules.rules[${i}].conditions.conditions[${j}].operator`
+              condition?.operator,
+              `rules.${key}[${i}].conditions.conditions[${j}].operator`
             );
             issues.push(...operatorIssues);
           }

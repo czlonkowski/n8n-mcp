@@ -287,6 +287,57 @@ describe('Node Sanitizer', () => {
       expect(condition.operator.singleValue).toBe(true); // notEmpty is unary
     });
 
+    // `values` is the key n8n reads at 3.2+ and the one most real workflows use. Sanitizing only
+    // `rules` meant an operator the condition validator now reports under `values` was never
+    // repaired on the way in, so the caller was told to retry a payload nothing would fix (#1097).
+    it('sanitizes Switch rules stored under "values"', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: {
+          mode: 'rules',
+          rules: {
+            values: [{
+              outputKey: 'has a name',
+              conditions: {
+                conditions: [{
+                  id: 'c1',
+                  leftValue: '={{ $json.name }}',
+                  operator: { type: 'notEmpty' }
+                }]
+              }
+            }]
+          }
+        }
+      } as unknown as WorkflowNode;
+
+      const sanitized = sanitizeNode(node);
+      const rule = (sanitized.parameters.rules as any).values[0];
+
+      expect(rule.conditions.options).toEqual({
+        version: 2,
+        leftValue: '',
+        caseSensitive: true,
+        typeValidation: 'strict'
+      });
+      // The repair that {type: "notEmpty"} gets under `rules` — an operation name moved out of
+      // the type field, with the data type inferred (notEmpty infers "object", see inferDataType).
+      expect(rule.conditions.conditions[0].operator).toMatchObject({
+        type: 'object',
+        operation: 'notEmpty'
+      });
+    });
+
+    it('leaves a non-object entry under "values" untouched, as it does under "rules"', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: { rules: { values: [null, 'Branch 1', []] } }
+      } as unknown as WorkflowNode;
+
+      expect((sanitizeNode(node).parameters.rules as any).values).toEqual([null, 'Branch 1', []]);
+    });
+
     it('should leave a Switch rule entry that is not an object untouched (#1094)', () => {
       const node = {
         id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
