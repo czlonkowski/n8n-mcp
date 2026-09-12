@@ -145,7 +145,7 @@
     "@types/express": "^5.0.3",
     "@types/node": "^22.15.30",
     "@types/ws": "^8.18.1",
-    "@vitest/coverage-v8": "^3.2.6",
+    "@vitest/coverage-v8": "^5.0.0",
     "@vitest/runner": "^3.2.6",
     "@vitest/ui": "^3.2.6",
     "axios": "^1.18.1",
