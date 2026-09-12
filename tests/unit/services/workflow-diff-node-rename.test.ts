@@ -117,6 +117,40 @@ describe('WorkflowDiffEngine - Auto-Update Connection References on Node Rename'
     });
   });
 
+  // n8n stores an output with nothing wired to it as a null branch and returns it verbatim
+  // (#1096), so a fetched workflow can carry one into the rename pass, where
+  // updateConnectionReferences reached `null.length`.
+  describe('Scenario 1b: rename with a null output branch', () => {
+    beforeEach(() => {
+      baseWorkflow = createWorkflow('Test Workflow')
+        .addWebhookNode({ id: 'webhook-1', name: 'Webhook' })
+        .addHttpRequestNode({ id: 'http-1', name: 'HTTP Request' })
+        .connect('webhook-1', 'http-1')
+        .build() as Workflow;
+      convertConnectionsToNameBased(baseWorkflow);
+      // main[0] wired, main[1] explicitly nothing
+      baseWorkflow.connections['Webhook'].main.push(null);
+    });
+
+    it('renames through a null branch instead of throwing', async () => {
+      const result = await diffEngine.applyDiff(baseWorkflow, {
+        id: 'test-workflow',
+        operations: [{
+          type: 'updateNode',
+          nodeId: 'http-1',
+          updates: { name: 'HTTP Request Renamed' }
+        } as UpdateNodeOperation]
+      });
+
+      expect(result.success).toBe(true);
+
+      const webhookConnections = result.workflow!.connections['Webhook'];
+      expect(webhookConnections.main[0]![0].node).toBe('HTTP Request Renamed');
+      // The empty output is left exactly as n8n stored it, so indices do not shift.
+      expect(webhookConnections.main[1]).toBeNull();
+    });
+  });
+
   describe('Scenario 2: Multiple incoming connections', () => {
     beforeEach(() => {
       baseWorkflow = createWorkflow('Test Workflow')

@@ -618,7 +618,11 @@ export function validateConditionNodeStructure(node: WorkflowNode): string[] {
       errors.push(...validateFilterConditionOperators(node.parameters?.conditions, 'conditions'));
     }
   } else if (node.type === 'n8n-nodes-base.switch') {
-    if (typeVersion >= 3.2) {
+    // Only "rules" mode routes on conditions; an expression- or json-mode Switch can retain a
+    // stale hidden collection that n8n ignores at runtime. The branch-count check in
+    // validateWorkflowStructure filters on the same thing - these two should agree.
+    const mode = (node.parameters as any)?.mode;
+    if (typeVersion >= 3.2 && (!mode || mode === 'rules')) {
       const rules = node.parameters?.rules as any;
 
       // `values` is the key n8n actually reads: the `rules` fixedCollection declares one option
@@ -700,7 +704,11 @@ export function validateOperatorStructure(operator: any, path: string): string[]
       'Must be a data type: "string", "number", "boolean", "dateTime", "array", or "object"'
     );
   } else {
-    const validTypes = ['string', 'number', 'boolean', 'dateTime', 'array', 'object'];
+    // `any` is in n8n's own FilterOperatorType and its runtime short-circuits validation for it
+    // (filter-parameter.js: `if (type === 'any' ...) return {valid: true}`), so reporting it
+    // would be a false positive. None of the 2,352 bundled templates carries one, but #1097
+    // points this check at the key real workflows use, so the exposure is no longer theoretical.
+    const validTypes = ['string', 'number', 'boolean', 'dateTime', 'array', 'object', 'any'];
     if (!validTypes.includes(operator.type)) {
       errors.push(
         `${path}: invalid type "${operator.type}". ` +
