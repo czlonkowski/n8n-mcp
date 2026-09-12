@@ -447,6 +447,29 @@ describe('Node Sanitizer', () => {
       expect(issues.some(issue => issue.includes('invalid type "isNotEmpty"'))).toBe(true);
     });
 
+    it('accepts n8n\'s "any" operator type, as validateOperatorStructure does', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: {
+          rules: {
+            values: [{
+              outputKey: 'exists',
+              conditions: {
+                options: { version: 2, leftValue: '', caseSensitive: true, typeValidation: 'strict' },
+                conditions: [{
+                  leftValue: '={{ $json.x }}',
+                  operator: { type: 'any', operation: 'exists', singleValue: true }
+                }]
+              }
+            }]
+          }
+        }
+      } as unknown as WorkflowNode;
+
+      expect(validateNodeMetadata(node)).toEqual([]);
+    });
+
     it('should detect missing singleValue for unary operators', () => {
       const node: WorkflowNode = {
         id: 'test',

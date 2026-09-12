@@ -368,7 +368,10 @@ function validateOperator(operator: any, path: string): string[] {
 
   if (!operator.type) {
     issues.push(`${path}: missing required field 'type'`);
-  } else if (!['string', 'number', 'boolean', 'dateTime', 'array', 'object'].includes(operator.type)) {
+    // `any` is in n8n's FilterOperatorType and its runtime short-circuits validation for it.
+    // Kept in step with validateOperatorStructure in n8n-validation.ts, which this now walks
+    // the same rule collections as.
+  } else if (!['string', 'number', 'boolean', 'dateTime', 'array', 'object', 'any'].includes(operator.type)) {
     issues.push(`${path}: invalid type "${operator.type}" (must be data type, not operation)`);
   }
 
