@@ -353,6 +353,39 @@ describe('handlers-n8n-manager', () => {
         expect(mockApiClient.createWorkflow).toHaveBeenCalledOnce();
         expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input, expect.any(Object));
       });
+
+      // The same class one level down (#1094): the graph traversal walked these before the
+      // connection schema parsed them, so a null source entry threw out of the validator.
+      it.each([
+        { label: 'a null source entry', connections: { 'Manual Trigger': null } },
+        { label: 'a null output', connections: { 'Manual Trigger': { main: null } } },
+        { label: 'a flattened branch', connections: { 'Manual Trigger': { main: [{ node: 'Process Data', type: 'main', index: 0 }] } } },
+        { label: 'a null connection', connections: { 'Manual Trigger': { main: [[null]] } } },
+      ])('rejects $label before creating a workflow', async ({ connections }) => {
+        const input = {
+          name: 'Malformed connections',
+          nodes: [
+            { ...validNode, id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger' },
+            { ...validNode, name: 'Process Data' },
+          ],
+          connections,
+        };
+
+        const result = await handlers.handleCreateWorkflow(input);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toBe('Workflow validation failed');
+        expect(mockApiClient.createWorkflow).not.toHaveBeenCalled();
+
+        // The old trailing parse also produced an "Invalid connections:" line, so matching only
+        // that would pass against the unfixed code. What changed is that the line is collapsed
+        // rather than the Zod issue array serialized as JSON, and that it is the whole answer -
+        // the graph findings computed over the broken connection are gone.
+        const [connectionError, ...rest] = result.details.errors;
+        expect(connectionError).toMatch(/^Invalid connections: /);
+        expect(connectionError).not.toContain('{');
+        expect(rest).toEqual([]);
+      });
     });
 
     it('should create workflow successfully', async () => {

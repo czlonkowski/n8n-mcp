@@ -792,7 +792,7 @@ export class EnhancedConfigValidator extends ConfigValidator {
     // Validate rules.values structure if present
     if (config.rules.values && Array.isArray(config.rules.values)) {
       config.rules.values.forEach((rule: any, index: number) => {
-        if (!rule.conditions) {
+        if (!rule?.conditions) {
           result.warnings.push({
             type: 'missing_common',
             property: 'rules',
@@ -800,7 +800,7 @@ export class EnhancedConfigValidator extends ConfigValidator {
             suggestion: 'Each rule in the values array should have a "conditions" property'
           });
         }
-        if (!rule.outputKey && rule.renameOutput !== false) {
+        if (!rule?.outputKey && rule?.renameOutput !== false) {
           result.warnings.push({
             type: 'missing_common',
             property: 'rules',
@@ -1345,7 +1345,7 @@ export class EnhancedConfigValidator extends ConfigValidator {
 
     for (let i = 0; i < conditions.length; i++) {
       const condition = conditions[i];
-      if (!condition.operator || typeof condition.operator !== 'object') continue;
+      if (!condition?.operator || typeof condition.operator !== 'object') continue;
 
       const { type, operation } = condition.operator;
       if (!type || !operation) continue;

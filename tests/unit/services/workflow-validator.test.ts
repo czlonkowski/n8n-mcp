@@ -126,6 +126,146 @@ describe('WorkflowValidator', () => {
       });
     });
 
+    describe('malformed connection entries (#1094)', () => {
+      const webhook = { id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [0, 0] as [number, number], parameters: {} };
+      const set = { id: '2', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [200, 0] as [number, number], parameters: {} };
+      const validate = (connections: unknown) =>
+        validator.validateWorkflow({ name: 'Connections', nodes: [webhook, set], connections } as any);
+
+      // Some of these threw mid-traversal and became "Workflow validation failed: <TypeError>",
+      // the only error the caller saw; the rest were skipped in silence by a local guard.
+      it.each([
+        { label: 'a null source entry', connections: { Webhook: null }, expected: /Connections for "Webhook" must be an object keyed by connection type \(received null\)/ },
+        { label: 'a string source entry', connections: { Webhook: 'main' }, expected: /Connections for "Webhook" must be an object keyed by connection type \(received a string\)/ },
+        { label: 'an array source entry', connections: { Webhook: [] }, expected: /Connections for "Webhook" must be an object keyed by connection type \(received an array\)/ },
+        { label: 'a null output', connections: { Webhook: { main: null } }, expected: /Connections for "Webhook" output "main" must be an array of output branches \(received null\)/ },
+        // Published n8n.io templates carry this one (workflow 6507), where it threw
+        // "outputConnections.forEach is not a function".
+        { label: 'a flattened branch', connections: { Webhook: { main: [{ node: 'Set', type: 'main', index: 0 }] } }, expected: /Output branch "Webhook"\.main\[0\] must be an array of connections \(received an object\)/ },
+        { label: 'a string branch', connections: { Webhook: { main: ['Set'] } }, expected: /Output branch "Webhook"\.main\[0\] must be an array of connections \(received a string\)/ },
+        { label: 'a null connection', connections: { Webhook: { main: [[null]] } }, expected: /Connection "Webhook"\.main\[0\]\[0\] must be an object \(received null\)/ },
+        { label: 'a non-string target', connections: { Webhook: { main: [[{ node: 5, type: 'main', index: 0 }]] } }, expected: /Connection "Webhook"\.main\[0\]\[0\] has a non-string "node" \(received a number\)/ },
+        // JSON can express an object that throws when coerced, which is what the connection
+        // pass does to both fields - `connection.index < 0` and the invalid-type message.
+        { label: 'an object type', connections: { Webhook: { main: [[{ node: 'Set', type: { toString: null, valueOf: null }, index: 0 }]] } }, expected: /Connection "Webhook"\.main\[0\]\[0\] has a non-string "type" \(received an object\)/ },
+        { label: 'an object index', connections: { Webhook: { main: [[{ node: 'Set', type: 'main', index: { toString: null, valueOf: null } }]] } }, expected: /Connection "Webhook"\.main\[0\]\[0\] has a non-numeric "index" \(received an object\)/ },
+      ])('reports $label without leaking a TypeError', async ({ connections, expected }) => {
+        const result = await validate(connections);
+
+        expect(result.valid).toBe(false);
+        expect(result.errors.some(e => expected.test(e.message))).toBe(true);
+        expect(result.errors.some(e => /Cannot read propert|Cannot convert|is not a function|Workflow validation failed:/.test(e.message))).toBe(false);
+      });
+
+      // The expression pass reaches nodeHasInput, so switching connection validation off did
+      // not avoid the dereference.
+      it('reports the shape even when connection validation is switched off', async () => {
+        const result = await validator.validateWorkflow(
+          { name: 'Connections', nodes: [webhook, set], connections: { Webhook: null } } as any,
+          { validateConnections: false } as any
+        );
+
+        expect(result.errors.some(e => /Connections for "Webhook" must be an object/.test(e.message))).toBe(true);
+        expect(result.errors.some(e => /Workflow validation failed:/.test(e.message))).toBe(false);
+      });
+
+      it('reports every malformed branch in one pass', async () => {
+        const result = await validate({
+          Webhook: { main: [{ node: 'Set', type: 'main', index: 0 }, 'Set'] },
+        });
+
+        expect(result.errors.filter(e => /must be an array of connections/.test(e.message))).toHaveLength(2);
+      });
+
+      // Node findings do not depend on the connection shape, so they survive the gate.
+      it('still reports node problems alongside the connection shape', async () => {
+        const result = await validator.validateWorkflow({
+          name: 'Connections',
+          nodes: [webhook, { ...set, typeVersion: 99 }],
+          connections: { Webhook: { main: [[{ node: 5, type: 'main', index: 0 }]] } },
+        } as any);
+
+        expect(result.errors.some(e => /has a non-string "node"/.test(e.message))).toBe(true);
+        expect(result.errors.some(e => /typeVersion 99 exceeds/.test(e.message))).toBe(true);
+      });
+
+      // Deliberately shallower than the write-path schema: all of these validate here today,
+      // and the gate must not be what changes that.
+      it.each([
+        { label: 'a connection without type or index', connections: { Webhook: { main: [[{ node: 'Set' }]] } } },
+        { label: 'a stringified index', connections: { Webhook: { main: [[{ node: 'Set', type: 'main', index: '0' }]] } } },
+        { label: 'a nullish branch for an unconnected output', connections: { Webhook: { main: [[{ node: 'Set', type: 'main', index: 0 }], null] } } },
+        { label: 'an empty branch', connections: { Webhook: { main: [[]] } } },
+        { label: 'an empty output', connections: { Webhook: { main: [] } } },
+        { label: 'a source that matches no node', connections: { Nowhere: { main: [[{ node: 'Set', type: 'main', index: 0 }]] } } },
+        { label: 'an unknown output key', connections: { Webhook: { weird: [[{ node: 'Set', type: 'main', index: 0 }]] } } },
+        { label: 'an AI connection type', connections: { Webhook: { ai_tool: [[{ node: 'Set', type: 'ai_tool', index: 0 }]] } } },
+        // Scalars of the wrong kind coerce without throwing, and the connection pass already
+        // reports them - claiming them here would report the same problem twice.
+        { label: 'a numeric type', connections: { Webhook: { main: [[{ node: 'Set', type: 5, index: 0 }]] } } },
+      ])('accepts $label, as before', async ({ connections }) => {
+        const result = await validate(connections);
+
+        expect(result.errors.filter(e => e.code === 'MALFORMED_CONNECTION')).toHaveLength(0);
+      });
+
+      // Stronger than the code filter above, which a future gate could evade by reporting the
+      // same shapes under a different code: these have to come back clean, full stop.
+      it.each([
+        { label: 'a connection without type or index', connections: { Webhook: { main: [[{ node: 'Set' }]] } } },
+        { label: 'a stringified index', connections: { Webhook: { main: [[{ node: 'Set', type: 'main', index: '0' }]] } } },
+        { label: 'a nullish branch for an unconnected output', connections: { Webhook: { main: [[{ node: 'Set', type: 'main', index: 0 }], null] } } },
+      ])('validates a workflow with $label', async ({ connections }) => {
+        const result = await validate(connections);
+
+        expect(result.errors).toEqual([]);
+        expect(result.valid).toBe(true);
+      });
+
+      // Bundled template 6686 keys its connections under "output" AND flattens the branches.
+      // Reporting only the nesting would send the caller to fix the wrong thing.
+      it('names an invalid output key ahead of the shape errors under it', async () => {
+        const result = await validate({ Webhook: { output: [{ node: 'Set', type: 'main', index: 0 }] } });
+
+        const messages = result.errors.map(e => e.message);
+        expect(messages[0]).toMatch(/Unknown connection output key "output" on node "Webhook"/);
+        expect(messages[1]).toMatch(/Output branch "Webhook"\.output\[0\] must be an array of connections/);
+      });
+
+      // An unknown key and a missing source are validateConnections' job, and it still gets to
+      // do it: the gate does not claim them and does not stop the pass that reports them.
+      it.each([
+        { label: 'an unknown output key', connections: { Webhook: { weird: [[{ node: 'Set', type: 'main', index: 0 }]] } }, expected: /Unknown connection output key "weird"/ },
+        { label: 'a source that matches no node', connections: { Nowhere: { main: [[{ node: 'Set', type: 'main', index: 0 }]] } }, expected: /Connection from non-existent node: "Nowhere"/ },
+      ])('still reports $label from the connection pass', async ({ connections, expected }) => {
+        const result = await validate(connections);
+
+        expect(result.errors.some(e => expected.test(e.message))).toBe(true);
+      });
+
+      // Nothing dereferences a null output map today, so this one is a new report rather than a
+      // fixed throw - kept because n8n's write schema rejects it and silence would mislead.
+      it('reports a null output map that was previously passed over in silence', async () => {
+        const result = await validate({ Webhook: { main: null } });
+
+        expect(result.errors.some(e => e.code === 'MALFORMED_CONNECTION')).toBe(true);
+      });
+
+      // The code is internal - the MCP response maps errors to {node, message, details} and
+      // drops it, as it does for every other code. What the caller sees is the ordering: the
+      // shape errors are pushed before any pass runs, so they arrive first.
+      it('tags shape errors with a code and reports them ahead of node findings', async () => {
+        const result = await validator.validateWorkflow({
+          name: 'Connections',
+          nodes: [webhook, { ...set, typeVersion: 99 }],
+          connections: { Webhook: null },
+        } as any);
+
+        expect(result.errors[0].code).toBe('MALFORMED_CONNECTION');
+        expect(result.errors.at(-1)!.message).toMatch(/typeVersion 99 exceeds/);
+      });
+    });
+
     it('should validate a workflow with all options disabled', async () => {
       const workflow = createWorkflow('Test Workflow').addWebhookNode({ name: 'Webhook' }).build();
       const result = await validator.validateWorkflow(workflow as any, { validateNodes: false, validateConnections: false, validateExpressions: false });
@@ -1256,6 +1396,54 @@ describe('WorkflowValidator', () => {
       };
       const errors = validateConditionNodeStructure(node);
       expect(errors).toHaveLength(0);
+    });
+
+    it.each([
+      { label: 'a null rule', rule: null },
+      { label: 'a string rule', rule: 'Branch 1' },
+      { label: 'a numeric rule', rule: 0 },
+      // typeof [] === 'object', so an array slipped through a plain typeof check.
+      { label: 'an array rule', rule: [] },
+    ])('Switch v3.2 with $label → reports the entry instead of dereferencing it (#1094)', ({ rule }) => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: { rules: { rules: [rule] } }
+      };
+      expect(validateConditionNodeStructure(node as any))
+        .toEqual(['rules.rules[0]: rule is missing or not an object']);
+    });
+
+    it.each([
+      { label: 'a string', rules: 'abc' },
+      { label: 'an object with a length', rules: { length: 2 } },
+    ])('Switch v3.2 with $label as the rules collection → reports it rather than reading zero rules (#1094)', ({ rules }) => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: { rules: { rules } }
+      };
+      expect(validateConditionNodeStructure(node as any))
+        .toEqual(['rules.rules: rules is not an array']);
+    });
+
+    it('Switch v3.2 storing its rules under "values" is left alone', () => {
+      const node = {
+        id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+        position: [0, 0] as [number, number],
+        parameters: { rules: { values: [{ conditions: { conditions: [] } }] } }
+      };
+      expect(validateConditionNodeStructure(node as any)).toEqual([]);
+    });
+
+    it('If v2.2 with a null condition entry → reports the missing operator (#1094)', () => {
+      const node = {
+        id: '1', name: 'IF', type: 'n8n-nodes-base.if', typeVersion: 2.2,
+        position: [0, 0] as [number, number],
+        parameters: { conditions: { conditions: [null] } }
+      };
+      expect(validateConditionNodeStructure(node as any))
+        .toEqual(['conditions.conditions[0].operator: operator is missing or not an object']);
     });
   });
 });
