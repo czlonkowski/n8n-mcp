@@ -5,6 +5,7 @@ vi.mock('@/mcp/official-mcp-access', async (orig) => ({ ...(await orig<any>()), 
 const api = vi.hoisted(() => ({ getN8nApiClient: vi.fn() }));
 vi.mock('@/mcp/handlers-n8n-manager', () => ({ getN8nApiClient: api.getN8nApiClient }));
 import { handleExploreNodeResources, handleListCatalog, callOfficialTool, resolveProjectChoices } from '@/mcp/handlers-official-tools';
+import { PUBLIC_API_CONTEXT_HINT } from '@/services/mcp-exposure';
 import { N8nApiError } from '@/utils/n8n-errors';
 import { N8nOfficialMcpClient } from '@/services/n8n-official-mcp-client';
 import { startFakeOfficialMcp, FakeOfficialMcp, FakeTool } from '../../helpers/fake-official-mcp-server';
@@ -173,6 +174,28 @@ describe('handleListCatalog', () => {
     api.getN8nApiClient.mockReturnValue({ listTags: vi.fn().mockResolvedValue({ data: [{ id: 't1', name: 'Prod' }, { id: 't2', name: 'staging' }, { id: 't3', name: 'Production' }] }) });
     const r = await handleListCatalog({ kind: 'tags', query: 'prod', limit: 1 });
     expect(r).toMatchObject({ success: true, kind: 'tags', backend: 'public-api', data: { items: [{ id: 't1', name: 'Prod' }] } });
+  });
+  it('does not fall back to the environment API for tags on a url + token context', async () => {
+    api.getN8nApiClient.mockReturnValue({ listTags: vi.fn() });
+
+    const r = await handleListCatalog(
+      { kind: 'tags' },
+      { n8nApiUrl: 'https://other.test.com', n8nMcpAccessToken: 'tok' }
+    );
+
+    expect(api.getN8nApiClient).not.toHaveBeenCalled();
+    expect(r).toMatchObject({ success: false, code: 'NOT_CONFIGURED', error: PUBLIC_API_CONTEXT_HINT });
+  });
+  it('uses the context-specific hint when projects have no matching client', async () => {
+    api.getN8nApiClient.mockReturnValue(null);
+    access.getOfficialMcpClient.mockReturnValue(null);
+
+    const r = await handleListCatalog(
+      { kind: 'projects' },
+      { n8nApiUrl: 'https://other.test.com', n8nMcpAccessToken: 'tok' }
+    );
+
+    expect(r).toMatchObject({ success: false, code: 'NOT_CONFIGURED', error: PUBLIC_API_CONTEXT_HINT });
   });
   it('rejects unknown kinds', async () => {
     expect(await handleListCatalog({ kind: 'users' })).toMatchObject({ success: false, code: 'INVALID_ARGS' });
