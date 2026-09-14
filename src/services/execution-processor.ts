@@ -350,7 +350,12 @@ export function filterExecutionData(
   options: ExecutionFilterOptions,
   workflow?: Workflow
 ): FilteredExecutionResponse {
-  const mode = options.mode || 'summary';
+  const mode = options.mode === 'error'
+    && execution.status === ExecutionStatus.SUCCESS
+    && !execution.data?.resultData?.error
+    && !Object.values(execution.data?.resultData?.runData || {}).some(getRunError)
+    ? 'summary'
+    : options.mode || 'summary';
 
   // Validate and bound itemsLimit
   let itemsLimit = options.itemsLimit !== undefined ? options.itemsLimit : 2;
