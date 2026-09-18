@@ -1246,6 +1246,9 @@ export class SingleSessionHTTPServer {
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
       const existingTransport = sessionId ? this.transports[sessionId] : undefined;
       if (existingTransport && existingTransport instanceof StreamableHTTPServerTransport) {
+        // Refresh lastAccess so the idle-session reaper does not prune a client
+        // that is holding a long-lived GET stream without POST.
+        this.updateSessionAccess(sessionId!);
         // Let the StreamableHTTPServerTransport handle the GET request
         try {
           await existingTransport.handleRequest(req, res, undefined);
@@ -1292,7 +1295,19 @@ export class SingleSessionHTTPServer {
         });
         return;
       }
-      
+
+      // A stale mcp-session-id that didn't match any live StreamableHTTP
+      // transport (and isn't an SSE or n8n-mode request) gets a 404 so the
+      // client knows to reinitialize rather than spin in a reconnect loop.
+      if (sessionId && !existingTransport) {
+        res.status(404).json({
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Session not found or expired' },
+          id: null
+        });
+        return;
+      }
+
       // Standard response for non-n8n mode
       res.json({
         description: 'n8n Documentation MCP Server',
