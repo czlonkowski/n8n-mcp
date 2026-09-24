@@ -31,7 +31,7 @@ Not workflow-scoped — this reads live account data, so it always runs when ins
       filter: { type: 'string', required: false, description: 'Search/filter text to narrow results (listSearch only)' },
       paginationToken: { type: 'string', required: false, description: 'Token from a previous response to fetch the next page (listSearch only)' },
       currentNodeParameters: { type: 'object', required: false, description: 'Parameters the method depends on (loadOptionsDependsOn), e.g. {documentId: {__rl: true, mode: "id", value: "…"}}' },
-      timeoutMs: { type: 'integer', required: false, description: 'Request timeout in ms, 5000-600000. Default 30000.' },
+      timeoutMs: { type: 'integer', required: false, description: 'Whole-call timeout in ms, including connection, tool discovery and execution. 5000-600000, default 30000.' },
     },
     returns: '{success: true, officialTool: "explore_node_resources", data: {results: [{name, value, url?, description?}], paginationToken?, builderHint?}} on success; {success: false, code, error, hint?} on failure. Codes: NOT_CONFIGURED, OFFICIAL_MCP_AUTH_FAILED, OFFICIAL_MCP_NOT_ENABLED, OFFICIAL_MCP_RATE_LIMITED, OFFICIAL_MCP_TOOL_UNAVAILABLE, OFFICIAL_MCP_URL_REJECTED, OFFICIAL_MCP_TIMEOUT, OFFICIAL_MCP_TRANSPORT_ERROR, INVALID_ARGS, OFFICIAL_MCP_ERROR.',
     examples: [
