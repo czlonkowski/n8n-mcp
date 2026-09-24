@@ -74,6 +74,46 @@ describe('MCP Tool Invocation', () => {
         expect(fuzzyNodes.length).toBeGreaterThan(0);
       });
 
+      it('should respect source filters when FTS5 falls back to LIKE search', async () => {
+        const coreResponse = await client.callTool({ name: 'search_nodes', arguments: {
+          query: 'webhook',
+          source: 'core'
+        }});
+        const coreResult = JSON.parse(((coreResponse as any).content[0]).text);
+
+        const communityResponse = await client.callTool({ name: 'search_nodes', arguments: {
+          query: 'webhook',
+          source: 'community'
+        }});
+        const communityResult = JSON.parse(((communityResponse as any).content[0]).text);
+
+        expect(coreResult.results.length).toBeGreaterThan(0);
+        expect(communityResult.results.length).toBeGreaterThan(0);
+        expect(coreResult.results.every((node: any) => node.package === 'n8n-nodes-base')).toBe(true);
+        expect(communityResult.results.every((node: any) => node.package !== 'n8n-nodes-base')).toBe(true);
+      });
+
+      it('should preserve source filters in fuzzy search mode', async () => {
+        const coreResponse = await client.callTool({ name: 'search_nodes', arguments: {
+          query: 'webhook',
+          mode: 'FUZZY',
+          source: 'core'
+        }});
+        const coreResult = JSON.parse(((coreResponse as any).content[0]).text);
+
+        const communityResponse = await client.callTool({ name: 'search_nodes', arguments: {
+          query: 'webhook',
+          mode: 'FUZZY',
+          source: 'community'
+        }});
+        const communityResult = JSON.parse(((communityResponse as any).content[0]).text);
+
+        expect(coreResult.results.length).toBeGreaterThan(0);
+        expect(communityResult.results.length).toBeGreaterThan(0);
+        expect(coreResult.results.every((node: any) => node.package === 'n8n-nodes-base')).toBe(true);
+        expect(communityResult.results.every((node: any) => node.package !== 'n8n-nodes-base')).toBe(true);
+      });
+
       it('should respect result limit', async () => {
         const response = await client.callTool({ name: 'search_nodes', arguments: {
           query: 'node',
