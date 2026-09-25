@@ -543,6 +543,16 @@ describe('N8nApiClient', () => {
       expect(result).toEqual(updatedWorkflow);
     });
 
+    it('asks n8n not to publish when publishIfActive is false', async () => {
+      // n8n 2.x publishes an active workflow's draft on every PUT unless publishIfActive=false.
+      const workflow = { name: 'Renamed', nodes: [], connections: {} };
+      mockAxiosInstance.put.mockResolvedValue({ data: { ...workflow, id: '123' } });
+
+      await client.updateWorkflow('123', workflow, { publishIfActive: false });
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/workflows/123', workflow, { params: { publishIfActive: 'false' } });
+    });
+
     it('should fallback to PATCH when PUT is not supported', async () => {
       const workflow = { name: 'Updated', nodes: [], connections: {} };
       const updatedWorkflow = { ...workflow, id: '123' };
