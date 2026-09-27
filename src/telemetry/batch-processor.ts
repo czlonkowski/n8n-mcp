@@ -190,22 +190,36 @@ export class TelemetryBatchProcessor {
   ): Promise<void> {
     if (!this.isEnabled() || !this.ingestClient) return;
 
+    // Local preparation first: drop items that cannot be serialized,
+    // deduplicate, convert and batch. This is pure local work with no
+    // network call, so it runs before the circuit breaker is consulted —
+    // a flush made only of poison items then has no work left and never
+    // touches the breaker (round 4).
+    const droppedBeforePrepare = this.metrics.eventsDropped;
+    const eventBatches = this.prepareEventBatches(events ?? []);
+    const workflowBatches = this.prepareWorkflowBatches(workflows ?? []);
+    const mutationBatches = this.prepareMutationBatches(mutations ?? []);
+    const droppedLocally = this.metrics.eventsDropped - droppedBeforePrepare;
+
     // Nothing to do: a scheduled tick with empty queues and an empty dead
     // letter queue must be a complete no-op. shouldAllow() has side effects
     // (the open->half-open transition, consuming a half-open probe slot),
     // so calling it here — with no request to actually make — would waste
     // the limited half-open budget on nothing, potentially wedging the
     // breaker half-open forever once a real outage opens it (round 3).
-    const hasWork = Boolean(events && events.length > 0)
-      || Boolean(workflows && workflows.length > 0)
-      || Boolean(mutations && mutations.length > 0)
+    const hasWork = eventBatches.length > 0
+      || workflowBatches.length > 0
+      || mutationBatches.length > 0
       || this.deadLetterQueue.length > 0;
     if (!hasWork) return;
 
     // Check circuit breaker
     if (!this.circuitBreaker.shouldAllow()) {
       logger.debug('Circuit breaker open - skipping flush');
-      this.metrics.eventsDropped += (events?.length || 0) + (workflows?.length || 0) + (mutations?.length || 0);
+      // Everything this call was handed is dropped; the items already
+      // dropped (and counted) during preparation are not counted twice.
+      this.metrics.eventsDropped +=
+        (events?.length || 0) + (workflows?.length || 0) + (mutations?.length || 0) - droppedLocally;
       return;
     }
 
@@ -214,21 +228,21 @@ export class TelemetryBatchProcessor {
     let primaryBatchAttempted = false;
 
     // Flush events if provided
-    if (events && events.length > 0) {
+    if (eventBatches.length > 0) {
       primaryBatchAttempted = true;
-      hasErrors = !(await this.flushEvents(events)) || hasErrors;
+      hasErrors = !(await this.flushEvents(eventBatches)) || hasErrors;
     }
 
     // Flush workflows if provided
-    if (workflows && workflows.length > 0) {
+    if (workflowBatches.length > 0) {
       primaryBatchAttempted = true;
-      hasErrors = !(await this.flushWorkflows(workflows)) || hasErrors;
+      hasErrors = !(await this.flushWorkflows(workflowBatches)) || hasErrors;
     }
 
     // Flush mutations if provided
-    if (mutations && mutations.length > 0) {
+    if (mutationBatches.length > 0) {
       primaryBatchAttempted = true;
-      hasErrors = !(await this.flushMutations(mutations)) || hasErrors;
+      hasErrors = !(await this.flushMutations(mutationBatches)) || hasErrors;
     }
 
     // Record flush time
@@ -253,38 +267,75 @@ export class TelemetryBatchProcessor {
     // the breaker too — a replay is a real network attempt like any other.
     if (!hasErrors && this.deadLetterQueue.length > 0) {
       const replaySucceeded = await this.processDeadLetterQueue();
-      if (replaySucceeded) {
+      if (replaySucceeded === true) {
         this.circuitBreaker.recordSuccess();
-      } else {
+      } else if (replaySucceeded === false) {
         this.circuitBreaker.recordFailure();
       }
+      // null: every parked item was dropped locally, no request was made.
     }
   }
 
   /**
-   * Flush events with batching
+   * Drop items that are not objects, run the stream-specific transform
+   * (deduplication / column conversion), and batch what remains. Never
+   * throws: a batching or serialization failure is a local data problem,
+   * not a server one, so it must never park items in the dead letter queue
+   * (a replay would hit the same item forever) or record a circuit-breaker
+   * failure. Every dropped item is counted in metrics.eventsDropped.
    */
-  private async flushEvents(events: TelemetryEvent[]): Promise<boolean> {
-    // Batching stringifies every row to measure it — a BigInt property or a
-    // circular reference throws there, outside any network call. That must
-    // become a normal failed batch (breaker failure via the caller's
-    // hasErrors accounting, parked in the DLQ like any other failure), not
-    // an uncaught exception: an uncaught throw here would abort this whole
-    // flush() call before workflows/mutations in the same call are even
-    // attempted.
-    let batches: TelemetryEvent[][];
-    try {
-      batches = this.createByteAwareBatches(
-        events, TELEMETRY_CONFIG.MAX_BATCH_SIZE, TELEMETRY_CONFIG.MAX_BATCH_BYTES_EVENTS
-      );
-    } catch (error) {
-      logger.debug('Failed to batch telemetry events (unserializable payload?):', error);
-      this.addToDeadLetterQueue(events);
-      this.metrics.eventsFailed += events.length;
-      this.metrics.batchesFailed++;
-      return false;
-    }
+  private prepareBatches<T, R>(
+    items: T[],
+    streamName: string,
+    transform: (valid: T[]) => R[],
+    maxBytes: number
+  ): R[][] {
+    if (items.length === 0) return [];
 
+    const droppedBefore = this.metrics.eventsDropped;
+    try {
+      const valid = items.filter(item => item !== null && typeof item === 'object');
+      this.metrics.eventsDropped += items.length - valid.length;
+      return this.createByteAwareBatches(transform(valid), TELEMETRY_CONFIG.MAX_BATCH_SIZE, maxBytes);
+    } catch (error) {
+      // Defensive only — nothing above is expected to throw. Drop the whole
+      // stream for this call rather than let the throw escape the flush.
+      logger.debug(`Failed to prepare telemetry ${streamName}; dropping them:`, error);
+      this.metrics.eventsDropped = droppedBefore + items.length;
+      return [];
+    }
+  }
+
+  private prepareEventBatches(events: TelemetryEvent[]): TelemetryEvent[][] {
+    return this.prepareBatches(
+      events, 'events', valid => valid, TELEMETRY_CONFIG.MAX_BATCH_BYTES_EVENTS
+    );
+  }
+
+  private prepareWorkflowBatches(workflows: WorkflowTelemetry[]): WorkflowTelemetry[][] {
+    return this.prepareBatches(workflows, 'workflows', valid => {
+      const unique = this.deduplicateWorkflows(valid);
+      logger.debug(`Deduplicating workflows: ${valid.length} -> ${unique.length}`);
+      return unique;
+    }, TELEMETRY_CONFIG.MAX_BATCH_BYTES_WORKFLOWS);
+  }
+
+  private prepareMutationBatches(mutations: WorkflowMutationRecord[]): Record<string, any>[][] {
+    // Convert camelCase to snake_case for the ingest API's column names
+    // BEFORE batching, so the byte-size check measures what is actually
+    // sent (workflowAfter/operations can be large).
+    return this.prepareBatches(
+      mutations,
+      'workflow mutations',
+      valid => valid.map(mutation => mutationToSupabaseFormat(mutation)),
+      TELEMETRY_CONFIG.MAX_BATCH_BYTES_MUTATIONS
+    );
+  }
+
+  /**
+   * Send prepared event batches (see prepareEventBatches)
+   */
+  private async flushEvents(batches: TelemetryEvent[][]): Promise<boolean> {
     try {
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
@@ -335,28 +386,9 @@ export class TelemetryBatchProcessor {
   }
 
   /**
-   * Flush workflows with deduplication
+   * Send prepared, deduplicated workflow batches (see prepareWorkflowBatches)
    */
-  private async flushWorkflows(workflows: WorkflowTelemetry[]): Promise<boolean> {
-    // Deduplicate workflows by hash
-    const uniqueWorkflows = this.deduplicateWorkflows(workflows);
-    logger.debug(`Deduplicating workflows: ${workflows.length} -> ${uniqueWorkflows.length}`);
-
-    // Batching stringifies every row to measure it — see flushEvents for why
-    // that throw must become a normal failed batch, not a crash.
-    let batches: WorkflowTelemetry[][];
-    try {
-      batches = this.createByteAwareBatches(
-        uniqueWorkflows, TELEMETRY_CONFIG.MAX_BATCH_SIZE, TELEMETRY_CONFIG.MAX_BATCH_BYTES_WORKFLOWS
-      );
-    } catch (error) {
-      logger.debug('Failed to batch telemetry workflows (unserializable payload?):', error);
-      this.addToDeadLetterQueue(uniqueWorkflows);
-      this.metrics.eventsFailed += uniqueWorkflows.length;
-      this.metrics.batchesFailed++;
-      return false;
-    }
-
+  private async flushWorkflows(batches: WorkflowTelemetry[][]): Promise<boolean> {
     try {
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
@@ -405,31 +437,9 @@ export class TelemetryBatchProcessor {
   }
 
   /**
-   * Flush workflow mutations with batching
+   * Send prepared, snake_cased mutation batches (see prepareMutationBatches)
    */
-  private async flushMutations(mutations: WorkflowMutationRecord[]): Promise<boolean> {
-    // Convert camelCase to snake_case for the ingest API's column names
-    // BEFORE batching, so the byte-size check measures what is actually
-    // sent (workflowAfter/operations can be large).
-    const snakeCaseMutations = mutations.map(mutation => mutationToSupabaseFormat(mutation));
-
-    // Batching stringifies every row to measure it — see flushEvents for why
-    // that throw must become a normal failed batch, not a crash. Mutations
-    // are never parked in the dead letter queue (same as a real send
-    // failure below), so this only adjusts metrics and returns false.
-    let batches: Record<string, any>[][];
-    try {
-      batches = this.createByteAwareBatches(
-        snakeCaseMutations, TELEMETRY_CONFIG.MAX_BATCH_SIZE, TELEMETRY_CONFIG.MAX_BATCH_BYTES_MUTATIONS
-      );
-    } catch (error) {
-      logger.debug('Failed to batch workflow mutations (unserializable payload?):', error);
-      this.metrics.eventsFailed += mutations.length;
-      this.metrics.eventsDropped += mutations.length;
-      this.metrics.batchesFailed++;
-      return false;
-    }
-
+  private async flushMutations(batches: Record<string, any>[][]): Promise<boolean> {
     try {
       let allBatchesSent = true;
 
@@ -542,6 +552,11 @@ export class TelemetryBatchProcessor {
    * per separating comma — string escaping never depends on array
    * position), rather than re-stringifying the whole growing batch on every
    * item, which was O(n^2) for a large batch.
+   *
+   * Never throws. Each item is serialized on its own; an item that cannot be
+   * (a BigInt, a circular reference, undefined, or a toJSON returning
+   * undefined) is dropped and counted in metrics.eventsDropped, and every
+   * other item is batched normally.
    */
   private createByteAwareBatches<T>(items: T[], maxCount: number, maxBytes: number): T[][] {
     const batches: T[][] = [];
@@ -549,7 +564,18 @@ export class TelemetryBatchProcessor {
     let currentBytes = 0; // excludes the '[' + ']' brackets, added on push
 
     for (const item of items) {
-      const itemBytes = Buffer.byteLength(JSON.stringify(item));
+      let serialized: string | undefined;
+      try {
+        serialized = JSON.stringify(item);
+      } catch (error) {
+        logger.debug('Dropping unserializable telemetry item:', error);
+      }
+      if (serialized === undefined) {
+        this.metrics.eventsDropped++;
+        continue;
+      }
+
+      const itemBytes = Buffer.byteLength(serialized);
       const separatorBytes = current.length > 0 ? 1 : 0; // comma before this item
       const candidateBytes = currentBytes + separatorBytes + itemBytes;
       const fits = current.length + 1 <= maxCount && candidateBytes + 2 <= maxBytes;
@@ -634,8 +660,10 @@ export class TelemetryBatchProcessor {
    * Returns whether the replay succeeded, so the caller can feed that
    * outcome back into the circuit breaker — this is a real network attempt
    * like any other and must not go unrecorded (see flushQueuedBatch).
+   * Returns null when every parked item was dropped during preparation, so
+   * no request was made and there is no outcome to record.
    */
-  private async processDeadLetterQueue(): Promise<boolean> {
+  private async processDeadLetterQueue(): Promise<boolean | null> {
     if (this.deadLetterQueue.length === 0) return true;
 
     logger.debug(`Processing ${this.deadLetterQueue.length} items from dead letter queue`);
@@ -656,15 +684,19 @@ export class TelemetryBatchProcessor {
     // Clear dead letter queue
     this.deadLetterQueue = [];
 
+    const eventBatches = this.prepareEventBatches(events);
+    const workflowBatches = this.prepareWorkflowBatches(workflows);
+    if (eventBatches.length === 0 && workflowBatches.length === 0) return null;
+
     // Try to flush. A thrown error (flushEvents/flushWorkflows re-throw as a
     // TelemetryError on an unexpected failure) counts as a failed replay too.
     let succeeded = true;
     try {
-      if (events.length > 0) {
-        succeeded = (await this.flushEvents(events)) && succeeded;
+      if (eventBatches.length > 0) {
+        succeeded = (await this.flushEvents(eventBatches)) && succeeded;
       }
-      if (workflows.length > 0) {
-        succeeded = (await this.flushWorkflows(workflows)) && succeeded;
+      if (workflowBatches.length > 0) {
+        succeeded = (await this.flushWorkflows(workflowBatches)) && succeeded;
       }
     } catch (error) {
       logger.debug('Dead letter queue replay failed:', error);
