@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.90.0] - 2026-09-27
+
+### Changed
+
+- **Telemetry moved off Supabase to our own ingest API at `telemetry.n8n-mcp.com`.** The client no longer depends on `@supabase/supabase-js`; a new `IngestClient` posts JSON batches to `POST {url}/v1/ingest/{events|workflows|mutations}` with `X-N8N-MCP-Key`/`X-N8N-MCP-Version` headers, shaped like `supabase-js`'s `from(table).insert(rows)` so the batch processor's call sites were unaffected. The server can now tell a client to stop: HTTP 410 disables telemetry for that installed client version only (persisted to `telemetry.json`, cleared by upgrading), HTTP 401/403 disables it for the rest of the current process, and 400/413 drop a batch without treating it as a failure (no retry, no dead-letter queue). `N8N_MCP_TELEMETRY_URL` and `N8N_MCP_TELEMETRY_KEY` override the defaults, replacing `SUPABASE_URL`/`SUPABASE_ANON_KEY`. See `PRIVACY.md` for the updated data-storage statement.
+
 ## [2.89.0] - 2026-09-23
 
 ### Changed

@@ -1,9 +1,9 @@
 /**
  * Batch Processor for Telemetry
- * Handles batching, queuing, and sending telemetry data to Supabase
+ * Handles batching, queuing, and sending telemetry data to the ingest API
  */
 
-import { SupabaseClient } from '@supabase/supabase-js';
+import { IngestClient } from './ingest-client';
 import { TelemetryEvent, WorkflowTelemetry, WorkflowMutationRecord, TELEMETRY_CONFIG, TelemetryMetrics } from './telemetry-types';
 import { TelemetryError, TelemetryErrorType, TelemetryCircuitBreaker } from './telemetry-error';
 import { logger } from '../utils/logger';
@@ -16,7 +16,7 @@ function keyToSnakeCase(key: string): string {
 }
 
 /**
- * Convert WorkflowMutationRecord to Supabase-compatible format.
+ * Convert WorkflowMutationRecord to the ingest API's column-name format.
  *
  * IMPORTANT: Only converts top-level field names to snake_case, because only the
  * top-level columns (user_id, session_id, etc.) are named that way. Nested workflow
@@ -65,7 +65,7 @@ export class TelemetryBatchProcessor {
   private readonly onFlushRequested?: () => void | Promise<void>;
 
   constructor(
-    private supabase: SupabaseClient | null,
+    private ingestClient: IngestClient | null,
     private isEnabled: () => boolean,
     options: {
       operationTimeout?: number;
@@ -81,7 +81,7 @@ export class TelemetryBatchProcessor {
    * Start the batch processor
    */
   start(): void {
-    if (!this.isEnabled() || !this.supabase) return;
+    if (!this.isEnabled() || !this.ingestClient) return;
 
     // Guard against multiple starts (prevents event listener accumulation)
     if (this.started) {
@@ -164,7 +164,7 @@ export class TelemetryBatchProcessor {
   }
 
   /**
-   * Flush events, workflows, and mutations to Supabase
+   * Flush events, workflows, and mutations to the ingest API
    */
   flush(events?: TelemetryEvent[], workflows?: WorkflowTelemetry[], mutations?: WorkflowMutationRecord[]): Promise<void> {
     // Capture each caller's batches before queuing so later caller mutations cannot
@@ -188,7 +188,7 @@ export class TelemetryBatchProcessor {
     workflows?: WorkflowTelemetry[],
     mutations?: WorkflowMutationRecord[]
   ): Promise<void> {
-    if (!this.isEnabled() || !this.supabase) return;
+    if (!this.isEnabled() || !this.ingestClient) return;
 
     // Check circuit breaker
     if (!this.circuitBreaker.shouldAllow()) {
@@ -243,20 +243,30 @@ export class TelemetryBatchProcessor {
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
         const result = await this.executeWithTimeout(async () => {
-          const { error } = await this.supabase!
+          const { error, dropped } = await this.ingestClient!
             .from('telemetry_events')
             .insert(batch);
+
+          // The server told us to drop this batch (400/413): it is neither
+          // retryable nor an error — treat it as sent, just not tracked.
+          if (dropped) {
+            return { dropped: true } as const;
+          }
 
           if (error) {
             throw error;
           }
 
           logger.debug(`Flushed batch of ${batch.length} telemetry events`);
-          return true;
+          return { dropped: false } as const;
         }, 'Flush telemetry events');
 
         if (result) {
-          this.metrics.eventsTracked += batch.length;
+          if (result.dropped) {
+            this.metrics.eventsDropped += batch.length;
+          } else {
+            this.metrics.eventsTracked += batch.length;
+          }
           this.metrics.batchesSent++;
         } else {
           const unsent = this.addUnsentBatchesToDeadLetterQueue(batches, batchIndex);
@@ -293,20 +303,28 @@ export class TelemetryBatchProcessor {
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
         const result = await this.executeWithTimeout(async () => {
-          const { error } = await this.supabase!
+          const { error, dropped } = await this.ingestClient!
             .from('telemetry_workflows')
             .insert(batch);
+
+          if (dropped) {
+            return { dropped: true } as const;
+          }
 
           if (error) {
             throw error;
           }
 
           logger.debug(`Flushed batch of ${batch.length} telemetry workflows`);
-          return true;
+          return { dropped: false } as const;
         }, 'Flush telemetry workflows');
 
         if (result) {
-          this.metrics.eventsTracked += batch.length;
+          if (result.dropped) {
+            this.metrics.eventsDropped += batch.length;
+          } else {
+            this.metrics.eventsTracked += batch.length;
+          }
           this.metrics.batchesSent++;
         } else {
           const unsent = this.addUnsentBatchesToDeadLetterQueue(batches, batchIndex);
@@ -340,31 +358,37 @@ export class TelemetryBatchProcessor {
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
         const result = await this.executeWithTimeout(async () => {
-          // Convert camelCase to snake_case for Supabase
+          // Convert camelCase to snake_case for the ingest API's column names
           const snakeCaseBatch = batch.map(mutation => mutationToSupabaseFormat(mutation));
 
-          const { error } = await this.supabase!
+          const { error, dropped } = await this.ingestClient!
             .from('workflow_mutations')
             .insert(snakeCaseBatch);
+
+          if (dropped) {
+            return { dropped: true } as const;
+          }
 
           if (error) {
             // Enhanced error logging for mutation flushes
             logger.error('Mutation insert error details:', {
-              code: (error as any).code,
               message: (error as any).message,
-              details: (error as any).details,
-              hint: (error as any).hint,
+              status: (error as any).status,
               fullError: String(error)
             });
             throw error;
           }
 
           logger.debug(`Flushed batch of ${batch.length} workflow mutations`);
-          return true;
+          return { dropped: false } as const;
         }, 'Flush workflow mutations');
 
         if (result) {
-          this.metrics.eventsTracked += batch.length;
+          if (result.dropped) {
+            this.metrics.eventsDropped += batch.length;
+          } else {
+            this.metrics.eventsTracked += batch.length;
+          }
           this.metrics.batchesSent++;
         } else {
           // A mutation batch that failed here is dropped, never parked in the

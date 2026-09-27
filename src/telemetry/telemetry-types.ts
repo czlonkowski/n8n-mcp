@@ -108,14 +108,15 @@ export const TELEMETRY_CONFIG = {
 } as const;
 
 export const TELEMETRY_BACKEND = {
-  URL: 'https://ydyufsohxdfpopqbubwk.supabase.co',
+  URL: 'https://telemetry.n8n-mcp.com',
   /**
-   * Supabase publishable key (`sb_publishable_…`), the successor to the legacy
-   * anon JWT. The field keeps the ANON_KEY name to match the SUPABASE_ANON_KEY
-   * environment variable that overrides it — a documented public contract.
-   * Insert-only by design; row access is governed by RLS policies.
+   * Public client identifier for our own ingest API (apps/telemetry-ingest in
+   * n8n-mcp-backend). It is not a secret — it identifies this client to the
+   * server, which is write-only from the client's point of view (no read
+   * access to any data), so publishing it here is safe. Overridable via
+   * N8N_MCP_TELEMETRY_KEY for development/testing.
    */
-  ANON_KEY: 'sb_publishable_UbVUTyXgIyvemM9b15auQg_YzGa47Gq'
+  KEY: 'ntk_pub_245fefa7e96617d0e8015056'
 } as const;
 
 export interface TelemetryMetrics {

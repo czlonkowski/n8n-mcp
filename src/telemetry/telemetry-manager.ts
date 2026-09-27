@@ -3,25 +3,30 @@
  * Main telemetry coordinator using modular components
  */
 
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { IngestClient } from './ingest-client';
 import { TelemetryConfigManager } from './config-manager';
 import { TelemetryEventTracker } from './event-tracker';
 import { TelemetryBatchProcessor } from './batch-processor';
 import { TelemetryPerformanceMonitor } from './performance-monitor';
 import { TELEMETRY_BACKEND, TELEMETRY_CONFIG } from './telemetry-types';
 import { TelemetryError, TelemetryErrorType, TelemetryErrorAggregator } from './telemetry-error';
-import { telemetryFetch } from './telemetry-fetch';
 import { logger } from '../utils/logger';
 
 export class TelemetryManager {
   private static instance: TelemetryManager;
-  private supabase: SupabaseClient | null = null;
+  private ingestClient: IngestClient | null = null;
   private configManager: TelemetryConfigManager;
   private eventTracker: TelemetryEventTracker;
   private batchProcessor: TelemetryBatchProcessor;
   private performanceMonitor: TelemetryPerformanceMonitor;
   private errorAggregator: TelemetryErrorAggregator;
   private isInitialized: boolean = false;
+  /**
+   * Set when the ingest server told us (HTTP 401/403) to stop sending for the
+   * rest of this process. Unlike disabledByServer (410, persisted, version-
+   * scoped), this is in-memory only and cleared on the next process start.
+   */
+  private serverDisabled: boolean = false;
 
   private constructor() {
     // Prevent direct instantiation even when TypeScript is bypassed
@@ -39,7 +44,7 @@ export class TelemetryManager {
       () => this.isEnabled()
     );
 
-    // Initialize batch processor (will be configured after Supabase init)
+    // Initialize batch processor (will be configured after ingest client init)
     this.batchProcessor = new TelemetryBatchProcessor(
       null,
       () => this.isEnabled()
@@ -76,28 +81,33 @@ export class TelemetryManager {
 
     // Use hardcoded credentials for zero-configuration telemetry
     // Environment variables can override for development/testing
-    const supabaseUrl = process.env.SUPABASE_URL || TELEMETRY_BACKEND.URL;
-    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || TELEMETRY_BACKEND.ANON_KEY;
+    const url = process.env.N8N_MCP_TELEMETRY_URL || TELEMETRY_BACKEND.URL;
+    const key = process.env.N8N_MCP_TELEMETRY_KEY || TELEMETRY_BACKEND.KEY;
+    const version = this.configManager.getPackageVersion();
 
     try {
-      this.supabase = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-        },
-        realtime: {
-          params: {
-            eventsPerSecond: 1,
-          },
-        },
-        global: {
-          fetch: telemetryFetch,
+      this.ingestClient = new IngestClient({
+        url,
+        key,
+        version,
+        onControl: (signal) => {
+          if (signal.kind === 'disable_version') {
+            // The server told us (410) this client version is no longer
+            // accepted. Persist so it stays off across restarts until an
+            // upgrade, and stop the batch processor for the rest of this run.
+            this.configManager.recordServerDisable(version);
+            this.batchProcessor.stop();
+          } else if (signal.kind === 'disable_process') {
+            // 401/403: something is wrong with the key/request itself, not
+            // this version specifically — stop for this process only.
+            this.serverDisabled = true;
+          }
         },
       });
 
-      // Update batch processor with Supabase client
+      // Update batch processor with the ingest client
       this.batchProcessor = new TelemetryBatchProcessor(
-        this.supabase,
+        this.ingestClient,
         () => this.isEnabled(),
         {
           onFlushRequested: () => this.flush(),
@@ -261,11 +271,11 @@ export class TelemetryManager {
 
 
   /**
-   * Flush queued events to Supabase
+   * Flush queued events to the ingest API
    */
   async flush(): Promise<void> {
     this.ensureInitialized();
-    if (!this.isEnabled() || !this.supabase) return;
+    if (!this.isEnabled() || !this.ingestClient) return;
 
     this.performanceMonitor.startOperation('flush');
 
@@ -344,7 +354,7 @@ export class TelemetryManager {
    */
   async flushMutations(): Promise<void> {
     this.ensureInitialized();
-    if (!this.isEnabled() || !this.supabase) return;
+    if (!this.isEnabled() || !this.ingestClient) return;
 
     const mutations = this.eventTracker.getMutationQueue();
     this.eventTracker.clearMutationQueue();
@@ -359,7 +369,7 @@ export class TelemetryManager {
    * Check if telemetry is enabled
    */
   private isEnabled(): boolean {
-    return this.isInitialized && this.configManager.isEnabled();
+    return this.isInitialized && !this.serverDisabled && this.configManager.isEnabled();
   }
 
   /**
@@ -369,7 +379,7 @@ export class TelemetryManager {
     this.configManager.disable();
     this.batchProcessor.stop();
     this.isInitialized = false;
-    this.supabase = null;
+    this.ingestClient = null;
   }
 
   /**

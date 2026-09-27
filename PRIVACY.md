@@ -76,7 +76,7 @@ Event data is reduced each night to counts. Raw events are kept for 7 days, then
 
 ## Data Storage and Service Providers
 
-- The processing queue and event data are stored with Supabase. Clients have write-only access; row-level security prevents any client from reading data back.
+- The processing queue and event data are stored in our own ingest service at telemetry.n8n-mcp.com, hosted on Microsoft Azure (EU, Germany West Central). Clients have write-only access and cannot read data back.
 - The anonymized workflow dataset is stored on servers we operate with a European hosting provider.
 - Automated review and description generation use AI service providers acting on our instructions. They receive sanitized workflow content, never the installation ID.
 

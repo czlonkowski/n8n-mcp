@@ -62,7 +62,7 @@ export const telemetryEventSchema = z.object({
 // `onError` and `webhookId` (legitimate post-sanitization node fields not
 // yet covered by `workflowNodeSchema`), and applies `.strict()` so an unknown
 // node-level key surfaces as a validation failure rather than silently
-// propagating to Supabase.
+// propagating to the ingest backend.
 const sanitizedNodeSchema = z.object({
   id: z.string(),
   name: z.string(),

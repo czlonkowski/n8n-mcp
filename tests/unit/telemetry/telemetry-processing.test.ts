@@ -4,7 +4,7 @@ import { TelemetryEvent, WorkflowTelemetry, WorkflowMutationRecord, TELEMETRY_CO
 import { TelemetryError, TelemetryErrorType } from '../../../src/telemetry/telemetry-error';
 import { IntentClassification, MutationToolName } from '../../../src/telemetry/mutation-types';
 import { AddNodeOperation } from '../../../src/types/workflow-diff';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { IngestClient } from '../../../src/telemetry/ingest-client';
 
 // Mock logger to avoid console output in tests
 vi.mock('../../../src/utils/logger', () => ({
@@ -19,7 +19,7 @@ vi.mock('../../../src/utils/logger', () => ({
 describe('TelemetryBatchProcessor', () => {
   const TEST_OPERATION_TIMEOUT = 100;
   let batchProcessor: TelemetryBatchProcessor;
-  let mockSupabase: SupabaseClient;
+  let mockSupabase: IngestClient;
   let mockIsEnabled: ReturnType<typeof vi.fn>;
   let mockProcessExit: MockInstance;
 
@@ -446,7 +446,7 @@ describe('TelemetryBatchProcessor', () => {
 
       await batchProcessor.flush(undefined, workflows);
 
-      const insertCall = vi.mocked(mockSupabase.from('telemetry_workflows').insert).mock.calls[0][0];
+      const insertCall = vi.mocked(mockSupabase.from('telemetry_workflows').insert).mock.calls[0][0] as WorkflowTelemetry[];
       expect(insertCall).toHaveLength(2); // Should deduplicate to 2 workflows
 
       const hashes = insertCall.map((w: WorkflowTelemetry) => w.workflow_hash);
@@ -551,6 +551,58 @@ describe('TelemetryBatchProcessor', () => {
 
       const metrics = batchProcessor.getMetrics();
       expect(metrics.deadLetterQueueSize).toBe(2);
+    });
+
+    // Task 9: the ingest client's status contract distinguishes a server-side
+    // drop (400/413 — never retryable, not an error) from an error (429/5xx/
+    // network — retryable, goes through the existing dead-letter path).
+    describe('ingest client dropped vs. error contract', () => {
+      it('a dropped result (400/413) does not go to the dead letter queue', async () => {
+        vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue({
+          data: null,
+          error: null,
+          dropped: true,
+          status: 400,
+          statusText: 'Bad Request',
+          count: null,
+          success: true,
+        } as any);
+
+        const events: TelemetryEvent[] = [
+          { user_id: 'user1', event: 'event1', properties: {} }
+        ];
+
+        await batchProcessor.flush(events);
+
+        const metrics = batchProcessor.getMetrics();
+        expect(metrics.deadLetterQueueSize).toBe(0);
+        expect(metrics.eventsDropped).toBe(1);
+        expect(metrics.eventsFailed).toBe(0);
+        expect(metrics.batchesSent).toBe(1);
+        expect(metrics.batchesFailed).toBe(0);
+      });
+
+      it('an error result (429/5xx) does go to the dead letter queue', async () => {
+        vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue({
+          data: null,
+          error: { message: 'telemetry ingest HTTP 503', status: 503 },
+          status: 503,
+          statusText: 'Service Unavailable',
+          count: null,
+          success: false,
+        } as any);
+
+        const events: TelemetryEvent[] = [
+          { user_id: 'user1', event: 'event1', properties: {} }
+        ];
+
+        await batchProcessor.flush(events);
+
+        const metrics = batchProcessor.getMetrics();
+        expect(metrics.deadLetterQueueSize).toBe(1);
+        expect(metrics.eventsFailed).toBe(1);
+        expect(metrics.batchesFailed).toBe(1);
+      });
     });
 
     it('should process dead letter queue when circuit is healthy', async () => {
