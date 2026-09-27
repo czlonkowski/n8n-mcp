@@ -199,19 +199,23 @@ export class TelemetryBatchProcessor {
 
     const startTime = Date.now();
     let hasErrors = false;
+    let primaryBatchAttempted = false;
 
     // Flush events if provided
     if (events && events.length > 0) {
+      primaryBatchAttempted = true;
       hasErrors = !(await this.flushEvents(events)) || hasErrors;
     }
 
     // Flush workflows if provided
     if (workflows && workflows.length > 0) {
+      primaryBatchAttempted = true;
       hasErrors = !(await this.flushWorkflows(workflows)) || hasErrors;
     }
 
     // Flush mutations if provided
     if (mutations && mutations.length > 0) {
+      primaryBatchAttempted = true;
       hasErrors = !(await this.flushMutations(mutations)) || hasErrors;
     }
 
@@ -219,16 +223,29 @@ export class TelemetryBatchProcessor {
     const flushTime = Date.now() - startTime;
     this.recordFlushTime(flushTime);
 
-    // Update circuit breaker
-    if (hasErrors) {
-      this.circuitBreaker.recordFailure();
-    } else {
-      this.circuitBreaker.recordSuccess();
+    // Update circuit breaker from this call's own batch — but only if it
+    // actually attempted a request. A scheduled flush with nothing new to
+    // send must not record a success on the breaker's behalf; that used to
+    // mask a persistently failing dead-letter replay below by resetting the
+    // failure count on every empty tick, so the circuit never opened and the
+    // DLQ was retried, unthrottled, forever.
+    if (primaryBatchAttempted) {
+      if (hasErrors) {
+        this.circuitBreaker.recordFailure();
+      } else {
+        this.circuitBreaker.recordSuccess();
+      }
     }
 
-    // Process dead letter queue if circuit is healthy
+    // Process dead letter queue if circuit is healthy. Its own outcome feeds
+    // the breaker too — a replay is a real network attempt like any other.
     if (!hasErrors && this.deadLetterQueue.length > 0) {
-      await this.processDeadLetterQueue();
+      const replaySucceeded = await this.processDeadLetterQueue();
+      if (replaySucceeded) {
+        this.circuitBreaker.recordSuccess();
+      } else {
+        this.circuitBreaker.recordFailure();
+      }
     }
   }
 
@@ -237,8 +254,10 @@ export class TelemetryBatchProcessor {
    */
   private async flushEvents(events: TelemetryEvent[]): Promise<boolean> {
     try {
-      // Batch events
-      const batches = this.createBatches(events, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
+      // Batch events, bounded by count and by serialized byte size
+      const batches = this.createByteAwareBatches(
+        events, TELEMETRY_CONFIG.MAX_BATCH_SIZE, TELEMETRY_CONFIG.MAX_BATCH_BYTES_EVENTS
+      );
 
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
@@ -297,8 +316,10 @@ export class TelemetryBatchProcessor {
       const uniqueWorkflows = this.deduplicateWorkflows(workflows);
       logger.debug(`Deduplicating workflows: ${workflows.length} -> ${uniqueWorkflows.length}`);
 
-      // Batch workflows
-      const batches = this.createBatches(uniqueWorkflows, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
+      // Batch workflows, bounded by count and by serialized byte size
+      const batches = this.createByteAwareBatches(
+        uniqueWorkflows, TELEMETRY_CONFIG.MAX_BATCH_SIZE, TELEMETRY_CONFIG.MAX_BATCH_BYTES_WORKFLOWS
+      );
 
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
@@ -351,19 +372,23 @@ export class TelemetryBatchProcessor {
    */
   private async flushMutations(mutations: WorkflowMutationRecord[]): Promise<boolean> {
     try {
-      // Batch mutations
-      const batches = this.createBatches(mutations, TELEMETRY_CONFIG.MAX_BATCH_SIZE);
+      // Convert camelCase to snake_case for the ingest API's column names
+      // BEFORE batching, so the byte-size check measures what is actually
+      // sent (workflowAfter/operations can be large).
+      const snakeCaseMutations = mutations.map(mutation => mutationToSupabaseFormat(mutation));
+
+      // Batch mutations, bounded by count and by serialized byte size
+      const batches = this.createByteAwareBatches(
+        snakeCaseMutations, TELEMETRY_CONFIG.MAX_BATCH_SIZE, TELEMETRY_CONFIG.MAX_BATCH_BYTES_MUTATIONS
+      );
       let allBatchesSent = true;
 
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
         const result = await this.executeWithTimeout(async () => {
-          // Convert camelCase to snake_case for the ingest API's column names
-          const snakeCaseBatch = batch.map(mutation => mutationToSupabaseFormat(mutation));
-
           const { error, dropped } = await this.ingestClient!
             .from('workflow_mutations')
-            .insert(snakeCaseBatch);
+            .insert(batch);
 
           if (dropped) {
             return { dropped: true } as const;
@@ -452,13 +477,39 @@ export class TelemetryBatchProcessor {
   }
 
   /**
-   * Create batches from array
+   * Create batches bounded by BOTH row count and serialized byte size.
+   *
+   * MAX_BATCH_SIZE (count) alone is not enough: a sanitized workflow or a
+   * workflow-mutation payload varies hugely in size, so a 50-row batch can
+   * still be many times larger than the server's per-stream request cap. A
+   * single row that alone exceeds maxBytes is sent alone rather than split —
+   * the server will 413 it and it is dropped (see the ingest client), which
+   * is the correct outcome for one pathological row.
    */
-  private createBatches<T>(items: T[], batchSize: number): T[][] {
+  private createByteAwareBatches<T>(items: T[], maxCount: number, maxBytes: number): T[][] {
     const batches: T[][] = [];
+    let current: T[] = [];
 
-    for (let i = 0; i < items.length; i += batchSize) {
-      batches.push(items.slice(i, i + batchSize));
+    for (const item of items) {
+      const candidate = [...current, item];
+      const fits = candidate.length <= maxCount
+        && Buffer.byteLength(JSON.stringify(candidate)) <= maxBytes;
+
+      if (fits) {
+        current = candidate;
+        continue;
+      }
+
+      if (current.length > 0) {
+        batches.push(current);
+      }
+      // Start fresh with just this item, even if it alone is over maxBytes —
+      // it is never split further, only ever grown from here.
+      current = [item];
+    }
+
+    if (current.length > 0) {
+      batches.push(current);
     }
 
     return batches;
@@ -517,10 +568,14 @@ export class TelemetryBatchProcessor {
   }
 
   /**
-   * Process dead letter queue when circuit is healthy
+   * Process dead letter queue when circuit is healthy.
+   *
+   * Returns whether the replay succeeded, so the caller can feed that
+   * outcome back into the circuit breaker — this is a real network attempt
+   * like any other and must not go unrecorded (see flushQueuedBatch).
    */
-  private async processDeadLetterQueue(): Promise<void> {
-    if (this.deadLetterQueue.length === 0) return;
+  private async processDeadLetterQueue(): Promise<boolean> {
+    if (this.deadLetterQueue.length === 0) return true;
 
     logger.debug(`Processing ${this.deadLetterQueue.length} items from dead letter queue`);
 
@@ -540,13 +595,22 @@ export class TelemetryBatchProcessor {
     // Clear dead letter queue
     this.deadLetterQueue = [];
 
-    // Try to flush
-    if (events.length > 0) {
-      await this.flushEvents(events);
+    // Try to flush. A thrown error (flushEvents/flushWorkflows re-throw as a
+    // TelemetryError on an unexpected failure) counts as a failed replay too.
+    let succeeded = true;
+    try {
+      if (events.length > 0) {
+        succeeded = (await this.flushEvents(events)) && succeeded;
+      }
+      if (workflows.length > 0) {
+        succeeded = (await this.flushWorkflows(workflows)) && succeeded;
+      }
+    } catch (error) {
+      logger.debug('Dead letter queue replay failed:', error);
+      succeeded = false;
     }
-    if (workflows.length > 0) {
-      await this.flushWorkflows(workflows);
-    }
+
+    return succeeded;
   }
 
   /**

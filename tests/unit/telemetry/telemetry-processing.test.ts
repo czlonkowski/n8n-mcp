@@ -409,6 +409,96 @@ describe('TelemetryBatchProcessor', () => {
     });
   });
 
+  // Round 2 fix: MAX_BATCH_SIZE bounds row *count* (50), but a sanitized
+  // workflow or a workflow-mutation payload can be huge, so a 50-row batch
+  // can still blow past the server's per-stream byte cap. Batches must also
+  // split on serialized byte size.
+  describe('byte-aware batching (round 2)', () => {
+    it('splits an events batch so no single insert exceeds the stream byte limit, even under MAX_BATCH_SIZE', async () => {
+      // 5 events well under the 50-row cap, but their combined JSON size
+      // comfortably exceeds the 256 KiB events limit.
+      const blob = 'x'.repeat(90 * 1024);
+      const events: TelemetryEvent[] = Array.from({ length: 5 }, (_, i) => ({
+        user_id: `user${i}`,
+        event: 'big_event',
+        properties: { blob, index: i }
+      }));
+      expect(Buffer.byteLength(JSON.stringify(events))).toBeGreaterThan(TELEMETRY_CONFIG.MAX_BATCH_BYTES_EVENTS);
+
+      await batchProcessor.flush(events);
+
+      const insert = vi.mocked(mockSupabase.from('telemetry_events').insert);
+      expect(insert.mock.calls.length).toBeGreaterThan(1);
+
+      let totalSent = 0;
+      for (const [batch] of insert.mock.calls) {
+        expect(Buffer.byteLength(JSON.stringify(batch))).toBeLessThanOrEqual(TELEMETRY_CONFIG.MAX_BATCH_BYTES_EVENTS);
+        totalSent += (batch as unknown[]).length;
+      }
+      expect(totalSent).toBe(5);
+
+      const metrics = batchProcessor.getMetrics();
+      expect(metrics.eventsTracked).toBe(5);
+      expect(metrics.batchesFailed).toBe(0);
+    });
+
+    it('sends a single row larger than the stream limit alone, without splitting it', async () => {
+      const hugeBlob = 'x'.repeat(300 * 1024); // > 256 KiB alone
+      const events: TelemetryEvent[] = [
+        { user_id: 'huge', event: 'oversized_event', properties: { blob: hugeBlob } },
+        { user_id: 'small', event: 'small_event', properties: {} }
+      ];
+
+      await batchProcessor.flush(events);
+
+      const insert = vi.mocked(mockSupabase.from('telemetry_events').insert);
+      expect(insert.mock.calls.length).toBe(2);
+
+      const firstBatch = insert.mock.calls[0][0] as any[];
+      const secondBatch = insert.mock.calls[1][0] as any[];
+      expect(firstBatch).toHaveLength(1);
+      expect(firstBatch[0].user_id).toBe('huge');
+      expect(Buffer.byteLength(JSON.stringify(firstBatch))).toBeGreaterThan(TELEMETRY_CONFIG.MAX_BATCH_BYTES_EVENTS);
+
+      expect(secondBatch).toHaveLength(1);
+      expect(secondBatch[0].user_id).toBe('small');
+    });
+
+    it('applies the workflows byte limit too', async () => {
+      // 1 MiB limit; two ~600 KiB blobs together don't fit in one batch.
+      const blob = 'x'.repeat(600 * 1024);
+      const workflows: WorkflowTelemetry[] = [
+        { ...createWorkflowTelemetry(0), sanitized_workflow: { blob } },
+        { ...createWorkflowTelemetry(1), sanitized_workflow: { blob } }
+      ];
+
+      await batchProcessor.flush(undefined, workflows);
+
+      const insert = vi.mocked(mockSupabase.from('telemetry_workflows').insert);
+      expect(insert.mock.calls.length).toBe(2);
+      for (const [batch] of insert.mock.calls) {
+        expect(Buffer.byteLength(JSON.stringify(batch))).toBeLessThanOrEqual(TELEMETRY_CONFIG.MAX_BATCH_BYTES_WORKFLOWS);
+      }
+    });
+
+    it('applies the mutations byte limit after snake_case conversion', async () => {
+      // 2 MiB limit; two ~1.2 MiB blobs together don't fit in one batch.
+      const blob = 'x'.repeat(1200 * 1024);
+      const mutations: WorkflowMutationRecord[] = [0, 1].map(index => ({
+        ...createMutationRecord(index),
+        workflowAfter: { blob }
+      }));
+
+      await batchProcessor.flush(undefined, undefined, mutations);
+
+      const insert = vi.mocked(mockSupabase.from('workflow_mutations').insert);
+      expect(insert.mock.calls.length).toBe(2);
+      for (const [batch] of insert.mock.calls) {
+        expect(Buffer.byteLength(JSON.stringify(batch))).toBeLessThanOrEqual(TELEMETRY_CONFIG.MAX_BATCH_BYTES_MUTATIONS);
+      }
+    });
+  });
+
   describe('workflow deduplication', () => {
     it('should deduplicate workflows by hash', async () => {
       const workflows: WorkflowTelemetry[] = [
@@ -602,6 +692,62 @@ describe('TelemetryBatchProcessor', () => {
         expect(metrics.deadLetterQueueSize).toBe(1);
         expect(metrics.eventsFailed).toBe(1);
         expect(metrics.batchesFailed).toBe(1);
+      });
+    });
+
+    // Round 2 fix: a dead-letter replay is a real network attempt like any
+    // other, so its own outcome must feed the circuit breaker too. Before this
+    // fix, a scheduled flush with nothing new to send (events=[]) always
+    // recorded a breaker *success* regardless of whether the DLQ replay
+    // buried inside it succeeded or failed — so a permanently-down server
+    // (or a persistent 429) never opened the circuit and the DLQ was replayed,
+    // unthrottled, on every single flush interval forever.
+    describe('dead-letter replay feeds the circuit breaker (round 2)', () => {
+      it('a persistently failing replay eventually opens the circuit, instead of replaying forever unthrottled', async () => {
+        const errorResponse = createMockSupabaseResponse(new Error('Persistent 503'));
+        vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue(errorResponse);
+
+        const events: TelemetryEvent[] = [
+          { user_id: 'user1', event: 'event1', properties: {} }
+        ];
+
+        // First flush fails outright: breaker failure #1, event parked in the DLQ.
+        await batchProcessor.flush(events);
+        expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(1);
+        expect(batchProcessor.getMetrics().circuitBreakerState.failureCount).toBe(1);
+
+        // Every later flush carries no new data, but the DLQ replay inside it
+        // keeps hitting the same failing endpoint — each one must still count.
+        await batchProcessor.flush([]);
+        await batchProcessor.flush([]);
+        await batchProcessor.flush([]);
+        await batchProcessor.flush([]);
+
+        const metrics = batchProcessor.getMetrics();
+        expect(metrics.circuitBreakerState.failureCount).toBe(5);
+        expect(metrics.circuitBreakerState.state).toBe('open');
+      });
+
+      it('a successful replay records a circuit-breaker success and clears the dead letter queue', async () => {
+        const errorResponse = createMockSupabaseResponse(new Error('Temporary error'));
+        const insert = vi.mocked(mockSupabase.from('telemetry_events').insert);
+        insert.mockResolvedValueOnce(errorResponse);
+
+        const events: TelemetryEvent[] = [
+          { user_id: 'user1', event: 'event1', properties: {} }
+        ];
+
+        await batchProcessor.flush(events);
+        expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(1);
+        expect(batchProcessor.getMetrics().circuitBreakerState.failureCount).toBe(1);
+
+        insert.mockResolvedValue(createMockSupabaseResponse());
+        await batchProcessor.flush([]);
+
+        const metrics = batchProcessor.getMetrics();
+        expect(metrics.deadLetterQueueSize).toBe(0);
+        expect(metrics.circuitBreakerState.failureCount).toBe(0);
+        expect(metrics.circuitBreakerState.state).toBe('closed');
       });
     });
 

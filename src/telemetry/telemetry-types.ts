@@ -104,7 +104,16 @@ export const TELEMETRY_CONFIG = {
 
   // Queue limits
   MAX_QUEUE_SIZE: 1000, // Maximum events to queue
-  MAX_BATCH_SIZE: 50, // Maximum events per batch
+  MAX_BATCH_SIZE: 50, // Maximum rows per batch, by count
+
+  // Byte-size limits per ingest stream, mirroring the server's own per-request
+  // caps. MAX_BATCH_SIZE bounds row count, but sanitized workflow/mutation
+  // payloads vary hugely in size, so a 50-row batch can still be too large.
+  // A single row over its stream's limit is sent alone — the server 413s it
+  // and it is dropped, never split.
+  MAX_BATCH_BYTES_EVENTS: 256 * 1024, // 256 KiB
+  MAX_BATCH_BYTES_WORKFLOWS: 1024 * 1024, // 1 MiB
+  MAX_BATCH_BYTES_MUTATIONS: 2 * 1024 * 1024, // 2 MiB
 } as const;
 
 export const TELEMETRY_BACKEND = {
