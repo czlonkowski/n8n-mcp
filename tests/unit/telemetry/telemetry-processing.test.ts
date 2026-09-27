@@ -499,6 +499,75 @@ describe('TelemetryBatchProcessor', () => {
     });
   });
 
+  // Round 3: JSON.stringify (used by the byte-aware batcher to measure
+  // payload size) can itself throw — BigInt properties and circular
+  // references are the common real-world cases. That throw must become a
+  // normal failed-batch outcome (a circuit-breaker failure, like any other
+  // send failure), not an uncaught exception that crashes the flush or
+  // aborts sibling streams in the same flush() call before they're even
+  // attempted.
+  describe('unserializable payloads do not crash the flush (round 3)', () => {
+    it('a BigInt property fails batching as a normal failed batch, and other streams in the same flush are still attempted', async () => {
+      const insertEvents = vi.fn().mockResolvedValue(createMockSupabaseResponse());
+      const insertWorkflows = vi.fn().mockResolvedValue(createMockSupabaseResponse());
+      vi.mocked(mockSupabase.from).mockImplementation((table) => ({
+        insert: table === 'telemetry_events' ? insertEvents : insertWorkflows,
+        url: { href: '' },
+        headers: {},
+        select: vi.fn(),
+        upsert: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn()
+      } as any));
+
+      const events: TelemetryEvent[] = [
+        { user_id: 'user1', event: 'bad_event', properties: { huge: BigInt(1) } as any }
+      ];
+      const workflows: WorkflowTelemetry[] = [createWorkflowTelemetry(0)];
+
+      await expect(batchProcessor.flush(events, workflows)).resolves.not.toThrow();
+
+      // Events: batching itself threw (BigInt is not JSON-serializable) —
+      // must never reach the network, and must count as a normal failure.
+      expect(insertEvents).not.toHaveBeenCalled();
+
+      // Workflows: an independent stream in the same flush() call — must
+      // still be attempted despite the events stream blowing up.
+      expect(insertWorkflows).toHaveBeenCalledTimes(1);
+
+      const metrics = batchProcessor.getMetrics();
+      expect(metrics.eventsFailed).toBeGreaterThan(0);
+      expect(metrics.circuitBreakerState.failureCount).toBeGreaterThan(0);
+    });
+
+    it('a circular reference in a workflow payload also fails as a normal failed batch, not a crash', async () => {
+      const circular: any = { user_id: 'x' };
+      circular.self = circular;
+      const workflows: WorkflowTelemetry[] = [
+        { ...createWorkflowTelemetry(0), sanitized_workflow: circular }
+      ];
+
+      await expect(batchProcessor.flush(undefined, workflows)).resolves.not.toThrow();
+
+      const metrics = batchProcessor.getMetrics();
+      expect(metrics.eventsFailed).toBeGreaterThan(0);
+      expect(metrics.circuitBreakerState.failureCount).toBeGreaterThan(0);
+    });
+
+    it('a BigInt property in a mutation payload also fails as a normal failed batch, not a crash', async () => {
+      const mutation: WorkflowMutationRecord = {
+        ...createMutationRecord(0),
+        workflowAfter: { huge: BigInt(1) } as any
+      };
+
+      await expect(batchProcessor.flush(undefined, undefined, [mutation])).resolves.not.toThrow();
+
+      const metrics = batchProcessor.getMetrics();
+      expect(metrics.eventsFailed).toBeGreaterThan(0);
+      expect(metrics.circuitBreakerState.failureCount).toBeGreaterThan(0);
+    });
+  });
+
   describe('workflow deduplication', () => {
     it('should deduplicate workflows by hash', async () => {
       const workflows: WorkflowTelemetry[] = [
@@ -934,6 +1003,76 @@ describe('TelemetryBatchProcessor', () => {
 
       const metrics = batchProcessor.getMetrics();
       expect(metrics.circuitBreakerState.failureCount).toBeGreaterThan(0);
+    });
+
+    // Round 3, CRITICAL: shouldAllow() has side effects (it performs the
+    // open->half-open transition and consumes one of a limited number of
+    // half-open probe slots on every call that returns true). Before this
+    // fix, flushQueuedBatch called shouldAllow() on every tick regardless of
+    // whether there was anything to send, and getState()/getMetrics() called
+    // it too just to read canRetry. Once a real server outage opened the
+    // circuit, the very next idle scheduled flush (every 60s, with empty
+    // queues) or even just a status read would silently burn through the
+    // half-open slots with nothing to show for them, permanently wedging the
+    // breaker half-open — real events queued after that point were dropped
+    // forever, with no way to recover short of a process restart.
+    it('idle flush ticks and getMetrics() reads never consume half-open probe slots, so recovery still succeeds after the circuit opens', async () => {
+      // Open the circuit with mutation failures specifically: mutations are
+      // never parked in the dead letter queue (see flushMutations), so this
+      // opens the breaker while leaving the DLQ genuinely empty. That
+      // isolates the "truly nothing to do" no-op path (this fix) from the
+      // "DLQ has a backlog to replay" path (round 2's separate fix, tested
+      // elsewhere) — a non-empty DLQ is real work and legitimately still
+      // calls shouldAllow() on every tick.
+      const errorResponse = createMockSupabaseResponse(new Error('Persistent error'));
+      vi.mocked(mockSupabase.from('workflow_mutations').insert).mockResolvedValue(errorResponse);
+
+      for (let i = 0; i < 5; i++) {
+        await batchProcessor.flush(undefined, undefined, [createMutationRecord(i)]);
+      }
+      expect(batchProcessor.getMetrics().circuitBreakerState.state).toBe('open');
+      expect(batchProcessor.getMetrics().circuitBreakerState.failureCount).toBe(5);
+      expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(0);
+
+      // Advance past the reset timeout (default 60s).
+      vi.advanceTimersByTime(60_001);
+
+      // Idle ticks: nothing queued, nothing in the dead letter queue. These
+      // must be a complete no-op for the breaker — reading state, including
+      // via a scheduled flush with empty arrays, must never spend a
+      // half-open probe that a real request would have needed.
+      for (let i = 0; i < 5; i++) {
+        await batchProcessor.flush([]);
+      }
+      for (let i = 0; i < 5; i++) {
+        batchProcessor.getMetrics();
+      }
+      // Still 'open' — nothing above should have touched the breaker at all
+      // (no premature open->half-open transition from a mere read or a
+      // no-op tick).
+      expect(batchProcessor.getMetrics().circuitBreakerState.state).toBe('open');
+
+      // Real data now arrives. Recovery must still work: the first attempt
+      // performs the open->half-open transition itself (free, no probe
+      // consumed), then the default halfOpenRequests (3) successful probes
+      // close the circuit — 4 real sends in total.
+      vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue(createMockSupabaseResponse());
+      const events: TelemetryEvent[] = [
+        { user_id: 'user1', event: 'test_event', properties: {} }
+      ];
+      await batchProcessor.flush(events);
+      await batchProcessor.flush(events);
+      await batchProcessor.flush(events);
+      await batchProcessor.flush(events);
+
+      const metrics = batchProcessor.getMetrics();
+      expect(metrics.circuitBreakerState.state).toBe('closed');
+      expect(metrics.circuitBreakerState.failureCount).toBe(0);
+      // All 4 real event sends actually went through and succeeded (the
+      // shared mock's own call count also includes the 5 earlier mutation
+      // attempts, so eventsTracked — this processor's own bookkeeping — is
+      // the meaningful count here).
+      expect(metrics.eventsTracked).toBe(4);
     });
   });
 

@@ -46,25 +46,47 @@ export function resetIngestClientProcessStateForTests(): void {
   blockedUntil = 0;
 }
 
+// Matches anything that reads as a bare number (optional sign, optional
+// fractional part) — RFC 7231 seconds-delays are non-negative integers ONLY,
+// but any number-shaped string must be judged as a seconds-delay candidate
+// and never handed to Date.parse: Date.parse on a bare number like "-5" or
+// "20260101" does not reliably return NaN and must not be silently
+// reinterpreted as a date.
+const NUMBER_LIKE_RE = /^[+-]?\d+(?:\.\d+)?$/;
+const POSITIVE_INTEGER_RE = /^\d+$/;
+
 /**
  * Parse a Retry-After header value into a millisecond delay.
- * Accepts a delay in seconds (RFC 7231) or an HTTP-date. Missing or
- * unparseable values default to 60s; every result is capped at 1 hour so a
- * misconfigured or hostile value cannot park the client indefinitely.
+ * Accepts a delay in seconds (RFC 7231: a non-negative integer) or an
+ * HTTP-date strictly in the future. Missing, unparseable, non-positive-
+ * integer numeric, or non-future-date values all default to 60s; every
+ * result is capped at 1 hour so a misconfigured or hostile value cannot
+ * park the client indefinitely.
  */
 function parseRetryAfterMs(header: string | null, now: number): number {
   if (!header) return RETRY_AFTER_DEFAULT_MS;
   const trimmed = header.trim();
+  if (!trimmed) return RETRY_AFTER_DEFAULT_MS;
 
-  if (/^\d+$/.test(trimmed)) {
-    return Math.min(parseInt(trimmed, 10) * 1000, RETRY_AFTER_MAX_MS);
+  if (NUMBER_LIKE_RE.test(trimmed)) {
+    // Number-shaped: only a valid positive integer is a real seconds-delay.
+    // Never fall through to Date.parse for these — "-5", "0", "5.5", and
+    // giant bare numbers like "20260101" are not dates.
+    if (POSITIVE_INTEGER_RE.test(trimmed)) {
+      const seconds = parseInt(trimmed, 10);
+      if (seconds > 0) {
+        return Math.min(seconds * 1000, RETRY_AFTER_MAX_MS);
+      }
+    }
+    return RETRY_AFTER_DEFAULT_MS;
   }
 
   const dateMs = Date.parse(trimmed);
-  if (!Number.isNaN(dateMs)) {
-    return Math.min(Math.max(dateMs - now, 0), RETRY_AFTER_MAX_MS);
+  if (!Number.isNaN(dateMs) && dateMs > now) {
+    return Math.min(dateMs - now, RETRY_AFTER_MAX_MS);
   }
 
+  // Unparseable, or a date that is not strictly in the future.
   return RETRY_AFTER_DEFAULT_MS;
 }
 
@@ -124,7 +146,12 @@ export class IngestClient {
       return { error: null, status, dropped: true };
     }
     if (status === 429) {
-      blockedUntil = Date.now() + parseRetryAfterMs(res.headers.get('retry-after'), Date.now());
+      const now = Date.now();
+      const candidate = now + parseRetryAfterMs(res.headers.get('retry-after'), now);
+      // Never let a new 429 shorten an already-longer active window — e.g.
+      // two in-flight requests resolving out of order, one with a longer
+      // backoff than the other.
+      blockedUntil = Math.max(blockedUntil, candidate);
       return { error: { message: `telemetry ingest HTTP ${status}`, status }, status };
     }
     if (status >= 400 && status < 500) {

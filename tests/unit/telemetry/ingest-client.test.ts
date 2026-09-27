@@ -207,5 +207,102 @@ describe('IngestClient', () => {
       expect(fetchImplB).not.toHaveBeenCalled();
       expect(rB.error).toEqual({ message: 'rate limited (local backoff)', status: 429 });
     });
+
+    // Round 3: malformed/hostile Retry-After values must never produce a
+    // shorter-than-safe or nonsensical block. Only a valid positive integer
+    // count of seconds is honored as "seconds"; anything number-shaped but
+    // not a valid positive integer (negative, zero, non-integer) falls back
+    // to the default rather than accidentally being parsed as a date —
+    // Date.parse on a bare number can silently produce a bogus result.
+    it('a past HTTP-date falls back to the 60s default, not an immediate unblock', async () => {
+      const past = new Date('2025-12-31T23:59:00.000Z').toUTCString(); // 60s before "now"
+      const { c, fetchImpl } = client(429, vi.fn(), { 'retry-after': past });
+
+      await c.from('telemetry_events').insert([{}]);
+      vi.advanceTimersByTime(59_999);
+      await c.from('telemetry_events').insert([{}]);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(2);
+      await c.from('telemetry_events').insert([{}]);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('a negative numeric value falls back to the 60s default, not Date.parse', async () => {
+      const { c, fetchImpl } = client(429, vi.fn(), { 'retry-after': '-5' });
+
+      await c.from('telemetry_events').insert([{}]);
+      vi.advanceTimersByTime(59_999);
+      await c.from('telemetry_events').insert([{}]);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(2);
+      await c.from('telemetry_events').insert([{}]);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('zero falls back to the 60s default rather than an immediate retry', async () => {
+      const { c, fetchImpl } = client(429, vi.fn(), { 'retry-after': '0' });
+
+      await c.from('telemetry_events').insert([{}]);
+      vi.advanceTimersByTime(59_999);
+      await c.from('telemetry_events').insert([{}]);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(2);
+      await c.from('telemetry_events').insert([{}]);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('a non-integer numeric value falls back to the 60s default', async () => {
+      const { c, fetchImpl } = client(429, vi.fn(), { 'retry-after': '5.5' });
+
+      await c.from('telemetry_events').insert([{}]);
+      vi.advanceTimersByTime(59_999);
+      await c.from('telemetry_events').insert([{}]);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(2);
+      await c.from('telemetry_events').insert([{}]);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('never shortens an already-longer active backoff window, regardless of response arrival order', async () => {
+      // Two in-flight requests, both started while unblocked, resolving with
+      // different Retry-After values. If the second (shorter) response to
+      // resolve simply overwrote blockedUntil, the earlier, longer window
+      // from the first response would be incorrectly shortened.
+      let resolveLong!: (r: Response) => void;
+      let resolveShort!: (r: Response) => void;
+      const fetchImplLong = vi.fn(() => new Promise<Response>(resolve => { resolveLong = resolve; }));
+      const fetchImplShort = vi.fn(() => new Promise<Response>(resolve => { resolveShort = resolve; }));
+      const clientLong = new IngestClient({ url: 'https://t.example', key: 'kLong', version: '1', fetchImpl: fetchImplLong as any });
+      const clientShort = new IngestClient({ url: 'https://t.example', key: 'kShort', version: '1', fetchImpl: fetchImplShort as any });
+
+      const pLong = clientLong.from('telemetry_events').insert([{}]);
+      const pShort = clientShort.from('telemetry_events').insert([{}]);
+
+      // The long (100s) window resolves FIRST...
+      resolveLong(res(429, { 'retry-after': '100' }));
+      await pLong;
+      // ...then the short (10s) window resolves SECOND, and must not shrink
+      // the 100s window already in effect.
+      resolveShort(res(429, { 'retry-after': '10' }));
+      await pShort;
+
+      const fetchImplC = vi.fn(async () => res(201));
+      const clientC = new IngestClient({ url: 'https://t.example', key: 'kC', version: '1', fetchImpl: fetchImplC as any });
+
+      // Past the short window (10s) but well inside the long one (100s):
+      // still blocked.
+      vi.advanceTimersByTime(11_000);
+      await clientC.from('telemetry_events').insert([{}]);
+      expect(fetchImplC).not.toHaveBeenCalled();
+
+      // Past the long window too: unblocked.
+      vi.advanceTimersByTime(90_000);
+      await clientC.from('telemetry_events').insert([{}]);
+      expect(fetchImplC).toHaveBeenCalledTimes(1);
+    });
   });
 });

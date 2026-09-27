@@ -190,6 +190,18 @@ export class TelemetryBatchProcessor {
   ): Promise<void> {
     if (!this.isEnabled() || !this.ingestClient) return;
 
+    // Nothing to do: a scheduled tick with empty queues and an empty dead
+    // letter queue must be a complete no-op. shouldAllow() has side effects
+    // (the open->half-open transition, consuming a half-open probe slot),
+    // so calling it here — with no request to actually make — would waste
+    // the limited half-open budget on nothing, potentially wedging the
+    // breaker half-open forever once a real outage opens it (round 3).
+    const hasWork = Boolean(events && events.length > 0)
+      || Boolean(workflows && workflows.length > 0)
+      || Boolean(mutations && mutations.length > 0)
+      || this.deadLetterQueue.length > 0;
+    if (!hasWork) return;
+
     // Check circuit breaker
     if (!this.circuitBreaker.shouldAllow()) {
       logger.debug('Circuit breaker open - skipping flush');
@@ -253,12 +265,27 @@ export class TelemetryBatchProcessor {
    * Flush events with batching
    */
   private async flushEvents(events: TelemetryEvent[]): Promise<boolean> {
+    // Batching stringifies every row to measure it — a BigInt property or a
+    // circular reference throws there, outside any network call. That must
+    // become a normal failed batch (breaker failure via the caller's
+    // hasErrors accounting, parked in the DLQ like any other failure), not
+    // an uncaught exception: an uncaught throw here would abort this whole
+    // flush() call before workflows/mutations in the same call are even
+    // attempted.
+    let batches: TelemetryEvent[][];
     try {
-      // Batch events, bounded by count and by serialized byte size
-      const batches = this.createByteAwareBatches(
+      batches = this.createByteAwareBatches(
         events, TELEMETRY_CONFIG.MAX_BATCH_SIZE, TELEMETRY_CONFIG.MAX_BATCH_BYTES_EVENTS
       );
+    } catch (error) {
+      logger.debug('Failed to batch telemetry events (unserializable payload?):', error);
+      this.addToDeadLetterQueue(events);
+      this.metrics.eventsFailed += events.length;
+      this.metrics.batchesFailed++;
+      return false;
+    }
 
+    try {
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
         const result = await this.executeWithTimeout(async () => {
@@ -311,16 +338,26 @@ export class TelemetryBatchProcessor {
    * Flush workflows with deduplication
    */
   private async flushWorkflows(workflows: WorkflowTelemetry[]): Promise<boolean> {
-    try {
-      // Deduplicate workflows by hash
-      const uniqueWorkflows = this.deduplicateWorkflows(workflows);
-      logger.debug(`Deduplicating workflows: ${workflows.length} -> ${uniqueWorkflows.length}`);
+    // Deduplicate workflows by hash
+    const uniqueWorkflows = this.deduplicateWorkflows(workflows);
+    logger.debug(`Deduplicating workflows: ${workflows.length} -> ${uniqueWorkflows.length}`);
 
-      // Batch workflows, bounded by count and by serialized byte size
-      const batches = this.createByteAwareBatches(
+    // Batching stringifies every row to measure it — see flushEvents for why
+    // that throw must become a normal failed batch, not a crash.
+    let batches: WorkflowTelemetry[][];
+    try {
+      batches = this.createByteAwareBatches(
         uniqueWorkflows, TELEMETRY_CONFIG.MAX_BATCH_SIZE, TELEMETRY_CONFIG.MAX_BATCH_BYTES_WORKFLOWS
       );
+    } catch (error) {
+      logger.debug('Failed to batch telemetry workflows (unserializable payload?):', error);
+      this.addToDeadLetterQueue(uniqueWorkflows);
+      this.metrics.eventsFailed += uniqueWorkflows.length;
+      this.metrics.batchesFailed++;
+      return false;
+    }
 
+    try {
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         const batch = batches[batchIndex];
         const result = await this.executeWithTimeout(async () => {
@@ -371,16 +408,29 @@ export class TelemetryBatchProcessor {
    * Flush workflow mutations with batching
    */
   private async flushMutations(mutations: WorkflowMutationRecord[]): Promise<boolean> {
-    try {
-      // Convert camelCase to snake_case for the ingest API's column names
-      // BEFORE batching, so the byte-size check measures what is actually
-      // sent (workflowAfter/operations can be large).
-      const snakeCaseMutations = mutations.map(mutation => mutationToSupabaseFormat(mutation));
+    // Convert camelCase to snake_case for the ingest API's column names
+    // BEFORE batching, so the byte-size check measures what is actually
+    // sent (workflowAfter/operations can be large).
+    const snakeCaseMutations = mutations.map(mutation => mutationToSupabaseFormat(mutation));
 
-      // Batch mutations, bounded by count and by serialized byte size
-      const batches = this.createByteAwareBatches(
+    // Batching stringifies every row to measure it — see flushEvents for why
+    // that throw must become a normal failed batch, not a crash. Mutations
+    // are never parked in the dead letter queue (same as a real send
+    // failure below), so this only adjusts metrics and returns false.
+    let batches: Record<string, any>[][];
+    try {
+      batches = this.createByteAwareBatches(
         snakeCaseMutations, TELEMETRY_CONFIG.MAX_BATCH_SIZE, TELEMETRY_CONFIG.MAX_BATCH_BYTES_MUTATIONS
       );
+    } catch (error) {
+      logger.debug('Failed to batch workflow mutations (unserializable payload?):', error);
+      this.metrics.eventsFailed += mutations.length;
+      this.metrics.eventsDropped += mutations.length;
+      this.metrics.batchesFailed++;
+      return false;
+    }
+
+    try {
       let allBatchesSent = true;
 
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
@@ -485,18 +535,28 @@ export class TelemetryBatchProcessor {
    * single row that alone exceeds maxBytes is sent alone rather than split —
    * the server will 413 it and it is dropped (see the ingest client), which
    * is the correct outcome for one pathological row.
+   *
+   * Each item's own serialized size is computed exactly once and reused as
+   * batches grow (an array's JSON byte length is exactly the sum of its
+   * items' own JSON byte lengths, plus 2 bytes for the brackets and 1 byte
+   * per separating comma — string escaping never depends on array
+   * position), rather than re-stringifying the whole growing batch on every
+   * item, which was O(n^2) for a large batch.
    */
   private createByteAwareBatches<T>(items: T[], maxCount: number, maxBytes: number): T[][] {
     const batches: T[][] = [];
     let current: T[] = [];
+    let currentBytes = 0; // excludes the '[' + ']' brackets, added on push
 
     for (const item of items) {
-      const candidate = [...current, item];
-      const fits = candidate.length <= maxCount
-        && Buffer.byteLength(JSON.stringify(candidate)) <= maxBytes;
+      const itemBytes = Buffer.byteLength(JSON.stringify(item));
+      const separatorBytes = current.length > 0 ? 1 : 0; // comma before this item
+      const candidateBytes = currentBytes + separatorBytes + itemBytes;
+      const fits = current.length + 1 <= maxCount && candidateBytes + 2 <= maxBytes;
 
       if (fits) {
-        current = candidate;
+        current.push(item);
+        currentBytes = candidateBytes;
         continue;
       }
 
@@ -506,6 +566,7 @@ export class TelemetryBatchProcessor {
       // Start fresh with just this item, even if it alone is over maxBytes —
       // it is never split further, only ever grown from here.
       current = [item];
+      currentBytes = itemBytes;
     }
 
     if (current.length > 0) {
