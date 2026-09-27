@@ -720,6 +720,46 @@ describe('TelemetryManager', () => {
     });
   });
 
+  describe('onControl wiring (server-driven disable)', () => {
+    beforeEach(() => {
+      manager = TelemetryManager.getInstance();
+      // Trigger initialization so the ingest client (and its onControl) exists
+      manager.trackEvent('test', {});
+    });
+
+    function capturedOnControl(): (signal: { kind: string; status: number }) => void {
+      const calls = vi.mocked(IngestClient).mock.calls;
+      const [options] = calls[calls.length - 1];
+      return (options as any).onControl;
+    }
+
+    it('disable_version records the server disable with the package version and stops the batch processor', () => {
+      const onControl = capturedOnControl();
+
+      onControl({ kind: 'disable_version', status: 410 });
+
+      expect(mockConfigManager.recordServerDisable).toHaveBeenCalledWith('2.90.0');
+      expect(mockBatchProcessor.stop).toHaveBeenCalled();
+    });
+
+    it('disable_process disables telemetry for the rest of this process', async () => {
+      const onControl = capturedOnControl();
+
+      // Enabled before the signal arrives.
+      expect(manager.getMetrics().status).toBe('enabled');
+
+      onControl({ kind: 'disable_process', status: 401 });
+
+      expect(manager.getMetrics().status).toBe('disabled');
+
+      // isEnabled() is private; flush() is the public surface that reads it,
+      // and it must now decline to reach the (still-configured) batch processor.
+      vi.mocked(mockBatchProcessor.flush).mockClear();
+      await manager.flush();
+      expect(mockBatchProcessor.flush).not.toHaveBeenCalled();
+    });
+  });
+
   describe('workflow creation auto-flush behavior', () => {
     beforeEach(() => {
       manager = TelemetryManager.getInstance();

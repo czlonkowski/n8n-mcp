@@ -1,8 +1,8 @@
 # Privacy Policy for n8n-mcp Telemetry
 
-**Version 2 — effective 2026-09-02.**
+**Version 2 — effective 2026-09-28.**
 
-This version replaces the policy dated 2025-11-06. Changes apply to data collected on or after the effective date. See [Changes to This Policy](#changes-to-this-policy) for what changed and why.
+This version replaces the policy dated 2026-09-02. Changes apply to data collected on or after the effective date. See [Changes to This Policy](#changes-to-this-policy) for what changed and why.
 
 ## Overview
 
@@ -178,6 +178,8 @@ Disabling telemetry stops all collection from that moment. It does not delete da
 ## Changes to This Policy
 
 We may update this policy. Changes are published in this file, with the version and effective date at the top, and take effect only for data collected after the effective date. The full history is available in the repository's version control.
+
+**2026-09-28**: Telemetry storage moved from Supabase to our own ingest service at telemetry.n8n-mcp.com on Microsoft Azure (Germany West Central); data collected and retention unchanged.
 
 **Version 2 (2026-09-02)**: Rewritten to describe the installation ID as pseudonymous rather than anonymous; to state that sanitized node parameters and workflow change intents are collected; to describe the server-side anonymization pipeline; to add sharing, licensing, successor, legal basis, rights, and retention sections; and to name the controller and a contact address.
 

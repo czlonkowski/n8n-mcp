@@ -28,6 +28,13 @@ export class TelemetryConfigManager {
   private readonly configDir: string;
   private readonly configPath: string;
   private config: TelemetryConfig | null = null;
+  /**
+   * Cache of getPackageVersion()'s result. isEnabled() calls getPackageVersion()
+   * on every check once disabledByServer is set, and the version cannot change
+   * within a running process, so there is no reason to re-read and re-parse
+   * package.json from disk synchronously on every call.
+   */
+  private cachedPackageVersion: string | null = null;
 
   private constructor() {
     this.configDir = join(homedir(), '.n8n-mcp');
@@ -434,8 +441,26 @@ For Docker: Set N8N_MCP_TELEMETRY_DISABLED=true
   /**
    * Get package version safely. Public: the telemetry manager and the ingest
    * client need it too (client version header, server-disable matching).
+   *
+   * Cached after the first successful call: the version is fixed for the
+   * life of the process, and isEnabled() calls this on every check once
+   * disabledByServer is set, so re-reading package.json from disk each time
+   * would be pure waste. An 'unknown' result is not cached, in case an
+   * earlier call raced package.json being unavailable.
    */
   getPackageVersion(): string {
+    if (this.cachedPackageVersion !== null) {
+      return this.cachedPackageVersion;
+    }
+
+    const version = this.resolvePackageVersion();
+    if (version !== 'unknown') {
+      this.cachedPackageVersion = version;
+    }
+    return version;
+  }
+
+  private resolvePackageVersion(): string {
     try {
       // Try multiple approaches to find package.json
       const possiblePaths = [

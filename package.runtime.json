@@ -1,11 +1,10 @@
 {
   "name": "n8n-mcp-runtime",
-  "version": "2.89.0",
+  "version": "2.90.0",
   "description": "n8n MCP Server Runtime Dependencies Only",
   "private": true,
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
-    "@supabase/supabase-js": ">=2.57.4 <2.110.0",
     "express": "^5.1.0",
     "express-rate-limit": "^7.1.5",
     "dotenv": "^16.5.0",

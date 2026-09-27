@@ -231,6 +231,49 @@ describe('TelemetryConfigManager', () => {
     });
   });
 
+  describe('getPackageVersion caching', () => {
+    it('reads package.json only once across repeated getPackageVersion() calls', () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+        enabled: true,
+        userId: 'test-id',
+        version: '9.9.9'
+      }));
+
+      manager = TelemetryConfigManager.getInstance();
+
+      expect(manager.getPackageVersion()).toBe('9.9.9');
+      const readCallsAfterFirst = vi.mocked(readFileSync).mock.calls.length;
+
+      expect(manager.getPackageVersion()).toBe('9.9.9');
+      expect(manager.getPackageVersion()).toBe('9.9.9');
+
+      expect(vi.mocked(readFileSync).mock.calls.length).toBe(readCallsAfterFirst);
+    });
+
+    it('does not re-read package.json on every isEnabled() check once disabledByServer is set', () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+        enabled: true,
+        userId: 'test-id',
+        version: '9.9.9',
+        disabledByServer: { version: '9.9.9', at: '2020-01-01T00:00:00Z' }
+      }));
+
+      manager = TelemetryConfigManager.getInstance();
+
+      expect(manager.isEnabled()).toBe(false);
+      const readCallsAfterFirst = vi.mocked(readFileSync).mock.calls.length;
+
+      // Neither the config (already cached by loadConfig) nor the package
+      // version should be re-read from disk on subsequent checks.
+      expect(manager.isEnabled()).toBe(false);
+      expect(manager.isEnabled()).toBe(false);
+
+      expect(vi.mocked(readFileSync).mock.calls.length).toBe(readCallsAfterFirst);
+    });
+  });
+
   describe('getUserId', () => {
     it('should return consistent user ID', () => {
       vi.mocked(existsSync).mockReturnValue(true);

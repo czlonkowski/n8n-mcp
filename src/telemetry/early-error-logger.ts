@@ -103,10 +103,24 @@ export class EarlyErrorLogger {
       // Initialize the ingest client for direct inserts
       const url = process.env.N8N_MCP_TELEMETRY_URL || TELEMETRY_BACKEND.URL;
       const key = process.env.N8N_MCP_TELEMETRY_KEY || TELEMETRY_BACKEND.KEY;
+      const version = configManager.getPackageVersion();
       this.ingestClient = new IngestClient({
         url,
         key,
-        version: configManager.getPackageVersion(),
+        version,
+        onControl: (signal) => {
+          if (signal.kind === 'disable_version') {
+            // Persist so telemetry (and this logger) stays off across
+            // restarts until an upgrade past this version — same contract
+            // as the main telemetry manager's server-disable handling.
+            configManager.recordServerDisable(version);
+          }
+          // Either signal means: stop sending for the rest of this process.
+          // The ingest client itself already latches and drops further
+          // sends, so this just short-circuits logCheckpoint/logStartupError
+          // without waiting on a doomed request.
+          this.enabled = false;
+        },
       });
 
       // Get user ID from config manager
