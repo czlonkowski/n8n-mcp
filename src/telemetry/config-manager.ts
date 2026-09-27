@@ -15,6 +15,12 @@ export interface TelemetryConfig {
   firstRun?: string;
   lastModified?: string;
   version?: string;
+  /**
+   * Set when the ingest server told us (HTTP 410) that this client version is
+   * no longer accepted. Only suppresses telemetry while the installed package
+   * version still matches — an upgrade past this version re-enables it.
+   */
+  disabledByServer?: { version: string; at: string };
 }
 
 export class TelemetryConfigManager {
@@ -248,7 +254,26 @@ export class TelemetryConfigManager {
     }
 
     const config = this.loadConfig();
+
+    // Server-side disable (HTTP 410 from the ingest API) applies only to the
+    // client version that was told to stop; an upgrade clears it implicitly.
+    if (config.disabledByServer && config.disabledByServer.version === this.getPackageVersion()) {
+      return false;
+    }
+
     return config.enabled;
+  }
+
+  /**
+   * Record that the ingest server rejected this client version with HTTP 410
+   * (permanently gone). Persists so the disable survives process restarts;
+   * isEnabled() only honors it while the installed version still matches.
+   */
+  recordServerDisable(version: string): void {
+    const config = this.loadConfig();
+    config.disabledByServer = { version, at: new Date().toISOString() };
+    this.config = config;
+    this.saveConfig();
   }
 
   /**
@@ -407,9 +432,10 @@ For Docker: Set N8N_MCP_TELEMETRY_DISABLED=true
   }
 
   /**
-   * Get package version safely
+   * Get package version safely. Public: the telemetry manager and the ingest
+   * client need it too (client version header, server-disable matching).
    */
-  private getPackageVersion(): string {
+  getPackageVersion(): string {
     try {
       // Try multiple approaches to find package.json
       const possiblePaths = [
