@@ -170,10 +170,13 @@ export async function handleListCatalog(args: unknown, context?: InstanceContext
     return { success: false, code: 'INVALID_ARGS', error: parsed.error.issues.map(i => `${i.path.join('.') || 'input'}: ${i.message}`).join('; ') };
   }
   const { kind, query, limit } = parsed.data;
-  const api = getN8nApiClient(context);
-  if (!api) return { success: false, code: 'NOT_CONFIGURED', error: 'n8n API not configured. Set N8N_API_URL and N8N_API_KEY.' };
 
   if (kind === 'tags') {
+    if (!publicApiMatchesContext(context)) {
+      return { success: false, kind, code: 'NOT_CONFIGURED', error: PUBLIC_API_CONTEXT_HINT } as McpToolResponse;
+    }
+    const api = getN8nApiClient(context);
+    if (!api) return { success: false, kind, code: 'NOT_CONFIGURED', error: 'n8n API not configured. Set N8N_API_URL and N8N_API_KEY.' } as McpToolResponse;
     try {
       const tags = (await api.listTags({ limit: 250 })).data.map(t => ({ id: String(t.id), name: t.name }));
       return { success: true, kind, backend: 'public-api', data: { items: filterItems(tags, query, limit) } } as McpToolResponse;
