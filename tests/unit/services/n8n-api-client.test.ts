@@ -2357,14 +2357,14 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
       expect(result).toEqual(created);
     });
 
-    it('should update tag', async () => {
-      const updates = { name: 'Updated Tag' };
-      const updated = { id: '123', ...updates };
-      mockAxiosInstance.patch.mockResolvedValue({ data: updated });
+    it('should update tag with PUT and a name-only body', async () => {
+      const updated = { id: '123', name: 'Updated Tag' };
+      mockAxiosInstance.put.mockResolvedValue({ data: updated });
       
-      const result = await client.updateTag('123', updates);
+      const result = await client.updateTag('123', 'Updated Tag');
       
-      expect(mockAxiosInstance.patch).toHaveBeenCalledWith('/tags/123', updates);
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/tags/123', { name: 'Updated Tag' });
+      expect(mockAxiosInstance.patch).not.toHaveBeenCalled();
       expect(result).toEqual(updated);
     });
 

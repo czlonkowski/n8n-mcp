@@ -1441,9 +1441,10 @@ export class N8nApiClient {
     }
   }
 
-  async updateTag(id: string, tag: Partial<Tag>): Promise<Tag> {
+  // n8n exposes only PUT /tags/{id}, and since 2.41 its body DTO is strict: send the name alone.
+  async updateTag(id: string, name: string): Promise<Tag> {
     try {
-      const response = await this.client.patch(`/tags/${encodeApiPathSegment(id, 'tagId')}`, tag);
+      const response = await this.client.put(`/tags/${encodeApiPathSegment(id, 'tagId')}`, { name });
       return response.data;
     } catch (error) {
       throw handleN8nApiError(error);

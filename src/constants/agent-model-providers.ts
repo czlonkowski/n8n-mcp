@@ -3,7 +3,7 @@
  * Source: n8n `packages/@n8n/api-types/src/agents/model-providers.ts`
  * (AGENT_MODEL_PROVIDER_CREDENTIAL_TYPES). The agents runtime validates
  * credentials against `packages/cli/src/modules/agents/llm-provider-defaults.ts`
- * (LLM_PROVIDER_DEFAULTS), which on n8n 2.40.5 has no entry for azureOpenAiApi,
+ * (LLM_PROVIDER_DEFAULTS), which on n8n 2.41.5 has no entry for azureOpenAiApi,
  * azureEntraCognitiveServicesOAuth2Api or aws — those credentials are rejected
  * as incompatible even though the api-types table lists them. Re-check both
  * files on each n8n update.
@@ -35,9 +35,9 @@ export const AGENT_MODEL_PROVIDER_CREDENTIAL_TYPES: Record<string, string[]> = {
 };
 
 export const AGENT_UNSUPPORTED_CREDENTIAL_TYPES: Record<string, string> = {
-  azureOpenAiApi: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.40.5)',
-  azureEntraCognitiveServicesOAuth2Api: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.40.5)',
-  aws: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.40.5)',
+  azureOpenAiApi: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.41.5)',
+  azureEntraCognitiveServicesOAuth2Api: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.41.5)',
+  aws: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.41.5)',
 };
 
 export const AGENT_SUPPORTED_CREDENTIAL_TYPES = Object.values(AGENT_MODEL_PROVIDER_CREDENTIAL_TYPES)

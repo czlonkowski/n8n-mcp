@@ -376,7 +376,8 @@ export interface TestCaseExecution {
   errorDetails: Record<string, unknown> | null;
   inputs: Record<string, unknown> | null;
   outputs: Record<string, unknown> | null;
-  executionId: string | null;
+  // n8n 2.42+ documents this as an integer; earlier releases declared a string.
+  executionId: number | string | null;
 }
 
 // Returned by the trigger/cancel routes (n8n Public API >= 2.32), which answer

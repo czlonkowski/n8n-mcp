@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.91.0] - 2026-10-01
+
+### Changed
+
+- **Updated n8n to 2.41.x.** n8n-nodes-base 2.40.2 → 2.41.4, n8n-core 2.40.3 → 2.41.4, n8n-workflow 2.40.1 → 2.41.2, @n8n/n8n-nodes-langchain 2.40.3 → 2.41.4. Rebuilt the node database: 2,951 nodes (838 core: 707 from n8n-nodes-base, 131 from @n8n/n8n-nodes-langchain; 2,113 community, 1,730 verified). The new core nodes are the Databricks Trigger and Databricks Embeddings. Among the changed node schemas, Microsoft Teams gained a Chat resource, Databricks job operations take a `runId`, Execute Workflow is at version 1.4, and new versions of the MiniMax node and of the Google Gemini, MiniMax and Alibaba Cloud chat models change the model selector. `node_versions` has 634 rows (629 before). The community node refresh updated the verified catalogue and saved 129 node rows from 62 npm packages, adding 88 community nodes and removing 3 rows that their packages no longer declare; all new nodes with a README received an AI summary, so 2,100 of 2,113 community nodes are documented (the other 13 come from packages that publish no README). The database is 66.2 MiB.
+- **n8n 2.41 contract check.** The workflow create and update bodies, settings and node properties are unchanged (`check-settings-drift.ts` reports no drift for 2.41.5). `GET /folders` moved to a strict query schema and now answers 400 to unknown query parameters; `n8n_manage_folders` sends only the accepted keys. Executions are authorized with the `execution:read`/`execution:delete` project scopes instead of the workflow scopes, which the default roles include. `POST /credentials` accepts an optional `id`, which no tool sends. n8n's MCP server keeps every tool `n8n_manage_agents` maps, and its agent model providers are unchanged. Credentials, folders, data tables, executions and evaluation runs were checked against an n8n 2.41.4 instance.
+
+### Fixed
+
+- **`N8nApiClient.updateTag` uses `PUT`.** It sent `PATCH /tags/{id}`, which n8n does not route; it now sends `PUT` with a body of `{ name }` only, because n8n 2.41 rejects any other key. No tool calls it yet.
+- **`TestCaseExecution.executionId` accepts a number.** n8n 2.42 documents the field as an integer; the type now allows `number | string | null`. The value is passed through unchanged.
+
 ## [2.90.0] - 2026-09-27
 
 ### Changed
