@@ -161,7 +161,7 @@ per workflow, plus an age-based retention window). Native history retention is n
         type: 'integer',
         required: false,
         default: 30000,
-        description: 'Client deadline for the native call (5000-600000)'
+        description: 'Whole-call timeout for the native path, including connection, tool discovery and execution (5000-600000)'
       }
     },
     returns: `Response varies by mode:
