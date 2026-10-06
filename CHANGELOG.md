@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Overlapping requests on one HTTP session each apply their own instance context.** A request that arrived while another context switch for the same session was in progress waited for it and then skipped its own, so the session kept the first request's context.
+- **Overlapping requests on one HTTP session each apply their own instance context.** A request that arrived while another context switch for the same session was in progress waited for it and then skipped its own, so the session kept the first request's context. In the `instance` strategy a waiting request now merges over the context as it is when its turn comes, so it cannot write back a value that a request ahead of it replaced.
 - **`tools/list` no longer writes UI metadata onto the shared tool definitions.** `UIAppRegistry.injectToolMeta` assigned `_meta` on the module-level definitions it was given, so the metadata stayed for the lifetime of the process. It now returns copies of the tools it enriches and leaves its input untouched.
 
 ## [2.91.0] - 2026-10-01

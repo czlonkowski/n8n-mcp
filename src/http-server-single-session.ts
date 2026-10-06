@@ -506,9 +506,18 @@ export class SingleSessionHTTPServer {
   }
 
   /**
-   * Switch session context with locking to prevent race conditions
+   * Switch session context with locking to prevent race conditions.
+   *
+   * With `mergeOverStored`, `newContext` holds only the fields a request supplied and
+   * is merged over the stored context once this call holds the lock. Merging before
+   * the wait would let a queued request write back values that a request ahead of it
+   * has since replaced.
    */
-  private async switchSessionContext(sessionId: string, newContext: InstanceContext): Promise<void> {
+  private async switchSessionContext(
+    sessionId: string,
+    newContext: InstanceContext,
+    mergeOverStored = false
+  ): Promise<void> {
     // Wait for any switch already in progress for this session, then apply this
     // request's context as well. Returning after the wait would drop it, leaving the
     // session on the context of whichever request got there first.
@@ -518,8 +527,16 @@ export class SingleSessionHTTPServer {
       existingLock = this.contextSwitchLocks.get(sessionId);
     }
 
+    let contextToApply = newContext;
+    if (mergeOverStored) {
+      const storedContext = this.sessionContexts[sessionId];
+      // The session went away while this request waited; there is nothing to refresh.
+      if (!storedContext) return;
+      contextToApply = { ...storedContext, ...newContext };
+    }
+
     // Create a promise for this switch operation
-    const switchPromise = this.performContextSwitch(sessionId, newContext);
+    const switchPromise = this.performContextSwitch(sessionId, contextToApply);
     this.contextSwitchLocks.set(sessionId, switchPromise);
 
     try {
@@ -960,10 +977,7 @@ export class SingleSessionHTTPServer {
               storedContext?.instanceId === instanceContext.instanceId &&
               storedContext?.n8nApiUrl === instanceContext.n8nApiUrl
             ) {
-              await this.switchSessionContext(sessionId, {
-                ...storedContext,
-                ...pickInstanceContextFields(instanceContext)
-              });
+              await this.switchSessionContext(sessionId, pickInstanceContextFields(instanceContext), true);
             }
           }
 

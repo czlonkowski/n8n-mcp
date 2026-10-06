@@ -651,11 +651,25 @@ describe('HTTP Server Session Management', () => {
       // Requests that overlap on one session each apply their own context; the later
       // one must not be dropped because a switch was already in progress.
       await Promise.all([
-        (server as any).switchSessionContext('session-a', { ...tenant, uiAppsEnabled: true }),
-        (server as any).switchSessionContext('session-a', { ...tenant, uiAppsEnabled: false })
+        (server as any).switchSessionContext('session-a', { ...storedContext, uiAppsEnabled: true }),
+        (server as any).switchSessionContext('session-a', { ...storedContext, uiAppsEnabled: false })
       ]);
       expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
       expect((server as any).contextSwitchLocks.size).toBe(0);
+
+      // A queued request that omits the field merges over the context as it is when its
+      // turn comes, not as it was when the request arrived, so it cannot undo the
+      // request ahead of it. Driven through the helper the refresh calls: overlapping
+      // handleRequest calls do not keep the mocked SSRF module under vitest.
+      const refresh = (context: any) => (server as any).switchSessionContext('session-a', context, true);
+      await refresh({ ...tenant, uiAppsEnabled: true });
+      await Promise.all([
+        refresh({ ...tenant, uiAppsEnabled: true }),
+        refresh({ ...tenant, uiAppsEnabled: false }),
+        refresh({ ...tenant })
+      ]);
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+      expect(mcpServer.instanceContext.n8nMcpAccessToken).toBe('stored-token');
     });
 
     it('should keep same-instance sessions alive in instance mode when concurrent sessions are allowed', async () => {
