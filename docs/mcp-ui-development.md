@@ -62,6 +62,17 @@ Loaded UI tools attach their identity in response `_meta['n8n-mcp/toolName']`. C
 
 Receipt labels use explicit evidence: `saved` for partial updates, `preview` for autofix, the returned validation verdict and operation count for simulation, and the official pinned-test result for confirmed execution. Arbitrary public webhook response fields are never interpreted as execution success. Unrecognized operation shapes produce an unknown outcome. There are no mutation, retry or send-to-chat buttons.
 
+## Turning cards off
+
+Cards are advertised by default. Two switches stop that, and both leave every tool available with the same text result:
+
+- `N8N_MCP_DISABLE_UI_APPS=true` applies to the whole process, in stdio and HTTP mode. Only the exact value `true` turns cards off.
+- `InstanceContext.uiAppsEnabled: false` applies to the requests an embedder makes with that context. Unset and `true` both mean the default. The environment variable wins over `uiAppsEnabled: true`. A value that is not a boolean is rejected by `validateInstanceContext`.
+
+With cards off the server omits `_meta.ui` and `_meta['ui/resourceUri']` from tool definitions, `_meta['n8n-mcp/toolName']` from tool results, and the `ui://n8n-mcp/*` entries from `resources/list`. `resources/read` for a `ui://n8n-mcp/*` URI keeps succeeding: hosts cache the tool list, and a host holding an older list would otherwise show a card that fails to load. For the same reason a host can keep rendering cards from a cached tool list until it fetches the list again.
+
+In HTTP mode the context switch follows the session context. With `ENABLE_MULTI_TENANT=true` the value is taken from each request that carries the session's full tenant identity (`n8nApiUrl`, `n8nApiKey` and the same `instanceId`); a request that omits `uiAppsEnabled` returns the session to the default, so send the value on every request. Without multi-tenant mode a session keeps the context it was created with.
+
 ## Manual acceptance
 
 1. Replay creation → invalid validation → fix preview → saved update → passed validation → triggered run → confirmed execution. The replay must advance without a human repair handoff.

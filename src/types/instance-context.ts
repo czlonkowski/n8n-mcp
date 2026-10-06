@@ -35,6 +35,15 @@ export interface InstanceContext {
   sessionId?: string;
 
   /**
+   * MCP Apps (UI cards) switch. Unset or `true` keeps the default behaviour; `false`
+   * stops the server from advertising UI: no `_meta.ui` on tool definitions, no
+   * `_meta['n8n-mcp/toolName']` on tool results, no `ui://` entries in resources/list.
+   * `resources/read` of a `ui://` URI keeps working, because hosts cache tool lists.
+   * The `N8N_MCP_DISABLE_UI_APPS=true` environment variable overrides `true`.
+   */
+  uiAppsEnabled?: boolean;
+
+  /**
    * Extensible metadata for future use
    * Allows passing additional configuration without interface changes
    */
@@ -54,6 +63,7 @@ const INSTANCE_CONTEXT_KEYS = [
   'n8nMcpAccessToken',
   'instanceId',
   'sessionId',
+  'uiAppsEnabled',
   'metadata'
 ] as const satisfies readonly (keyof InstanceContext)[];
 
@@ -182,10 +192,12 @@ export function isInstanceContext(obj: any): obj is InstanceContext {
   const hasValidSessionId = obj.sessionId === undefined || typeof obj.sessionId === 'string';
   const hasValidMetadata = obj.metadata === undefined ||
     (typeof obj.metadata === 'object' && obj.metadata !== null);
+  const hasValidUiAppsEnabled = obj.uiAppsEnabled === undefined || typeof obj.uiAppsEnabled === 'boolean';
 
   return hasValidUrl && hasValidKey && hasValidTimeout && hasValidRetries &&
          hasValidMcpAccessToken &&
-         hasValidInstanceId && hasValidSessionId && hasValidMetadata;
+         hasValidInstanceId && hasValidSessionId && hasValidMetadata &&
+         hasValidUiAppsEnabled;
 }
 
 /**
@@ -265,6 +277,12 @@ export function validateInstanceContext(context: InstanceContext): {
     } else if (!isFinite(context.n8nApiMaxRetries)) {
       errors.push(`Invalid n8nApiMaxRetries: ${context.n8nApiMaxRetries} - Must be a finite number (not Infinity or NaN)`);
     }
+  }
+
+  // Validate the UI apps switch. No coercion: a string "false" read as true (or the
+  // reverse) would silently invert the caller's choice.
+  if (context.uiAppsEnabled !== undefined && typeof context.uiAppsEnabled !== 'boolean') {
+    errors.push(`Invalid uiAppsEnabled: Must be a boolean, got ${typeof context.uiAppsEnabled}`);
   }
 
   return {

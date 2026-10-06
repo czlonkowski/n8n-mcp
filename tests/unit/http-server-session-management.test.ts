@@ -578,6 +578,63 @@ describe('HTTP Server Session Management', () => {
       expect(mcpServer.instanceContext.n8nMcpAccessToken).toBe('stored-token');
     });
 
+    it('should take uiAppsEnabled from each qualifying request instead of keeping the stored value (#1152)', async () => {
+      mockConsoleManager.wrapOperation.mockImplementation(async (fn: () => Promise<any>) => {
+        return await fn();
+      });
+      process.env.ENABLE_MULTI_TENANT = 'true';
+      process.env.MULTI_TENANT_SESSION_STRATEGY = 'instance';
+      server = new SingleSessionHTTPServer();
+
+      const tenant = {
+        instanceId: 'tenant-a',
+        n8nApiUrl: 'https://a.example.com',
+        n8nApiKey: 'key-a',
+      };
+      const storedContext = { ...tenant, n8nMcpAccessToken: 'stored-token' };
+      const mcpServer: any = { instanceContext: storedContext };
+      (server as any).transports['session-a'] = {
+        handleRequest: vi.fn(async (_req: any, res2: any) => {
+          res2.status(200).json({ jsonrpc: '2.0', result: {}, id: 3 });
+        }),
+        close: vi.fn().mockResolvedValue(undefined)
+      };
+      (server as any).servers['session-a'] = mcpServer;
+      (server as any).sessionMetadata['session-a'] = {
+        lastAccess: new Date(),
+        createdAt: new Date()
+      };
+      (server as any).sessionContexts['session-a'] = storedContext;
+
+      const call = async (instanceContext: any) => {
+        const { req, res } = createMockReqRes();
+        req.method = 'POST';
+        req.headers = { 'mcp-session-id': 'session-a' };
+        req.body = { jsonrpc: '2.0', method: 'tools/list', params: {}, id: 3 };
+        await server.handleRequest(req as any, res as any, instanceContext);
+      };
+
+      await call({ ...tenant, uiAppsEnabled: false });
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+      // Credentials the request omits still stay as stored.
+      expect(mcpServer.instanceContext.n8nMcpAccessToken).toBe('stored-token');
+
+      // A request without the credentials must not change the switch either.
+      await call({ instanceId: 'tenant-a', n8nApiUrl: 'https://a.example.com', uiAppsEnabled: true });
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+
+      // Omitted means "default", not "unchanged": a sticky false could only be
+      // cleared by a caller that knows to send an explicit true.
+      await call({ ...tenant });
+      expect(mcpServer.instanceContext).not.toHaveProperty('uiAppsEnabled');
+      expect((server as any).sessionContexts['session-a']).not.toHaveProperty('uiAppsEnabled');
+      expect(mcpServer.instanceContext.n8nMcpAccessToken).toBe('stored-token');
+
+      await call({ ...tenant, uiAppsEnabled: false });
+      await call({ ...tenant, uiAppsEnabled: true });
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(true);
+    });
+
     it('should keep same-instance sessions alive in instance mode when concurrent sessions are allowed', async () => {
       mockConsoleManager.wrapOperation.mockImplementation(async (fn: () => Promise<any>) => {
         return await fn();

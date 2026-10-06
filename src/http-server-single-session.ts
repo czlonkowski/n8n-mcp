@@ -929,6 +929,9 @@ export class SingleSessionHTTPServer {
             // through initialize, not mutate an existing session. Fields the request omits
             // mean "unchanged" — merging over the stored context keeps a request without
             // e.g. the MCP access token header from clearing a configured token.
+            // uiAppsEnabled is the exception (#1152): it is a per-request preference, not
+            // a credential, so the request's value replaces the stored one and an omitted
+            // value returns the session to the default.
             const storedContext = this.sessionContexts[sessionId];
             if (
               instanceContext.n8nApiUrl &&
@@ -937,8 +940,9 @@ export class SingleSessionHTTPServer {
               storedContext?.instanceId === instanceContext.instanceId &&
               storedContext?.n8nApiUrl === instanceContext.n8nApiUrl
             ) {
+              const { uiAppsEnabled: _storedUiAppsEnabled, ...storedWithoutUiApps } = storedContext;
               await this.switchSessionContext(sessionId, {
-                ...storedContext,
+                ...storedWithoutUiApps,
                 ...pickInstanceContextFields(instanceContext)
               });
             }

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.92.0] - 2026-10-06
+
+### Added
+
+- **Result cards (MCP Apps) can be turned off** (#1152). `N8N_MCP_DISABLE_UI_APPS=true` stops the server from advertising cards for the whole process. Embedders can do the same per request with the new `InstanceContext.uiAppsEnabled: false`; the environment variable wins over `uiAppsEnabled: true`, and unset keeps the previous behaviour. With cards off, tool definitions carry no `_meta.ui` or `_meta['ui/resourceUri']`, tool results carry no `_meta['n8n-mcp/toolName']`, and `resources/list` has no `ui://n8n-mcp/*` entries. Every tool stays available and returns the same text. `resources/read` for a `ui://n8n-mcp/*` URI keeps succeeding, because a host that cached the tool list would otherwise show a card that fails to load. In the `instance` session strategy the value is taken from each request that refreshes the session context, and a request that omits it returns the session to the default. See `docs/mcp-ui-development.md`.
+
+### Fixed
+
+- **`tools/list` no longer writes UI metadata onto the shared tool definitions.** `UIAppRegistry.injectToolMeta` assigned `_meta` on the module-level definitions it was given, so the metadata stayed for the lifetime of the process. It now returns copies of the tools it enriches and leaves its input untouched.
+
 ## [2.91.0] - 2026-10-01
 
 ### Changed
