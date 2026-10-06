@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Docker build stages run on the build host's platform.** The UI and TypeScript build stages of the main image now use `--platform=$BUILDPLATFORM`, so a multi-platform build no longer runs `npm` under emulation for them. Their output is HTML and JavaScript and does not depend on the target platform. The Docker build jobs in CI also have a time limit.
+
 ## [2.92.1] - 2026-10-06
 
 ### Security

@@ -454,6 +454,7 @@ jobs:
   build-docker:
     name: Build and Push Docker Images
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: [detect-version-change, build-and-verify]
     if: needs.detect-version-change.outputs.version-changed == 'true'
     permissions:

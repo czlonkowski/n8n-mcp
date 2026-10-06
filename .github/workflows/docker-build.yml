@@ -50,6 +50,7 @@ jobs:
   build:
     name: Build Docker Image
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -160,6 +161,7 @@ jobs:
   build-railway:
     name: Build Railway Docker Image
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: build
     permissions:
       contents: read

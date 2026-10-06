@@ -2,7 +2,10 @@
 # Ultra-optimized Dockerfile - minimal runtime dependencies (no n8n packages)
 
 # Build the self-contained UI assets independently of server dependencies.
-FROM node:22-alpine AS ui-builder
+# Both build stages run on the build host's own platform: they produce only
+# HTML and JavaScript, which are the same for every target platform, so there is
+# no reason to run npm under emulation for the non-native target.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS ui-builder
 WORKDIR /app/ui-apps
 COPY ui-apps/package.json ui-apps/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
@@ -12,7 +15,7 @@ COPY ui-apps/src/shared ./src/shared
 RUN npm run build
 
 # Server builder (TypeScript compilation only)
-FROM node:22-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
 WORKDIR /app
 
 # Copy tsconfig files for TypeScript compilation
