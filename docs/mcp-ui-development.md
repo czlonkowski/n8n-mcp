@@ -67,11 +67,17 @@ Receipt labels use explicit evidence: `saved` for partial updates, `preview` for
 Cards are advertised by default. Two switches stop that, and both leave every tool available with the same text result:
 
 - `N8N_MCP_DISABLE_UI_APPS=true` applies to the whole process, in stdio and HTTP mode. Only the exact value `true` turns cards off.
-- `InstanceContext.uiAppsEnabled: false` applies to the requests an embedder makes with that context. Unset and `true` both mean the default. The environment variable wins over `uiAppsEnabled: true`. A value that is not a boolean is rejected by `validateInstanceContext`.
+- `InstanceContext.uiAppsEnabled: false` applies to the requests an embedder makes with that context. Unset and `true` both mean the default. The environment variable wins over `uiAppsEnabled: true`.
 
 With cards off the server omits `_meta.ui` and `_meta['ui/resourceUri']` from tool definitions, `_meta['n8n-mcp/toolName']` from tool results, and the `ui://n8n-mcp/*` entries from `resources/list`. `resources/read` for a `ui://n8n-mcp/*` URI keeps succeeding: hosts cache the tool list, and a host holding an older list would otherwise show a card that fails to load. For the same reason a host can keep rendering cards from a cached tool list until it fetches the list again.
 
-In HTTP mode the context switch follows the session context. With `ENABLE_MULTI_TENANT=true` the value is taken from each request that carries the session's full tenant identity (`n8nApiUrl`, `n8nApiKey` and the same `instanceId`); a request that omits `uiAppsEnabled` leaves the session's value unchanged, like every other context field, so send the value on every request and send `true` to turn cards back on. The value is kept when a session is exported and restored. Without multi-tenant mode a session keeps the context it was created with.
+In HTTP mode the context switch follows the session context, so send the value on every request:
+
+- `ENABLE_MULTI_TENANT=true` with the default `instance` session strategy: the value is taken from each request that carries the session's full tenant identity (the same `n8nApiUrl` and `instanceId`, plus `n8nApiKey`). A request that omits `uiAppsEnabled` leaves the session's value unchanged, like every other context field; send `true` to turn cards back on. A request without the full identity does not change it.
+- `MULTI_TENANT_SESSION_STRATEGY=shared`: each request's context replaces the previous one, so an omitted value means the default (cards on).
+- Without multi-tenant mode a session keeps the context it was created with.
+
+A new session takes the value from its `initialize` request, including after a server restart. A request whose `uiAppsEnabled` is not a boolean is answered with HTTP 400.
 
 ## Manual acceptance
 

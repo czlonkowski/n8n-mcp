@@ -623,6 +623,18 @@ describe('HTTP Server Session Management', () => {
       await call({ instanceId: 'tenant-a', n8nApiUrl: 'https://a.example.com', uiAppsEnabled: true });
       expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
 
+      // A non-boolean is refused before it can reach the session: the string "false"
+      // would read as enabled.
+      for (const bad of ['false', 'true', 0, null]) {
+        const { req, res } = createMockReqRes();
+        req.method = 'POST';
+        req.headers = { 'mcp-session-id': 'session-a' };
+        req.body = { jsonrpc: '2.0', method: 'tools/list', params: {}, id: 4 };
+        await server.handleRequest(req as any, res as any, { ...tenant, uiAppsEnabled: bad } as any);
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+      }
+
       // Omitted means "unchanged", as for every other field: a caller that forgets the
       // field on one request must not switch the cards back on.
       await call({ ...tenant });

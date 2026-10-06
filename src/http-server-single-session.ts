@@ -701,6 +701,28 @@ export class SingleSessionHTTPServer {
           }
         }
 
+        // #1152: embedders hand the context over directly, and it may come from untyped
+        // JSON. A non-boolean switch (the string "false") would read as enabled here and
+        // would later make validateInstanceContext reject the whole context, so refuse
+        // it up front instead of storing it on a session.
+        if (instanceContext?.uiAppsEnabled !== undefined && typeof instanceContext.uiAppsEnabled !== 'boolean') {
+          logger.warn('Instance context rejected: uiAppsEnabled must be a boolean', {
+            receivedType: typeof instanceContext.uiAppsEnabled,
+            instanceId: instanceContext.instanceId
+          });
+          if (!res.headersSent) {
+            res.status(400).json({
+              jsonrpc: '2.0',
+              error: {
+                code: -32602,
+                message: 'Invalid instance configuration: uiAppsEnabled must be a boolean'
+              },
+              id: req.body?.id ?? null
+            });
+          }
+          return;
+        }
+
         const sessionId = req.headers['mcp-session-id'] as string | undefined;
         const isInitialize = req.body ? isInitializeRequest(req.body) : false;
 
