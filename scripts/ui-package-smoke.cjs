@@ -13,8 +13,7 @@ for (const config of UI_APP_CONFIGS) {
   assert(entry?.html?.includes('<html'), `Missing UI HTML: ${config.id}`);
   const bytes = Buffer.byteLength(entry.html);
   assert(bytes <= 750_000, `UI resource exceeds 750 kB: ${config.id} (${bytes})`);
-  const tools = config.toolPatterns.map(name => ({ name }));
-  UIAppRegistry.injectToolMeta(tools);
+  const tools = UIAppRegistry.injectToolMeta(config.toolPatterns.map(name => ({ name })));
   for (const tool of tools) {
     assert.equal(tool._meta?.ui?.resourceUri, config.uri, `Missing UI metadata: ${tool.name}`);
     assert.equal(tool._meta?.['ui/resourceUri'], config.uri);
