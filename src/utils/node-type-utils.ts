@@ -179,7 +179,7 @@ export function isTriggerNode(nodeType: string): boolean {
 
   // Check for specific trigger types that don't have 'trigger' in their name
   // (manualTrigger and formTrigger are already caught by the 'trigger' check above)
-  return normalized === 'nodes-base.start';
+  return normalized === 'nodes-base.start' || normalized === 'nodes-base.cron';
 }
 
 /**
