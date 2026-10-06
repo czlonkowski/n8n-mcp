@@ -91,7 +91,7 @@ export class UIAppRegistry {
     if (!this.loaded) return tools;
     return tools.map(tool => {
       const entry = this.toolIndex.get(tool.name);
-      if (!entry || !entry.html) return tool;
+      if (!entry?.html) return tool;
       return {
         ...tool,
         _meta: {

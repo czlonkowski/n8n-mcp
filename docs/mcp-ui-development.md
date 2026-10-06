@@ -71,7 +71,7 @@ Cards are advertised by default. Two switches stop that, and both leave every to
 
 With cards off the server omits `_meta.ui` and `_meta['ui/resourceUri']` from tool definitions, `_meta['n8n-mcp/toolName']` from tool results, and the `ui://n8n-mcp/*` entries from `resources/list`. `resources/read` for a `ui://n8n-mcp/*` URI keeps succeeding: hosts cache the tool list, and a host holding an older list would otherwise show a card that fails to load. For the same reason a host can keep rendering cards from a cached tool list until it fetches the list again.
 
-In HTTP mode the context switch follows the session context. With `ENABLE_MULTI_TENANT=true` the value is taken from each request that carries the session's full tenant identity (`n8nApiUrl`, `n8nApiKey` and the same `instanceId`); a request that omits `uiAppsEnabled` returns the session to the default, so send the value on every request. Without multi-tenant mode a session keeps the context it was created with.
+In HTTP mode the context switch follows the session context. With `ENABLE_MULTI_TENANT=true` the value is taken from each request that carries the session's full tenant identity (`n8nApiUrl`, `n8nApiKey` and the same `instanceId`); a request that omits `uiAppsEnabled` leaves the session's value unchanged, like every other context field, so send the value on every request and send `true` to turn cards back on. The value is kept when a session is exported and restored. Without multi-tenant mode a session keeps the context it was created with.
 
 ## Manual acceptance
 

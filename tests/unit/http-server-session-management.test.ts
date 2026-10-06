@@ -578,7 +578,7 @@ describe('HTTP Server Session Management', () => {
       expect(mcpServer.instanceContext.n8nMcpAccessToken).toBe('stored-token');
     });
 
-    it('should take uiAppsEnabled from each qualifying request instead of keeping the stored value (#1152)', async () => {
+    it('should refresh uiAppsEnabled on a live instance-strategy session (#1152)', async () => {
       mockConsoleManager.wrapOperation.mockImplementation(async (fn: () => Promise<any>) => {
         return await fn();
       });
@@ -623,14 +623,16 @@ describe('HTTP Server Session Management', () => {
       await call({ instanceId: 'tenant-a', n8nApiUrl: 'https://a.example.com', uiAppsEnabled: true });
       expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
 
-      // Omitted means "default", not "unchanged": a sticky false could only be
-      // cleared by a caller that knows to send an explicit true.
+      // Omitted means "unchanged", as for every other field: a caller that forgets the
+      // field on one request must not switch the cards back on.
       await call({ ...tenant });
-      expect(mcpServer.instanceContext).not.toHaveProperty('uiAppsEnabled');
-      expect((server as any).sessionContexts['session-a']).not.toHaveProperty('uiAppsEnabled');
-      expect(mcpServer.instanceContext.n8nMcpAccessToken).toBe('stored-token');
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+      expect((server as any).sessionContexts['session-a'].uiAppsEnabled).toBe(false);
 
-      await call({ ...tenant, uiAppsEnabled: false });
+      // The value travels with the session through export, so a restore keeps it.
+      const exported = server.exportSessionState().find(session => session.sessionId === 'session-a');
+      expect(exported?.context.uiAppsEnabled).toBe(false);
+
       await call({ ...tenant, uiAppsEnabled: true });
       expect(mcpServer.instanceContext.uiAppsEnabled).toBe(true);
     });

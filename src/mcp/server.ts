@@ -863,9 +863,10 @@ export class N8NDocumentationMCPServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
       const isAdditionalTool = this.additionalToolsByName.has(name);
-      const resultMeta = !isAdditionalTool && isUIAppsEnabled(this.instanceContext) && UIAppRegistry.getAppForTool(name)?.html
-        ? { _meta: { 'n8n-mcp/toolName': name } }
-        : {};
+      const hasUIApp = !isAdditionalTool
+        && isUIAppsEnabled(this.instanceContext)
+        && Boolean(UIAppRegistry.getAppForTool(name)?.html);
+      const resultMeta = hasUIApp ? { _meta: { 'n8n-mcp/toolName': name } } : {};
       
       // SECURITY (GHSA-wg4g-395p-mqv3): log metadata only, not raw arg values.
       logger.info('Tool call received', {
