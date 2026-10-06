@@ -2198,6 +2198,10 @@ export class N8NDocumentationMCPServer {
     }
     
     const searchMode = options?.mode || 'OR';
+
+    if (searchMode === 'FUZZY') {
+      return this.searchNodesFuzzy(normalizedQuery, limit, options);
+    }
     
     // Check if FTS5 table exists
     const ftsExists = this.db.prepare(`
@@ -2219,7 +2223,7 @@ export class N8NDocumentationMCPServer {
   private async searchNodesFTS(
     query: string,
     limit: number,
-    mode: 'OR' | 'AND' | 'FUZZY',
+    mode: 'OR' | 'AND',
     options?: {
       includeSource?: boolean;
       includeExamples?: boolean;
@@ -2233,11 +2237,6 @@ export class N8NDocumentationMCPServer {
     const cleanedQuery = query.trim();
     if (!cleanedQuery) {
       return { query, results: [], totalCount: 0 };
-    }
-    
-    // For FUZZY mode, use LIKE search with typo patterns
-    if (mode === 'FUZZY') {
-      return this.searchNodesFuzzy(cleanedQuery, limit, { includeOperations: options?.includeOperations });
     }
     
     let ftsQuery: string;
@@ -2416,7 +2415,7 @@ export class N8NDocumentationMCPServer {
         logger.warn(`FTS5 syntax error for query "${query}" in mode ${mode}`);
         
         // For problematic queries, use LIKE search with mode info
-        const likeResult = await this.searchNodesLIKE(query, limit);
+        const likeResult = await this.searchNodesLIKE(query, limit, options);
 
         // Track search query telemetry for fallback
         telemetry.trackSearchQuery(query, likeResult.results?.length ?? 0, `${mode}_LIKE_FALLBACK`);
@@ -2427,7 +2426,7 @@ export class N8NDocumentationMCPServer {
         };
       }
       
-      return this.searchNodesLIKE(query, limit);
+      return this.searchNodesLIKE(query, limit, options);
     }
   }
   
@@ -2435,7 +2434,9 @@ export class N8NDocumentationMCPServer {
     query: string,
     limit: number,
     options?: {
+      includeExamples?: boolean;
       includeOperations?: boolean;
+      source?: 'all' | 'core' | 'community' | 'verified';
     }
   ): Promise<any> {
     if (!this.db) throw new Error('Database not initialized');
@@ -2447,10 +2448,23 @@ export class N8NDocumentationMCPServer {
       return { query, results: [], totalCount: 0, mode: 'FUZZY' };
     }
     
-    // For fuzzy search, get ALL nodes to ensure we don't miss potential matches
+    let sourceFilter = '';
+    switch (options?.source || 'all') {
+      case 'core':
+        sourceFilter = 'WHERE is_community = 0';
+        break;
+      case 'community':
+        sourceFilter = 'WHERE is_community = 1';
+        break;
+      case 'verified':
+        sourceFilter = 'WHERE is_community = 1 AND is_verified = 1';
+        break;
+    }
+
+    // For fuzzy search, get all source-matching nodes before scoring.
     // We'll limit results after scoring
     const candidateNodes = this.db!.prepare(`
-      SELECT * FROM nodes
+      SELECT * FROM nodes ${sourceFilter}
     `).all() as NodeRow[];
     
     // Calculate fuzzy scores for candidate nodes
@@ -2475,7 +2489,7 @@ export class N8NDocumentationMCPServer {
         topScores.map(s => ({ name: s.node.display_name, score: s.score })));
     }
     
-    return {
+    const result: any = {
       query,
       mode: 'FUZZY',
       results: matchingNodes.map(node => {
@@ -2487,6 +2501,17 @@ export class N8NDocumentationMCPServer {
           category: node.category,
           package: node.package_name
         };
+
+        if ((node as any).is_community === 1) {
+          nodeResult.isCommunity = true;
+          nodeResult.isVerified = (node as any).is_verified === 1;
+          if ((node as any).author_name) {
+            nodeResult.authorName = (node as any).author_name;
+          }
+          if ((node as any).npm_downloads) {
+            nodeResult.npmDownloads = (node as any).npm_downloads;
+          }
+        }
 
         // Add operations tree if requested
         if (options?.includeOperations) {
@@ -2500,6 +2525,32 @@ export class N8NDocumentationMCPServer {
       }),
       totalCount: matchingNodes.length
     };
+
+    if (options?.includeExamples) {
+      for (const nodeResult of result.results) {
+        try {
+          const examples = this.db!.prepare(`
+            SELECT parameters_json, template_name, template_views
+            FROM template_node_configs
+            WHERE node_type = ?
+            ORDER BY rank
+            LIMIT 2
+          `).all(nodeResult.workflowNodeType) as any[];
+
+          if (examples.length > 0) {
+            nodeResult.examples = examples.map((example: any) => ({
+              configuration: JSON.parse(example.parameters_json),
+              template: example.template_name,
+              views: example.template_views
+            }));
+          }
+        } catch (error: any) {
+          logger.warn(`Failed to fetch examples for ${nodeResult.nodeType}:`, error.message);
+        }
+      }
+    }
+
+    return result;
   }
   
   private calculateFuzzyScore(node: NodeRow, query: string): number {
@@ -2604,6 +2655,7 @@ export class N8NDocumentationMCPServer {
       includeExamples?: boolean;
       includeOperations?: boolean;
       source?: 'all' | 'core' | 'community' | 'verified';
+      mode?: 'OR' | 'AND';
     }
   ): Promise<any> {
     if (!this.db) throw new Error('Database not initialized');
@@ -2632,8 +2684,19 @@ export class N8NDocumentationMCPServer {
         SELECT * FROM nodes
         WHERE (node_type LIKE ? OR display_name LIKE ? OR description LIKE ?)
         ${sourceFilter}
+        ORDER BY
+          CASE
+            WHEN LOWER(display_name) = LOWER(?) THEN 0
+            WHEN LOWER(display_name) LIKE LOWER(?) THEN 1
+            WHEN LOWER(node_type) LIKE LOWER(?) THEN 2
+            ELSE 3
+          END,
+          display_name
         LIMIT ?
-      `).all(`%${exactPhrase}%`, `%${exactPhrase}%`, `%${exactPhrase}%`, limit * 3) as NodeRow[];
+      `).all(
+        `%${exactPhrase}%`, `%${exactPhrase}%`, `%${exactPhrase}%`,
+        exactPhrase, `${exactPhrase}%`, `%${exactPhrase}%`, limit * 3
+      ) as NodeRow[];
 
       // Apply relevance ranking for exact phrase search
       const rankedNodes = this.rankSearchResults(nodes, exactPhrase, limit);
@@ -2714,18 +2777,28 @@ export class N8NDocumentationMCPServer {
     }
     
     // Build conditions for each word
+    const wordOperator = options?.mode === 'AND' ? ' AND ' : ' OR ';
     const conditions = words.map(() => 
       '(node_type LIKE ? OR display_name LIKE ? OR description LIKE ?)'
-    ).join(' OR ');
+    ).join(wordOperator);
     
     const params: any[] = words.flatMap(w => [`%${w}%`, `%${w}%`, `%${w}%`]);
     // Fetch more results initially to ensure we get the best matches after ranking
+    params.push(query, `${query}%`, `%${query}%`);
     params.push(limit * 3);
     
     const nodes = this.db!.prepare(`
       SELECT DISTINCT * FROM nodes
       WHERE (${conditions})
       ${sourceFilter}
+      ORDER BY
+        CASE
+          WHEN LOWER(display_name) = LOWER(?) THEN 0
+          WHEN LOWER(display_name) LIKE LOWER(?) THEN 1
+          WHEN LOWER(node_type) LIKE LOWER(?) THEN 2
+          ELSE 3
+        END,
+        display_name
       LIMIT ?
     `).all(...params) as NodeRow[];
     
@@ -4329,7 +4402,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
       transportType: transport.constructor.name 
     });
   }
-  
+
   // Template-related methods
   private async listTemplates(limit: number = 10, offset: number = 0, sortBy: 'views' | 'created_at' | 'name' = 'views', includeMetadata: boolean = false): Promise<any> {
     await this.ensureInitialized();

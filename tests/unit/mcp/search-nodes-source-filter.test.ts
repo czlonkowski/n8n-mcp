@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { N8NDocumentationMCPServer } from '../../../src/mcp/server';
 
 /**
  * Tests for MCP server search_nodes source filtering functionality.
@@ -468,6 +469,149 @@ describe('MCP Server - search_nodes source filter', () => {
 
       expect(query).not.toContain('is_community');
       expect(query).not.toContain('is_verified');
+    });
+  });
+
+  describe('search_nodes server behavior', () => {
+    let server: N8NDocumentationMCPServer;
+    let previousDbPath: string | undefined;
+
+    beforeEach(async () => {
+      previousDbPath = process.env.NODE_DB_PATH;
+      process.env.NODE_DB_PATH = ':memory:';
+      server = new N8NDocumentationMCPServer();
+      await (server as any).initialized;
+
+      const db = (server as any).db;
+      const insertNode = db.prepare(`
+        INSERT INTO nodes (
+          node_type, package_name, display_name, description, category,
+          is_community, is_verified, operations
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (let index = 0; index < 5; index++) {
+        insertNode.run(
+          `n8n-nodes-test.community${index}`,
+          'n8n-nodes-test',
+          `Community Operation ${index}`,
+          'Runs an operation in a third-party service',
+          'Community',
+          1,
+          0,
+          '[]'
+        );
+      }
+
+      insertNode.run(
+        'nodes-base.noOp',
+        'n8n-nodes-base',
+        'No Operation, do nothing',
+        'A core node that does nothing',
+        'Core',
+        0,
+        0,
+        '[]'
+      );
+      insertNode.run(
+        'nodes-base.webhook',
+        'n8n-nodes-base',
+        'Webhook',
+        'Starts a workflow from a webhook request',
+        'Core',
+        0,
+        0,
+        '[]'
+      );
+      insertNode.run(
+        'n8n-nodes-test.webhook',
+        'n8n-nodes-test',
+        'Webhook Community',
+        'Starts a workflow from a webhook request',
+        'Community',
+        1,
+        0,
+        '[]'
+      );
+    });
+
+    afterEach(() => {
+      if (previousDbPath === undefined) {
+        delete process.env.NODE_DB_PATH;
+      } else {
+        process.env.NODE_DB_PATH = previousDbPath;
+      }
+    });
+
+    it('ranks an exact core node name ahead of incidental OR matches', async () => {
+      const result = await (server as any).searchNodes('No Operation', 1, {});
+
+      expect(result.results[0].nodeType).toBe('nodes-base.noOp');
+    });
+
+    it('preserves AND semantics when FTS is unavailable', async () => {
+      const result = await (server as any).searchNodes('webhook operation', 20, {
+        mode: 'AND',
+        source: 'core'
+      });
+
+      expect(result.results).toHaveLength(0);
+    });
+
+    it('applies the source filter in fuzzy mode', async () => {
+      const result = await (server as any).searchNodes('webhook', 20, {
+        mode: 'FUZZY',
+        source: 'core'
+      });
+
+      expect(result.mode).toBe('FUZZY');
+      expect(result.results.length).toBeGreaterThan(0);
+      expect(result.results.every((node: any) => node.package === 'n8n-nodes-base')).toBe(true);
+    });
+
+    it('returns community metadata and examples in fuzzy mode', async () => {
+      const db = (server as any).db;
+      const originalPrepare = db.prepare.bind(db);
+      db.prepare = vi.fn((query: string) => {
+        if (query.includes('template_node_configs')) {
+          return {
+            all: vi.fn(() => [{
+              parameters_json: JSON.stringify({ path: 'webhook' }),
+              template_name: 'Webhook example',
+              template_views: 10
+            }])
+          };
+        }
+        return originalPrepare(query);
+      });
+
+      const result = await (server as any).searchNodes('webhook', 20, {
+        mode: 'FUZZY',
+        source: 'community',
+        includeExamples: true
+      });
+
+      expect(result.results.length).toBeGreaterThan(0);
+      expect(result.results.every((node: any) => node.isCommunity === true)).toBe(true);
+      expect(result.results[0].examples[0].template).toBe('Webhook example');
+    });
+
+    it('preserves the core source filter after an FTS syntax error', async () => {
+      const db = (server as any).db;
+      db.exec(`
+        CREATE VIRTUAL TABLE nodes_fts USING fts5(
+          node_type, display_name, description, documentation, operations
+        )
+      `);
+      db.exec(`
+        INSERT INTO nodes_fts(rowid, node_type, display_name, description, operations)
+        SELECT rowid, node_type, display_name, description, operations FROM nodes
+      `);
+
+      const result = await (server as any).searchNodes('webhook OR', 20, { source: 'core' });
+
+      expect(result.results.length).toBeGreaterThan(0);
+      expect(result.results.every((node: any) => node.package === 'n8n-nodes-base')).toBe(true);
     });
   });
 });
