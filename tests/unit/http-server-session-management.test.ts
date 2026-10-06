@@ -647,6 +647,15 @@ describe('HTTP Server Session Management', () => {
 
       await call({ ...tenant, uiAppsEnabled: true });
       expect(mcpServer.instanceContext.uiAppsEnabled).toBe(true);
+
+      // Requests that overlap on one session each apply their own context; the later
+      // one must not be dropped because a switch was already in progress.
+      await Promise.all([
+        (server as any).switchSessionContext('session-a', { ...tenant, uiAppsEnabled: true }),
+        (server as any).switchSessionContext('session-a', { ...tenant, uiAppsEnabled: false })
+      ]);
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+      expect((server as any).contextSwitchLocks.size).toBe(0);
     });
 
     it('should keep same-instance sessions alive in instance mode when concurrent sessions are allowed', async () => {

@@ -509,12 +509,13 @@ export class SingleSessionHTTPServer {
    * Switch session context with locking to prevent race conditions
    */
   private async switchSessionContext(sessionId: string, newContext: InstanceContext): Promise<void> {
-    // Check if there's already a switch in progress for this session
-    const existingLock = this.contextSwitchLocks.get(sessionId);
-    if (existingLock) {
-      // Wait for the existing switch to complete
-      await existingLock;
-      return;
+    // Wait for any switch already in progress for this session, then apply this
+    // request's context as well. Returning after the wait would drop it, leaving the
+    // session on the context of whichever request got there first.
+    let existingLock = this.contextSwitchLocks.get(sessionId);
+    while (existingLock) {
+      await existingLock.catch(() => undefined);
+      existingLock = this.contextSwitchLocks.get(sessionId);
     }
 
     // Create a promise for this switch operation
