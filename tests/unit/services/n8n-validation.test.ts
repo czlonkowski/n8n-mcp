@@ -1513,20 +1513,22 @@ describe('n8n-validation', () => {
         { label: 'a null branch', main: [null] },
         { label: 'an empty branch', main: [[]] },
       ])('reports both nodes as disconnected when each source key has $label and no target', ({ main }) => {
+        const warnings: string[] = [];
         const errors = validateWorkflowStructure({
           name: 'Two isolated nodes',
           nodes: twoNodes(),
           connections: { Start: { main }, B: { main } },
-        } as unknown as Partial<Workflow>);
+        } as unknown as Partial<Workflow>, warnings);
 
-        expect(errors).toHaveLength(1);
-        expect(errors[0]).toContain('Disconnected nodes detected');
-        expect(errors[0]).toContain('"Start"');
-        expect(errors[0]).toContain('"B"');
+        expect(errors).toEqual([]);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('Disconnected nodes detected');
+        expect(warnings[0]).toContain('"Start"');
+        expect(warnings[0]).toContain('"B"');
 
         // With nothing connected, the suggested source falls back to some other node in the
         // workflow, not the disconnected node itself - a self-loop is not a useful fix (#1101).
-        const suggestion = errors[0].match(/source: '([^']+)', target: '([^']+)'/);
+        const suggestion = warnings[0].match(/source: '([^']+)', target: '([^']+)'/);
         expect(suggestion).toBeTruthy();
         const [, source, target] = suggestion!;
         expect(source).not.toBe(target);
@@ -1726,8 +1728,10 @@ describe('n8n-validation', () => {
         connections: {},
       };
 
-      const errors = validateWorkflowStructure(workflow);
-      expect(errors.some(e => e.includes('Multi-node workflow has no connections between nodes'))).toBe(true);
+      const warnings: string[] = [];
+      const errors = validateWorkflowStructure(workflow, warnings);
+      expect(errors).toEqual([]);
+      expect(warnings.some(w => w.includes('Multi-node workflow has no connections between nodes'))).toBe(true);
     });
 
     it('should validate node type format - missing package prefix', () => {
@@ -2286,8 +2290,10 @@ describe('n8n-validation', () => {
           },
         };
 
-        const errors = validateWorkflowStructure(workflow);
-        const disconnectedErrors = errors.filter(e => e.includes('Disconnected'));
+        const warnings: string[] = [];
+        const errors = validateWorkflowStructure(workflow, warnings);
+        expect(errors).toEqual([]);
+        const disconnectedErrors = warnings.filter(w => w.includes('Disconnected'));
         expect(disconnectedErrors.length).toBeGreaterThan(0);
         expect(disconnectedErrors[0]).toContain('Disconnected Set');
       });
@@ -3065,10 +3071,11 @@ describe('n8n-validation', () => {
           connections: {}
         };
 
-        const errors = validateWorkflowStructure(workflow);
+        const warnings: string[] = [];
+        const errors = validateWorkflowStructure(workflow, warnings);
 
-        expect(errors.length).toBeGreaterThan(0);
-        const disconnectedError = errors.find(e => e.includes('Disconnected'));
+        expect(errors).toEqual([]);
+        const disconnectedError = warnings.find(w => w.includes('Disconnected'));
         expect(disconnectedError).toBeDefined();
         expect(disconnectedError).toContain('Disconnected HTTP');
         expect(disconnectedError).not.toContain('Sticky Note');
@@ -3122,10 +3129,11 @@ describe('n8n-validation', () => {
           connections: {}
         };
 
-        const errors = validateWorkflowStructure(workflow);
+        const warnings: string[] = [];
+        const errors = validateWorkflowStructure(workflow, warnings);
 
-        expect(errors.length).toBeGreaterThan(0);
-        const connectionError = errors.find(e => e.includes('no connections') || e.includes('Disconnected'));
+        expect(errors).toEqual([]);
+        const connectionError = warnings.find(w => w.includes('no connections') || w.includes('Disconnected'));
         expect(connectionError).toBeDefined();
         expect(connectionError).not.toContain('Note 1');
         expect(connectionError).not.toContain('Note 2');
@@ -3175,10 +3183,11 @@ describe('n8n-validation', () => {
           }
         };
 
-        const errors = validateWorkflowStructure(workflow);
+        const warnings: string[] = [];
+        const errors = validateWorkflowStructure(workflow, warnings);
 
-        expect(errors.length).toBeGreaterThan(0);
-        const disconnectedError = errors.find(e => e.includes('Disconnected'));
+        expect(errors).toEqual([]);
+        const disconnectedError = warnings.find(w => w.includes('Disconnected'));
         expect(disconnectedError).toBeDefined();
         expect(disconnectedError).toContain('Disconnected Set');
         expect(disconnectedError).not.toContain('Connected HTTP');
@@ -3333,7 +3342,24 @@ describe('n8n-validation', () => {
     });
   });
   describe('disconnected-node suggestion (#1101)', () => {
+    it('reports parked executable nodes through warnings without blocking a valid graph', () => {
+      const warnings: string[] = [];
+      const errors = validateWorkflowStructure({
+        name: 'Parked node',
+        nodes: [
+          { id: '1', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} },
+          { id: '2', name: 'Process', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [100, 0], parameters: {} },
+          { id: '3', name: 'Parked', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [200, 0], parameters: {}, disabled: true },
+        ],
+        connections: { Start: { main: [[{ node: 'Process', type: 'main', index: 0 }]] } },
+      } as Partial<Workflow>, warnings);
+
+      expect(errors).toEqual([]);
+      expect(warnings).toEqual([expect.stringContaining('Parked')]);
+    });
+
     it('never proposes a sticky note or a self-loop as the source', () => {
+      const warnings: string[] = [];
       const errors = validateWorkflowStructure({
         name: 'Orphans with a note',
         nodes: [
@@ -3342,12 +3368,14 @@ describe('n8n-validation', () => {
           { id: '3', name: 'Note', type: 'n8n-nodes-base.stickyNote', typeVersion: 1, position: [0, 0], parameters: {} },
         ],
         connections: { A: { main: [[]] }, B: { main: [null] } },
-      } as unknown as Partial<Workflow>);
-      const suggestion = errors.find(e => e.includes('Disconnected nodes'));
+      } as unknown as Partial<Workflow>, warnings);
+      expect(errors).toEqual([]);
+      const suggestion = warnings.find(w => w.includes('Disconnected nodes'));
       expect(suggestion).toContain("source: 'B', target: 'A'");
     });
 
     it('omits the hint when the only other node is a sticky note', () => {
+      const warnings: string[] = [];
       const errors = validateWorkflowStructure({
         name: 'Lone node with a note',
         nodes: [
@@ -3355,8 +3383,9 @@ describe('n8n-validation', () => {
           { id: '3', name: 'Note', type: 'n8n-nodes-base.stickyNote', typeVersion: 1, position: [0, 0], parameters: {} },
         ],
         connections: { A: { main: [[]] } },
-      } as unknown as Partial<Workflow>);
-      const message = errors.find(e => e.includes('Disconnected nodes'));
+      } as unknown as Partial<Workflow>, warnings);
+      expect(errors).toEqual([]);
+      const message = warnings.find(w => w.includes('Disconnected nodes'));
       expect(message).toBeDefined();
       expect(message).not.toContain('addConnection');
     });

@@ -60,6 +60,8 @@ export const n8nUpdatePartialWorkflowDoc: ToolDocumentation = {
 
 n8n validates canvas groups on every write, including writes that have nothing to do with grouping. Groups are therefore reconciled automatically: members a diff deleted are pruned, a group left with no members is removed, and a group n8n refuses is ungrouped so the edit still lands. Every adjustment appears in \`details.warnings\`; nodes and connections are never altered to save a group.
 
+Disconnected executable nodes and multi-node workflows without connections can be saved. The response reports these graph findings in \`details.warnings\`; invalid connection references remain blocking errors.
+
 ### Workflow Activation Operations (2 types):
 - **activateWorkflow**: Activate the workflow to enable automatic execution via triggers
 - **deactivateWorkflow**: Deactivate the workflow to prevent automatic execution

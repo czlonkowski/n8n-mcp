@@ -26,7 +26,7 @@ export const n8nCreateWorkflowDoc: ToolDocumentation = {
       projectId: { type: 'string', description: 'Optional project to create the workflow in (enterprise feature). Defaults to the personal project.' },
       parentFolderId: { type: 'string', description: 'Optional folder to place the workflow in (n8n 2.32+; rejected with a 400 on older instances). Omit for the project root. Manage folders with n8n_manage_folders.' }
     },
-    returns: 'Minimal summary (id, name, active, nodeCount) for token efficiency. Use n8n_get_workflow with mode "structure" to verify current state if needed.',
+    returns: 'Minimal summary (id, name, active, nodeCount) for token efficiency. Disconnected executable nodes are allowed and reported in details.warnings. Use n8n_get_workflow with mode "structure" to verify current state if needed.',
     examples: [
       `// Basic webhook to Slack workflow
 n8n_create_workflow({

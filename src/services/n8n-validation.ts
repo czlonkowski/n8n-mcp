@@ -308,7 +308,7 @@ function describeParseFailure(error: unknown): string {
 }
 
 // Validate workflow structure
-export function validateWorkflowStructure(workflow: Partial<Workflow>): string[] {
+export function validateWorkflowStructure(workflow: Partial<Workflow>, warnings: string[] = []): string[] {
   const errors: string[] = [];
 
   // Check required fields
@@ -389,7 +389,7 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
     // First check: workflow has no connections at all (only check if there are multiple executable nodes)
     if (connectionCount === 0 && executableNodes.length > 1) {
       const nodeNames = executableNodes.slice(0, 2).map(n => n.name);
-      errors.push(`Multi-node workflow has no connections between nodes. Add a connection using: {type: 'addConnection', source: '${nodeNames[0]}', target: '${nodeNames[1]}', sourcePort: 'main', targetPort: 'main'}`);
+      warnings.push(`Multi-node workflow has no connections between nodes. Add a connection using: {type: 'addConnection', source: '${nodeNames[0]}', target: '${nodeNames[1]}', sourcePort: 'main', targetPort: 'main'}`);
     } else if (connectionCount > 0 || executableNodes.length > 1) {
       // Second check: detect disconnected nodes (nodes with no incoming or outgoing connections)
       const connectedNodes = new Set<string>();
@@ -449,7 +449,7 @@ export function validateWorkflowStructure(workflow: Partial<Workflow>): string[]
           ? ` Add a connection: {type: 'addConnection', source: '${suggestedSource}', target: '${firstDisconnected.name}', sourcePort: 'main', targetPort: 'main'}`
           : '';
 
-        errors.push(`Disconnected nodes detected: ${disconnectedList}. Each node must have at least one connection.${hint}`);
+        warnings.push(`Disconnected nodes detected: ${disconnectedList}. These nodes will not run through the connected flow. Connect them if they should run.${hint}`);
       }
     }
   }

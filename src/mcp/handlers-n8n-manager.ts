@@ -657,7 +657,8 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
     }
 
     // Validate workflow structure (n8n API expects FULL form: n8n-nodes-base.*)
-    const errors = validateWorkflowStructure(input);
+    const structureWarnings: string[] = [];
+    const errors = validateWorkflowStructure(input, structureWarnings);
     if (errors.length > 0) {
       // Track validation failure
       telemetry.trackWorkflowCreation(input, false);
@@ -707,7 +708,9 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
         nodeCount: workflow.nodes?.length || 0
       },
       message: `Workflow "${workflow.name}" created successfully with ID: ${workflow.id}. Use n8n_get_workflow with mode 'structure' to verify current state.`,
-      ...(groupWarnings.length > 0 ? { details: { warnings: groupWarnings } } : {})
+      ...(structureWarnings.length + groupWarnings.length > 0
+        ? { details: { warnings: [...structureWarnings, ...groupWarnings] } }
+        : {})
     };
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -1187,6 +1190,7 @@ export async function handleUpdateWorkflow(
     }
     attemptedWorkflow = fullWorkflow;
 
+    const structureWarnings: string[] = [];
     // Backup + structure validation when the graph or its grouping changed.
     if (updateData.nodes || updateData.connections || nodeGroupsUpdate !== undefined) {
       // Create backup before modifying workflow (default: true)
@@ -1213,7 +1217,7 @@ export async function handleUpdateWorkflow(
       }
 
       // Validate workflow structure (n8n API expects FULL form: n8n-nodes-base.*)
-      const errors = validateWorkflowStructure(fullWorkflow);
+      const errors = validateWorkflowStructure(fullWorkflow, structureWarnings);
       if (errors.length > 0) {
         return {
           success: false,
@@ -1257,7 +1261,9 @@ export async function handleUpdateWorkflow(
         nodeCount: workflow.nodes?.length || 0
       },
       message: `Workflow "${workflow.name}" updated successfully. Use n8n_get_workflow with mode 'structure' to verify current state.`,
-      ...(groupWarnings.length > 0 ? { details: { warnings: groupWarnings } } : {})
+      ...(structureWarnings.length + groupWarnings.length > 0
+        ? { details: { warnings: [...structureWarnings, ...groupWarnings] } }
+        : {})
     };
   } catch (error) {
     // Track failed mutation

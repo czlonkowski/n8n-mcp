@@ -1094,11 +1094,11 @@ describe('Integration: handleUpdatePartialWorkflow', () => {
       expect(updated.nodes.find((n: any) => n.name === 'Process Data')).toBeDefined();
     });
 
-    it('should reject adding node without connecting it (disconnected node)', async () => {
+    it('should save a disconnected node and report a warning', async () => {
       // Create workflow with 2 connected nodes
       const workflow = {
         ...SIMPLE_HTTP_WORKFLOW,
-        name: createTestWorkflowName('Partial - Reject Disconnected Node'),
+        name: createTestWorkflowName('Partial - Save Disconnected Node'),
         tags: ['mcp-integration-test']
       };
 
@@ -1107,7 +1107,7 @@ describe('Integration: handleUpdatePartialWorkflow', () => {
       if (!created.id) throw new Error('Workflow ID is missing');
       context.trackWorkflow(created.id);
 
-      // Try to add a third node WITHOUT connecting it - should be rejected
+      // Add a third node without connecting it.
       const response = await handleUpdatePartialWorkflow(
         {
           id: created.id,
@@ -1133,14 +1133,13 @@ describe('Integration: handleUpdatePartialWorkflow', () => {
         mcpContext
       );
 
-      // Should fail validation - disconnected node detected
-      expect(response.success).toBe(false);
-      expect(response.error).toContain('Workflow validation failed');
-      expect(response.details?.errors).toBeDefined();
-      expect(Array.isArray(response.details?.errors)).toBe(true);
-      const errorMessage = (response.details?.errors as string[])[0];
-      expect(errorMessage).toContain('Disconnected nodes detected');
-      expect(errorMessage).toContain('Disconnected Set');
+      expect(response.success).toBe(true);
+      expect(response.saved).toBe(true);
+      expect(response.details?.warnings).toEqual(expect.arrayContaining([
+        expect.objectContaining({ operation: -1, message: expect.stringContaining('Disconnected Set') }),
+      ]));
+      const updated = await client.getWorkflow(created.id);
+      expect(updated.nodes.some(node => node.name === 'Disconnected Set')).toBe(true);
     });
   });
 });

@@ -303,8 +303,9 @@ export async function handleUpdatePartialWorkflow(
     // n8n API behavior with edge case workflows by setting SKIP_WORKFLOW_VALIDATION=true.
     // When skipping, both paths treat the workflow as valid so they continue to agree.
     const skipValidation = process.env.SKIP_WORKFLOW_VALIDATION === 'true';
+    const structureWarnings: string[] = [];
     const structureErrors = !skipValidation && diffResult.workflow
-      ? validateWorkflowStructure(diffResult.workflow)
+      ? validateWorkflowStructure(diffResult.workflow, structureWarnings)
       : [];
 
     // If validateOnly, return the same structural-validity verdict the apply path would.
@@ -321,7 +322,9 @@ export async function handleUpdatePartialWorkflow(
           ...(structureErrors.length > 0 ? { structureErrors } : {})
         },
         details: {
-          warnings: diffResult.warnings
+          warnings: structureWarnings.length > 0
+            ? mergeWarnings(diffResult.warnings, structureWarnings)
+            : diffResult.warnings
         }
       };
     }
@@ -878,7 +881,7 @@ export async function handleUpdatePartialWorkflow(
           applied: diffResult.applied,
           failed: diffResult.failed,
           errors: diffResult.errors,
-          warnings: mergeWarnings(diffResult.warnings, [...tagWarnings, ...groupWarnings])
+          warnings: mergeWarnings(diffResult.warnings, [...structureWarnings, ...tagWarnings, ...groupWarnings])
         }
       };
     } catch (error) {

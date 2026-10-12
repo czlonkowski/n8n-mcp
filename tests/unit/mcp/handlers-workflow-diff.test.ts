@@ -112,6 +112,53 @@ describe('handlers-workflow-diff', () => {
   });
 
   describe('handleUpdatePartialWorkflow', () => {
+    it.each([false, true])('saves a hostname edit with an existing disconnected node (disabled=%s)', async (disabled) => {
+      const actual = await vi.importActual<typeof import('@/services/workflow-diff-engine')>(
+        '@/services/workflow-diff-engine'
+      );
+      vi.mocked(WorkflowDiffEngine).mockImplementation(() => new actual.WorkflowDiffEngine());
+      const current = createTestWorkflow({ active: false });
+      current.nodes.push({
+        id: 'parked', name: 'Parked HTTP Request', type: 'n8n-nodes-base.httpRequest',
+        typeVersion: 3, position: [500, 100], parameters: {}, disabled,
+      } as any);
+      mockApiClient.getWorkflow.mockResolvedValue(current);
+      mockApiClient.updateWorkflow.mockImplementation(async (_id: string, workflow: any) => workflow);
+
+      const validation = await handleUpdatePartialWorkflow({
+        id: current.id,
+        operations: [{
+          type: 'updateNode', nodeId: 'node2',
+          updates: { 'parameters.url': 'https://new.example.com' },
+        }],
+        validateOnly: true,
+      }, mockRepository);
+      expect(validation.data).toMatchObject({ valid: true });
+      expect(validation.details?.warnings).toEqual(expect.arrayContaining([
+        expect.objectContaining({ operation: -1, message: expect.stringContaining('Parked HTTP Request') }),
+      ]));
+      expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
+
+      const result = await handleUpdatePartialWorkflow({
+        id: current.id,
+        operations: [{
+          type: 'updateNode', nodeId: 'node2',
+          updates: { 'parameters.url': 'https://new.example.com' },
+        }],
+      }, mockRepository);
+
+      expect(result.success).toBe(true);
+      expect(result.saved).toBe(true);
+      expect(result.details?.warnings).toEqual(expect.arrayContaining([
+        expect.objectContaining({ operation: -1, message: expect.stringContaining('Parked HTTP Request') }),
+      ]));
+      const saved = mockApiClient.updateWorkflow.mock.calls[0][1];
+      expect(saved.nodes[1].parameters.url).toBe('https://new.example.com');
+      expect(saved.nodes[2]).toEqual(current.nodes[2]);
+      expect(saved.connections).toEqual(current.connections);
+      expect(current.nodes[1].parameters.url).toBe('https://api.test.com');
+    });
+
     it('should apply diff operations successfully', async () => {
       const testWorkflow = createTestWorkflow();
       const updatedWorkflow = {
@@ -753,6 +800,14 @@ describe('handlers-workflow-diff', () => {
       const data = result.data as { valid: boolean; structureErrors?: string[] };
       expect(data.valid).toBe(false);
       expect(data.structureErrors).toBeDefined();
+      expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
+
+      const saveResult = await handleUpdatePartialWorkflow({
+        id: 'test-workflow-id',
+        operations: [{ type: 'updateName', name: 'Anything' }],
+      }, mockRepository);
+      expect(saveResult.success).toBe(false);
+      expect(saveResult.saved).toBe(false);
       expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
     });
 

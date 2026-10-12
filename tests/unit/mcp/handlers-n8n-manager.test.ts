@@ -399,6 +399,25 @@ describe('handlers-n8n-manager', () => {
         expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input, expect.any(Object));
       });
 
+      it('creates a workflow with a parked executable node and reports a warning', async () => {
+        const input = {
+          name: 'Workflow with parked node',
+          nodes: [
+            { ...validNode, id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger' },
+            { ...validNode, name: 'Process Data' },
+            { ...validNode, id: '3', name: 'Parked Node', disabled: true },
+          ],
+          connections: { 'Manual Trigger': { main: [[{ node: 'Process Data', type: 'main', index: 0 }]] } },
+        };
+        mockApiClient.createWorkflow.mockResolvedValue({ ...input, id: 'created-id', active: false });
+
+        const result = await handlers.handleCreateWorkflow(input);
+
+        expect(result.success).toBe(true);
+        expect(result.details?.warnings).toEqual([expect.stringContaining('Parked Node')]);
+        expect(mockApiClient.createWorkflow).toHaveBeenCalledOnce();
+      });
+
       // The same class one level down (#1094): the graph traversal walked these before the
       // connection schema parsed them, so a null source entry threw out of the validator.
       it.each([
@@ -458,7 +477,7 @@ describe('handlers-n8n-manager', () => {
 
       // Should send input as-is to API (n8n expects FULL form: n8n-nodes-base.*)
       expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input, expect.objectContaining({ onWarning: expect.any(Function) }));
-      expect(n8nValidation.validateWorkflowStructure).toHaveBeenCalledWith(input);
+      expect(n8nValidation.validateWorkflowStructure).toHaveBeenCalledWith(input, []);
     });
 
     it('should forward settings keys outside the typed schema, such as availableInMCP (issue #1026)', async () => {
@@ -606,7 +625,7 @@ describe('handlers-n8n-manager', () => {
       const result = await handlers.handleCreateWorkflow(input);
 
       expect(result.success).toBe(true);
-      expect(n8nValidation.validateWorkflowStructure).toHaveBeenCalledWith(normalizedInput);
+      expect(n8nValidation.validateWorkflowStructure).toHaveBeenCalledWith(normalizedInput, []);
       expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(normalizedInput, expect.objectContaining({ onWarning: expect.any(Function) }));
     });
 
@@ -2355,6 +2374,30 @@ describe('handlers-n8n-manager', () => {
         expect.stringContaining('Invalid node at index 1:'),
       ]));
       expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('saves a node edit with an existing parked node and reports a warning', async () => {
+      const current = createTestWorkflow({
+        id: 'wf-1',
+        nodes: [
+          { id: '1', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} },
+          { id: '2', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', typeVersion: 3, position: [100, 0], parameters: { url: 'https://old.example.com' } },
+          { id: '3', name: 'Parked Node', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [200, 0], parameters: {}, disabled: true },
+        ],
+        connections: { Start: { main: [[{ node: 'HTTP Request', type: 'main', index: 0 }]] } },
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(current);
+      mockApiClient.updateWorkflow.mockResolvedValue(current);
+      const nodes = current.nodes.map(node => node.id === '2'
+        ? { ...node, parameters: { url: 'https://new.example.com' } }
+        : node);
+
+      const result = await handlers.handleUpdateWorkflow({ id: 'wf-1', nodes, createBackup: false });
+
+      expect(result.success).toBe(true);
+      expect(result.details?.warnings).toEqual([expect.stringContaining('Parked Node')]);
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledOnce();
+      expect(mockApiClient.updateWorkflow.mock.calls[0][1].nodes[1].parameters.url).toBe('https://new.example.com');
     });
   });
 

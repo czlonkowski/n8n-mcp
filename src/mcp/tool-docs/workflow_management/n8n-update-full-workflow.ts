@@ -26,7 +26,7 @@ export const n8nUpdateFullWorkflowDoc: ToolDocumentation = {
       nodeGroups: { type: 'array', description: 'Canvas groups (n8n 2.28+): [{name, nodeIds, description?}]. Omit to keep the existing groups; pass [] to ungroup everything. Groups whose members a nodes[] update deleted are pruned automatically.' },
       intent: { type: 'string', description: 'Intent of the change - helps to return better response. Include in every tool call. Example: "Migrate workflow to new node versions".' }
     },
-    returns: 'Minimal summary (id, name, active, nodeCount) for token efficiency. Use n8n_get_workflow with mode "structure" to verify current state if needed.',
+    returns: 'Minimal summary (id, name, active, nodeCount) for token efficiency. Disconnected executable nodes are allowed and reported in details.warnings when structure is validated. Use n8n_get_workflow with mode "structure" to verify current state if needed.',
     examples: [
       'n8n_update_full_workflow({id: "abc", intent: "Rename workflow for clarity", name: "New Name"}) - Rename with intent',
       'n8n_update_full_workflow({id: "abc", name: "New Name"}) - Rename only',
