@@ -151,7 +151,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.3",
     "@types/node": "^22.15.30",
-    "@types/ws": "^8.18.1",
+    "@types/ws": "^8.18.2",
     "@vitest/coverage-v8": "^3.2.6",
     "@vitest/runner": "^3.2.6",
     "@vitest/ui": "^3.2.6",
