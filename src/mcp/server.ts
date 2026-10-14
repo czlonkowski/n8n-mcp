@@ -2237,7 +2237,10 @@ export class N8NDocumentationMCPServer {
     
     // For FUZZY mode, use LIKE search with typo patterns
     if (mode === 'FUZZY') {
-      return this.searchNodesFuzzy(cleanedQuery, limit, { includeOperations: options?.includeOperations });
+      return this.searchNodesFuzzy(cleanedQuery, limit, {
+        includeOperations: options?.includeOperations,
+        source: options?.source
+      });
     }
     
     let ftsQuery: string;
@@ -2416,7 +2419,7 @@ export class N8NDocumentationMCPServer {
         logger.warn(`FTS5 syntax error for query "${query}" in mode ${mode}`);
         
         // For problematic queries, use LIKE search with mode info
-        const likeResult = await this.searchNodesLIKE(query, limit);
+        const likeResult = await this.searchNodesLIKE(query, limit, options);
 
         // Track search query telemetry for fallback
         telemetry.trackSearchQuery(query, likeResult.results?.length ?? 0, `${mode}_LIKE_FALLBACK`);
@@ -2427,7 +2430,7 @@ export class N8NDocumentationMCPServer {
         };
       }
       
-      return this.searchNodesLIKE(query, limit);
+      return this.searchNodesLIKE(query, limit, options);
     }
   }
   
@@ -2436,6 +2439,7 @@ export class N8NDocumentationMCPServer {
     limit: number,
     options?: {
       includeOperations?: boolean;
+      source?: 'all' | 'core' | 'community' | 'verified';
     }
   ): Promise<any> {
     if (!this.db) throw new Error('Database not initialized');
@@ -2449,9 +2453,21 @@ export class N8NDocumentationMCPServer {
     
     // For fuzzy search, get ALL nodes to ensure we don't miss potential matches
     // We'll limit results after scoring
-    const candidateNodes = this.db!.prepare(`
+    const source = options?.source || 'all';
+    const candidateNodes = (this.db!.prepare(`
       SELECT * FROM nodes
-    `).all() as NodeRow[];
+    `).all() as NodeRow[]).filter((node) => {
+      switch (source) {
+        case 'core':
+          return (node as any).is_community === 0;
+        case 'community':
+          return (node as any).is_community === 1;
+        case 'verified':
+          return (node as any).is_community === 1 && (node as any).is_verified === 1;
+        default:
+          return true;
+      }
+    });
     
     // Calculate fuzzy scores for candidate nodes
     const scoredNodes = candidateNodes.map(node => {
