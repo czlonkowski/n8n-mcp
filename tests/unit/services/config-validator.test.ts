@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ConfigValidator } from '@/services/config-validator';
+import { EnhancedConfigValidator } from '@/services/enhanced-config-validator';
 import type { ValidationResult, ValidationError, ValidationWarning } from '@/services/config-validator';
 
 // Mock the database
@@ -84,6 +85,50 @@ describe('ConfigValidator', () => {
       const result = ConfigValidator.validate('nodes-base.test', { optionField: 'b' }, [{ name: 'optionField', type: 'options', options: [{ name: 'Option A', value: 'a' }, { name: 'Option B', value: 'b' }, { name: 'Option C', value: 'c' }] }]);
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
+    });
+  });
+
+  describe.each([
+    { type: 'number', expression: '={{ $json.limit }}', literal: '42' },
+    { type: 'boolean', expression: '={{ $json.enabled }}', literal: 'true' },
+  ])('$type property expressions', ({ type, expression, literal }) => {
+    const properties = [{ name: 'value', type, required: true }];
+
+    it('defers expression type checking until runtime', () => {
+      const result = ConfigValidator.validate(
+        'nodes-base.test', { value: expression }, properties
+      );
+
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it.each(['ai-friendly', 'strict'] as const)('accepts expressions in the %s profile', profile => {
+      const result = EnhancedConfigValidator.validateWithMode(
+        'nodes-base.test', { value: expression }, properties, 'operation', profile
+      );
+
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it('keeps type checking when expressions are disabled for the property', () => {
+      const result = ConfigValidator.validate(
+        'nodes-base.test', { value: expression },
+        [{ ...properties[0], noDataExpression: true }]
+      );
+
+      expect(result.errors).toEqual([
+        expect.objectContaining({ type: 'invalid_type', property: 'value' })
+      ]);
+    });
+
+    it.each([literal, expression.slice(1)])('rejects the literal string %s', value => {
+      const result = ConfigValidator.validate('nodes-base.test', { value }, properties);
+
+      expect(result.errors).toEqual([
+        expect.objectContaining({ type: 'invalid_type', property: 'value' })
+      ]);
     });
   });
 

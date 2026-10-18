@@ -5,7 +5,7 @@
  * Provides helpful suggestions and identifies missing or misconfigured properties.
  */
 
-import { shouldSkipLiteralValidation } from '../utils/expression-utils.js';
+import { isExpression, shouldSkipLiteralValidation } from '../utils/expression-utils.js';
 
 export interface ValidationResult {
   valid: boolean;
@@ -309,6 +309,9 @@ export class ConfigValidator {
         continue;
       }
 
+      // n8n resolves expressions before checking the resulting primitive type.
+      const isRuntimeExpression = !prop.noDataExpression && isExpression(value);
+
       // Type validation
       if (prop.type === 'string' && typeof value !== 'string') {
         errors.push({
@@ -317,14 +320,14 @@ export class ConfigValidator {
           message: `Property '${key}' must be a string, got ${typeof value}`,
           fix: `Change ${key} to a string value`
         });
-      } else if (prop.type === 'number' && typeof value !== 'number') {
+      } else if (prop.type === 'number' && typeof value !== 'number' && !isRuntimeExpression) {
         errors.push({
           type: 'invalid_type',
           property: key,
           message: `Property '${key}' must be a number, got ${typeof value}`,
           fix: `Change ${key} to a number`
         });
-      } else if (prop.type === 'boolean' && typeof value !== 'boolean') {
+      } else if (prop.type === 'boolean' && typeof value !== 'boolean' && !isRuntimeExpression) {
         errors.push({
           type: 'invalid_type',
           property: key,
