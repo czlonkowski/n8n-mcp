@@ -1109,6 +1109,33 @@ describe('WorkflowSanitizer', () => {
       expect(content(out)).not.toMatch(/leak-/);
     });
 
+    it.each([
+      ['retype and content in one update', [
+        { type: 'updateNode', nodeName: 'Html', updates: { type: 'n8n-nodes-base.stickyNote', 'parameters.content': 'leak-retype-same' } },
+        { type: 'removeNode', nodeName: 'Html' },
+      ]],
+      ['retype by id, edit by name, retype back', [
+        { type: 'updateNode', nodeId: 'h1', updates: { type: 'n8n-nodes-base.stickyNote' } },
+        { type: 'updateNode', nodeName: 'Html', updates: { 'parameters.content': 'leak-alias' } },
+        { type: 'updateNode', nodeId: 'h1', updates: { type: 'n8n-nodes-base.html' } },
+      ]],
+      ['retype through a type patch', [
+        { type: 'patchNodeField', nodeId: 'h1', fieldPath: 'type', patches: [{ find: 'html', replace: 'stickyNote' }] },
+        { type: 'patchNodeField', nodeId: 'h1', fieldPath: 'parameters.content', patches: [{ find: 'a', replace: 'leak-type-patch' }] },
+        { type: 'removeNode', nodeId: 'h1' },
+      ]],
+      ['temporary name reuse through name patches', [
+        { type: 'patchNodeField', nodeName: 'Html', fieldPath: 'name', patches: [{ find: 'Html', replace: 'Page' }] },
+        { type: 'patchNodeField', nodeName: 'Note', fieldPath: 'name', patches: [{ find: 'Note', replace: 'Html' }] },
+        { type: 'updateNode', nodeName: 'Html', updates: { 'parameters.content': 'leak-name-patch' } },
+        { type: 'patchNodeField', nodeName: 'Html', fieldPath: 'name', patches: [{ find: 'Html', replace: 'Note' }] },
+        { type: 'patchNodeField', nodeName: 'Page', fieldPath: 'name', patches: [{ find: 'Page', replace: 'Html' }] },
+      ]],
+    ])('drops content when the batch changes types or patches names: %s', (_label, batch) => {
+      const out = WorkflowSanitizer.sanitizeOperations<any[]>(batch as any[], [before()]);
+      expect(content(out)).not.toMatch(/leak-/);
+    });
+
     it('keeps content edits on a known non-sticky node, including after a rename', () => {
       const out = WorkflowSanitizer.sanitizeOperations<any[]>([
         { type: 'updateNode', nodeName: 'Html', updates: { 'parameters.content': '<p>kept-1</p>' } },

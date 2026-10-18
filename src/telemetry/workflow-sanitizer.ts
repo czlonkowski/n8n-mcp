@@ -318,13 +318,24 @@ export class WorkflowSanitizer {
       for (const key of keys) for (const type of types.get(key) ?? []) found.add(type);
       return found;
     };
+    // A batch that changes a node type, or renames through a patch, makes
+    // target types uncertain; every content edit in it is then removed.
+    const uncertain = operations.some((op: any) => {
+      if (!op || typeof op !== 'object') return false;
+      const updates = op.updates;
+      if (updates && typeof updates === 'object' && !Array.isArray(updates) &&
+          Object.keys(updates).some((key) => key === 'type' || key.startsWith('type.'))) {
+        return true;
+      }
+      return op.type === 'patchNodeField' && (op.fieldPath === 'type' || op.fieldPath === 'name');
+    });
     const stripped = operations.map((op: any) => {
       if (!op || typeof op !== 'object' || Array.isArray(op)) {
         return op;
       }
       const { description, ...rest } = op;
       const resolved = targetTypes(rest);
-      const targetsSticky = resolved.size === 0 || [...resolved].some((type) => !this.isKnownNonSticky(type));
+      const targetsSticky = uncertain || resolved.size === 0 || [...resolved].some((type) => !this.isKnownNonSticky(type));
       if (rest.updates && typeof rest.updates === 'object' && !Array.isArray(rest.updates) && typeof rest.updates.name === 'string') {
         for (const type of resolved.size > 0 ? resolved : [undefined]) this.recordNodeType(types, undefined, rest.updates.name, type);
       }
