@@ -1131,6 +1131,13 @@ describe('WorkflowSanitizer', () => {
         { type: 'patchNodeField', nodeName: 'Html', fieldPath: 'name', patches: [{ find: 'Html', replace: 'Note' }] },
         { type: 'patchNodeField', nodeName: 'Page', fieldPath: 'name', patches: [{ find: 'Page', replace: 'Html' }] },
       ]],
+      ['sticky added later in the batch under a removed node name', [
+        { type: 'removeNode', nodeName: 'Html' },
+        { type: 'addConnection', source: 'Start', target: 'Html' },
+        { type: 'updateNode', nodeName: 'Html', updates: { 'parameters.content': 'leak-hoisted' } },
+        { type: 'addNode', node: { name: 'Html', type: 'n8n-nodes-base.stickyNote', parameters: {} } },
+        { type: 'removeNode', nodeName: 'Html' },
+      ]],
     ])('drops content when the batch changes types or patches names: %s', (_label, batch) => {
       const out = WorkflowSanitizer.sanitizeOperations<any[]>(batch as any[], [before()]);
       expect(content(out)).not.toMatch(/leak-/);

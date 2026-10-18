@@ -306,6 +306,13 @@ export class WorkflowSanitizer {
       return this.sanitizeTelemetryObject<T>(operations);
     }
     const types = this.nodeTypesByKey(workflows);
+    // The diff engine applies addNode operations before the others, so every
+    // added node is known before any edit is classified.
+    for (const op of operations) {
+      if (op && typeof op === 'object' && op.node && typeof op.node === 'object' && !Array.isArray(op.node)) {
+        this.recordNodeType(types, op.node.id, op.node.name, op.node.type);
+      }
+    }
     const isContentPath = (path: unknown) =>
       typeof path === 'string' && (path === 'parameters.content' || path.startsWith('parameters.content.'));
     // Content edits are kept only when every node the target could resolve to
