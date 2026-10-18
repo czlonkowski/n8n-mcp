@@ -297,6 +297,83 @@ export class WorkflowSanitizer {
   }
 
   /**
+   * Sanitize workflow diff operations before telemetry storage. Free-text
+   * fields (operation and group descriptions, node notes) are removed; the
+   * rest goes through {@link sanitizeTelemetryObject}.
+   */
+  static sanitizeOperations<T = any>(operations: any, workflows: any[] = []): T {
+    if (!Array.isArray(operations)) {
+      return this.sanitizeTelemetryObject<T>(operations);
+    }
+    const types = this.nodeTypesByKey(workflows);
+    const isContentPath = (path: unknown) =>
+      typeof path === 'string' && (path === 'parameters.content' || path.startsWith('parameters.content.'));
+    // Content edits are kept only when every node the target could resolve to
+    // is known not to be a sticky note; an unknown target counts as sticky.
+    const targetTypes = (op: any): Set<unknown> => {
+      const found = new Set<unknown>();
+      const keys = [];
+      if (typeof op.nodeId === 'string') keys.push(`id:${op.nodeId}`, this.nodeKey(op.nodeId));
+      if (typeof op.nodeName === 'string') keys.push(this.nodeKey(op.nodeName));
+      for (const key of keys) for (const type of types.get(key) ?? []) found.add(type);
+      return found;
+    };
+    const stripped = operations.map((op: any) => {
+      if (!op || typeof op !== 'object' || Array.isArray(op)) {
+        return op;
+      }
+      const { description, ...rest } = op;
+      const resolved = targetTypes(rest);
+      const targetsSticky = resolved.size === 0 || [...resolved].some((type) => !this.isKnownNonSticky(type));
+      if (rest.updates && typeof rest.updates === 'object' && !Array.isArray(rest.updates) && typeof rest.updates.name === 'string') {
+        for (const type of resolved.size > 0 ? resolved : [undefined]) this.recordNodeType(types, undefined, rest.updates.name, type);
+      }
+      if (rest.node && typeof rest.node === 'object' && !Array.isArray(rest.node)) {
+        const { notes, ...node } = rest.node;
+        this.recordNodeType(types, node.id, node.name, node.type);
+        if (this.isStickyType(node.type)) {
+          node.parameters = this.withoutContent(node.parameters);
+        }
+        rest.node = node;
+      }
+      if (rest.updates && typeof rest.updates === 'object' && !Array.isArray(rest.updates)) {
+        const { notes, ...updates } = rest.updates;
+        if (targetsSticky) {
+          for (const key of Object.keys(updates)) {
+            if (isContentPath(key)) delete updates[key];
+          }
+          if (updates.parameters !== undefined) {
+            updates.parameters = this.withoutContent(updates.parameters);
+          }
+        }
+        rest.updates = updates;
+      }
+      if (rest.type === 'patchNodeField' && (rest.fieldPath === 'notes' || (targetsSticky && isContentPath(rest.fieldPath)))) {
+        delete rest.patches;
+      }
+      if (Array.isArray(rest.nodeGroups)) {
+        rest.nodeGroups = this.stripGroupDescriptions(rest.nodeGroups);
+      }
+      if (rest.settings && typeof rest.settings === 'object' && !Array.isArray(rest.settings)) {
+        const { errorWorkflow, ...settings } = rest.settings;
+        rest.settings = settings;
+      }
+      return rest;
+    });
+    return this.sanitizeTelemetryObject<T>(stripped);
+  }
+
+  private static stripGroupDescriptions(groups: any[]): any[] {
+    return groups.map((group: any) => {
+      if (!group || typeof group !== 'object' || Array.isArray(group)) {
+        return group;
+      }
+      const { description, ...kept } = group;
+      return kept;
+    });
+  }
+
+  /**
    * Sanitize an arbitrary value before telemetry storage.
    * SECURITY (GHSA-8g7g-hmwm-6rv2): redact secrets from caller-supplied
    * values (operations diffs, validation results, error messages) prior to enqueue.
@@ -327,12 +404,58 @@ export class WorkflowSanitizer {
 
     // Sanitize parameters
     if (parameters) {
-      sanitized.parameters = this.sanitizeObject(parameters);
+      sanitized.parameters = this.sanitizeObject(
+        this.isStickyType(type) ? this.withoutContent(parameters) : parameters
+      );
     } else if (parameters !== undefined) {
       sanitized.parameters = parameters;
     }
 
     return sanitized;
+  }
+
+  private static isStickyType(type: unknown): boolean {
+    return typeof type === 'string' && /stickynote$/i.test(type);
+  }
+
+  private static isKnownNonSticky(type: unknown): boolean {
+    return typeof type === 'string' && !this.isStickyType(type);
+  }
+
+  /** Sticky-note text is free text and is removed. */
+  private static withoutContent(parameters: any): any {
+    if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) {
+      return parameters;
+    }
+    const { content, ...rest } = parameters;
+    return rest;
+  }
+
+  /** Loose name key: matching more than the diff engine does only removes more. */
+  private static nodeKey(name: string): string {
+    return `name:${name.replace(/\\/g, '').replace(/\s+/g, ' ').trim().toLowerCase()}`;
+  }
+
+  /** Node types known for each id/name key in the given workflows. */
+  private static nodeTypesByKey(workflows: any[]): Map<string, Set<unknown>> {
+    const types = new Map<string, Set<unknown>>();
+    for (const workflow of workflows) {
+      if (!workflow || !Array.isArray(workflow.nodes)) continue;
+      for (const node of workflow.nodes) {
+        if (node && typeof node === 'object') this.recordNodeType(types, node.id, node.name, node.type);
+      }
+    }
+    return types;
+  }
+
+  private static recordNodeType(types: Map<string, Set<unknown>>, id: unknown, name: unknown, type: unknown): void {
+    const keys = [];
+    if (typeof id === 'string') keys.push(`id:${id}`, this.nodeKey(id));
+    if (typeof name === 'string') keys.push(this.nodeKey(name));
+    for (const key of keys) {
+      if (!types.has(key)) types.set(key, new Set());
+      types.get(key)!.add(type);
+    }
   }
 
   /**
@@ -610,6 +733,9 @@ export class WorkflowSanitizer {
     delete sanitized.description;
     delete sanitized.shared;
     delete sanitized.homeProject;
+    if (Array.isArray(sanitized.nodeGroups)) {
+      sanitized.nodeGroups = this.stripGroupDescriptions(sanitized.nodeGroups);
+    }
 
     // SECURITY (GHSA-gg57-wj7g-vfrv): sanitize every other field; nested
     // workflow versions get the full workflow pass.

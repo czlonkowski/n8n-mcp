@@ -1037,6 +1037,106 @@ describe('WorkflowSanitizer', () => {
     });
   });
 
+  describe('sticky notes', () => {
+    const wf = () => ({
+      nodes: [
+        { id: 's1', name: 'Note', type: 'n8n-nodes-base.stickyNote', typeVersion: 1, position: [0, 0], parameters: { content: 'sticky prose text', width: 300 } },
+        { id: 'h1', name: 'Html', type: 'n8n-nodes-base.html', typeVersion: 1, position: [0, 0], parameters: { content: '<p>template body</p>' } },
+      ],
+      connections: {},
+    });
+
+    it.each([
+      ['sanitizeWorkflow', (w: any) => WorkflowSanitizer.sanitizeWorkflow(w)],
+      ['sanitizeWorkflowRaw', (w: any) => WorkflowSanitizer.sanitizeWorkflowRaw(w)],
+    ])('%s removes sticky-note content and keeps other node content', (_label, sanitize) => {
+      const out = sanitize(wf());
+      expect(JSON.stringify(out)).not.toContain('sticky prose text');
+      expect(out.nodes[0].parameters).toEqual({ width: 300 });
+      expect(out.nodes[1].parameters.content).toBe('<p>template body</p>');
+    });
+
+    it('removes sticky-note content from operations that target a sticky node', () => {
+      const ops = WorkflowSanitizer.sanitizeOperations<any[]>([
+        { type: 'addNode', node: { name: 'Note2', type: 'n8n-nodes-base.stickyNote', parameters: { content: 'added sticky text', color: 3 } } },
+        { type: 'updateNode', nodeName: 'Note', updates: { 'parameters.content': 'dotted sticky text', 'parameters.width': 400 } },
+        { type: 'updateNode', nodeId: 's1', updates: { parameters: { content: 'nested sticky text', height: 200 } } },
+        { type: 'patchNodeField', nodeId: 's1', fieldPath: 'parameters.content', patches: [{ find: 'a', replace: 'patched sticky text' }] },
+        { type: 'updateNode', nodeName: 'Html', updates: { 'parameters.content': '<p>kept</p>' } },
+        { type: 'patchNodeField', nodeName: 'Html', fieldPath: 'parameters.content', patches: [{ find: 'a', replace: 'kept patch' }] },
+      ], [wf()]);
+      const json = JSON.stringify(ops);
+      for (const text of ['added sticky text', 'dotted sticky text', 'nested sticky text', 'patched sticky text']) {
+        expect(json).not.toContain(text);
+      }
+      expect(ops[0].node.parameters).toEqual({ color: 3 });
+      expect(ops[1].updates).toEqual({ 'parameters.width': 400 });
+      expect(ops[2].updates.parameters).toEqual({ height: 200 });
+      expect(ops[3]).not.toHaveProperty('patches');
+      expect(ops[4].updates['parameters.content']).toBe('<p>kept</p>');
+      expect(ops[5].patches).toEqual([{ find: 'a', replace: 'kept patch' }]);
+    });
+  });
+
+  describe('sticky-note content in operations resolves targets conservatively', () => {
+    const before = () => ({
+      nodes: [
+        { id: 's1', name: 'Note', type: 'n8n-nodes-base.stickyNote', parameters: { content: 'x' } },
+        { id: 'h1', name: 'Html', type: 'n8n-nodes-base.html', parameters: { content: 'y' } },
+      ],
+    });
+    const content = (op: any) => JSON.stringify(op);
+
+    it.each([
+      ['id used as a name', { type: 'updateNode', nodeId: 'Note', updates: { 'parameters.content': 'leak-a' } }],
+      ['whitespace in the name', { type: 'updateNode', nodeName: ' Note ', updates: { 'parameters.content': 'leak-b' } }],
+      ['unknown target', { type: 'updateNode', nodeName: 'Ghost', updates: { 'parameters.content': 'leak-c' } }],
+      ['patch with id used as a name', { type: 'patchNodeField', nodeId: 'Note', fieldPath: 'parameters.content', patches: [{ find: 'a', replace: 'leak-d' }] }],
+    ])('drops content for %s', (_label, op) => {
+      const out = WorkflowSanitizer.sanitizeOperations<any[]>([op], [before()]);
+      expect(content(out)).not.toMatch(/leak-/);
+    });
+
+    it('drops content for names that exist only in the middle of a batch', () => {
+      const out = WorkflowSanitizer.sanitizeOperations<any[]>([
+        { type: 'updateNode', nodeName: 'Note', updates: { name: 'Mid' } },
+        { type: 'updateNode', nodeName: 'Mid', updates: { 'parameters.content': 'leak-rename' } },
+        { type: 'updateNode', nodeName: 'Mid', updates: { name: 'Note B' } },
+        { type: 'addNode', node: { name: 'Tmp', type: 'n8n-nodes-base.stickyNote', parameters: {} } },
+        { type: 'updateNode', nodeName: 'Tmp', updates: { 'parameters.content': 'leak-added' } },
+        { type: 'removeNode', nodeName: 'Tmp' },
+      ], [before()]);
+      expect(content(out)).not.toMatch(/leak-/);
+    });
+
+    it('keeps content edits on a known non-sticky node, including after a rename', () => {
+      const out = WorkflowSanitizer.sanitizeOperations<any[]>([
+        { type: 'updateNode', nodeName: 'Html', updates: { 'parameters.content': '<p>kept-1</p>' } },
+        { type: 'updateNode', nodeId: 'h1', updates: { name: 'Page' } },
+        { type: 'patchNodeField', nodeName: 'Page', fieldPath: 'parameters.content', patches: [{ find: 'a', replace: 'kept-2' }] },
+      ], [before()]);
+      expect(out[0].updates['parameters.content']).toBe('<p>kept-1</p>');
+      expect(out[2].patches).toEqual([{ find: 'a', replace: 'kept-2' }]);
+    });
+
+    it('does not modify its inputs', () => {
+      const ops = [{ type: 'updateNode', nodeName: 'Note', updates: { 'parameters.content': 'text', notes: 'n' }, description: 'd' }];
+      const wf = before();
+      const snapshot = JSON.stringify([ops, wf]);
+      WorkflowSanitizer.sanitizeOperations(ops, [wf]);
+      expect(JSON.stringify([ops, wf])).toBe(snapshot);
+    });
+  });
+
+  describe('sanitizeOperations', () => {
+    it('tolerates malformed operation lists', () => {
+      expect(WorkflowSanitizer.sanitizeOperations(null)).toBeNull();
+      expect(WorkflowSanitizer.sanitizeOperations('Bearer abcdefghijklmnop1234')).toBe('Bearer [REDACTED]');
+      expect(WorkflowSanitizer.sanitizeOperations([null, 'x', [1], { type: 'addNode', node: null, updates: [] }]))
+        .toEqual([null, 'x', [1], { type: 'addNode', node: null, updates: [] }]);
+    });
+  });
+
   describe('node and workflow free-text fields', () => {
     const KEY_A = 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD';
     const KEY_B = 'sk-proj-zyxwvutsrqponmlkjihgfedcba9876543210WXYZ';

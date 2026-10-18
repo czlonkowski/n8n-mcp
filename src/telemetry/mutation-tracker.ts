@@ -49,8 +49,9 @@ export class MutationTracker {
 
       // SECURITY (GHSA-8g7g-hmwm-6rv2): redact caller-supplied operations,
       // validation results, and error messages before storing in the telemetry record.
-      const sanitizedOperations = WorkflowSanitizer.sanitizeTelemetryObject<DiffOperation[]>(
-        data.operations
+      const sanitizedOperations = WorkflowSanitizer.sanitizeOperations<DiffOperation[]>(
+        data.operations,
+        [data.workflowBefore, data.workflowAfter]
       );
       const sanitizedValidationBefore = WorkflowSanitizer.sanitizeTelemetryObject(
         data.validationBefore

@@ -75,6 +75,66 @@ describe('MutationTracker - telemetry redaction', () => {
     expect(serialized).toMatch(/REDACTED/);
   });
 
+  it('removes free-text fields from operations', async () => {
+    const operations: DiffOperation[] = [
+      { type: 'addNode', description: 'op description text', node: { name: 'Set', type: 'n8n-nodes-base.set', notes: 'added note text' } } as any,
+      { type: 'updateNode', nodeName: 'Set', updates: { notes: 'updated note text', 'parameters.mode': 'raw' } } as any,
+      { type: 'patchNodeField', nodeName: 'Set', fieldPath: 'notes', patches: [{ find: 'a', replace: 'patched note text' }] } as any,
+      { type: 'patchNodeField', nodeName: 'Set', fieldPath: 'parameters.jsCode', patches: [{ find: 'a', replace: 'b' }] } as any,
+      { type: 'setNodeGroups', nodeGroups: [{ name: 'G', nodeNames: ['Set'], description: 'group description text' }] } as any,
+    ];
+    const data = makeBaseData({ operations });
+
+    const record = await tracker.processMutation(data, 'user-1');
+    expect(record).not.toBeNull();
+
+    const serialized = JSON.stringify(record!.operations);
+    for (const text of ['op description text', 'added note text', 'updated note text', 'patched note text', 'group description text']) {
+      expect(serialized).not.toContain(text);
+    }
+    const ops = record!.operations as any[];
+    expect(ops[1].updates['parameters.mode']).toBe('raw');
+    expect(ops[1].updates).not.toHaveProperty('notes');
+    expect(ops[3].patches).toEqual([{ find: 'a', replace: 'b' }]);
+    expect(ops[4].nodeGroups[0].nodeNames).toEqual(['Set']);
+  });
+
+  it('removes node group descriptions from the workflow snapshots', async () => {
+    const group = { name: 'G', nodeNames: ['Set'], description: 'snapshot group description' };
+    const data = makeBaseData({
+      operations: [
+        { type: 'updateNode', nodeName: 'Set', updates: { notes: { __patch_find_replace: [{ find: 'a', replace: 'patch note text' }] } } } as any,
+        { type: 'updateSettings', settings: { errorWorkflow: 'wf-123', timezone: 'UTC' } } as any,
+      ],
+    });
+    data.workflowBefore = { ...data.workflowBefore, nodeGroups: [group] };
+    data.workflowAfter = { ...data.workflowAfter, nodeGroups: [group] };
+
+    const record = await tracker.processMutation(data, 'user-1');
+    expect(record).not.toBeNull();
+    const serialized = JSON.stringify(record);
+    expect(serialized).not.toContain('snapshot group description');
+    expect(serialized).not.toContain('patch note text');
+    expect((record!.workflowAfter as any).nodeGroups[0].nodeNames).toEqual(['Set']);
+    const ops = record!.operations as any[];
+    expect(ops[1].settings).toEqual({ timezone: 'UTC' });
+  });
+
+  it('removes sticky-note content from operations and snapshots', async () => {
+    const sticky = { id: 's1', name: 'Note', type: 'n8n-nodes-base.stickyNote', typeVersion: 1, position: [0, 0], parameters: { content: 'before sticky text' } };
+    const data = makeBaseData({
+      operations: [{ type: 'updateNode', nodeName: 'Note', updates: { 'parameters.content': 'after sticky text' } } as any],
+    });
+    data.workflowBefore = { ...data.workflowBefore, nodes: [...data.workflowBefore.nodes, sticky] };
+    data.workflowAfter = { ...data.workflowAfter, nodes: [...data.workflowAfter.nodes, { ...sticky, parameters: { content: 'after sticky text' } }] };
+
+    const record = await tracker.processMutation(data, 'user-1');
+    expect(record).not.toBeNull();
+    const serialized = JSON.stringify(record);
+    expect(serialized).not.toContain('before sticky text');
+    expect(serialized).not.toContain('after sticky text');
+  });
+
   it('redacts apiKey-like field values from operation updates', async () => {
     const operations: DiffOperation[] = [
       {

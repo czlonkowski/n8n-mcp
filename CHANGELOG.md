@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.94.3] - 2026-10-18
+
+### Security
+
+- Remove more free-text fields from workflow telemetry: sticky-note text in workflows and in the recorded workflow operations, node notes and operation descriptions in the recorded operations, and node group descriptions in both the operations and the workflow snapshots. Follow-up to GHSA-gg57-wj7g-vfrv.
+
 ## [2.94.2] - 2026-10-18
 
 ### Security
