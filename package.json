@@ -170,7 +170,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "@n8n/n8n-nodes-langchain": "2.43.3",
     "dotenv": "^16.5.0",
-    "express": "^5.1.0",
+    "express": "^5.3.0",
     "express-rate-limit": "^7.1.5",
     "form-data": "^4.0.6",
     "ipaddr.js": "^1.9.1",
@@ -179,15 +179,15 @@
     "n8n-nodes-base": "2.43.3",
     "n8n-workflow": "2.43.3",
     "openai": "^4.77.0",
-    "sql.js": "^1.13.0",
+    "sql.js": "^1.15.0",
     "tslib": "^2.6.2",
     "undici": "^6.29.0",
     "uuid": "^11.1.1",
     "zod": "3.25.76"
   },
   "optionalDependencies": {
-    "@rollup/rollup-darwin-arm64": "^4.50.0",
-    "@rollup/rollup-linux-x64-gnu": "^4.50.0",
+    "@rollup/rollup-darwin-arm64": "^4.64.7",
+    "@rollup/rollup-linux-x64-gnu": "^4.64.7",
     "better-sqlite3": "^11.10.0"
   },
   "overrides": {
