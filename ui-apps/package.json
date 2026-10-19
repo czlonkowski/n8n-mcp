@@ -22,7 +22,7 @@
     "check": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/ext-apps": "^1.0.1",
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
