@@ -303,8 +303,14 @@ export class ToolValidation {
       ['OR', 'AND', 'FUZZY'], 
       false
     );
+    const sourceResult = Validator.validateEnum(
+      args.source,
+      'source',
+      ['all', 'core', 'community', 'verified'],
+      false
+    );
 
-    return Validator.combineResults(queryResult, limitResult, modeResult);
+    return Validator.combineResults(queryResult, limitResult, modeResult, sourceResult);
   }
 
   /**

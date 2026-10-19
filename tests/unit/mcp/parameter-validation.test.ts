@@ -196,6 +196,13 @@ describe('Parameter Validation', () => {
           limit: 'invalid'
         })).rejects.toThrow('search_nodes: Validation failed:\n  • limit: limit must be a number, got string');
       });
+
+      it('should reject invalid source value', async () => {
+        await expect(server.testExecuteTool('search_nodes', {
+          query: 'http',
+          source: 'third-party'
+        })).rejects.toThrow('search_nodes: Validation failed:\n  • source: source must be one of: all, core, community, verified, got "third-party"');
+      });
     });
 
     describe('validate_node (consolidated)', () => {
