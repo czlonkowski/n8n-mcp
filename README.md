@@ -166,7 +166,7 @@ ALWAYS explicitly configure ALL parameters that control node behavior.
    - Fix ALL errors before proceeding
 
 6. **Building Phase**
-   - If using template: `get_template(templateId, {mode: "full"})`
+   - If using template: `get_template({templateId, mode: "full"})`
    - **MANDATORY ATTRIBUTION**: "Based on template by **[author.name]** (@[username]). View at: [url]"
    - Build from validated configurations
    - EXPLICITLY set ALL parameters - never rely on defaults
@@ -176,9 +176,7 @@ ALWAYS explicitly configure ALL parameters that control node behavior.
    - Build in artifact (unless deploying to n8n instance)
 
 7. **Workflow Validation** (before deployment)
-   - `validate_workflow(workflow)` - Complete validation
-   - `validate_workflow_connections(workflow)` - Structure check
-   - `validate_workflow_expressions(workflow)` - Expression validation
+   - `validate_workflow({workflow})` - Node, connection, and expression validation
    - Fix ALL issues before deployment
 
 8. **Deployment** (if n8n API configured)
@@ -213,7 +211,7 @@ Default values cause runtime failures. Example:
 `validate_node({nodeType, config, mode: 'full', profile: 'runtime'})` - Full validation with fixes
 
 ### Level 3 - Complete (after building)
-`validate_workflow(workflow)` - Connections, expressions, AI tools
+`validate_workflow({workflow})` - Connections, expressions, AI tools
 
 ### Level 4 - Post-Deployment
 1. `n8n_validate_workflow({id})` - Validate deployed workflow
@@ -253,8 +251,8 @@ GOOD - Batch multiple operations:
 n8n_update_partial_workflow({
   id: "wf-123",
   operations: [
-    {type: "updateNode", nodeId: "slack-1", changes: {...}},
-    {type: "updateNode", nodeId: "http-1", changes: {...}},
+    {type: "updateNode", nodeId: "slack-1", updates: {...}},
+    {type: "updateNode", nodeId: "http-1", updates: {...}},
     {type: "cleanStaleConnections"}
   ]
 })
@@ -268,16 +266,16 @@ n8n_update_partial_workflow({id: "wf-123", operations: [{...}]})
 
 ### CRITICAL: addConnection Syntax
 
-The `addConnection` operation requires **four separate string parameters**. Common mistakes cause misleading errors.
+The `addConnection` operation requires **`source` and `target`**. Optional `sourceOutput` and `targetInput` select connection types and default to `"main"`.
 
-CORRECT - Four separate string parameters:
+CORRECT - Separate source and target parameters:
 ```json
 {
   "type": "addConnection",
   "source": "node-id-string",
   "target": "target-node-id-string",
-  "sourcePort": "main",
-  "targetPort": "main"
+  "sourceOutput": "main",
+  "targetInput": "main"
 }
 ```
 
@@ -291,8 +289,8 @@ IF nodes have **two outputs** (TRUE and FALSE). Use the **`branch` parameter** t
 n8n_update_partial_workflow({
   id: "workflow-id",
   operations: [
-    {type: "addConnection", source: "If Node", target: "True Handler", sourcePort: "main", targetPort: "main", branch: "true"},
-    {type: "addConnection", source: "If Node", target: "False Handler", sourcePort: "main", targetPort: "main", branch: "false"}
+    {type: "addConnection", source: "If Node", target: "True Handler", sourceOutput: "main", targetInput: "main", branch: "true"},
+    {type: "addConnection", source: "If Node", target: "False Handler", sourceOutput: "main", targetInput: "main", branch: "false"}
   ]
 })
 ```
@@ -301,14 +299,14 @@ n8n_update_partial_workflow({
 
 ### removeConnection Syntax
 
-Use the same four-parameter format:
+Use the same source/target format, with optional connection types:
 ```json
 {
   "type": "removeConnection",
   "source": "source-node-id",
   "target": "target-node-id",
-  "sourcePort": "main",
-  "targetPort": "main"
+  "sourceOutput": "main",
+  "targetInput": "main"
 }
 ```
 
