@@ -24,7 +24,8 @@ n8n_create_workflow({
   name: "Webhook to Slack",  // Required
   nodes: [...],              // Required: array of nodes
   connections: {...},        // Required: connections object
-  settings: {...}            // Optional: workflow settings
+  settings: {...},           // Optional: workflow settings
+  parentFolderId: "abc123"   // Optional: folder to create in (n8n 2.32+; omit = project root)
 })
 ```
 
@@ -72,6 +73,7 @@ n8n_create_workflow({
 - Workflows created **inactive** (activate with `activateWorkflow` operation)
 - Auto-sanitization runs on creation
 - Validate before creating for best results
+- `parentFolderId` places the workflow in a folder at creation (find or create folders with `n8n_manage_folders`). On n8n < 2.32 the whole create is rejected with a 400 naming the field — retry without it
 
 ---
 
@@ -83,7 +85,7 @@ n8n_create_workflow({
 
 **Common pattern**: 56s average between edits (iterative building!)
 
-### 20 Operation Types
+### 21 Operation Types
 
 **Node Operations** (7 types):
 1. `addNode` - Add new node
@@ -112,8 +114,9 @@ n8n_create_workflow({
 18. `activateWorkflow` - Activate workflow for automatic execution
 19. `deactivateWorkflow` - Deactivate workflow
 
-**Project Management Operations** (1 type):
+**Project Management Operations** (2 types):
 20. `transferWorkflow` - Transfer workflow to a different project (enterprise/cloud)
+21. `moveToFolder` - Move workflow into a folder, or to the project root with `parentFolderId: null` (n8n 2.32+)
 
 ### Intent Parameter (IMPORTANT!)
 
@@ -441,6 +444,33 @@ workflow without groups and warns; it does not fail.
 modes when the workflow has any. `mode: "active"` returns the *published* version's groups, which
 can differ from the draft's.
 
+### moveToFolder (Folder Placement, n8n 2.32+)
+
+Move the workflow into a folder as part of a diff:
+
+```javascript
+n8n_update_partial_workflow({
+  id: "workflow-id",
+  intent: "Move into the Production folder",
+  operations: [
+    {type: "moveToFolder", parentFolderId: "abc123"}  // or null = project root
+  ]
+})
+```
+
+n8n treats a workflow's folder as **write-only**: it can be set but never read back
+(no field in `n8n_get_workflow`, no folder filter on `n8n_list_workflows`). Verify a
+move indirectly — `n8n_manage_folders({action: "get", folderId: "abc123"})` reports the
+folder's recursive `totalWorkflows` — or visually in the n8n UI. Two consequences:
+
+- If a mixed update fails after the PUT persisted, the rollback restores the graph but
+  **cannot** restore the previous folder (it was never readable); the error says so.
+- Combined with `transferWorkflow` in one request, the folder move applies in the
+  *source* project before the transfer — move in a separate call after transferring.
+
+On n8n < 2.32 the operation fails with a 400 naming `parentFolderId` plus upgrade
+guidance. Find or create folders with `n8n_manage_folders` (see below).
+
 ### Cleanup & Recovery
 
 **cleanStaleConnections** - Remove broken connections:
@@ -517,7 +547,16 @@ const result = n8n_deploy_template({
 
 ## n8n_workflow_versions (VERSION CONTROL)
 
-**Use when**: Managing workflow history, rollback, cleanup
+**Use when**: Managing workflow history, rollback, cleanup, comparing versions
+
+Two independent histories, selected with `source`:
+
+- `source: "local"` (default) — snapshots n8n-mcp takes before it changes a workflow. Any n8n version, no token; ids are numbers. Blind to edits made in the n8n UI. The only source with `delete` and `prune`.
+- `source: "native"` — n8n's own workflow history, the same list the UI shows. Needs `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+; native `diff` needs 2.36) and the workflow's "Available in MCP" setting; ids are opaque strings; `list` is capped at 50 with `offset`; `delete`/`prune` return `MODE_NOT_SUPPORTED_FOR_SOURCE`; native `rollback` runs without local validation and says so in `validation`.
+
+Native modes are gated on the workflow's "Available in MCP" setting: when it is off the call answers `WORKFLOW_NOT_EXPOSED`, and re-running with `exposeToMcp: true` turns it on and retries once (`exposedToMcp: true` comes back in the response). That setting is visible and persistent in the n8n UI — confirm with the user before enabling it. Nothing ever disables it implicitly. `timeoutMs` (5000-600000) is the client deadline for a native call.
+
+Every response states `source` and `backend` (`n8n-mcp` for local, `official-mcp` for native). The examples below use `source: "local"` unless noted.
 
 ### List Versions
 ```javascript
@@ -526,15 +565,53 @@ n8n_workflow_versions({
   workflowId: "workflow-id",
   limit: 10
 })
+
+// n8n's own history (edits made in the UI included)
+n8n_workflow_versions({
+  mode: "list",
+  source: "native",
+  workflowId: "workflow-id",
+  limit: 20,
+  offset: 0
+})
 ```
 
 ### Get Specific Version
 ```javascript
 n8n_workflow_versions({
   mode: "get",
-  versionId: 123
+  workflowId: "workflow-id",
+  versionId: 123          // local ids are numbers
+})
+
+n8n_workflow_versions({
+  mode: "get",
+  source: "native",
+  workflowId: "workflow-id",
+  versionId: "8f3c…"      // native ids are strings, from the native list
 })
 ```
+
+### Diff Two Versions
+```javascript
+// Local: added/removed/modified nodes reported as node IDs (data.format: "n8n-mcp")
+n8n_workflow_versions({
+  mode: "diff",
+  workflowId: "workflow-id",
+  versionId: 122,
+  toVersionId: 123
+})
+
+// Native: n8n's own payload with field-level before/after values (data.format: "n8n", n8n 2.36+)
+n8n_workflow_versions({
+  mode: "diff",
+  source: "native",
+  workflowId: "workflow-id",
+  versionId: "8f3c…",
+  toVersionId: "a91d…"
+})
+```
+Both versions must come from the same source and the same workflow; a mismatch is refused, not silently compared.
 
 ### Rollback to Previous Version
 ```javascript
@@ -542,11 +619,20 @@ n8n_workflow_versions({
   mode: "rollback",
   workflowId: "workflow-id",
   versionId: 123,  // Optional: specific version
-  validateBefore: true  // Default: validate before rollback
+  validateBefore: true  // Default: validate before rollback (local only)
+})
+
+// Native rollback restores n8n's own version; no local validation runs
+n8n_workflow_versions({
+  mode: "rollback",
+  source: "native",
+  workflowId: "workflow-id",
+  versionId: "8f3c…"
 })
 ```
 
 ### Delete Versions
+Local snapshots only (`source: "native"` returns `MODE_NOT_SUPPORTED_FOR_SOURCE`).
 ```javascript
 // Delete specific version
 n8n_workflow_versions({
@@ -564,6 +650,7 @@ n8n_workflow_versions({
 ```
 
 ### Prune Old Versions
+Local snapshots only.
 ```javascript
 n8n_workflow_versions({
   mode: "prune",
@@ -574,31 +661,57 @@ n8n_workflow_versions({
 
 ---
 
-## n8n_test_workflow (TRIGGER EXECUTION)
+## n8n_test_workflow (RUNNING WORKFLOWS)
 
-**Use when**: Testing workflow execution
+**Use when**: Running a workflow to test it
 
-**Auto-detects** trigger type (webhook, form, chat)
+`method` picks the path. `auto` (default) and `trigger` fire a webhook/form/chat trigger over HTTP through the Public API — the workflow must be active. `prepare`, `pinned` and `direct` go through n8n's MCP server (`N8N_MCP_ACCESS_TOKEN`, n8n 2.34+, workflow "Available in MCP") and also work for inactive workflows and workflows without an HTTP trigger. `auto` never runs anything through n8n's MCP server: without an HTTP trigger it reports that the workflow cannot be triggered and names the other methods.
+
+**Both routed run methods execute real nodes.** `direct` runs every node; `pinned` substitutes pinned data only for trigger nodes, nodes with credentials and HTTP Request nodes, so Code, Set, If and credential-free I/O (Execute Command, file read/write) still run for real. Confirm with the user before running a workflow that writes anywhere. `executionMode: "production"` (on `direct`) changes the execution context and how the run is recorded, not whether it has side effects — never pass it unasked. SKILL.md → "Running Workflows" has the same methods as a side-by-side table.
 
 ```javascript
-// Test webhook workflow
+// HTTP trigger path (method auto/trigger): the older fields still apply here
 n8n_test_workflow({
   workflowId: "workflow-id",
   triggerType: "webhook",  // Optional: auto-detected
   httpMethod: "POST",
   data: {message: "Hello!"},
   waitForResponse: true,
-  timeout: 120000
+  timeout: 120000          // HTTP trigger path only
 })
 
-// Test chat workflow
 n8n_test_workflow({
   workflowId: "workflow-id",
   triggerType: "chat",
   message: "Hello, AI agent!",
   sessionId: "session-123"  // For conversation continuity
 })
+
+// Which nodes need pinned data (read-only)
+n8n_test_workflow({
+  workflowId: "workflow-id",
+  method: "prepare"
+})
+
+// Run with pinned data standing in for trigger, credentialed and HTTP Request nodes
+n8n_test_workflow({
+  workflowId: "workflow-id",
+  method: "pinned",
+  pinData: {"Webhook": [{"json": {"id": "123"}}]},  // keyed by node name; items wrapped as {json: ...}
+  timeoutMs: 300000         // client deadline for the official call (5000-600000)
+})
+
+// Start a run without a webhook; returns once the run has started
+n8n_test_workflow({
+  workflowId: "workflow-id",
+  method: "direct",
+  data: {message: "Hello!"},
+  triggerNodeName: "Manual Trigger"   // optional; required by n8n when inputs are given
+})
+// then poll: n8n_executions({action: "get", id: executionId})
 ```
+
+`timeout` applies to the HTTP trigger path only; the routed methods use `timeoutMs`. A workflow whose "Available in MCP" setting is off comes back as `WORKFLOW_NOT_EXPOSED`; re-running with `exposeToMcp: true` enables that setting on the workflow (a visible, persistent change — confirm with the user first).
 
 ---
 
@@ -924,9 +1037,9 @@ n8n_executions({
 
 ## n8n_evaluations (EVALUATION TEST RUNS)
 
-**Use when**: Reading evaluation test runs — polling a run started in the editor, comparing metrics across runs, pulling per-case results into a report or dashboard.
+**Use when**: Working with evaluation test runs — starting or cancelling a run, polling one in progress, comparing metrics across runs, pulling per-case results into a report or dashboard.
 
-Read-only. Requires n8n >= 2.30 **and an API key created on 2.30+** — keys created earlier silently lack the `testRun` scopes, so a 403 means "re-create the API key", not a bug. Runs exist only for workflows with an evaluation trigger that have been run from the n8n editor; triggering runs via the public API is not yet supported by n8n (planned upstream, will arrive as `run`/`cancel` actions).
+Reads (`list_runs`/`get_run`/`list_cases`) require n8n >= 2.30 and an API key created on 2.30+; `run`/`cancel` require n8n >= 2.32 and a key created on 2.32+ — older keys silently lack the `testRun` scopes. A 403 can mean: a key created before the action's minimum version (re-create it), evaluations not licensed on the plan, or the key's owner lacking access to the workflow — for `run`/`cancel`, specifically the `workflow:execute` scope. Runs exist only for workflows with an evaluation trigger.
 
 ### List Test Runs
 ```javascript
@@ -962,10 +1075,97 @@ n8n_evaluations({
 // with n8n_executions({action: "get", id: executionId, mode: "error"})
 ```
 
+### Start a Run
+```javascript
+n8n_evaluations({
+  action: "run",
+  workflowId: "workflow-id"
+})
+// → {id, status: "new", createdAt} — poll with get_run until completed
+```
+`run` executes the workflow once per dataset row — real nodes fire (HTTP calls,
+DB writes, sends) and LLM metric calls cost money. Ask the user before starting
+a run, especially against a large dataset.
+
+### Cancel a Run
+```javascript
+n8n_evaluations({
+  action: "cancel",
+  workflowId: "workflow-id",
+  runId: "run-id"
+})
+// → {id, status: "cancelled"} plus a note: in-flight cases stop
+// asynchronously — confirm with get_run that the run reached "cancelled"
+```
+
 **Gotchas**:
-- A 404 can mean three things: the instance predates 2.30, the workflowId is wrong, or the runId belongs to a different workflow (the tool's error message disambiguates using the instance version)
-- Evaluations are license/quota-gated in n8n — an instance without the feature simply has no runs
+- A 404 can mean three things: the instance predates the action's minimum version, the workflowId is wrong, or the runId belongs to a different workflow (the tool's error message disambiguates using the instance version when it can read it)
+- Pre-2.32 instances answer `run` with 405 (the route exists, GET-only) and `cancel` with 404 (the route does not exist); the tool folds both into its upgrade guidance
+- 409 on `run` = the workflow has no evaluation trigger; 409 on `cancel` = the run already finished
+- 402 on `run` = the license's evaluation-run quota is exhausted
+- Evaluations are license/quota-gated in n8n — an unlicensed instance answers `run`/`cancel` with 403, and its reads have no runs to return
 - Compare `metrics` across runs of the same workflow to catch prompt/model regressions
+
+---
+
+## n8n_manage_folders (FOLDER MANAGEMENT)
+
+**Use when**: Organizing workflows into folders — creating structure before deploying a batch, restructuring a grown instance, or finding where to place a new workflow.
+
+Folder CRUD needs n8n >= 2.19 and a licensed instance (folders unlock on the **registered free Community tier** — Settings → Usage and plan → register — and up) plus `folder:*` API key scopes. Placing *workflows* into folders needs n8n >= 2.32 and happens in the workflow tools (`parentFolderId` on `n8n_create_workflow`, `moveToFolder` op), not here.
+
+### 6 Actions
+
+`create`, `list`, `get`, `rename`, `move`, `delete`. `projectId` defaults to `'personal'` (the calling user's personal project) on every action — pass a real project ID on multi-project enterprise instances.
+
+### Create a Folder
+
+```javascript
+n8n_manage_folders({action: "create", name: "Production"})
+// Nested: add parentFolderId: "abc123"
+// → {id, name, parentFolderId}
+```
+
+### List Folders (with contents counts)
+
+```javascript
+n8n_manage_folders({action: "list"})
+// Optional: nameFilter (contains match), parentFolderId (direct children only),
+//           sortBy ("name:asc" ... default "updatedAt:desc"), skip, take (max 100)
+// → folders: [{id, name, parentFolder, workflowCount, subFolderCount, path}], count
+// count = total matching the query, not the page size; path = names from root
+```
+
+### Folder Details (recursive totals)
+
+```javascript
+n8n_manage_folders({action: "get", folderId: "abc123"})
+// → {..., totalSubFolders, totalWorkflows}  // recursive — this is how you verify
+//    a workflow placement, since n8n never reports a workflow's folder directly
+```
+
+### Rename / Move
+
+```javascript
+n8n_manage_folders({action: "rename", folderId: "abc123", name: "Staging"})
+n8n_manage_folders({action: "move", folderId: "abc123", parentFolderId: "def456"})
+n8n_manage_folders({action: "move", folderId: "abc123", parentFolderId: null})  // → project root
+```
+
+### Delete (read this one)
+
+```javascript
+n8n_manage_folders({action: "delete", folderId: "abc123", transferToFolderId: "0"})
+```
+
+Without `transferToFolderId`, the folder's workflows are moved to the project root **and ARCHIVED** (deactivated), and sub-folders are deleted. Pass `transferToFolderId` to move contents somewhere first — `"0"` means the project root and keeps workflows active. Prefer the transfer form unless archiving is intended.
+
+**Gotchas**:
+- Folder names are not unique — `list` before `create` to avoid duplicates
+- A workflow's folder cannot be read back through the API; don't build logic that queries folder membership. Folder contents are visible only as counts
+- The `'personal'` default resolves through the projects API when licensed; on Community (where that API is 403) it infers the project from an existing workflow — a brand-new instance with zero workflows needs an explicit `projectId`, or create any workflow first
+- 403 = missing `folder:*` scopes or an unregistered/unlicensed instance; 404 = wrong project/folder ID, or n8n < 2.19 (no folders API at all)
+- On n8n 2.19–2.31 folder CRUD works but workflow placement doesn't (that needs 2.32+)
 
 ---
 
@@ -1072,7 +1272,7 @@ update → update → update → ... (56s avg between edits)
 - `n8n_workflow_versions` - Version control & rollback
 - `n8n_test_workflow` - Trigger execution
 - `n8n_executions` - Manage executions
-- `n8n_evaluations` - Read evaluation test runs (n8n 2.30+, read-only)
+- `n8n_evaluations` - Evaluation test runs: reads (n8n 2.30+), run/cancel (n8n 2.32+)
 - `n8n_manage_datatable` - Data table and row management
 - `n8n_manage_credentials` - Credential CRUD + schema discovery
 - `n8n_audit_instance` - Security audit (built-in + custom scan)

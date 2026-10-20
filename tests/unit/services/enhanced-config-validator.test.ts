@@ -33,6 +33,142 @@ describe('EnhancedConfigValidator', () => {
     vi.clearAllMocks();
   });
 
+  describe('Switch rules.values entries', () => {
+    const validateSwitch = (values: unknown[]) =>
+      EnhancedConfigValidator.validateWithMode(
+        'nodes-base.switch',
+        { mode: 'rules', rules: { values } },
+        [{ name: 'rules', type: 'fixedCollection', required: false }],
+        'operation',
+        'ai-friendly'
+      );
+
+    // validateConditionNodeStructure reports these precisely as
+    // "rules.values[i]: rule is missing or not an object"; describing one as a rule missing
+    // its "conditions" property on top of that points at the wrong repair (#1097).
+    it.each([
+      { label: 'null', rule: null },
+      { label: 'a string', rule: 'Branch 1' },
+      { label: 'an array', rule: [] },
+    ])('does not warn about missing rule properties when the entry is $label', ({ rule }) => {
+      const messages = validateSwitch([rule]).warnings.map(w => w.message);
+      expect(messages.filter(m => m.includes('Switch rule'))).toEqual([]);
+    });
+
+    it('still warns about a real rule missing its conditions', () => {
+      const messages = validateSwitch([{ outputKey: 'a' }]).warnings.map(w => w.message);
+      expect(messages.some(m => m.includes('Switch rule 1 is missing "conditions" property'))).toBe(true);
+    });
+  });
+
+  // validate_node runs the same operator-structure checks the workflow paths run
+  // (validateWorkflowStructure / WorkflowValidator), via config['@version'] standing in for
+  // typeVersion (#1103).
+  describe('Condition operator validation (validate_node path, #1103)', () => {
+    const malformedOperators = [
+      { label: 'type without operation', operator: { type: 'string' } },
+      { label: 'operation without type', operator: { operation: 'equals' } },
+      { label: 'type that is an operation name, not a data type', operator: { type: 'equals', operation: 'equals' } },
+      { label: 'a string', operator: 'equals' },
+      { label: 'null', operator: null },
+    ];
+
+    const conditionsConfig = (operator: unknown, version?: number) => ({
+      ...(version !== undefined ? { '@version': version } : {}),
+      conditions: { conditions: [{ id: '1', leftValue: 'x', operator, rightValue: 'y' }] },
+    });
+    const conditionsProperties = [{ name: 'conditions', type: 'filter', required: true }];
+
+    describe('nodes-base.if (typeVersion 2.2)', () => {
+      it.each(malformedOperators)('reports a malformed operator ($label) as an error on conditions', ({ operator }) => {
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.if', conditionsConfig(operator, 2.2), conditionsProperties, 'operation', 'ai-friendly');
+        expect(result.errors.some(e => e.type === 'invalid_value' && e.property === 'conditions')).toBe(true);
+      });
+
+      it('reports no operator error for a well-formed operator', () => {
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.if', conditionsConfig({ type: 'string', operation: 'equals' }, 2.2), conditionsProperties, 'operation', 'ai-friendly');
+        expect(result.errors.some(e => e.type === 'invalid_value' && e.property === 'conditions')).toBe(false);
+      });
+
+      it('does not run the check without @version (defaults to typeVersion 1)', () => {
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.if', conditionsConfig({ type: 'string' }), conditionsProperties, 'operation', 'ai-friendly');
+        expect(result.errors.some(e => e.type === 'invalid_value' && e.property === 'conditions')).toBe(false);
+      });
+    });
+
+    describe('nodes-base.filter (typeVersion 2)', () => {
+      it.each(malformedOperators)('reports a malformed operator ($label) as an error on conditions', ({ operator }) => {
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', conditionsConfig(operator, 2), conditionsProperties, 'operation', 'ai-friendly');
+        expect(result.errors.some(e => e.type === 'invalid_value' && e.property === 'conditions')).toBe(true);
+      });
+
+      it('reports no operator error for a well-formed operator', () => {
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.filter', conditionsConfig({ type: 'string', operation: 'equals' }, 2), conditionsProperties, 'operation', 'ai-friendly');
+        expect(result.errors.some(e => e.type === 'invalid_value' && e.property === 'conditions')).toBe(false);
+      });
+    });
+
+    describe('nodes-base.switch (typeVersion 3.2, rules mode)', () => {
+      const switchConfig = (operator: unknown, mode: string = 'rules') => ({
+        '@version': 3.2,
+        mode,
+        rules: { values: [{ outputKey: 'a', conditions: { conditions: [{ id: '1', leftValue: 'x', operator, rightValue: 'y' }] } }] },
+      });
+      const switchProperties = [{ name: 'rules', type: 'fixedCollection', required: false }];
+
+      it.each(malformedOperators)('reports a malformed operator ($label) as an error on rules', ({ operator }) => {
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.switch', switchConfig(operator), switchProperties, 'operation', 'ai-friendly');
+        expect(result.errors.some(e => e.type === 'invalid_value' && e.property === 'rules')).toBe(true);
+      });
+
+      it('reports no operator error for a well-formed operator', () => {
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.switch', switchConfig({ type: 'string', operation: 'equals' }), switchProperties, 'operation', 'ai-friendly');
+        expect(result.errors.some(e => e.type === 'invalid_value' && e.property === 'rules')).toBe(false);
+      });
+
+      it('skips an expression-mode Switch', () => {
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.switch', switchConfig({ type: 'string' }, 'expression'), switchProperties, 'operation', 'ai-friendly');
+        expect(result.errors.some(e => e.type === 'invalid_value' && e.property === 'rules')).toBe(false);
+      });
+
+      // The `fix` hint is operator-repair advice, so it's only attached when the underlying
+      // message is actually about an operator - a malformed rules collection needs a different
+      // fix (make it an array), which this generic hint would misdescribe.
+      it('attaches a fix hint to a malformed operator error', () => {
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.switch', switchConfig({ type: 'string' }), switchProperties, 'operation', 'ai-friendly');
+        const error = result.errors.find(e => e.type === 'invalid_value' && e.property === 'rules');
+        expect(error).toBeDefined();
+        expect(error!.message).toContain('operator');
+        expect(error!.fix).toBeDefined();
+      });
+
+      it('stores a numeric-string @version as a number and treats Infinity as version 1', () => {
+        const config = { '@version': '3.2', mode: 'rules', rules: { values: [{ conditions: { conditions: [{ operator: { type: 'string' } }] } }] } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.switch', config as any, switchProperties, 'operation', 'ai-friendly');
+        expect(result.errors.some(e => e.property === 'rules' && e.message.includes('operator'))).toBe(true);
+        const inf = EnhancedConfigValidator.validateWithMode('nodes-base.switch', { ...config, '@version': Infinity } as any, switchProperties, 'operation', 'ai-friendly');
+        expect(inf.errors.some(e => e.property === 'rules' && e.message.includes('operator'))).toBe(false);
+      });
+
+      it('treats a non-primitive @version as version 1 instead of throwing (#1094)', () => {
+        const config = { '@version': { toString: null, valueOf: null }, mode: 'rules', rules: { values: [{ conditions: { conditions: [{ operator: { type: 'string' } }] } }] } };
+        expect(() => EnhancedConfigValidator.validateWithMode('nodes-base.switch', config as any, switchProperties, 'operation', 'ai-friendly')).not.toThrow();
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.switch', config as any, switchProperties, 'operation', 'ai-friendly');
+        // Version 1 is below the Switch operator gate, so the operator check is skipped.
+        expect(result.errors.some(e => e.property === 'rules' && e.message.includes('operator'))).toBe(false);
+      });
+
+      it('does not attach a fix hint when rules.values itself is malformed (not an array)', () => {
+        const config = { '@version': 3.2, mode: 'rules', rules: { values: 'abc' } };
+        const result = EnhancedConfigValidator.validateWithMode('nodes-base.switch', config, switchProperties, 'operation', 'ai-friendly');
+        const error = result.errors.find(e => e.type === 'invalid_value' && e.property === 'rules');
+        expect(error).toBeDefined();
+        expect(error!.message).not.toContain('operator');
+        expect(error!.fix).toBeUndefined();
+      });
+    });
+  });
+
   describe('validateWithMode', () => {
     it('should validate config with operation awareness', () => {
       const nodeType = 'nodes-base.slack';
@@ -201,18 +337,30 @@ describe('EnhancedConfigValidator', () => {
   });
 
   describe('deduplicateErrors', () => {
-    it('should remove duplicate errors for the same property and type', () => {
+    it('should remove repeats of the same message on a property', () => {
       const errors = [
-        { type: 'missing_required', property: 'channel', message: 'Short message' },
-        { type: 'missing_required', property: 'channel', message: 'Much longer and more detailed message with specific fix' },
+        { type: 'missing_required', property: 'channel', message: 'Channel is required' },
+        { type: 'missing_required', property: 'channel', message: 'Channel is required' },
         { type: 'invalid_type', property: 'channel', message: 'Different type error' }
       ];
 
       const deduplicated = EnhancedConfigValidator['deduplicateErrors'](errors as ValidationError[]);
 
       expect(deduplicated).toHaveLength(2);
-      // Should keep the longer message
-      expect(deduplicated.find(e => e.type === 'missing_required')?.message).toContain('longer');
+    });
+
+    it('should keep distinct findings on the same property and type', () => {
+      // Several rules can fail on one property (e.g. the native-Python rules all
+      // report against pythonCode). Each is a separate defect to fix.
+      const errors = [
+        { type: 'invalid_value', property: 'pythonCode', message: '_input does not exist in native Python' },
+        { type: 'invalid_value', property: 'pythonCode', message: 'Items are dicts: .json attribute access raises AttributeError' },
+        { type: 'invalid_value', property: 'pythonCode', message: 'class definitions fail in the sandbox' }
+      ];
+
+      const deduplicated = EnhancedConfigValidator['deduplicateErrors'](errors as ValidationError[]);
+
+      expect(deduplicated).toHaveLength(3);
     });
 
     it('should prefer errors with fix information over those without', () => {
@@ -225,6 +373,18 @@ describe('EnhancedConfigValidator', () => {
 
       expect(deduplicated).toHaveLength(1);
       expect(deduplicated[0].fix).toBeDefined();
+    });
+
+    it('should keep the most specific wording when required errors collapse', () => {
+      const errors = [
+        { type: 'missing_required', property: 'table', message: "Required property 'Table' cannot be empty" },
+        { type: 'missing_required', property: 'table', message: 'Table name is required for insert operation', fix: 'Specify the table to insert data into' }
+      ];
+
+      const deduplicated = EnhancedConfigValidator['deduplicateErrors'](errors as ValidationError[]);
+
+      expect(deduplicated).toHaveLength(1);
+      expect(deduplicated[0].message).toBe('Table name is required for insert operation');
     });
 
     it('should handle empty error arrays', () => {

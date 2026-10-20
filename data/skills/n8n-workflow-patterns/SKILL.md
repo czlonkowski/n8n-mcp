@@ -364,6 +364,7 @@ These skills work together with Workflow Patterns:
 - Deploy templates (n8n_deploy_template)
 - Use `tools_documentation({topic: "ai_agents_guide", depth: "full"})` for AI pattern guidance
 - Manage data tables with `n8n_manage_datatable`
+- Organize workflows into folders with `n8n_manage_folders`
 
 **n8n Expression Syntax** - Use to:
 - Write expressions in transformation nodes

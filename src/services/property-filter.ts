@@ -21,6 +21,8 @@ export interface SimplifiedProperty {
     modes?: string[];
     example: Record<string, any>;
   };
+  /** Options for this property come from the live service; resolve them with n8n_explore_node_resources. */
+  dynamicOptions?: { methodName: string; methodType: 'loadOptions' | 'listSearch'; dependsOn: string[] };
 }
 
 export interface EssentialConfig {
@@ -99,7 +101,7 @@ export class PropertyFilter {
     // Slack - Messaging
     'nodes-base.slack': {
       required: [],
-      common: ['resource', 'operation', 'channel', 'text', 'attachments', 'blocks'],
+      common: ['resource', 'operation', 'channelId', 'text', 'attachments', 'blocksUi'],
       categoryPriority: ['basic', 'message', 'formatting', 'advanced']
     },
     
@@ -347,13 +349,48 @@ export class PropertyFilter {
         simplified.showWhen = prop.displayOptions.show;
       }
     }
-    
+
+    const dynamic = PropertyFilter.extractDynamicOptions(prop);
+    if (dynamic) simplified.dynamicOptions = dynamic;
+
     // Add usage hints based on property characteristics
     simplified.usageHint = this.generateUsageHint(prop);
-    
+
     return simplified;
   }
-  
+
+  /**
+   * Detect properties whose options are resolved at runtime rather than
+   * enumerated statically (loadOptions methods or resource-locator list search).
+   *
+   * Precedence: a `loadOptionsMethod` on the property itself wins over a
+   * resource-locator mode's `searchListMethod`. A property carrying both is
+   * a plain options field that also happens to offer a list-search mode, and
+   * the property-level method is the one that fills the field. Only one
+   * dynamic source is reported, so the caller has a single method to call.
+   *
+   * `dependsOn` merges the property-level and mode-level dependency lists and
+   * de-duplicates them: the two commonly name the same parent field.
+   */
+  private static extractDynamicOptions(prop: any): SimplifiedProperty['dynamicOptions'] | undefined {
+    const dependsOn = (o: any): string[] => Array.isArray(o?.loadOptionsDependsOn) ? o.loadOptionsDependsOn.map(String) : [];
+    const method = prop?.typeOptions?.loadOptionsMethod;
+    if (typeof method === 'string' && method) {
+      return { methodName: method, methodType: 'loadOptions', dependsOn: dependsOn(prop.typeOptions) };
+    }
+    if (Array.isArray(prop?.modes)) {
+      const mode = prop.modes.find((m: any) => typeof m?.typeOptions?.searchListMethod === 'string');
+      if (mode) {
+        return {
+          methodName: mode.typeOptions.searchListMethod,
+          methodType: 'listSearch',
+          dependsOn: [...new Set([...dependsOn(prop.typeOptions), ...dependsOn(mode.typeOptions)])]
+        };
+      }
+    }
+    return undefined;
+  }
+
   /**
    * Generate helpful usage hints for properties
    */

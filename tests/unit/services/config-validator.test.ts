@@ -642,13 +642,60 @@ describe('ConfigValidator', () => {
       const result = ConfigValidator.validate('nodes-base.code', { language: 'python', pythonCode: 'def process():\n    x = 1\n\ty = 2\n    return [{"json": {"x": x, "y": y}}]' }, [{ name: 'language', type: 'options' }, { name: 'pythonCode', type: 'string' }]);
       expect(result.errors.some(e => e.type === 'syntax_error' && e.message.includes('Mixed indentation'))).toBe(true);
     });
-    it('should warn about incorrect n8n return patterns', () => {
+    it('should not flag a single dict return - native Python auto-wraps it', () => {
       const result = ConfigValidator.validate('nodes-base.code', { language: 'python', pythonCode: 'result = {"data": "value"}\nreturn result' }, [{ name: 'language', type: 'options' }, { name: 'pythonCode', type: 'string' }]);
-      expect(result.warnings.some(w => w.type === 'invalid_value' && w.message.includes('Must return array of objects with json key'))).toBe(true);
+      expect(result.warnings.some(w => w.message.includes('Must return array of objects with json key'))).toBe(false);
+      expect(result.warnings.some(w => w.message.includes('Return value must be a list'))).toBe(false);
     });
-    it('should warn about using external libraries in Python code', () => {
+    it('should leave import reporting to the node-specific layer', () => {
       const result = ConfigValidator.validate('nodes-base.code', { language: 'python', pythonCode: 'import pandas as pd\nimport requests\ndf = pd.DataFrame(items)\nresponse = requests.get("https://api.example.com")\nreturn [{"json": {"data": response.json()}}]' }, [{ name: 'language', type: 'options' }, { name: 'pythonCode', type: 'string' }]);
-      expect(result.warnings.some(w => w.type === 'invalid_value' && w.message.includes('External libraries not available'))).toBe(true);
+      expect(result.warnings.some(w => w.message.includes('External libraries not available'))).toBe(false);
+    });
+    it('should not type-check a null value - the required check owns that case', () => {
+      const result = ConfigValidator.validate(
+        'nodes-base.httpRequest',
+        { url: null },
+        [{ name: 'url', type: 'string', required: true, displayName: 'URL' }]
+      );
+
+      expect(result.errors.filter(e => e.property === 'url')).toHaveLength(1);
+      expect(result.errors[0].message).toBe("Required property 'URL' cannot be null or undefined");
+      expect(result.errors.some(e => e.message.includes('must be a string, got object'))).toBe(false);
+    });
+
+    it('should not type-check a null optional value', () => {
+      const result = ConfigValidator.validate(
+        'nodes-base.stickyNote',
+        { color: null, content: 'note' },
+        [{ name: 'color', type: 'number', displayName: 'Color' }, { name: 'content', type: 'string' }]
+      );
+
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('should not emit the JavaScript eval/exec warning for Python', () => {
+      const result = ConfigValidator.validate('nodes-base.code', { language: 'python', pythonCode: 'value = eval("1 + 1")\nreturn [{"json": {"value": value}}]' }, [{ name: 'language', type: 'options' }, { name: 'pythonCode', type: 'string' }]);
+      expect(result.warnings.some(w => w.message.includes('eval/exec which can be a security risk'))).toBe(false);
+    });
+
+    describe('pythonNative language value', () => {
+      const codeProperties = [{ name: 'language', type: 'options' }, { name: 'pythonCode', type: 'string' }, { name: 'jsCode', type: 'string' }];
+
+      it('should read pythonCode, not jsCode, when language is pythonNative', () => {
+        const result = ConfigValidator.validate('nodes-base.code', { language: 'pythonNative', mode: 'runOnceForEachItem', pythonCode: 'row = _item["json"]\nreturn {"json": row}' }, codeProperties);
+        expect(result.errors.some(e => e.message === 'Code cannot be empty')).toBe(false);
+        expect(result.errors.some(e => e.property === 'jsCode')).toBe(false);
+      });
+
+      it('should still report empty pythonNative code against pythonCode', () => {
+        const result = ConfigValidator.validate('nodes-base.code', { language: 'pythonNative', pythonCode: '' }, codeProperties);
+        expect(result.errors).toContainEqual(expect.objectContaining({ property: 'pythonCode', message: 'Code cannot be empty' }));
+      });
+
+      it('should run Python syntax checks for pythonNative', () => {
+        const result = ConfigValidator.validate('nodes-base.code', { language: 'pythonNative', pythonCode: 'def process():\n    x = 1\n\ty = 2\n    return [{"json": {"x": x, "y": y}}]' }, codeProperties);
+        expect(result.errors.some(e => e.type === 'syntax_error' && e.message.includes('Mixed indentation'))).toBe(true);
+      });
     });
     it('should validate Python code with print statements', () => {
       const result = ConfigValidator.validate('nodes-base.code', { language: 'python', pythonCode: 'print("Debug:", items)\nprocessed = []\nfor item in items:\n    print(f"Processing: {item}")\n    processed.append({"json": item["json"]})\nreturn processed' }, [{ name: 'language', type: 'options' }, { name: 'pythonCode', type: 'string' }]);

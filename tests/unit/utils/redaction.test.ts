@@ -12,13 +12,20 @@ describe('redactHeaders', () => {
     expect(result.Authorization).toBe(REDACTED);
   });
 
-  it('redacts x-n8n-key and x-n8n-url', () => {
+  it('redacts x-n8n-key, x-n8n-mcp-token and x-n8n-url', () => {
     const result = redactHeaders({
       'x-n8n-key': 'per-tenant-api-key',
+      'x-n8n-mcp-token': 'per-tenant-mcp-token',
       'x-n8n-url': 'https://tenant.internal/',
     });
     expect(result['x-n8n-key']).toBe(REDACTED);
+    expect(result['x-n8n-mcp-token']).toBe(REDACTED);
     expect(result['x-n8n-url']).toBe(REDACTED);
+  });
+
+  it('redacts X-N8N-MCP-Token regardless of case', () => {
+    const result = redactHeaders({ 'X-N8N-MCP-Token': 'per-tenant-mcp-token' });
+    expect(result['X-N8N-MCP-Token']).toBe(REDACTED);
   });
 
   it('redacts cookie, set-cookie and proxy-authorization', () => {

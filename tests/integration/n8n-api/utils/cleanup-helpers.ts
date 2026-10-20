@@ -13,6 +13,21 @@ import { Logger } from '../../../../src/utils/logger';
 
 const logger = new Logger({ prefix: '[Cleanup]' });
 
+export interface CleanupOrphanedWorkflowsOptions {
+  /**
+   * Minimum age (in ms) a workflow must have before it is eligible for
+   * deletion, based on `updatedAt` (falling back to `createdAt`). Workflows
+   * with neither timestamp are kept when the age is positive, since their age
+   * cannot be established; `minAgeMs` of 0 deletes every candidate.
+   *
+   * Defaults to 5 minutes. This reduces (does not eliminate) the chance of
+   * deleting a workflow another run recently created or updated.
+   */
+  minAgeMs?: number;
+}
+
+const DEFAULT_MIN_AGE_MS = 5 * 60 * 1000;
+
 /**
  * Clean up orphaned test workflows
  *
@@ -20,9 +35,13 @@ const logger = new Logger({ prefix: '[Cleanup]' });
  * prefixed with the test name prefix. Run this periodically in CI
  * to clean up failed test runs.
  *
+ * @param options - Optional settings, including an age guard
  * @returns Array of deleted workflow IDs
  */
-export async function cleanupOrphanedWorkflows(): Promise<string[]> {
+export async function cleanupOrphanedWorkflows(
+  options: CleanupOrphanedWorkflowsOptions = {}
+): Promise<string[]> {
+  const { minAgeMs = DEFAULT_MIN_AGE_MS } = options;
   const creds = getN8nCredentials();
   const client = getTestN8nClient();
   const deleted: string[] = [];
@@ -70,12 +89,52 @@ export async function cleanupOrphanedWorkflows(): Promise<string[]> {
   ]);
 
   // Find test workflows but exclude pre-activated webhook workflows
-  const testWorkflows = allWorkflows.filter(w => {
+  const candidateWorkflows = allWorkflows.filter(w => {
     const isTestWorkflow = w.tags?.includes(creds.cleanup.tag) || w.name?.startsWith(creds.cleanup.namePrefix);
     const isPreserved = preservedWorkflowNames.has(w.name);
 
     return isTestWorkflow && !isPreserved;
   });
+
+  // Age guard: skip anything created/updated too recently. `updatedAt` only
+  // moves when a workflow is mutated, so a workflow being read (not
+  // written) by another run won't look "new" here - this reduces, rather
+  // than eliminates, the chance of deleting a workflow another run is
+  // using. The sweep is invoked once before the suite starts (not mid-run)
+  // for that reason: nothing else should be creating or touching test
+  // workflows while this runs.
+  //
+  // `minAgeMs <= 0` bypasses the timestamp filter entirely rather than just
+  // using a cutoff of "now": a workflow's updatedAt/createdAt can be ahead
+  // of this runner's clock (clock skew against the n8n host), which would
+  // make it look permanently "too new" under a `workflowTime < cutoffTime`
+  // check even at cutoff = now. cleanup-orphans.ts (the standalone
+  // maintenance script, which only runs when no test suite is live) always
+  // passes { minAgeMs: 0 } and must still delete every candidate.
+  let skippedTooNew = 0;
+  const testWorkflows = minAgeMs <= 0
+    ? candidateWorkflows
+    : candidateWorkflows.filter(w => {
+        const cutoffTime = Date.now() - minAgeMs;
+        const timestamp = w.updatedAt || w.createdAt;
+        const workflowTime = timestamp ? new Date(timestamp).getTime() : NaN;
+
+        // No usable timestamp: the age cannot be established, so the guard keeps it.
+        // The maintenance script passes minAgeMs 0 and deletes every candidate.
+        if (Number.isNaN(workflowTime)) {
+          return false;
+        }
+
+        const isOldEnough = workflowTime < cutoffTime;
+        if (!isOldEnough) {
+          skippedTooNew++;
+        }
+        return isOldEnough;
+      });
+
+  if (skippedTooNew > 0) {
+    logger.info(`Skipped ${skippedTooNew} workflow(s) younger than ${minAgeMs}ms (likely in use by another running test)`);
+  }
 
   logger.info(`Found ${testWorkflows.length} orphaned test workflow(s) (excluding ${preservedWorkflowNames.size} preserved webhook workflow)`);
 
@@ -179,16 +238,19 @@ export async function cleanupOldExecutions(
  * Combines cleanupOrphanedWorkflows and cleanupOldExecutions.
  * Use this as a comprehensive cleanup in CI.
  *
+ * @param options - Forwarded to cleanupOrphanedWorkflows (e.g. minAgeMs)
  * @returns Object with counts of deleted resources
  */
-export async function cleanupAllTestResources(): Promise<{
+export async function cleanupAllTestResources(
+  options: CleanupOrphanedWorkflowsOptions = {}
+): Promise<{
   workflows: number;
   executions: number;
 }> {
   logger.info('Starting comprehensive test resource cleanup...');
 
   const [workflowIds, executionIds] = await Promise.all([
-    cleanupOrphanedWorkflows(),
+    cleanupOrphanedWorkflows(options),
     cleanupOldExecutions()
   ]);
 

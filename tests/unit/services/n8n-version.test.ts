@@ -11,6 +11,7 @@ import {
   getCachedVersion,
   fetchN8nVersion,
   VERSION_THRESHOLDS,
+  settingsRejectionLadder,
 } from '@/services/n8n-version';
 import type { N8nVersionInfo } from '@/types/n8n-api';
 import type { PinnedAgents } from '@/utils/ssrf-protection';
@@ -245,6 +246,86 @@ describe('n8n-version', () => {
       expect(cleanSettingsForVersion({}, v)).toEqual({});
       expect(cleanSettingsForVersion(undefined, v)).toEqual({});
     });
+
+    describe('pass-through at n8n 2.24.0 and above', () => {
+      it('forwards a setting newer than our property list', () => {
+        const v = parseVersion('2.34.4')!;
+        const cleaned = cleanSettingsForVersion(
+          { executionOrder: 'v1', settingFromANewerN8n: 'forwarded' },
+          v
+        );
+
+        // The list trails n8n's weekly releases; the instance decides, not us
+        expect(cleaned).toEqual({ executionOrder: 'v1', settingFromANewerN8n: 'forwarded' });
+      });
+
+      it('keeps redactionPolicy instead of silently dropping it', () => {
+        const v = parseVersion('2.26.0')!;
+        const cleaned = cleanSettingsForVersion(
+          { executionOrder: 'v1', redactionPolicy: 'all' },
+          v
+        );
+
+        expect(cleaned).toHaveProperty('redactionPolicy', 'all');
+      });
+
+      it('still drops properties n8n derives and ignores on write', () => {
+        const v = parseVersion('2.34.4')!;
+        const cleaned = cleanSettingsForVersion(
+          { executionOrder: 'v1', binaryMode: 'combined', credentialResolverId: 'resolver-1' },
+          v
+        );
+
+        expect(cleaned).toEqual({ executionOrder: 'v1' });
+      });
+
+      it('still drops engineType, which the write schema rejects on every version (Issue #1043)', () => {
+        const v = parseVersion('2.36.0')!;
+        const cleaned = cleanSettingsForVersion({ executionOrder: 'v1', engineType: 'v2' }, v);
+
+        expect(cleaned).toEqual({ executionOrder: 'v1' });
+      });
+    });
+
+    describe('below the pass-through floor', () => {
+      it('filters unknown properties, which those versions reject outright', () => {
+        const v = parseVersion('2.23.0')!;
+        const cleaned = cleanSettingsForVersion(
+          { executionOrder: 'v1', settingFromANewerN8n: 'dropped' },
+          v
+        );
+
+        expect(cleaned).toEqual({ executionOrder: 'v1' });
+      });
+
+      it('filters properties introduced after the target version', () => {
+        const v = parseVersion('1.119.0')!;
+        const cleaned = cleanSettingsForVersion(
+          { executionOrder: 'v1', redactionPolicy: 'all' },
+          v
+        );
+
+        expect(cleaned).toEqual({ executionOrder: 'v1' });
+      });
+    });
+
+    it('passes unknown properties through when the version could not be detected', () => {
+      // Undetectable instances skew modern, and a surfaced 400 beats a silent drop
+      const cleaned = cleanSettingsForVersion(
+        { executionOrder: 'v1', redactionPolicy: 'all', binaryMode: 'combined' },
+        null
+      );
+
+      expect(cleaned).toEqual({ executionOrder: 'v1', redactionPolicy: 'all' });
+    });
+
+    it('drops engineType even when the version could not be detected (Issue #1043)', () => {
+      // Modern n8n hides its version from API clients, so this null-version path is what
+      // production takes - derived stripping must not depend on the version probe
+      const cleaned = cleanSettingsForVersion({ executionOrder: 'v1', engineType: 'v2' }, null);
+
+      expect(cleaned).toEqual({ executionOrder: 'v1' });
+    });
   });
 
   describe('Version cache', () => {
@@ -368,6 +449,46 @@ describe('n8n-version', () => {
       expect(cached).toEqual({ version: '1.119.0', major: 1, minor: 119, patch: 0 });
       expect(axios.get).toHaveBeenCalledTimes(1);
     });
+
+    it('caches an instance that answers without a version', async () => {
+      // The normal answer from every n8n >= 1.119.0. Re-probing would cost a round trip per
+      // workflow write to learn the same thing.
+      vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { data: { sso: {} } } });
+
+      expect(await fetchN8nVersion(baseUrl)).toBeNull();
+      expect(await fetchN8nVersion(baseUrl)).toBeNull();
+
+      expect(axios.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-probes after a probe that produced no usable response', async () => {
+      // Neither a timeout nor a 5xx - which validateStatus rejects - says anything about what the
+      // instance reports when healthy, so caching either would suppress detection over a blip.
+      vi.mocked(axios.get).mockRejectedValueOnce(new Error('ETIMEDOUT'));
+      vi.mocked(axios.get).mockRejectedValueOnce(
+        Object.assign(new Error('Bad Gateway'), { response: { status: 502 } })
+      );
+      vi.mocked(axios.get).mockResolvedValue(settingsResponse);
+
+      expect(await fetchN8nVersion(baseUrl)).toBeNull();
+      expect(await fetchN8nVersion(baseUrl)).toBeNull();
+      expect(await fetchN8nVersion(baseUrl)).toEqual({
+        version: '1.119.0',
+        major: 1,
+        minor: 119,
+        patch: 0,
+      });
+      expect(axios.get).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not let a forced refresh keep reporting a version the instance stopped sending', async () => {
+      vi.mocked(axios.get).mockResolvedValueOnce(settingsResponse);
+      expect(await fetchN8nVersion(baseUrl)).not.toBeNull();
+
+      vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { data: {} } });
+      expect(await fetchN8nVersion(baseUrl, { forceRefresh: true })).toBeNull();
+      expect(await fetchN8nVersion(baseUrl)).toBeNull();
+    });
   });
 
   describe('VERSION_THRESHOLDS', () => {
@@ -414,5 +535,35 @@ describe('n8n-version', () => {
       expect(cleaned).not.toHaveProperty('callerPolicy');
       expect(cleaned).not.toHaveProperty('availableInMCP');
     });
+  });
+});
+
+describe('settingsRejectionLadder', () => {
+  it('drops keys outside the settings table first, together, then known keys newest first', () => {
+    const steps = settingsRejectionLadder({
+      executionOrder: 'v1',
+      callerPolicy: 'workflowsFromSameOwner',
+      customTelemetryTags: { team: 'ops' },
+      timeSavedMode: 'fixed',
+      redactionPolicy: 'strict',
+      addedLastWeek: true,
+      addedYesterday: 1,
+    });
+
+    expect(steps).toEqual([
+      ['addedLastWeek', 'addedYesterday'],
+      ['timeSavedMode'],
+      ['redactionPolicy'],
+      ['customTelemetryTags'],
+    ]);
+  });
+
+  it('never offers keys that predate 1.119.0, which version detection still covers', () => {
+    expect(settingsRejectionLadder({ executionOrder: 'v1', timezone: 'UTC', callerPolicy: 'any' })).toEqual([]);
+  });
+
+  it('is empty for missing or malformed settings', () => {
+    expect(settingsRejectionLadder(undefined)).toEqual([]);
+    expect(settingsRejectionLadder(['not', 'an', 'object'])).toEqual([]);
   });
 });

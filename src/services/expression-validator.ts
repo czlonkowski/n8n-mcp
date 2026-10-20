@@ -3,6 +3,7 @@
  * Validates expression syntax, variable references, and context availability
  */
 
+import { blankStringLiterals, checkJmespathQuery, findJmespathCalls } from '../utils/jmespath-checks';
 import { extractBracketExpressions, hasDanglingOpenBracket } from '../utils/expression-utils';
 
 interface ExpressionValidationResult {
@@ -35,6 +36,9 @@ export class ExpressionValidator {
 
   // Expression extraction is now handled by the linear-time
   // `extractBracketExpressions` helper in utils/expression-utils.
+  /** Expressions longer than this skip the JMESPath scan; the scan is linear but bounded anyway. */
+  private static readonly MAX_JMESPATH_SCAN_LENGTH = 50_000;
+
   private static readonly VARIABLE_PATTERNS = {
     json: /\$json(\.[a-zA-Z_][\w]*|\["[^"]+"\]|\['[^']+'\]|\[\d+\])*/g,
     node: /\$node\["([^"]+)"\]\.json/g,
@@ -202,6 +206,34 @@ export class ExpressionValidator {
 
     // Check for common mistakes
     this.checkCommonMistakes(expr, result);
+    this.checkJmespathCalls(expr, result);
+  }
+
+  /**
+   * `$jmespath()` inside `{{ }}`: n8n swallows JMESPath parse errors there and the field
+   * resolves to null while the node reports success (#1114), so the query string gets the
+   * same static checks the Code-node validator applies.
+   */
+  private static checkJmespathCalls(expr: string, result: ExpressionValidationResult): void {
+    if (expr.length > this.MAX_JMESPATH_SCAN_LENGTH) return;
+    const seen = new Set<string>();
+    const report = (severity: 'error' | 'warning', text: string) => {
+      if (seen.has(text)) return;
+      seen.add(text);
+      (severity === 'error' ? result.errors : result.warnings).push(text);
+    };
+    for (const call of findJmespathCalls(expr)) {
+      if (call.queryIsFirstArgument) {
+        report('error', '$jmespath arguments are reversed: use $jmespath(data, "query"); n8n resolves the expression to null');
+        continue;
+      }
+      if (call.query === undefined) continue;
+      for (const finding of checkJmespathQuery(call.query)) {
+        // The silent null is expression-specific; a Code node surfaces the parse error.
+        const consequence = finding.severity === 'error' ? '; n8n resolves the expression to null instead of reporting the parse error' : '';
+        report(finding.severity, `${finding.message}${consequence}. ${finding.fix}`);
+      }
+    }
   }
 
   /**
@@ -218,8 +250,10 @@ export class ExpressionValidator {
     // - Inside word characters (e.g., myJson) - handled by (?<!\w)
     // - Inside bracket notation (e.g., ['json']) - handled by (?<![)
     // - After opening bracket or quote (e.g., "json" or ['json'])
+    // The words are checked outside string literals only: a JMESPath query over .all() items
+    // has to say `json.` because each item is a {json: …} wrapper (#1115).
     const missingPrefixPattern = /(?<![.$\w['])\b(json|node|input|items|workflow|execution)\b(?!\s*[:''])/;
-    if (expr.match(missingPrefixPattern)) {
+    if (blankStringLiterals(expr).match(missingPrefixPattern)) {
       result.warnings.push(
         'Possible missing $ prefix for variable (e.g., use $json instead of json)'
       );

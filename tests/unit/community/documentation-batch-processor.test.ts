@@ -64,6 +64,7 @@ function createMockRepository(): NodeRepository {
     getCommunityNodesWithoutReadme: vi.fn().mockReturnValue([]),
     getCommunityNodesWithoutAISummary: vi.fn().mockReturnValue([]),
     updateNodeReadme: vi.fn(),
+    clearNodeReadme: vi.fn(),
     updateNodeAISummary: vi.fn(),
     getDocumentationStats: vi.fn().mockReturnValue({
       total: 10,
@@ -213,7 +214,106 @@ describe('DocumentationBatchProcessor', () => {
       await processor.processAll({ readmeOnly: true });
 
       expect(mockFetcher.fetchReadmesBatch).toHaveBeenCalledTimes(1);
-      expect(mockRepository.updateNodeReadme).toHaveBeenCalledWith('node1', '# README content');
+      expect(mockRepository.updateNodeReadme).toHaveBeenCalledWith('node1', '# README content', { clearSummary: false });
+    });
+
+    it('does not summarise a stored npm placeholder', async () => {
+      const nodes = [
+        createMockCommunityNode({
+          nodeType: 'pkg1.placeholder',
+          npmPackageName: 'pkg1',
+          npmReadme: 'ERROR: No README data found!',
+        }),
+        createMockCommunityNode({ nodeType: 'pkg2.real', npmPackageName: 'pkg2', npmReadme: '# Real README' }),
+      ];
+
+      vi.mocked(mockRepository.getCommunityNodes).mockReturnValue(nodes);
+      vi.mocked(mockGenerator.generateBatch).mockResolvedValue([]);
+
+      await processor.processAll({ summaryOnly: true });
+
+      const inputs = vi.mocked(mockGenerator.generateBatch).mock.calls[0][0];
+      expect(inputs.map((input) => input.nodeType)).toEqual(['pkg2.real']);
+    });
+
+    it("clears a stored npm placeholder when no README is found, but keeps a real README", async () => {
+      const nodes = [
+        createMockCommunityNode({
+          nodeType: 'pkg1.placeholder',
+          npmPackageName: 'pkg1',
+          npmReadme: 'ERROR: No README data found!',
+        }),
+        createMockCommunityNode({ nodeType: 'pkg2.real', npmPackageName: 'pkg2', npmReadme: '# Older README' }),
+      ];
+
+      vi.mocked(mockRepository.getCommunityNodes).mockReturnValue(nodes);
+      vi.mocked(mockFetcher.fetchReadmesBatch).mockResolvedValue(
+        new Map([
+          ['pkg1', null],
+          ['pkg2', null],
+        ])
+      );
+
+      await processor.processAll({ readmeOnly: true });
+
+      expect(mockRepository.clearNodeReadme).toHaveBeenCalledTimes(1);
+      expect(mockRepository.clearNodeReadme).toHaveBeenCalledWith('pkg1.placeholder');
+    });
+
+    it('drops the summary of a stored placeholder that a fetched README replaces', async () => {
+      const nodes = [
+        createMockCommunityNode({
+          nodeType: 'pkg1.placeholder',
+          npmPackageName: 'pkg1',
+          npmReadme: 'ERROR: No README data found!',
+        }),
+        createMockCommunityNode({ nodeType: 'pkg2.real', npmPackageName: 'pkg2', npmReadme: '# Older README' }),
+      ];
+
+      vi.mocked(mockRepository.getCommunityNodes).mockReturnValue(nodes);
+      vi.mocked(mockFetcher.fetchReadmesBatch).mockResolvedValue(
+        new Map([
+          ['pkg1', '# Recovered README'],
+          ['pkg2', '# Newer README'],
+        ])
+      );
+
+      await processor.processAll({ readmeOnly: true });
+
+      expect(mockRepository.updateNodeReadme).toHaveBeenCalledWith('pkg1.placeholder', '# Recovered README', {
+        clearSummary: true,
+      });
+      expect(mockRepository.updateNodeReadme).toHaveBeenCalledWith('pkg2.real', '# Newer README', { clearSummary: false });
+    });
+
+    it('records a failed placeholder cleanup and keeps storing the other READMEs', async () => {
+      const nodes = [
+        createMockCommunityNode({
+          nodeType: 'pkg1.placeholder',
+          npmPackageName: 'pkg1',
+          npmReadme: 'ERROR: No README data found!',
+        }),
+        createMockCommunityNode({ nodeType: 'pkg2.node', npmPackageName: 'pkg2' }),
+      ];
+
+      vi.mocked(mockRepository.getCommunityNodes).mockReturnValue(nodes);
+      vi.mocked(mockRepository.clearNodeReadme).mockImplementation(() => {
+        throw new Error('database is locked');
+      });
+      vi.mocked(mockFetcher.fetchReadmesBatch).mockResolvedValue(
+        new Map([
+          ['pkg1', null],
+          ['pkg2', '# README'],
+        ])
+      );
+
+      const result = await processor.processAll({ readmeOnly: true });
+
+      expect(mockRepository.updateNodeReadme).toHaveBeenCalledWith('pkg2.node', '# README', { clearSummary: false });
+      expect(result.readmesFetched).toBe(1);
+      expect(result.errors).toEqual(
+        expect.arrayContaining([expect.stringContaining('pkg1.placeholder')])
+      );
     });
   });
 
@@ -356,6 +456,7 @@ describe('DocumentationBatchProcessor', () => {
       const manyNodes = Array.from({ length: 10 }, (_, i) =>
         createMockCommunityNode({
           nodeType: `node${i}`,
+          npmPackageName: `pkg${i}`,
           npmReadme: `# README ${i}`,
         })
       );
@@ -684,9 +785,94 @@ describe('DocumentationBatchProcessor', () => {
       expect(result.readmesFetched).toBe(0);
       expect(result.readmesFailed).toBe(0);
     });
+
+    it('should fetch a README once for a package that ships several nodes (#967)', async () => {
+      const nodes = [
+        createMockCommunityNode({ nodeType: 'pkg1.first', npmPackageName: 'pkg1' }),
+        createMockCommunityNode({ nodeType: 'pkg1.second', npmPackageName: 'pkg1' }),
+      ];
+
+      vi.mocked(mockRepository.getCommunityNodes).mockReturnValue(nodes);
+      vi.mocked(mockFetcher.fetchReadmesBatch).mockResolvedValue(
+        new Map([['pkg1', '# README']])
+      );
+
+      const result = await processor.processAll({ readmeOnly: true });
+
+      expect(mockFetcher.fetchReadmesBatch).toHaveBeenCalledWith(['pkg1'], undefined, 5);
+      // Both rows still get the README.
+      expect(result.readmesFetched).toBe(2);
+      expect(mockRepository.updateNodeReadme).toHaveBeenCalledWith('pkg1.first', '# README', { clearSummary: false });
+      expect(mockRepository.updateNodeReadme).toHaveBeenCalledWith('pkg1.second', '# README', { clearSummary: false });
+    });
   });
 
   describe('summary generation edge cases', () => {
+    it('should generate one summary per package and store it on every row (#967)', async () => {
+      const nodes = [
+        createMockCommunityNode({
+          nodeType: 'pkg1.first',
+          displayName: 'First',
+          npmPackageName: 'pkg1',
+          npmReadme: '# README',
+        }),
+        createMockCommunityNode({
+          nodeType: 'pkg1.second',
+          displayName: 'Second',
+          npmPackageName: 'pkg1',
+          npmReadme: '# README',
+        }),
+      ];
+
+      vi.mocked(mockRepository.getCommunityNodes).mockReturnValue(nodes);
+      vi.mocked(mockGenerator.generateBatch).mockResolvedValue([
+        { nodeType: 'pkg1.first', summary: createMockDocumentationSummary('pkg1') },
+      ]);
+
+      const result = await processor.processAll({ summaryOnly: true });
+
+      const inputs = vi.mocked(mockGenerator.generateBatch).mock.calls[0][0];
+      expect(inputs).toHaveLength(1);
+      // The prompt must describe the package, not whichever sibling was picked.
+      expect(inputs[0].nodeNames).toEqual(['First', 'Second']);
+      expect(inputs[0].npmPackageName).toBe('pkg1');
+      expect(result.summariesGenerated).toBe(2);
+      expect(mockRepository.updateNodeAISummary).toHaveBeenCalledWith(
+        'pkg1.first',
+        expect.any(Object)
+      );
+      expect(mockRepository.updateNodeAISummary).toHaveBeenCalledWith(
+        'pkg1.second',
+        expect.any(Object)
+      );
+    });
+
+    it('should count every row of a package as failed when its summary fails (#967)', async () => {
+      const nodes = [
+        createMockCommunityNode({
+          nodeType: 'pkg1.first',
+          npmPackageName: 'pkg1',
+          npmReadme: '# README',
+        }),
+        createMockCommunityNode({
+          nodeType: 'pkg1.second',
+          npmPackageName: 'pkg1',
+          npmReadme: '# README',
+        }),
+      ];
+
+      vi.mocked(mockRepository.getCommunityNodes).mockReturnValue(nodes);
+      vi.mocked(mockGenerator.generateBatch).mockResolvedValue([
+        { nodeType: 'pkg1.first', summary: {} as any, error: 'LLM timeout' },
+      ]);
+
+      const result = await processor.processAll({ summaryOnly: true });
+
+      expect(result.summariesGenerated).toBe(0);
+      expect(result.summariesFailed).toBe(2);
+      expect(mockRepository.updateNodeAISummary).not.toHaveBeenCalled();
+    });
+
     it('should skip nodes without README for summary generation', async () => {
       const nodes = [
         createMockCommunityNode({ nodeType: 'node1', npmReadme: '# README' }),
@@ -851,6 +1037,7 @@ describe('DocumentationBatchProcessor', () => {
         description: 'A test node',
         readme: '# Test README\nThis is a test.',
         npmPackageName: 'n8n-nodes-test',
+        nodeNames: ['Test Node'],
       });
     });
 

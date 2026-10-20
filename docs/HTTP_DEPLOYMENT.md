@@ -9,7 +9,7 @@ n8n-MCP HTTP mode enables:
 - 🌐 Remote access from any Claude Desktop /Windsurf / other MCP Client 
 - 🔒 Token-based authentication
 - ⚡ Production-ready performance (~12ms response time)
-- 🚀 Optional n8n management tools (16 additional tools when configured)
+- 🚀 Optional n8n management tools (21 additional tools when configured)
 - ❌ Does not work with n8n MCP Tool
 
 ## 📐 Deployment Scenarios
@@ -72,6 +72,9 @@ PORT=3000
 # Optional: Enable n8n management tools
 # N8N_API_URL=https://your-n8n-instance.com
 # N8N_API_KEY=your-api-key-here
+# Optional: Enable n8n_manage_agents, n8n_explore_node_resources, and the
+# team-project fallback in n8n_list_catalog — see docs/OFFICIAL_MCP_SETUP.md
+# N8N_MCP_ACCESS_TOKEN=your-mcp-access-token-here
 # Security Configuration (v2.16.3+)
 # Rate limiting (default: 20 attempts per 15 minutes)
 AUTH_RATE_LIMIT_WINDOW=900000
@@ -160,7 +163,7 @@ Skip HTTP entirely and use stdio mode directly:
 
 ### n8n Management Tools (Optional)
 
-Enable 16 additional tools for managing n8n workflows by configuring API access:
+Enable 21 additional tools for managing n8n workflows by configuring API access:
 
 ⚠️ **Requires v2.7.1+** - Earlier versions had an issue with tool registration in Docker environments.
 
@@ -170,30 +173,33 @@ Enable 16 additional tools for managing n8n workflows by configuring API access:
 | `N8N_API_KEY` | n8n API key (from Settings > API) | `n8n_api_key_xxx` |
 | `N8N_API_TIMEOUT` | Request timeout (ms) | `30000` |
 | `N8N_API_MAX_RETRIES` | Max retry attempts | `3` |
+| `N8N_MCP_ACCESS_TOKEN` | MCP API key from n8n Settings → Instance-level MCP → set MCP status to Enabled (optional; separate from `N8N_API_KEY`) | `n8n_mcp_xxx` |
 
 #### What This Enables
 
-When configured, you get **16 additional tools** (total: 39 tools):
+When configured, you get **21 additional tools** (total: 28 tools). See the [README's tool table](../README.md#n8n-management-tools-21-tools---requires-api-configuration) for the full, current list grouped by category (workflow, execution, folder, data table, credential, security/audit, agents, and system tools).
 
-**Workflow Management (11 tools):**
-- `n8n_create_workflow` - Create new workflows
-- `n8n_get_workflow` - Get workflow by ID
-- `n8n_update_full_workflow` - Update entire workflow
-- `n8n_update_partial_workflow` - Update using diff operations (v2.7.0+)
-- `n8n_delete_workflow` - Delete workflows
-- `n8n_list_workflows` - List all workflows
-- And more workflow detail/structure tools
+`N8N_MCP_ACCESS_TOKEN` additionally unlocks `n8n_manage_agents`, `n8n_explore_node_resources`, and the team-project fallback in `n8n_list_catalog` — see [Connecting n8n-mcp to n8n's instance-level MCP server](./OFFICIAL_MCP_SETUP.md). The MCP endpoint is derived from `N8N_API_URL`; instances that serve MCP from a split host (`N8N_MCP_BASE_URL`) are not supported.
 
-**Execution Management (4 tools):**
-- `n8n_trigger_webhook_workflow` - Execute via webhooks
-- `n8n_get_execution` - Get execution details
-- `n8n_list_executions` - List workflow runs
-- `n8n_delete_execution` - Delete execution records
+#### Per-Request Instance Headers (Multi-Tenant)
 
-**System Tools:**
-- `n8n_health_check` - Check n8n connectivity
-- `n8n_diagnostic` - System diagnostics
-- `n8n_validate_workflow` - Validate from n8n instance
+In multi-tenant HTTP mode (`ENABLE_MULTI_TENANT=true`) each request carries its own n8n target instead of using the process-level environment variables:
+
+| Header | Description | Required |
+|--------|-------------|----------|
+| `x-n8n-url` | The tenant's n8n instance URL (validated by the SSRF gate) | Yes |
+| `x-n8n-key` | The tenant's n8n Public API key | Yes |
+| `x-n8n-mcp-token` | The tenant's MCP access token, the per-request equivalent of `N8N_MCP_ACCESS_TOKEN`. Requires `x-n8n-url` | No |
+| `x-instance-id` | Opaque tenant identifier, used to key caches and sessions | No |
+| `x-session-id` | Client-supplied session identifier | No |
+
+In multi-tenant mode send `x-n8n-url` + `x-n8n-key` + `x-n8n-mcp-token`: the Public API key is the
+tenant's identity for every management tool, so a request with the token but no key is rejected like
+any other incomplete tenant header set, and `x-n8n-mcp-token` without `x-n8n-url` is rejected in any
+mode (the MCP endpoint is derived from the URL). `N8N_MCP_ACCESS_TOKEN` in the environment is never
+used for a header-driven request: a request whose headers carry `x-n8n-url` plus a credential is
+authoritative and never falls back to the server's own `N8N_API_KEY` or `N8N_MCP_ACCESS_TOKEN`. All
+three credential headers are redacted from logs.
 
 #### Getting Your n8n API Key
 
@@ -889,11 +895,13 @@ Some tools are write/destructive or handle sensitive data and should be removed 
 DISABLED_TOOLS=n8n_create_workflow,n8n_update_full_workflow,n8n_update_partial_workflow,n8n_delete_workflow,n8n_autofix_workflow,n8n_deploy_template,n8n_test_workflow,n8n_manage_credentials,n8n_manage_datatable
 ```
 
-Three tools bundle read and write operations under a single name. Use `DISABLED_TOOL_OPERATIONS` to block only their destructive branches while keeping `list` and `get`:
+Several tools bundle read and write operations under a single name. Use `DISABLED_TOOL_OPERATIONS` to block only their destructive branches while keeping `list` and `get`. This example names every write operation of every tool that has one:
 
 ```bash
-DISABLED_TOOL_OPERATIONS=n8n_workflow_versions:delete,rollback,prune;n8n_executions:delete;n8n_evaluations:run,cancel
+DISABLED_TOOL_OPERATIONS=n8n_executions:delete;n8n_test_workflow:auto,trigger,pinned,direct,expose;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_workflow_versions:delete,rollback,prune,expose;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration;n8n_manage_datatable:createTable,updateTable,deleteTable,insertRows,updateRows,upsertRows,deleteRows,addColumn,deleteColumn,renameColumn
 ```
+
+Two entries need explaining. For `n8n_test_workflow`, all four of `auto`, `trigger`, `pinned` and `direct` run the workflow (an omitted or blank `method` counts as `auto`), leaving only the read-only `prepare`. And `expose` is not a value of any operation parameter: it is the `exposeToMcp` consent write of `n8n_test_workflow` and `n8n_workflow_versions`, which enables a workflow's "Available in MCP" setting. Omitting `expose` leaves that write reachable.
 
 The operation parameter enum in the tool schema is updated to exclude disabled values, reducing the likelihood the model attempts them. Any attempt that does reach the server is rejected at dispatch before the handler runs.
 

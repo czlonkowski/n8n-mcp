@@ -14,7 +14,7 @@ export const UI_APP_CONFIGS: UIAppConfig[] = [
       'n8n_delete_workflow',
       'n8n_test_workflow',
       'n8n_autofix_workflow',
-      // n8n_deploy_template disabled: Claude.ai renders blank content for this tool
+      'n8n_deploy_template',
     ],
   },
   {
@@ -29,8 +29,22 @@ export const UI_APP_CONFIGS: UIAppConfig[] = [
       'n8n_validate_workflow',
     ],
   },
-  // workflow-list, execution-history, health-dashboard disabled:
-  // Claude.ai does not render these apps (shows collapsed accordions).
-  // The server sets _meta correctly on the wire but the host ignores it.
-  // Re-enable once the host-side issue is resolved.
+  {
+    id: 'workflow-list', displayName: 'Workflow List',
+    description: 'Workflow snapshots with activation state and returned-page scope',
+    uri: 'ui://n8n-mcp/workflow-list', mimeType: 'text/html;profile=mcp-app',
+    toolPatterns: ['n8n_list_workflows'],
+  },
+  {
+    id: 'execution-history', displayName: 'Execution Results',
+    description: 'Execution list, detail and deletion results',
+    uri: 'ui://n8n-mcp/execution-history', mimeType: 'text/html;profile=mcp-app',
+    toolPatterns: ['n8n_executions'],
+  },
+  {
+    id: 'health-dashboard', displayName: 'Connection Check',
+    description: 'Connection evidence from health checks and diagnostics',
+    uri: 'ui://n8n-mcp/health-dashboard', mimeType: 'text/html;profile=mcp-app',
+    toolPatterns: ['n8n_health_check'],
+  },
 ];

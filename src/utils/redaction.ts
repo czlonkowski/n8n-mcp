@@ -9,6 +9,7 @@ const SENSITIVE_HEADER_NAMES = new Set([
   'cookie',
   'set-cookie',
   'x-n8n-key',
+  'x-n8n-mcp-token',
   'x-n8n-url',
 ]);
 

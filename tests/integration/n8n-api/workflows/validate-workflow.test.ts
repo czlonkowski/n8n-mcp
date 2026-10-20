@@ -10,7 +10,6 @@ import { createTestContext, TestContext, createTestWorkflowName } from '../utils
 import { getTestN8nClient } from '../utils/n8n-client';
 import { N8nApiClient } from '../../../../src/services/n8n-api-client';
 import { SIMPLE_WEBHOOK_WORKFLOW } from '../utils/fixtures';
-import { cleanupOrphanedWorkflows } from '../utils/cleanup-helpers';
 import { createMcpContext } from '../utils/mcp-context';
 import { InstanceContext } from '../../../../src/types/instance-context';
 import { handleValidateWorkflow } from '../../../../src/mcp/handlers-n8n-manager';
@@ -37,9 +36,6 @@ describe('Integration: handleValidateWorkflow', () => {
 
   afterAll(async () => {
     await closeNodeRepository();
-    if (!process.env.CI) {
-      await cleanupOrphanedWorkflows();
-    }
   });
 
   // ======================================================================

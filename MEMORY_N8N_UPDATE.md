@@ -38,6 +38,14 @@ node dist/scripts/generate-community-docs.js --summary-only --skip-existing-summ
 # For vLLM with thinking models, the code auto-sends chat_template_kwargs: {enable_thinking: false}
 # Context length needed: 8K minimum (README truncated to 6000 chars, output max 2000 tokens)
 
+# 6b. Check the database size (GitHub rejects files over 100 MiB; the push fails with a bare
+# "pre-receive hook declined"). The rebuild already runs VACUUM, prints the size and throws at
+# 100 MiB, but fetch:community and the docs generators write rows after it, so check again:
+sqlite3 data/nodes.db 'VACUUM'
+ls -l data/nodes.db | awk '{ printf "%.1f MiB\n", $5 / 1048576 }'   # must be well under 100 (MiB, not MB)
+# Bulk columns (nodes.properties_schema, nodes.npm_readme, node_versions.properties_schema)
+# are stored gzip+base64 (#1067); `node dist/scripts/rebuild.js` rewrites any plain rows.
+
 # 7. Create feature branch
 git checkout -b update/n8n-X.X.X
 
@@ -104,6 +112,24 @@ gh release list | head -1
 **Problem**: CI takes 8+ minutes
 **Reason**: Integration tests need live n8n instance (slow)
 **Normal**: Unit tests (~2 min) + integration tests (~6 min) = ~8 min total
+
+**Problem**: `npm run update:n8n` stops at the database rebuild with `no such module: fts5`, after a warning that better-sqlite3 was compiled against a different Node.js version
+**Cause**: npm 11 skips the install scripts of packages not covered by `allowScripts`, so `npm install` does not recompile better-sqlite3 for the current Node.js and the rebuild falls back to sql.js, which has no FTS5
+**Solution**: `npm rebuild better-sqlite3`, then `npm run build && npm run rebuild && npm run validate`
+
+**Problem**: `npm run fetch:community` aborts (exit 134) with `Assertion failed: (env) != nullptr` in `RemoveEnvironmentCleanupHook`, while fetching or saving nodes
+**Cause**: better-sqlite3 11.10 crashes in a statement destructor during garbage collection under Node.js 24.21. Forcing sql.js does not help: the community fetch writes to FTS5-indexed tables, which sql.js lacks
+**Solution**: run the community fetch and the docs generators under Node.js 22, then recompile for the default Node.js. The fetch upserts, so re-running it after an abort is safe; check `sqlite3 data/nodes.db 'pragma integrity_check'` first
+```bash
+PATH=/opt/homebrew/opt/node@22/bin:$PATH npm rebuild better-sqlite3
+PATH=/opt/homebrew/opt/node@22/bin:$PATH node dist/scripts/fetch-community-nodes.js
+# generate-community-docs.js runs the same way
+npm rebuild better-sqlite3   # back to the default Node.js
+```
+
+**Problem**: `generate:docs:readme-only` exits with code 1
+**Reason**: Some packages have no README anywhere (the fetch reads the tarball when the registry metadata has none) or are no longer on npm
+**Normal**: A few failed fetches are expected; check the "With README" count instead of the exit code
 
 ## Quick One-Command Update
 

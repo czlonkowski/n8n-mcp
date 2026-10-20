@@ -187,11 +187,11 @@ describe('UIAppRegistry', () => {
         expect(UIAppRegistry.getAppForTool('n8n_autofix_workflow')!.config.id).toBe('operation-result');
       });
 
-      it('should not map disabled tools', () => {
-        expect(UIAppRegistry.getAppForTool('n8n_deploy_template')).toBeNull();
-        expect(UIAppRegistry.getAppForTool('n8n_list_workflows')).toBeNull();
-        expect(UIAppRegistry.getAppForTool('n8n_executions')).toBeNull();
-        expect(UIAppRegistry.getAppForTool('n8n_health_check')).toBeNull();
+      it('should map restored tools to their result views', () => {
+        expect(UIAppRegistry.getAppForTool('n8n_deploy_template')!.config.id).toBe('operation-result');
+        expect(UIAppRegistry.getAppForTool('n8n_list_workflows')!.config.id).toBe('workflow-list');
+        expect(UIAppRegistry.getAppForTool('n8n_executions')!.config.id).toBe('execution-history');
+        expect(UIAppRegistry.getAppForTool('n8n_health_check')!.config.id).toBe('health-dashboard');
       });
 
       it('should map validate_node to validation-summary', () => {
@@ -292,10 +292,10 @@ describe('UIAppRegistry', () => {
 
   describe('injectToolMeta()', () => {
     it('should not modify tools before load() is called', () => {
-      const tools: any[] = [
+      let tools: any[] = [
         { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
       ];
-      UIAppRegistry.injectToolMeta(tools);
+      tools = UIAppRegistry.injectToolMeta(tools);
       expect(tools[0]._meta).toBeUndefined();
     });
 
@@ -307,36 +307,36 @@ describe('UIAppRegistry', () => {
       });
 
       it('should set _meta.ui.resourceUri on matching operation tools', () => {
-        const tools: any[] = [
+        let tools: any[] = [
           { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
         ];
-        UIAppRegistry.injectToolMeta(tools);
+        tools = UIAppRegistry.injectToolMeta(tools);
         expect(tools[0]._meta).toEqual({ ui: { resourceUri: 'ui://n8n-mcp/operation-result' }, 'ui/resourceUri': 'ui://n8n-mcp/operation-result' });
       });
 
       it('should set _meta.ui.resourceUri on matching validation tools', () => {
-        const tools: any[] = [
+        let tools: any[] = [
           { name: 'validate_node', description: 'Validate', inputSchema: { type: 'object', properties: {} } },
         ];
-        UIAppRegistry.injectToolMeta(tools);
+        tools = UIAppRegistry.injectToolMeta(tools);
         expect(tools[0]._meta).toEqual({ ui: { resourceUri: 'ui://n8n-mcp/validation-summary' }, 'ui/resourceUri': 'ui://n8n-mcp/validation-summary' });
       });
 
       it('should not set _meta on tools without a matching UI app', () => {
-        const tools: any[] = [
+        let tools: any[] = [
           { name: 'search_nodes', description: 'Search', inputSchema: { type: 'object', properties: {} } },
         ];
-        UIAppRegistry.injectToolMeta(tools);
+        tools = UIAppRegistry.injectToolMeta(tools);
         expect(tools[0]._meta).toBeUndefined();
       });
 
       it('should handle a mix of matching and non-matching tools', () => {
-        const tools: any[] = [
+        let tools: any[] = [
           { name: 'n8n_delete_workflow', description: 'Delete', inputSchema: { type: 'object', properties: {} } },
           { name: 'get_node_essentials', description: 'Essentials', inputSchema: { type: 'object', properties: {} } },
           { name: 'validate_workflow', description: 'Validate', inputSchema: { type: 'object', properties: {} } },
         ];
-        UIAppRegistry.injectToolMeta(tools);
+        tools = UIAppRegistry.injectToolMeta(tools);
         expect(tools[0]._meta?.ui?.resourceUri).toBe('ui://n8n-mcp/operation-result');
         expect(tools[1]._meta).toBeUndefined();
         expect(tools[2]._meta?.ui?.resourceUri).toBe('ui://n8n-mcp/validation-summary');
@@ -346,7 +346,7 @@ describe('UIAppRegistry', () => {
         // Tools may set _meta directly on their definition (for instance to opt
         // a single tool above the Claude Code per-tool size cap). Injection
         // must merge, not overwrite, so those keys survive.
-        const tools: any[] = [
+        let tools: any[] = [
           {
             name: 'n8n_create_workflow',
             description: 'Create',
@@ -354,7 +354,7 @@ describe('UIAppRegistry', () => {
             _meta: { 'anthropic/maxResultSizeChars': 500000 },
           },
         ];
-        UIAppRegistry.injectToolMeta(tools);
+        tools = UIAppRegistry.injectToolMeta(tools);
         expect(tools[0]._meta).toEqual({
           'anthropic/maxResultSizeChars': 500000,
           ui: { resourceUri: 'ui://n8n-mcp/operation-result' },
@@ -370,10 +370,10 @@ describe('UIAppRegistry', () => {
       });
 
       it('should not set _meta when HTML is not available', () => {
-        const tools: any[] = [
+        let tools: any[] = [
           { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
         ];
-        UIAppRegistry.injectToolMeta(tools);
+        tools = UIAppRegistry.injectToolMeta(tools);
         expect(tools[0]._meta).toBeUndefined();
       });
     });

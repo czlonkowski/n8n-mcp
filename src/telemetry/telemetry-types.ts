@@ -82,13 +82,21 @@ export interface SanitizedWorkflow {
 
 export const TELEMETRY_CONFIG = {
   // Batch processing
-  BATCH_FLUSH_INTERVAL: 5000, // 5 seconds
+  BATCH_FLUSH_INTERVAL: 60000, // 60 seconds
   EVENT_QUEUE_THRESHOLD: 10, // Batch events for efficiency
   WORKFLOW_QUEUE_THRESHOLD: 5, // Batch workflows
 
   // Network timeouts
   OPERATION_TIMEOUT: 5000, // 5 seconds
   FETCH_TIMEOUT_MS: 2000, // Hard deadline for each telemetry request
+  // Cap on the final flush so it cannot delay exit. Bounded on both sides:
+  // above FETCH_TIMEOUT_MS, because a batch sends events, workflows and
+  // mutations as separate sequential requests and a budget equal to the
+  // per-request cap would guarantee only the first one lands (mutations go
+  // last, and they are the rarest records); and below the shutdown budgets
+  // callers allow themselves (the integration test helper's is 3000ms), so the
+  // flush can never be the thing that ties or overruns them.
+  SHUTDOWN_FLUSH_TIMEOUT_MS: 2500,
 
   // Rate limiting
   RATE_LIMIT_WINDOW: 60000, // 1 minute
@@ -96,12 +104,28 @@ export const TELEMETRY_CONFIG = {
 
   // Queue limits
   MAX_QUEUE_SIZE: 1000, // Maximum events to queue
-  MAX_BATCH_SIZE: 50, // Maximum events per batch
+  MAX_BATCH_SIZE: 50, // Maximum rows per batch, by count
+
+  // Byte-size limits per ingest stream, mirroring the server's own per-request
+  // caps. MAX_BATCH_SIZE bounds row count, but sanitized workflow/mutation
+  // payloads vary hugely in size, so a 50-row batch can still be too large.
+  // A single row over its stream's limit is sent alone — the server 413s it
+  // and it is dropped, never split.
+  MAX_BATCH_BYTES_EVENTS: 256 * 1024, // 256 KiB
+  MAX_BATCH_BYTES_WORKFLOWS: 1024 * 1024, // 1 MiB
+  MAX_BATCH_BYTES_MUTATIONS: 2 * 1024 * 1024, // 2 MiB
 } as const;
 
 export const TELEMETRY_BACKEND = {
-  URL: 'https://ydyufsohxdfpopqbubwk.supabase.co',
-  ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlkeXVmc29oeGRmcG9wcWJ1YndrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg3OTYyMDAsImV4cCI6MjA3NDM3MjIwMH0.xESphg6h5ozaDsm4Vla3QnDJGc6Nc_cpfoqTHRynkCk'
+  URL: 'https://telemetry.n8n-mcp.com',
+  /**
+   * Public client identifier for our own ingest API (apps/telemetry-ingest in
+   * n8n-mcp-backend). It is not a secret — it identifies this client to the
+   * server, which is write-only from the client's point of view (no read
+   * access to any data), so publishing it here is safe. Overridable via
+   * N8N_MCP_TELEMETRY_KEY for development/testing.
+   */
+  KEY: 'ntk_pub_245fefa7e96617d0e8015056'
 } as const;
 
 export interface TelemetryMetrics {

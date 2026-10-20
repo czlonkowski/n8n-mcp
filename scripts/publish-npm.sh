@@ -35,6 +35,9 @@ if [ ! -f "data/nodes.db" ]; then
 fi
 
 # Create a temporary publish directory
+echo "Building MCP UI assets..."
+npm --prefix ui-apps run build
+
 PUBLISH_DIR="npm-publish-temp"
 rm -rf $PUBLISH_DIR
 mkdir -p $PUBLISH_DIR
@@ -43,6 +46,8 @@ mkdir -p $PUBLISH_DIR
 echo "📦 Copying files..."
 cp -r dist $PUBLISH_DIR/
 cp -r data $PUBLISH_DIR/
+mkdir -p "$PUBLISH_DIR/ui-apps"
+cp -r ui-apps/dist "$PUBLISH_DIR/ui-apps/"
 cp README.md $PUBLISH_DIR/
 cp LICENSE $PUBLISH_DIR/
 cp .env.example $PUBLISH_DIR/
@@ -75,11 +80,13 @@ pkg.author = 'Romuald Czlonkowski @ www.aiadvisors.pl/en';
 pkg.license = 'MIT';
 pkg.bugs = { url: 'https://github.com/czlonkowski/n8n-mcp/issues' };
 pkg.homepage = 'https://github.com/czlonkowski/n8n-mcp#readme';
-pkg.files = ['dist/**/*', 'data/nodes.db', '.env.example', 'README.md', 'LICENSE'];
+pkg.files = ['dist/**/*', 'ui-apps/dist/**/*', 'data/nodes.db', '.env.example', 'README.md', 'LICENSE'];
 // Note: node_modules are automatically included for dependencies
 delete pkg.private; // Remove private field so we can publish
 require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2));
 "
+
+node ../scripts/ui-package-smoke.cjs "$PWD"
 
 echo ""
 echo "📋 Package details:"

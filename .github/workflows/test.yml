@@ -78,6 +78,49 @@ jobs:
         env:
           CI: true
       
+      # Compile to dist/ before the integration suites. Several of them spawn the
+      # real entrypoints as child processes (tests/integration/mcp/stdio-*.test.ts)
+      # and skip themselves when dist/ is absent — so without this step the stdio
+      # regression coverage silently never ran on CI at all.
+      - name: Build dist for entrypoint integration tests
+        run: npm run build
+
+      - name: Install UI dependencies
+        run: npm --prefix ui-apps ci
+
+      - name: Typecheck, test and build MCP cards
+        run: |
+          npm --prefix ui-apps run typecheck
+          npm --prefix ui-apps run test:coverage
+          npm --prefix ui-apps run build
+
+      - name: Verify UI resources and offline tool result over MCP
+        run: npm run ui:smoke
+
+      - name: Verify synthetic MCP host fixtures
+        run: npm run ui:fixtures:smoke
+
+      - name: Verify UI assets in the prepared npm tarball
+        run: |
+          npm run prepare:publish
+          node scripts/ui-npm-smoke.mjs
+          bash scripts/publish-npm-quick.sh
+          node scripts/ui-npm-smoke.mjs
+
+      - name: Install UI test browser
+        run: npm --prefix ui-apps exec -- playwright install --with-deps chromium
+
+      - name: Verify UI browser journeys and accessibility
+        run: npm --prefix ui-apps run test:browser
+
+      - name: Upload UI failure traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-test-traces
+          path: ui-apps/test-results/
+          if-no-files-found: ignore
+
       # Pre-build the Docker test image used by tests/integration/docker/*.test.ts
       # Two test files used to build it independently inside their beforeAll hooks; the
       # builder stage does an `npm install` from the public registry which intermittently

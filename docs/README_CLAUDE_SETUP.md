@@ -110,46 +110,28 @@ After restarting Claude Desktop:
 
 1. Look for "n8n-docker" or "n8n-documentation" in the MCP servers list
 2. Try asking Claude: "What n8n nodes are available for working with Slack?"
-3. Or use a tool directly: "Use the list_nodes tool to show me trigger nodes"
+3. Or use a tool directly: "Use the search_nodes tool to show me trigger nodes"
 
-## 🔧 Available Tools (v2.5.1)
+## 🔧 Available Tools
 
 ### Essential Tool - Start Here!
 - **`tools_documentation`** - Get documentation for any MCP tool (ALWAYS use this first!)
 
-### Core Tools
-- **`list_nodes`** - List all n8n nodes with filtering options
-- **`get_node_info`** - Get comprehensive information (now includes aiToolCapabilities)
-- **`get_node_essentials`** - Get only 10-20 essential properties (95% smaller!)
-- **`search_nodes`** - Full-text search across all node documentation
-- **`search_node_properties`** - Find specific properties within nodes
-- **`get_node_documentation`** - Get parsed documentation from n8n-docs
-- **`get_database_statistics`** - View database metrics and coverage
+### Documentation & Validation Tools (offline, always available)
+- **`search_nodes`** - Search n8n nodes by keyword, with optional real-world configuration examples
+- **`get_node`** - Get node info with progressive detail levels (`detail`: `minimal`, `standard`, `full`) and modes (schema info, docs, property search, version comparison)
+- **`validate_node`** - Validate a node configuration. `mode: 'minimal'` checks required fields only; `mode: 'full'` (default) runs full validation against a `profile` (`minimal`, `runtime`, `ai-friendly` (default), `strict`)
+- **`validate_workflow`** - Full workflow validation: structure, connections, expressions, AI tool connections
+- **`search_templates`** - Search workflow templates by keyword, by node type, by task, or by metadata
+- **`get_template`** - Get a complete workflow JSON by template ID, ready to import
 
-### AI Tools (Enhanced in v2.5.1)
-- **`list_ai_tools`** - List AI-capable nodes (ANY node can be used as AI tool!)
-- **`get_node_as_tool_info`** - Get guidance on using any node as an AI tool
-
-### Task & Template Tools
-- **`get_node_for_task`** - Pre-configured node settings for common tasks
-- **`list_tasks`** - Discover available task templates
-- **`list_node_templates`** - Find workflow templates using specific nodes
-- **`get_template`** - Get complete workflow JSON for import
-- **`search_templates`** - Search templates by keywords
-- **`get_templates_for_task`** - Get curated templates for common tasks
-
-### Validation Tools (Professional Grade)
-- **`validate_node_operation`** - Smart validation with operation awareness
-- **`validate_node_minimal`** - Quick validation for just required fields
-- **`validate_workflow`** - Complete workflow validation (validates AI tool connections)
-- **`validate_workflow_connections`** - Check workflow structure
-- **`validate_workflow_expressions`** - Validate n8n expressions including $fromAI()
-- **`get_property_dependencies`** - Analyze property visibility conditions
+### Management Tools (`n8n_*`, require n8n API configuration)
+See the [n8n Management Tools table](../README.md#n8n-management-tools-21-tools---requires-api-configuration) in the main README for the full list of 21 tools covering workflow CRUD, executions, folders, data tables, credentials, and instance auditing.
 
 ### Example Questions to Ask Claude:
 - "Show me all n8n nodes for working with databases"
 - "How do I use the HTTP Request node?"
-- "Get the essentials for Slack node" (uses get_node_essentials)
+- "Get the essential properties for the Slack node" (uses get_node with detail='standard')
 - "How can I use Google Sheets as an AI tool?"
 - "Validate my workflow before deployment"
 - "Find templates for webhook automation"

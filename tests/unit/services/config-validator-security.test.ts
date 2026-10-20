@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ConfigValidator } from '@/services/config-validator';
+import { NodeSpecificValidators } from '@/services/node-specific-validators';
 import type { ValidationResult, ValidationError, ValidationWarning } from '@/services/config-validator';
 
 // Mock the database
@@ -380,12 +381,15 @@ describe('ConfigValidator - Security Validation', () => {
   });
 
   describe('Python security', () => {
-    it('should warn about exec/eval in Python', () => {
+    // exec/eval are denied builtins in native Python, reported as errors by
+    // NodeSpecificValidators. The base layer stays quiet so the two layers
+    // don't report the same call twice.
+    it('should leave Python exec/eval to the node-specific layer', () => {
       const nodeType = 'nodes-base.code';
       const config = {
         language: 'python',
         pythonCode: `
-user_code = items[0]['json']['code']
+user_code = _items[0]['json']['code']
 result = exec(user_code)
 return [{"json": {"result": result}}]
         `
@@ -397,8 +401,24 @@ return [{"json": {"result": result}}]
 
       const result = ConfigValidator.validate(nodeType, config, properties);
 
-      expect(result.warnings.some(w => 
-        w.type === 'security' && 
+      expect(result.warnings.some(w =>
+        w.message.includes('eval/exec which can be a security risk')
+      )).toBe(false);
+
+      const context = { config, errors: [] as any[], warnings: [] as any[], suggestions: [] as string[], autofix: {} };
+      NodeSpecificValidators.validateCode(context as any);
+      expect(context.errors.filter(e => e.message.includes('exec() is denied'))).toHaveLength(1);
+    });
+
+    it('should still warn about JavaScript eval', () => {
+      const result = ConfigValidator.validate(
+        'nodes-base.code',
+        { language: 'javaScript', jsCode: 'const result = eval(items[0].json.code);\nreturn [{json: {result}}];' },
+        [{ name: 'language', type: 'options' }, { name: 'jsCode', type: 'string' }]
+      );
+
+      expect(result.warnings.some(w =>
+        w.type === 'security' &&
         w.message.includes('eval/exec which can be a security risk')
       )).toBe(true);
     });

@@ -6,9 +6,11 @@ import type {
 import {
   isVersionedNodeInstance,
   isVersionedNodeClass,
-  getNodeDescription as getNodeDescriptionHelper
+  getNodeDescription as getNodeDescriptionHelper,
+  instantiateNode
 } from '../types/node-types';
 import type { INodeTypeBaseDescription, INodeTypeDescription } from 'n8n-workflow';
+import { filterPropertiesForVersion } from './version-display-gate';
 
 export interface ParsedNode {
   style: 'declarative' | 'programmatic';
@@ -32,6 +34,35 @@ export interface ParsedNode {
   isToolVariant?: boolean;      // True for *Tool variants (e.g., supabaseTool)
   toolVariantOf?: string;       // For Tool variants: base node type (e.g., nodes-base.supabase)
   hasToolVariant?: boolean;     // For base nodes: true if Tool variant exists
+}
+
+/**
+ * One concrete version of a node, as n8n resolves it from a workflow's typeVersion.
+ * Feeds the node_versions table so version history and schema diffs work offline.
+ */
+export interface ParsedNodeVersion {
+  nodeType: string;
+  version: string;
+  packageName: string;
+  displayName: string;
+  description?: string;
+  category?: string;
+  isCurrentMax: boolean;
+  properties: any[];
+  operations: any[];
+  credentials: any[];
+  outputs?: any[];
+  addedProperties: string[];
+  deprecatedProperties: string[];
+}
+
+/**
+ * Format a version the way workflows store typeVersion: 1 -> "1", 4.1 -> "4.1".
+ * Keys of a VersionedNodeType map arrive as strings, description.version as numbers.
+ */
+export function normalizeNodeVersion(version: unknown): string {
+  const numeric = Number(version);
+  return Number.isFinite(numeric) ? String(numeric) : String(version);
 }
 
 export class NodeParser {
@@ -64,6 +95,80 @@ export class NodeParser {
     };
   }
   
+  /**
+   * Expand a node class into one record per version number.
+   *
+   * A VersionedNodeType registers every supported typeVersion as a key of its
+   * nodeVersions map (several keys usually share one implementation), and n8n
+   * resolves a workflow node by exact key lookup, so the keys are the version
+   * list. A plain node declares its versions as description.version, either a
+   * scalar or an array that shares the single description.
+   *
+   * Returns an empty array for nodes with a single scalar version: they have no
+   * history to record, and readers fall back to the nodes table for them.
+   */
+  parseVersions(nodeClass: NodeClass, packageName: string): ParsedNodeVersion[] {
+    this.currentNodeClass = nodeClass;
+    const base = this.getNodeDescription(nodeClass);
+    const nodeType = this.extractNodeType(base, packageName);
+    const currentVersion = this.extractVersion(nodeClass);
+    const category = this.extractCategory(base);
+
+    const instance = instantiateNode(nodeClass) as any;
+    const nodeVersions = instance?.nodeVersions ?? (nodeClass as any).nodeVersions;
+
+    // A workflow's typeVersion is a number, so only numeric versions are reachable
+    const entries = new Map<string, any>();
+    const record = (version: unknown, description: any) => {
+      if (description && Number.isFinite(Number(version))) {
+        entries.set(normalizeNodeVersion(version), description);
+      }
+    };
+    if (nodeVersions && typeof nodeVersions === 'object') {
+      for (const [key, implementation] of Object.entries<any>(nodeVersions)) {
+        record(key, implementation?.description);
+      }
+    } else {
+      const declared = (base as any).version;
+      if (!Array.isArray(declared)) return [];
+      for (const version of declared) record(version, base);
+    }
+
+    // Keys are numeric strings after normalizeNodeVersion, and n8n's typeVersion
+    // is a number, so ordering them numerically matches how n8n reads them.
+    const ordered = [...entries.entries()].sort(([a], [b]) => Number(a) - Number(b));
+
+    let previousNames: Set<string> | null = null;
+    return ordered.map(([version, description]) => {
+      const details = this.propertyExtractor.extractVersionDetails(description);
+      // A shared implementation gates properties per typeVersion; keep what this version shows
+      details.properties = filterPropertiesForVersion(details.properties, version);
+      const names = new Set<string>(
+        details.properties.map((p: any) => p.name).filter((n: any) => typeof n === 'string')
+      );
+      const previous = previousNames;
+      const addedProperties = previous ? [...names].filter(n => !previous.has(n)) : [];
+      const deprecatedProperties = previous ? [...previous].filter(n => !names.has(n)) : [];
+      previousNames = names;
+
+      return {
+        nodeType,
+        version,
+        packageName,
+        displayName: description.displayName || base.displayName || base.name,
+        description: description.description ?? base.description,
+        category,
+        isCurrentMax: version === currentVersion,
+        properties: details.properties,
+        operations: details.operations,
+        credentials: details.credentials,
+        outputs: this.extractOutputs(description).outputs,
+        addedProperties,
+        deprecatedProperties
+      };
+    });
+  }
+
   private getNodeDescription(nodeClass: NodeClass): INodeTypeBaseDescription | INodeTypeDescription {
     // Try to get description from the class first
     let description: INodeTypeBaseDescription | INodeTypeDescription | undefined;

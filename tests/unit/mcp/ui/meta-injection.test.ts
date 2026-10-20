@@ -25,45 +25,45 @@ describe('UI Meta Injection on Tool Definitions', () => {
     });
 
     it('should add _meta.ui.resourceUri to matching tool definitions', () => {
-      const tools: any[] = [
+      let tools: any[] = [
         { name: 'n8n_create_workflow', description: 'Create workflow', inputSchema: { type: 'object', properties: {} } },
       ];
 
-      UIAppRegistry.injectToolMeta(tools);
+      tools = UIAppRegistry.injectToolMeta(tools);
 
       expect(tools[0]._meta).toBeDefined();
       expect(tools[0]._meta.ui.resourceUri).toBe('ui://n8n-mcp/operation-result');
     });
 
     it('should add _meta.ui.resourceUri to validation tool definitions', () => {
-      const tools: any[] = [
+      let tools: any[] = [
         { name: 'validate_workflow', description: 'Validate', inputSchema: { type: 'object', properties: {} } },
       ];
 
-      UIAppRegistry.injectToolMeta(tools);
+      tools = UIAppRegistry.injectToolMeta(tools);
 
       expect(tools[0]._meta).toBeDefined();
       expect(tools[0]._meta.ui.resourceUri).toBe('ui://n8n-mcp/validation-summary');
     });
 
     it('should NOT add _meta to non-matching tool definitions', () => {
-      const tools: any[] = [
+      let tools: any[] = [
         { name: 'get_node_info', description: 'Get info', inputSchema: { type: 'object', properties: {} } },
       ];
 
-      UIAppRegistry.injectToolMeta(tools);
+      tools = UIAppRegistry.injectToolMeta(tools);
 
       expect(tools[0]._meta).toBeUndefined();
     });
 
     it('should inject _meta on matching tools and skip non-matching in a mixed list', () => {
-      const tools: any[] = [
+      let tools: any[] = [
         { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
         { name: 'get_node_info', description: 'Info', inputSchema: { type: 'object', properties: {} } },
         { name: 'validate_node', description: 'Validate', inputSchema: { type: 'object', properties: {} } },
       ];
 
-      UIAppRegistry.injectToolMeta(tools);
+      tools = UIAppRegistry.injectToolMeta(tools);
 
       expect(tools[0]._meta).toBeDefined();
       expect(tools[0]._meta.ui.resourceUri).toBe('ui://n8n-mcp/operation-result');
@@ -73,11 +73,11 @@ describe('UI Meta Injection on Tool Definitions', () => {
     });
 
     it('should produce _meta with both nested and flat resourceUri keys', () => {
-      const tools: any[] = [
+      let tools: any[] = [
         { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
       ];
 
-      UIAppRegistry.injectToolMeta(tools);
+      tools = UIAppRegistry.injectToolMeta(tools);
 
       expect(tools[0]._meta).toEqual({
         ui: {
@@ -97,21 +97,21 @@ describe('UI Meta Injection on Tool Definitions', () => {
     });
 
     it('should NOT add _meta even for matching tools', () => {
-      const tools: any[] = [
+      let tools: any[] = [
         { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
       ];
 
-      UIAppRegistry.injectToolMeta(tools);
+      tools = UIAppRegistry.injectToolMeta(tools);
 
       expect(tools[0]._meta).toBeUndefined();
     });
 
     it('should NOT add _meta for validation tools without HTML', () => {
-      const tools: any[] = [
+      let tools: any[] = [
         { name: 'validate_node', description: 'Validate', inputSchema: { type: 'object', properties: {} } },
       ];
 
-      UIAppRegistry.injectToolMeta(tools);
+      tools = UIAppRegistry.injectToolMeta(tools);
 
       expect(tools[0]._meta).toBeUndefined();
     });
@@ -119,11 +119,11 @@ describe('UI Meta Injection on Tool Definitions', () => {
 
   describe('when registry has not been loaded at all', () => {
     it('should NOT add _meta because registry is not loaded', () => {
-      const tools: any[] = [
+      let tools: any[] = [
         { name: 'n8n_create_workflow', description: 'Create', inputSchema: { type: 'object', properties: {} } },
       ];
 
-      UIAppRegistry.injectToolMeta(tools);
+      tools = UIAppRegistry.injectToolMeta(tools);
 
       expect(tools[0]._meta).toBeUndefined();
     });
@@ -137,8 +137,8 @@ describe('UI Meta Injection on Tool Definitions', () => {
     });
 
     it('should handle an empty tools array without error', () => {
-      const tools: any[] = [];
-      UIAppRegistry.injectToolMeta(tools);
+      let tools: any[] = [];
+      tools = UIAppRegistry.injectToolMeta(tools);
       expect(tools.length).toBe(0);
     });
   });

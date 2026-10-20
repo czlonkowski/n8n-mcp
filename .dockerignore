@@ -1,5 +1,10 @@
 # .dockerignore
 node_modules
+ui-apps/node_modules
+ui-apps/dist
+ui-apps/coverage
+ui-apps/test-results
+ui-apps/playwright-report
 npm-debug.log
 .git
 .gitignore

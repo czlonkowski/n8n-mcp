@@ -1,6 +1,6 @@
 ---
 name: n8n-self-hosting
-description: Deploy a production self-hosted n8n end-to-end to a fresh Linux VM over SSH, using Docker Compose behind a Caddy reverse proxy with automatic HTTPS. Use whenever the user wants to self-host, install, set up, provision, or deploy n8n on their own server/VPS/box (Hetzner, DigitalOcean, AWS EC2, bare metal, etc.) — in either single/regular mode or queue mode with workers — or to update, back up, restore, or harden such an instance. This is for SELF-HOSTED n8n (Docker), not n8n Cloud and not building workflows. The skill makes the agent ask single-vs-queue first, collect the domain/SSH/timezone inputs, generate fresh secrets on the box, and bring the stack up with TLS. Trigger on "deploy n8n", "self-host n8n", "install n8n on my server", "n8n docker compose", "n8n queue mode / workers / scaling", "n8n reverse proxy / SSL", or "back up / update my n8n".
+description: Deploy a production self-hosted n8n end-to-end to a fresh Linux VM over SSH, using Docker Compose behind a Caddy reverse proxy with automatic HTTPS. Use whenever the user wants to self-host, install, set up, provision, or deploy n8n on their own server/VPS/box (Hetzner, DigitalOcean, AWS EC2, bare metal, etc.) — in either single/regular mode or queue mode with workers — or to update, back up, restore, or harden such an instance. This is for SELF-HOSTED n8n (Docker), not n8n Cloud and not building workflows. The skill makes the agent ask single-vs-queue first, collect the domain/SSH/timezone inputs, generate fresh secrets on the box, and bring the stack up with TLS. Trigger on "deploy n8n", "self-host n8n", "install n8n on my server", "n8n docker compose", "n8n queue mode / workers / scaling", "n8n reverse proxy / SSL", "back up / update my n8n", or "we don't want to give every user the OAuth client secret" / "enable the Sign in with Google button" (credential overwrites).
 ---
 
 # Deploying self-hosted n8n
@@ -60,6 +60,10 @@ A misstep here leaks client credentials. Be diligent:
 - **TLS email** — for Let's Encrypt (`SSL_EMAIL`).
 - **Timezone** — IANA name for Schedule/Cron nodes (e.g. `Europe/Warsaw`), else `Etc/UTC`.
 - **Mode** — single or queue (Rule 0). Queue → confirm the box has enough RAM (rough floor ~4 GB; each worker wants ~1–2 GB).
+- **Optional modules** — some features (currently **Agents**) are backend modules that stay off
+  unless listed in `N8N_ENABLED_MODULES`. Ask only if the user brings one up; if they do, read
+  the modules section of `QUEUE_MODE.md` before enabling it, because in queue mode it has to
+  reach the workers as well.
 
 ## The deploy flow
 
@@ -123,6 +127,11 @@ detail; `SECURITY.md` covers secret generation and hardening; `DAY2.md` covers u
 - **Public reachability (with retry):** `curl -fsS --retry 5 --retry-delay 10 https://<fqdn>/healthz`
   → `{"status":"ok"}`. (`/healthz` only proves the process is reachable; `/healthz/readiness`
   additionally confirms the DB is connected and migrated — use it when debugging a boot loop.)
+- **Queue mode — main and workers must agree.** Diff their environments:
+  `diff <(docker compose exec -T n8n env | sort) <(docker compose exec -T --index 1 n8n-worker env | sort)`.
+  Only the public-URL/proxy vars should differ. Anything else means a behavioural setting reached
+  the main but not the workers — and workers are what execute workflows, so it fails at runtime
+  in one node rather than at boot. `QUEUE_MODE.md` explains the rule.
 - Open `https://<fqdn>` → the **owner setup** screen. **Whoever completes that signup form first
   claims the instance** — an exposed un-owned instance is a race, so create the owner account
   immediately, before sharing the URL. Enable 2FA. (Automated deploys can pre-provision the
@@ -140,14 +149,20 @@ detail; `SECURITY.md` covers secret generation and hardening; `DAY2.md` covers u
 - **Don't reuse another instance's encryption key or `.env`.** Fresh secrets per box.
 - **Don't run queue mode on SQLite.** Queue requires Postgres (the template already wires it).
 - **Don't put secrets in `docker-compose.yml` or the Caddyfile.** `.env` only.
+- **Don't add a behavioural env var to the main only (queue mode).** Modules, DB, queue,
+  binary-data and encryption settings belong in the shared `x-n8n-env` anchor so workers get
+  them too; only the public-URL/proxy vars are main-only. See `QUEUE_MODE.md`.
 - **Don't use `:latest` blindly.** Pin `N8N_IMAGE_TAG`; update deliberately (`DAY2.md`).
 
 ## Reference files
 
 - **`SINGLE_MODE.md`** — single-instance specifics, SQLite vs Postgres, when to graduate to queue.
-- **`QUEUE_MODE.md`** — queue architecture, workers/concurrency/scaling, shared encryption key, binary data (`database` mode — filesystem is unsupported in queue mode; S3/Azure = Enterprise), webhook processors, multi-main licensing.
+- **`QUEUE_MODE.md`** — queue architecture, workers/concurrency/scaling, shared encryption key, the main-vs-worker **env-parity rule**, optional backend modules (`N8N_ENABLED_MODULES`, e.g. Agents), binary data (`database` mode — filesystem is unsupported in queue mode; S3/Azure = Enterprise), webhook processors, multi-main licensing.
 - **`SECURITY.md`** — generating secrets, the encryption-key rules, the full hardening checklist (telemetry off, env-access block, public API, firewall, secure cookies).
-- **`DAY2.md`** — updating the image, backing up (encryption key + volume + Postgres), and restoring.
+- **`CREDENTIAL_OVERWRITES.md`** — managed OAuth: register one OAuth app instance-wide so users
+  never see a client ID/secret ("Sign in with Google" on self-hosted). The endpoint-vs-env choice,
+  the **mandatory** endpoint auth token, parent-type inheritance, persistence and worker reload.
+- **`DAY2.md`** — changing a setting (env var) safely, updating the image, backing up (encryption key + volume + Postgres), and restoring.
 - **`assets/`** — the templates: `docker-compose.single.yml`, `docker-compose.queue.yml`, `Caddyfile`, `.env.single.example`, `.env.queue.example`, `init-data.sh`.
 
 Authoritative upstream reference: the official hosting docs live at

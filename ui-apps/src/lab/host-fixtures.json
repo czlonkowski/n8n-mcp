@@ -1,0 +1,409 @@
+[
+  {
+    "id": "workflow-page",
+    "label": "Workflow page (synthetic)",
+    "app": "workflow-list",
+    "tool": "n8n_list_workflows",
+    "input": {
+      "limit": 6
+    },
+    "data": {
+      "success": true,
+      "data": {
+        "workflows": [
+          {
+            "id": "demo-0",
+            "name": "Demo \u2014 Customer onboarding",
+            "active": true,
+            "nodeCount": 2,
+            "updatedAt": "2026-09-13T10:00:00Z",
+            "tags": [
+              "Demo"
+            ]
+          },
+          {
+            "id": "demo-1",
+            "name": "Demo \u2014 Retry failed deliveries",
+            "active": false,
+            "nodeCount": 3,
+            "updatedAt": "2026-09-13T10:00:00Z",
+            "tags": [
+              "Demo"
+            ]
+          },
+          {
+            "id": "demo-2",
+            "name": "Demo \u2014 Weekly summary",
+            "active": true,
+            "nodeCount": 4,
+            "updatedAt": "2026-09-13T10:00:00Z",
+            "tags": [
+              "Demo"
+            ]
+          },
+          {
+            "id": "demo-3",
+            "name": "Demo \u2014 Archived import",
+            "active": false,
+            "nodeCount": 5,
+            "updatedAt": "2026-09-13T10:00:00Z",
+            "tags": [
+              "Demo"
+            ],
+            "isArchived": true
+          },
+          {
+            "id": "demo-4",
+            "name": "Demo \u2014 Activation not reported",
+            "nodeCount": 6,
+            "updatedAt": "2026-09-13T10:00:00Z",
+            "tags": [
+              "Demo"
+            ]
+          },
+          {
+            "id": "demo-5",
+            "name": "Demo \u2014 A very long workflow name that must wrap gracefully inside a narrow embedded card",
+            "active": false,
+            "nodeCount": 7,
+            "updatedAt": "2026-09-13T10:00:00Z",
+            "tags": [
+              "Demo"
+            ]
+          }
+        ],
+        "returned": 6,
+        "hasMore": true,
+        "nextCursor": "demo-next"
+      }
+    }
+  },
+  {
+    "id": "workflow-empty",
+    "label": "Workflow empty (synthetic)",
+    "app": "workflow-list",
+    "tool": "n8n_list_workflows",
+    "input": {
+      "limit": 6
+    },
+    "data": {
+      "success": true,
+      "data": {
+        "workflows": [],
+        "returned": 0,
+        "hasMore": false
+      }
+    }
+  },
+  {
+    "id": "workflow-error",
+    "label": "Workflow error (synthetic)",
+    "app": "workflow-list",
+    "tool": "n8n_list_workflows",
+    "input": {
+      "limit": 6
+    },
+    "data": {
+      "success": false,
+      "error": "Synthetic connection failure: the workflow list could not be loaded."
+    }
+  },
+  {
+    "id": "execution-page",
+    "label": "Execution page (synthetic)",
+    "app": "execution-history",
+    "tool": "n8n_executions",
+    "input": {
+      "action": "list",
+      "workflowId": "demo-0"
+    },
+    "data": {
+      "success": true,
+      "data": {
+        "executions": [
+          {
+            "id": "demo-ex-0",
+            "workflowId": "demo-0",
+            "workflowName": "Demo \u2014 Customer onboarding",
+            "status": "error",
+            "mode": "manual",
+            "startedAt": "2026-09-13T10:00:00Z",
+            "stoppedAt": "2026-09-13T10:00:01Z"
+          },
+          {
+            "id": "demo-ex-1",
+            "workflowId": "demo-0",
+            "workflowName": "Demo \u2014 Customer onboarding",
+            "status": "success",
+            "mode": "manual",
+            "startedAt": "2026-09-13T10:00:00Z",
+            "stoppedAt": "2026-09-13T10:00:01Z"
+          },
+          {
+            "id": "demo-ex-2",
+            "workflowId": "demo-0",
+            "workflowName": "Demo \u2014 Customer onboarding",
+            "status": "running",
+            "mode": "manual",
+            "startedAt": "2026-09-13T10:00:00Z"
+          },
+          {
+            "id": "demo-ex-3",
+            "workflowId": "demo-0",
+            "workflowName": "Demo \u2014 Customer onboarding",
+            "status": "waiting",
+            "mode": "manual",
+            "startedAt": "2026-09-13T10:00:00Z"
+          },
+          {
+            "id": "demo-ex-4",
+            "workflowId": "demo-0",
+            "workflowName": "Demo \u2014 Customer onboarding",
+            "status": "canceled",
+            "mode": "manual",
+            "startedAt": "2026-09-13T10:00:00Z",
+            "stoppedAt": "2026-09-13T10:00:01Z"
+          },
+          {
+            "id": "demo-ex-5",
+            "workflowId": "demo-0",
+            "workflowName": "Demo \u2014 Customer onboarding",
+            "status": "unknown-new-status",
+            "mode": "manual",
+            "startedAt": "2026-09-13T10:00:00Z"
+          }
+        ],
+        "returned": 6,
+        "hasMore": true
+      }
+    }
+  },
+  {
+    "id": "execution-empty",
+    "label": "Execution empty (synthetic)",
+    "app": "execution-history",
+    "tool": "n8n_executions",
+    "input": {
+      "action": "list"
+    },
+    "data": {
+      "success": true,
+      "data": {
+        "executions": [],
+        "returned": 0,
+        "hasMore": false
+      }
+    }
+  },
+  {
+    "id": "execution-detail",
+    "label": "Execution detail (synthetic)",
+    "app": "execution-history",
+    "tool": "n8n_executions",
+    "input": {
+      "action": "get",
+      "id": "demo-ex-0",
+      "mode": "error"
+    },
+    "data": {
+      "success": true,
+      "data": {
+        "id": "demo-ex-0",
+        "workflowId": "demo-0",
+        "workflowName": "Demo \u2014 Customer onboarding",
+        "status": "error",
+        "mode": "manual",
+        "startedAt": "2026-09-13T10:00:00Z",
+        "stoppedAt": "2026-09-13T10:00:01Z",
+        "errorInfo": {
+          "primaryError": {
+            "message": "Synthetic failure: remote service returned 503."
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "execution-deleted",
+    "label": "Execution deleted (synthetic)",
+    "app": "execution-history",
+    "tool": "n8n_executions",
+    "input": {
+      "action": "delete",
+      "id": "demo-ex-removed"
+    },
+    "data": {
+      "success": true,
+      "message": "Execution demo-ex-removed deleted successfully"
+    }
+  },
+  {
+    "id": "execution-error",
+    "label": "Execution error (synthetic)",
+    "app": "execution-history",
+    "tool": "n8n_executions",
+    "input": {
+      "action": "get",
+      "id": "demo-ex-missing"
+    },
+    "data": {
+      "success": false,
+      "error": "Synthetic execution not found."
+    }
+  },
+  {
+    "id": "health-connected",
+    "label": "Health connected (synthetic)",
+    "app": "health-dashboard",
+    "tool": "n8n_health_check",
+    "input": {
+      "mode": "status"
+    },
+    "data": {
+      "success": true,
+      "data": {
+        "status": "ok",
+        "apiUrl": "https://demo.example.test",
+        "n8nVersion": "2.0.0",
+        "mcpVersion": "2.84.4",
+        "performance": {
+          "responseTimeMs": 38,
+          "cacheHitRate": "80.00%"
+        }
+      }
+    }
+  },
+  {
+    "id": "health-unconfigured",
+    "label": "Health unconfigured (synthetic)",
+    "app": "health-dashboard",
+    "tool": "n8n_health_check",
+    "input": {
+      "mode": "diagnostic"
+    },
+    "data": {
+      "success": true,
+      "data": {
+        "apiConfiguration": {
+          "configured": false,
+          "status": {
+            "connected": false
+          },
+          "config": null
+        },
+        "versionInfo": {
+          "current": "2.84.4",
+          "latest": null,
+          "upToDate": true
+        },
+        "performance": {
+          "diagnosticResponseTimeMs": 12,
+          "cacheHitRate": "N/A"
+        }
+      }
+    }
+  },
+  {
+    "id": "health-diagnostic",
+    "label": "Health diagnostic (synthetic)",
+    "app": "health-dashboard",
+    "tool": "n8n_health_check",
+    "input": {
+      "mode": "diagnostic"
+    },
+    "data": {
+      "success": true,
+      "data": {
+        "apiConfiguration": {
+          "configured": true,
+          "status": {
+            "connected": true
+          },
+          "config": {
+            "baseUrl": "https://demo.example.test"
+          }
+        },
+        "versionInfo": {
+          "current": "2.84.4",
+          "latest": "2.85.0",
+          "upToDate": false
+        }
+      }
+    }
+  },
+  {
+    "id": "health-error",
+    "label": "Health error (synthetic)",
+    "app": "health-dashboard",
+    "tool": "n8n_health_check",
+    "input": {
+      "mode": "status"
+    },
+    "data": {
+      "success": false,
+      "error": "Synthetic connection failure: n8n did not respond."
+    }
+  },
+  {
+    "id": "template-saved",
+    "label": "Template saved (synthetic)",
+    "app": "operation-result",
+    "tool": "n8n_deploy_template",
+    "input": {
+      "templateId": 1000
+    },
+    "data": {
+      "success": true,
+      "data": {
+        "workflowId": "demo-template",
+        "name": "Demo \u2014 Template import",
+        "active": false,
+        "nodeCount": 3,
+        "templateId": 1000,
+        "autoFixStatus": "success"
+      }
+    }
+  },
+  {
+    "id": "template-setup",
+    "label": "Template setup (synthetic)",
+    "app": "operation-result",
+    "tool": "n8n_deploy_template",
+    "input": {
+      "templateId": 1000
+    },
+    "data": {
+      "success": true,
+      "data": {
+        "workflowId": "demo-template",
+        "name": "Demo \u2014 Template import",
+        "active": false,
+        "nodeCount": 3,
+        "templateId": 1000,
+        "autoFixStatus": "failed",
+        "requiredCredentials": [
+          {
+            "nodeName": "Demo service",
+            "credentialType": "demoApi"
+          }
+        ],
+        "warnings": [
+          "Synthetic warning: a canvas group could not be retained."
+        ]
+      }
+    }
+  },
+  {
+    "id": "template-error",
+    "label": "Template error (synthetic)",
+    "app": "operation-result",
+    "tool": "n8n_deploy_template",
+    "input": {
+      "templateId": 1000
+    },
+    "data": {
+      "success": false,
+      "error": "Synthetic template not found."
+    }
+  }
+]

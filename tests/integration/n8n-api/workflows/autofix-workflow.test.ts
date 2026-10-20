@@ -9,7 +9,6 @@ import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
 import { createTestContext, TestContext, createTestWorkflowName } from '../utils/test-context';
 import { getTestN8nClient } from '../utils/n8n-client';
 import { N8nApiClient } from '../../../../src/services/n8n-api-client';
-import { cleanupOrphanedWorkflows } from '../utils/cleanup-helpers';
 import { createMcpContext } from '../utils/mcp-context';
 import { InstanceContext } from '../../../../src/types/instance-context';
 import { handleAutofixWorkflow } from '../../../../src/mcp/handlers-n8n-manager';
@@ -36,9 +35,6 @@ describe('Integration: handleAutofixWorkflow', () => {
 
   afterAll(async () => {
     await closeNodeRepository();
-    if (!process.env.CI) {
-      await cleanupOrphanedWorkflows();
-    }
   });
 
   // ======================================================================

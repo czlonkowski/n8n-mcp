@@ -84,6 +84,14 @@ vi.mock('../../src/mcp/server', () => ({
   }))
 }));
 
+// handleRequest SSRF-validates instance-context URLs with real DNS resolution;
+// tests that pass an n8nApiUrl need it stubbed out.
+vi.mock('../../src/utils/ssrf-protection', () => ({
+  SSRFProtection: {
+    validateWebhookUrl: vi.fn(async () => ({ valid: true }))
+  }
+}));
+
 // Mock console manager
 const mockConsoleManager = {
   wrapOperation: vi.fn().mockImplementation(async (fn: () => Promise<any>) => {
@@ -418,6 +426,250 @@ describe('HTTP Server Session Management', () => {
 
       expect((server as any).transports['session-a']).toBeUndefined();
       expect(oldTransport.close).toHaveBeenCalled();
+    });
+
+    it('should change the session config hash when credentials rotate (#1045)', async () => {
+      // The configHash embedded in instance session IDs is the session's config
+      // identity. It must cover the credentials: rotating the n8n API key or the
+      // instance-level MCP access token has to produce a different hash, so
+      // sessions bound to the old secrets stop matching.
+      mockConsoleManager.wrapOperation.mockImplementation(async (fn: () => Promise<any>) => {
+        return await fn();
+      });
+      // Like wrapOperation above, the module mocks' implementations do not
+      // survive earlier tests — re-set them so initialize can complete.
+      const { N8NDocumentationMCPServer } = await import('../../src/mcp/server');
+      (N8NDocumentationMCPServer as any).mockImplementation(() => ({
+        connect: vi.fn().mockResolvedValue(undefined)
+      }));
+      const { StreamableHTTPServerTransport } = await import(
+        '@modelcontextprotocol/sdk/server/streamableHttp.js'
+      );
+      (StreamableHTTPServerTransport as any).mockImplementation((options: any) => {
+        const mockTransport: any = {
+          handleRequest: vi.fn().mockImplementation(async (_req: any, res2: any, body?: any) => {
+            res2.status(200).json({ jsonrpc: '2.0', result: { success: true }, id: body?.id || 1 });
+          }),
+          close: vi.fn().mockResolvedValue(undefined),
+          sessionId: null,
+          onclose: null
+        };
+        if (options?.sessionIdGenerator) {
+          const generatedId = options.sessionIdGenerator();
+          mockTransport.sessionId = generatedId;
+          mockTransports[generatedId] = mockTransport;
+          if (options.onsessioninitialized) {
+            setTimeout(() => options.onsessioninitialized(generatedId), 0);
+          }
+        }
+        return mockTransport;
+      });
+      process.env.ENABLE_MULTI_TENANT = 'true';
+      process.env.MULTI_TENANT_SESSION_STRATEGY = 'instance';
+      server = new SingleSessionHTTPServer();
+
+      const initialize = async (instanceContext: any): Promise<string> => {
+        const { req, res } = createMockReqRes();
+        req.method = 'POST';
+        req.body = { jsonrpc: '2.0', method: 'initialize', params: {}, id: 1 };
+        await server.handleRequest(req as any, res as any, instanceContext);
+        await new Promise(resolve => setTimeout(resolve, 10));
+        const ids = Object.keys((server as any).sessionContexts);
+        // Eager cleanup evicts the previous session for the instance
+        expect(ids).toHaveLength(1);
+        return ids[0];
+      };
+
+      const hashOf = (sessionId: string): string => {
+        const match = sessionId.match(/^instance-tenant-a-([0-9a-f]{8})-/);
+        expect(match).not.toBeNull();
+        return match![1];
+      };
+
+      // No n8nApiUrl: a real URL would hit the SSRF DNS check in handleRequest.
+      // The url was already part of the hash before #1045; the credentials are
+      // what this test pins down.
+      const baseContext = {
+        instanceId: 'tenant-a',
+        n8nApiKey: 'old-key'
+      };
+
+      const first = hashOf(await initialize(baseContext));
+
+      // Same credentials → same config identity
+      expect(hashOf(await initialize(baseContext))).toBe(first);
+
+      // Rotated n8n API key → new config identity
+      const rotatedId = await initialize({ ...baseContext, n8nApiKey: 'rotated-key' });
+      const rotated = hashOf(rotatedId);
+      expect(rotated).not.toBe(first);
+
+      // Added instance-level MCP access token → new config identity again
+      const withTokenId = await initialize({
+        ...baseContext,
+        n8nApiKey: 'rotated-key',
+        n8nMcpAccessToken: 'mcp-token'
+      });
+      expect(hashOf(withTokenId)).not.toBe(rotated);
+
+      // The raw secrets never appear in the session id
+      expect(rotatedId).not.toContain('rotated-key');
+      expect(withTokenId).not.toContain('mcp-token');
+    });
+
+    it('should refresh a live instance-strategy session when full rotated credentials arrive (#1045)', async () => {
+      mockConsoleManager.wrapOperation.mockImplementation(async (fn: () => Promise<any>) => {
+        return await fn();
+      });
+      process.env.ENABLE_MULTI_TENANT = 'true';
+      process.env.MULTI_TENANT_SESSION_STRATEGY = 'instance';
+      server = new SingleSessionHTTPServer();
+
+      const storedContext = {
+        instanceId: 'tenant-a',
+        n8nApiUrl: 'https://a.example.com',
+        n8nApiKey: 'old-key',
+        n8nMcpAccessToken: 'stored-token'
+      };
+      const mcpServer: any = { instanceContext: storedContext };
+      (server as any).transports['session-a'] = {
+        handleRequest: vi.fn(async (_req: any, res2: any) => {
+          res2.status(200).json({ jsonrpc: '2.0', result: {}, id: 3 });
+        }),
+        close: vi.fn().mockResolvedValue(undefined)
+      };
+      (server as any).servers['session-a'] = mcpServer;
+      (server as any).sessionMetadata['session-a'] = {
+        lastAccess: new Date(),
+        createdAt: new Date()
+      };
+      (server as any).sessionContexts['session-a'] = storedContext;
+
+      const call = async (instanceContext: any) => {
+        const { req, res } = createMockReqRes();
+        req.method = 'POST';
+        req.headers = { 'mcp-session-id': 'session-a' };
+        req.body = { jsonrpc: '2.0', method: 'tools/list', params: {}, id: 3 };
+        await server.handleRequest(req as any, res as any, instanceContext);
+      };
+
+      // Partial context (no API key) must never overwrite the stored credentials
+      // (GHSA-2cf7-hpwf-47h9 class).
+      await call({ instanceId: 'tenant-a', n8nApiUrl: 'https://a.example.com' });
+      expect((server as any).sessionContexts['session-a'].n8nApiKey).toBe('old-key');
+
+      // A different instanceId must never overwrite another session's credentials.
+      await call({ instanceId: 'tenant-b', n8nApiUrl: 'https://b.example.com', n8nApiKey: 'new-key' });
+      expect((server as any).sessionContexts['session-a'].n8nApiKey).toBe('old-key');
+
+      // Same instanceId but a different URL is a different config identity — it must
+      // re-initialize, not retarget the live session.
+      await call({ instanceId: 'tenant-a', n8nApiUrl: 'https://elsewhere.example.com', n8nApiKey: 'new-key' });
+      expect((server as any).sessionContexts['session-a'].n8nApiKey).toBe('old-key');
+      expect((server as any).sessionContexts['session-a'].n8nApiUrl).toBe('https://a.example.com');
+
+      // A complete same-instance context with a rotated key refreshes the live session,
+      // including the frozen server's own context — and fields the request omits stay
+      // as stored (the MCP access token is not cleared by a request without it).
+      await call({ instanceId: 'tenant-a', n8nApiUrl: 'https://a.example.com', n8nApiKey: 'new-key' });
+      expect((server as any).sessionContexts['session-a'].n8nApiKey).toBe('new-key');
+      expect((server as any).sessionContexts['session-a'].n8nMcpAccessToken).toBe('stored-token');
+      expect(mcpServer.instanceContext.n8nApiKey).toBe('new-key');
+      expect(mcpServer.instanceContext.n8nMcpAccessToken).toBe('stored-token');
+    });
+
+    it('should refresh uiAppsEnabled on a live instance-strategy session (#1152)', async () => {
+      mockConsoleManager.wrapOperation.mockImplementation(async (fn: () => Promise<any>) => {
+        return await fn();
+      });
+      process.env.ENABLE_MULTI_TENANT = 'true';
+      process.env.MULTI_TENANT_SESSION_STRATEGY = 'instance';
+      server = new SingleSessionHTTPServer();
+
+      const tenant = {
+        instanceId: 'tenant-a',
+        n8nApiUrl: 'https://a.example.com',
+        n8nApiKey: 'key-a',
+      };
+      const storedContext = { ...tenant, n8nMcpAccessToken: 'stored-token' };
+      const mcpServer: any = { instanceContext: storedContext };
+      (server as any).transports['session-a'] = {
+        handleRequest: vi.fn(async (_req: any, res2: any) => {
+          res2.status(200).json({ jsonrpc: '2.0', result: {}, id: 3 });
+        }),
+        close: vi.fn().mockResolvedValue(undefined)
+      };
+      (server as any).servers['session-a'] = mcpServer;
+      (server as any).sessionMetadata['session-a'] = {
+        lastAccess: new Date(),
+        createdAt: new Date()
+      };
+      (server as any).sessionContexts['session-a'] = storedContext;
+
+      const call = async (instanceContext: any) => {
+        const { req, res } = createMockReqRes();
+        req.method = 'POST';
+        req.headers = { 'mcp-session-id': 'session-a' };
+        req.body = { jsonrpc: '2.0', method: 'tools/list', params: {}, id: 3 };
+        await server.handleRequest(req as any, res as any, instanceContext);
+      };
+
+      await call({ ...tenant, uiAppsEnabled: false });
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+      // Credentials the request omits still stay as stored.
+      expect(mcpServer.instanceContext.n8nMcpAccessToken).toBe('stored-token');
+
+      // A request without the credentials must not change the switch either.
+      await call({ instanceId: 'tenant-a', n8nApiUrl: 'https://a.example.com', uiAppsEnabled: true });
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+
+      // A non-boolean is refused before it can reach the session: the string "false"
+      // would read as enabled.
+      for (const bad of ['false', 'true', 0, null]) {
+        const { req, res } = createMockReqRes();
+        req.method = 'POST';
+        req.headers = { 'mcp-session-id': 'session-a' };
+        req.body = { jsonrpc: '2.0', method: 'tools/list', params: {}, id: 4 };
+        await server.handleRequest(req as any, res as any, { ...tenant, uiAppsEnabled: bad } as any);
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+      }
+
+      // Omitted means "unchanged", as for every other field: a caller that forgets the
+      // field on one request must not switch the cards back on.
+      await call({ ...tenant });
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+      expect((server as any).sessionContexts['session-a'].uiAppsEnabled).toBe(false);
+
+      // The value travels with the session through export, so a restore keeps it.
+      const exported = server.exportSessionState().find(session => session.sessionId === 'session-a');
+      expect(exported?.context.uiAppsEnabled).toBe(false);
+
+      await call({ ...tenant, uiAppsEnabled: true });
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(true);
+
+      // Requests that overlap on one session each apply their own context; the later
+      // one must not be dropped because a switch was already in progress.
+      await Promise.all([
+        (server as any).switchSessionContext('session-a', { ...storedContext, uiAppsEnabled: true }),
+        (server as any).switchSessionContext('session-a', { ...storedContext, uiAppsEnabled: false })
+      ]);
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+      expect((server as any).contextSwitchLocks.size).toBe(0);
+
+      // A queued request that omits the field merges over the context as it is when its
+      // turn comes, not as it was when the request arrived, so it cannot undo the
+      // request ahead of it. Driven through the helper the refresh calls: overlapping
+      // handleRequest calls do not keep the mocked SSRF module under vitest.
+      const refresh = (context: any) => (server as any).switchSessionContext('session-a', context, true);
+      await refresh({ ...tenant, uiAppsEnabled: true });
+      await Promise.all([
+        refresh({ ...tenant, uiAppsEnabled: true }),
+        refresh({ ...tenant, uiAppsEnabled: false }),
+        refresh({ ...tenant })
+      ]);
+      expect(mcpServer.instanceContext.uiAppsEnabled).toBe(false);
+      expect(mcpServer.instanceContext.n8nMcpAccessToken).toBe('stored-token');
     });
 
     it('should keep same-instance sessions alive in instance mode when concurrent sessions are allowed', async () => {

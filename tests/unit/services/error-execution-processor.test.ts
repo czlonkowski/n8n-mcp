@@ -956,3 +956,123 @@ describe('ErrorExecutionProcessor - Performance', () => {
     expect(result.upstreamContext?.dataStructure).toBeDefined();
   });
 });
+
+/**
+ * Multi-run node tests
+ *
+ * A node invoked more than once within a single execution (e.g. an AI
+ * Agent's Chat Model, called once to decide to call a tool and again to
+ * produce the final answer) gets one runData array entry per invocation.
+ * Error detection and item sampling must look across every run, not just
+ * the first.
+ */
+describe('ErrorExecutionProcessor - multi-run nodes', () => {
+  function twoRunUpstreamNode() {
+    return [
+      {
+        startTime: Date.now() - 2000,
+        executionTime: 500,
+        data: { ai_languageModel: [[{ json: { text: 'first turn' } }]] },
+      },
+      {
+        startTime: Date.now() - 1000,
+        executionTime: 1200,
+        data: { ai_languageModel: [[{ json: { text: 'second turn' } }]] },
+      },
+    ];
+  }
+
+  it('should merge upstream context items across all runs (heuristic path, no workflow)', () => {
+    const execution = createMockExecution({
+      runData: {
+        'Upstream': twoRunUpstreamNode(),
+        'Error Node': createErrorNodeData(),
+      },
+    });
+
+    const result = processErrorExecution(execution);
+
+    expect(result.upstreamContext?.itemCount).toBe(2);
+    expect(result.upstreamContext?.sampleItems).toHaveLength(2);
+    expect((result.upstreamContext?.sampleItems?.[0] as any)?.json?.text).toBe('first turn');
+    expect((result.upstreamContext?.sampleItems?.[1] as any)?.json?.text).toBe('second turn');
+  });
+
+  it('should merge upstream context items across all runs (workflow path)', () => {
+    const execution = createMockExecution({
+      runData: {
+        'Upstream': twoRunUpstreamNode(),
+        'Error Node': createErrorNodeData(),
+      },
+    });
+
+    const workflow = createMockWorkflow({
+      connections: {
+        'Upstream': { main: [[{ node: 'Error Node', type: 'main', index: 0 }]] },
+      },
+      nodes: [
+        { name: 'Upstream', type: 'n8n-nodes-base.test' },
+        { name: 'Error Node', type: 'n8n-nodes-base.test' },
+      ],
+    });
+
+    const result = processErrorExecution(execution, { workflow });
+
+    expect(result.upstreamContext?.itemCount).toBe(2);
+    expect(result.upstreamContext?.sampleItems).toHaveLength(2);
+  });
+
+  it('should detect an error on a non-first run as an additional error', () => {
+    const nodeData = twoRunUpstreamNode();
+    (nodeData[1] as any).error = { message: 'Second run failed' };
+
+    const execution = createMockExecution({
+      runData: {
+        'Trigger': createSuccessfulNodeData(1),
+        'Multi-run Node': nodeData,
+        'Error Node': createErrorNodeData(),
+      },
+    });
+
+    const result = processErrorExecution(execution);
+
+    expect(result.additionalErrors).toContainEqual({
+      nodeName: 'Multi-run Node',
+      message: 'Second run failed',
+    });
+  });
+
+  it('should detect a primary error on a non-first run of the failing node', () => {
+    const nodeData = twoRunUpstreamNode();
+    (nodeData[1] as any).error = { message: 'Failed on second invocation', name: 'NodeOperationError' };
+
+    const execution = createMockExecution({
+      errorNode: 'Multi-run Error Node',
+      errorMessage: 'Failed on second invocation',
+      runData: {
+        'Trigger': createSuccessfulNodeData(1),
+        'Multi-run Error Node': nodeData,
+      },
+      hasExecutionError: false, // force fallback to node-level runData error
+    });
+
+    const result = processErrorExecution(execution);
+
+    expect(result.primaryError.message).toBe('Failed on second invocation');
+  });
+
+  it('should count itemCount across all runs in the execution path', () => {
+    const execution = createMockExecution({
+      runData: {
+        'Multi-run Node': twoRunUpstreamNode(),
+        'Error Node': createErrorNodeData(),
+      },
+    });
+
+    const result = processErrorExecution(execution, { includeExecutionPath: true });
+    const step = result.executionPath?.find(p => p.nodeName === 'Multi-run Node');
+
+    expect(step?.itemCount).toBe(2);
+    expect(step?.status).toBe('success');
+  });
+});

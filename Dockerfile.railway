@@ -1,7 +1,17 @@
 # syntax=docker/dockerfile:1.7
 # Railway-compatible Dockerfile for n8n-mcp
 
-# --- Stage 1: Builder ---
+# Build the self-contained UI assets independently of server dependencies.
+FROM node:22-alpine AS ui-builder
+WORKDIR /app/ui-apps
+COPY ui-apps/package.json ui-apps/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+COPY ui-apps/tsconfig.json ui-apps/vite.config.ts ./
+COPY ui-apps/src/apps ./src/apps
+COPY ui-apps/src/shared ./src/shared
+RUN npm run build
+
+# --- Server builder ---
 FROM node:22-alpine AS builder
 WORKDIR /app
 
@@ -45,6 +55,9 @@ RUN apk add --no-cache python3 make g++ && \
 
 # Copy built application from builder stage
 COPY --from=builder /app/dist ./dist
+COPY --from=ui-builder /app/ui-apps/dist ./ui-apps/dist
+RUN --mount=type=bind,source=scripts/ui-package-smoke.cjs,target=/tmp/ui-package-smoke.cjs \
+    node /tmp/ui-package-smoke.cjs /app
 
 # Copy necessary data and configuration files
 COPY data/ ./data/

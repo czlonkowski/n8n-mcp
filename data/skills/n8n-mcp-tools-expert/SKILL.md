@@ -1,6 +1,6 @@
 ---
 name: n8n-mcp-tools-expert
-description: Expert guide for using n8n-mcp MCP tools effectively. Use when searching for nodes, validating configurations, accessing templates, managing workflows, managing credentials, auditing instance security, or using any n8n-mcp tool. Provides tool selection guidance, parameter formats, and common patterns. IMPORTANT — Always consult this skill before calling any n8n-mcp tool — it prevents common mistakes like wrong nodeType formats, incorrect parameter structures, and inefficient tool usage. If the user mentions n8n, workflows, nodes, or automation and you have n8n MCP tools available, use this skill first.
+description: Expert guide for using n8n-mcp MCP tools effectively. Use when searching for nodes, validating configurations, accessing templates, managing workflows, organizing workflows into folders, managing credentials, auditing instance security, or using any n8n-mcp tool. Provides tool selection guidance, parameter formats, and common patterns. IMPORTANT — Always consult this skill before calling any n8n-mcp tool — it prevents common mistakes like wrong nodeType formats, incorrect parameter structures, and inefficient tool usage. If the user mentions n8n, workflows, nodes, or automation and you have n8n MCP tools available, use this skill first.
 ---
 
 # n8n MCP Tools Expert
@@ -17,10 +17,14 @@ n8n-mcp provides tools organized into categories:
 2. **Configuration Validation** → [VALIDATION_GUIDE.md](VALIDATION_GUIDE.md)
 3. **Workflow Management** → [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md)
 4. **Template Library** - Search and deploy 2,700+ real workflows
-5. **Data Tables** - Manage n8n data tables and rows (`n8n_manage_datatable`)
-6. **Credential Management** - Full credential CRUD + schema discovery (`n8n_manage_credentials`)
-7. **Security & Audit** - Instance security auditing with custom deep scan (`n8n_audit_instance`)
-8. **Documentation & Guides** - Tool docs, AI agent guide, Code node guides
+5. **Data Tables** - Manage n8n data tables, rows and columns (`n8n_manage_datatable`)
+6. **Workflow Folders** - Folder CRUD + workflow placement (`n8n_manage_folders`)
+7. **Credential Management** - Full credential CRUD + schema discovery (`n8n_manage_credentials`)
+8. **Security & Audit** - Instance security auditing with custom deep scan (`n8n_audit_instance`)
+9. **Documentation & Guides** - Tool docs, AI agent guide, Code node guides
+10. **Agents** - Create, configure, validate, run and publish persisted n8n Agents (`n8n_manage_agents`, requires `N8N_MCP_ACCESS_TOKEN`)
+11. **Node Resource Resolution** - Resolve live dropdown/resource-locator values with a real credential (`n8n_explore_node_resources`, requires `N8N_MCP_ACCESS_TOKEN`)
+12. **Instance Catalog** - List projects and tags (`n8n_list_catalog`)
 
 ---
 
@@ -38,9 +42,13 @@ n8n-mcp provides tools organized into categories:
 | `validate_workflow` | Checking complete workflow | 100-500ms |
 | `n8n_deploy_template` | Deploy template to n8n instance | 200-500ms |
 | `n8n_manage_datatable` | Managing data tables and rows | 50-500ms |
+| `n8n_manage_folders` | Folder CRUD + organizing workflows | 100-500ms |
 | `n8n_manage_credentials` | Credential CRUD + schema discovery | 50-500ms |
 | `n8n_audit_instance` | Security audit (built-in + custom scan) | 500-5000ms |
 | `n8n_autofix_workflow` | Auto-fix validation errors | 200-1500ms |
+| `n8n_manage_agents` | Persisted n8n Agent CRUD/validate/publish | 150-400ms; `call` action: 5-60s |
+| `n8n_explore_node_resources` | Resolve live loadOptions/listSearch values | 200 ms - 5 s |
+| `n8n_list_catalog` | List projects or tags | 50-300ms |
 
 ---
 
@@ -219,12 +227,13 @@ See [VALIDATION_GUIDE.md](VALIDATION_GUIDE.md) for:
 ### Workflow Management
 See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for:
 - n8n_create_workflow
-- n8n_update_partial_workflow (20 operation types including patchNodeField and setNodeGroups!)
+- n8n_update_partial_workflow (21 operation types including patchNodeField, setNodeGroups, and moveToFolder!)
 - Smart parameters (branch, case)
 - AI connection types (8 types)
 - Workflow activation (activateWorkflow/deactivateWorkflow)
 - n8n_deploy_template
 - n8n_workflow_versions
+- n8n_manage_folders (folder CRUD + workflow placement)
 - n8n_manage_credentials (credential CRUD + schema discovery)
 - n8n_audit_instance (security auditing)
 
@@ -244,11 +253,65 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for full search/get/deploy exampl
 
 ---
 
+## Running Workflows
+
+`n8n_test_workflow` has one required parameter (`workflowId`) and a `method` that picks the path:
+
+| `method` | Backend | What it does |
+|---|---|---|
+| `auto` (default) | Public API | Detects a webhook/form/chat trigger and fires it over HTTP — the workflow must be **active**. No such trigger → it reports that the workflow cannot be triggered and names the methods below. **`auto` never runs anything through n8n's MCP server.** |
+| `trigger` | Public API | Same HTTP path, requested explicitly. |
+| `prepare` | n8n's MCP server | Read-only: lists the nodes that need pinned data. |
+| `pinned` | n8n's MCP server | Runs the workflow with `pinData` standing in for trigger, credentialed and HTTP Request nodes, and waits. Every other node still runs. A run that finishes in `error`/`crashed`/`canceled` comes back as `EXECUTION_FAILED` with the `executionId`. |
+| `direct` | n8n's MCP server | Starts a run and returns once it has started; nothing is pinned, so every node runs. `message` or `data`/`headers` are forwarded to the trigger as input. |
+
+- The last three need `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+) and the workflow's "Available in MCP" setting.
+- `pinData` is keyed by node **name**, and every value is an array of items wrapped as `{"json": {...}}` — `{"Webhook": [{"json": {"id": "123"}}]}`, never a flat object. It must be non-empty.
+- `triggerNodeName` picks the trigger node to start from (defaults to the detected one; n8n requires it whenever inputs are given).
+- **Both run methods execute the workflow's nodes for real.** `direct` runs every node; `pinned` pins only trigger nodes, nodes with credentials and HTTP Request nodes, so Code, Set, If and credential-free I/O (Execute Command, file read/write) still run. Confirm with the user before running a workflow that writes anywhere.
+- `executionMode` applies to `direct`: `manual` (default) or `production`. It changes the execution context, not whether the run has side effects — a production run goes through the production execution path and is recorded as one. Only pass it when the user asked for one.
+- `timeoutMs` is the client deadline for the official call (5000-600000; default 30000 for `prepare`, 300000 for `pinned`/`direct`).
+- `direct` returns as soon as the run starts, so it reports success with an `executionId` regardless of how the run ends — poll `n8n_executions({action: "get", id: executionId})` for the outcome. A dispatch n8n refuses outright comes back as `OFFICIAL_MCP_ERROR`, not `EXECUTION_FAILED`.
+- A workflow whose "Available in MCP" setting is off answers `WORKFLOW_NOT_EXPOSED`; `exposeToMcp: true` turns the setting on and retries once. That is a visible, persistent change — ask the user first, and note that enabling it is itself a workflow update, so it can overwrite a concurrent UI edit.
+
+Successful and routed responses state `method` and `backend` (`public-api` or `official-mcp`); an envelope rejected on argument validation may carry neither.
+
+See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md#n8n_test_workflow-running-workflows) for runnable examples of each method.
+
+---
+
+## Version History
+
+`n8n_workflow_versions` reads two independent histories, selected with `source`:
+
+- `source: "local"` (default) — the snapshots n8n-mcp takes before it changes a workflow. Any n8n version, no token, ids are numbers. Blind to edits made in the n8n UI. The only source that supports `delete` and `prune`.
+- `source: "native"` — n8n's own workflow history, the same list the UI shows, including edits made by people. Needs `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+; the native `diff` needs 2.36, where `get_workflow_versions_diff` shipped) and the workflow's "Available in MCP" setting; ids are opaque strings; `list` is capped at 50 with an `offset`; `delete` and `prune` are refused with `MODE_NOT_SUPPORTED_FOR_SOURCE` (n8n owns that retention). Native rollback is not pre-validated — `validateBefore` is accepted and ignored.
+
+`mode: "diff"` compares two versions (`versionId` + `toVersionId`, both from the same source and workflow). A local diff (`data.format: "n8n-mcp"`) reports added/removed/modified nodes as node **IDs**; a native diff (`data.format: "n8n"`) is n8n's own payload with field-level before/after values. Branch on `data.format` rather than assuming field names.
+
+Native modes hit the same consent gate as the routed run methods: a workflow whose "Available in MCP" setting is off answers `WORKFLOW_NOT_EXPOSED`, and re-running with `exposeToMcp: true` turns that setting on and retries once (the response then carries `exposedToMcp: true`). It is a visible, persistent change to the workflow — ask the user before passing it. `timeoutMs` (5000-600000) is the client deadline for the native call.
+
+See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md#n8n_workflow_versions-version-control) for every mode with runnable examples of both sources.
+
+---
+
 ## Data Table Management
 
 `n8n_manage_datatable` is the MCP tool for managing data tables and rows from *outside* a workflow (table actions `createTable`/`listTables`/`getTable`/`updateTable`/`deleteTable`; row actions `getRows`/`insertRows`/`updateRows`/`upsertRows`/`deleteRows`, with filtering, pagination, and `dryRun`). Don't confuse it with the in-workflow `nodes-base.dataTable` node, which reads/writes rows *during execution* (see [n8n-node-configuration → OPERATION_PATTERNS.md](../n8n-node-configuration/OPERATION_PATTERNS.md#data-table-nodes-basedatatable)). Rule of thumb: MCP tool to set up a table once, workflow node to read/write on every execution. `deleteRows` requires a filter; use `dryRun: true` before bulk changes.
 
+**Column actions** — `addColumn`, `deleteColumn`, `renameColumn` — change an existing table's columns, which the Public API cannot do; they run through n8n's MCP server and need `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+). `addColumn` takes `column: {name, type}` (name starts with a letter, letters/digits/underscores only, at most 63 chars; type is `string`, `number`, `boolean` or `date`); `deleteColumn`/`renameColumn` take the `columnId` from `getTable`, and `renameColumn` puts the new column name in `name`. They address the table by project: `projectId` is resolved automatically when exactly one project is accessible, otherwise the call returns `PROJECT_REQUIRED` and lists the candidates — pass `projectId` (from `n8n_list_catalog({kind: "projects"})`) to skip resolution. Renaming the *table* is not a column action: use `updateTable` on the Public API.
+
+**`deleteColumn` drops the column's values along with the column, and there is no undo.** That bites hardest where you'd least expect it: a column's type cannot be changed after creation, so "make this column a number" really means drop-and-re-add, which throws away everything in it. Read the values out with `getRows` first if they matter, and confirm with the user before dropping a populated column.
+
 See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for all actions, filter conditions, and examples.
+
+---
+
+## Workflow Folders
+
+`n8n_manage_folders` organizes workflows into folders (actions `create`/`list`/`get`/`rename`/`move`/`delete`; n8n 2.19+, registered free Community tier and up). `projectId` defaults to `'personal'`. Placing workflows happens in the *workflow* tools: `parentFolderId` on `n8n_create_workflow`, or the `moveToFolder` operation of `n8n_update_partial_workflow` (both n8n 2.32+; `null` = project root). Two things to internalize: a workflow's folder is **write-only** in n8n's API (verify placement via a folder's `get` counts, never by reading the workflow), and `delete` without `transferToFolderId` **archives** the folder's workflows (`transferToFolderId: "0"` moves them to the project root instead, keeping them active).
+
+See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for all actions, list filters/counts, and the delete semantics.
 
 ---
 
@@ -257,6 +320,16 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for all actions, filter condition
 `n8n_manage_credentials` is the unified credential tool: actions `list`, `get`, `create`, `update`, `delete`, `getSchema`. It never returns secrets — `get`/`create`/`update` strip the `data` field. Use `getSchema` before `create` to discover required fields. The optional `includeUsage: true` flag (on `list`/`get`) reverse-scans workflows and attaches `usedIn: [{id, name, active}]` + `usageCount` — use it before deleting or rotating a credential to see what breaks (it triggers a full client-side scan, caps at 5000 workflows, excludes archived, and degrades to a `usageScanError` field on failure).
 
 See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for all actions, the includeUsage shape, security notes, and the safe delete/rotate workflow.
+
+---
+
+## Agents
+
+The three tools in this section exist only for n8n's instance-level MCP server (a separate endpoint from the Public API). `n8n_manage_agents` and `n8n_explore_node_resources` need `N8N_MCP_ACCESS_TOKEN`; `n8n_list_catalog` works without it and uses the token only for its team-project fallback. Other tools route individual operations through the same server — `n8n_test_workflow` `prepare`/`pinned`/`direct`, `n8n_workflow_versions` `source: "native"`, the `n8n_manage_datatable` column actions — as described in their own sections; see "Tool Availability" below.
+
+- `n8n_manage_agents` — create, configure, validate, run and publish persisted n8n Agents (a standalone assistant artifact: model, instructions, tools, skills, tasks, memory, channels — not the AI Agent workflow node). Actions: `reference`, `search`, `get`, `create`, `mutate`, `validate`, `call`, `publish`, `unpublish`, `revert`, `versions`, `delete`, `discover_assets`, `verify_mcp_server`, `update_integration`. Start with `action: "reference"`, then `discover_assets` → `create` → `mutate` (one resource at a time, always the latest hash — n8n returns it as `configHash` and expects it back as `args.baseConfigHash`; a stale one comes back as `STALE_CONFIG`) → `validate`. `publish` only on explicit request; `call` runs the agent with real credentials and tools and may return `approvals[]` for the human to decide. `timeoutMs` is a top-level parameter (default 30000, 180000 for `call`), not part of `args`. Needs n8n **2.34+** with the agents module; on 2.36.x the agents runtime rejects `azureOpenAiApi`/`aws` credentials. Envelope error codes: `NOT_CONFIGURED`, `INVALID_ARGS`, `STALE_CONFIG`, `AGENT_NOT_RUNNABLE`, `AGENT_TOOL_ERROR` (a custom tool that failed to compile, or an unknown `agentId`), plus the shared `OFFICIAL_MCP_*` family (`AUTH_FAILED`, `NOT_ENABLED`, `RATE_LIMITED`, `TOOL_UNAVAILABLE`, `URL_REJECTED`, `TIMEOUT`, `TRANSPORT_ERROR`, `ERROR`). See **n8n-agents** skill's "Persisted n8n Agents" section for the full workflow.
+- `n8n_explore_node_resources` — resolve the real values behind a node's `loadOptions` dropdown or resource-locator `listSearch` (Slack channels, Google Sheets tabs, model lists) using a live credential, instead of guessing an ID. Use it when `get_node` (`standard` detail) shows `dynamicOptions: {methodName, methodType, dependsOn}` on a property. **Six parameters are required and none of them are inferred:** `nodeType` (LONG form), `version` (the node `typeVersion` the method belongs to), `methodName` and `methodType` copied verbatim from `dynamicOptions`, and `credentialType` plus a `credentialId` of that type from `n8n_manage_credentials({action: "list"})`. Whatever the method `dependsOn` goes in `currentNodeParameters`, resource-locator values keeping their `{__rl: true, mode: "id", value: "…"}` shape. Each result's `value` is what belongs in the workflow parameter; `name` is display text only.
+- `n8n_list_catalog` — list instance-level `projects` (personal project marked, gives `projectId` for `n8n_manage_agents`/`n8n_manage_datatable`) or `tags`. Works without the token via the Public API; with it configured, falls back to the official MCP server for team projects when the Public API's licence gate refuses (`teamProjectsEnabled` reports which).
 
 ---
 
@@ -272,7 +345,7 @@ See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for the two scanning approaches, exam
 
 - `tools_documentation()` — overview of all tools; `tools_documentation({topic, depth: "full"})` for a specific tool. Code node guides via topics `javascript_code_node_guide` / `python_code_node_guide`.
 - **AI agent guide** — `tools_documentation({topic: "ai_agents_guide", depth: "full"})` (no standalone tool); returns architecture, connections, tools, validation, best practices.
-- `n8n_health_check()` — quick check; `n8n_health_check({mode: "diagnostic"})` returns status, env vars, tool status, API connectivity.
+- `n8n_health_check()` — quick check; `n8n_health_check({mode: "diagnostic"})` returns status, env vars, tool status, API connectivity. Both modes also return an **`officialMcp`** block — `{configured, endpoint, reachable, toolCount, agentTools}` — the preflight for everything gated on `N8N_MCP_ACCESS_TOKEN`: the agent tools, `n8n_test_workflow`'s routed methods, native version history, the data-table column actions. Read it once before reaching for any of them, rather than discovering the gap through a `NOT_CONFIGURED` envelope mid-task.
 
 See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for examples.
 
@@ -293,13 +366,22 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for examples.
 - n8n_list_workflows, n8n_get_workflow, n8n_delete_workflow
 - n8n_test_workflow
 - n8n_executions
-- n8n_evaluations (n8n 2.30+; read evaluation test runs — API key must be created on 2.30+ for testRun scopes)
+- n8n_evaluations (reads: n8n 2.30+ with an API key created on 2.30+; run/cancel: n8n 2.32+ with a key created on 2.32+ — older keys lack the testRun scopes)
 - n8n_deploy_template
 - n8n_workflow_versions
 - n8n_autofix_workflow
 - n8n_manage_datatable
+- n8n_manage_folders (folder CRUD: n8n 2.19+, registered Community tier and up; workflow placement via parentFolderId/moveToFolder: n8n 2.32+)
 - n8n_manage_credentials
 - n8n_audit_instance
+- n8n_list_catalog (works without the token; needs it only for the team-project fallback)
+
+**Requires `N8N_MCP_ACCESS_TOKEN`** (a separate token from n8n Settings → Instance-level MCP, in addition to the Public API credentials above):
+- n8n_manage_agents
+- n8n_explore_node_resources
+- n8n_test_workflow with `method: "prepare"`/`"pinned"`/`"direct"` (also needs the workflow's "Available in MCP" setting)
+- n8n_workflow_versions with `source: "native"` (also needs the workflow's "Available in MCP" setting)
+- n8n_manage_datatable with `addColumn`/`deleteColumn`/`renameColumn`
 
 If API tools unavailable, use templates and validation-only workflows.
 
@@ -322,6 +404,7 @@ If API tools unavailable, use templates and validation-only workflows.
 | validate_node (minimal) | <50ms | Small |
 | validate_node (full) | <100ms | Medium |
 | validate_workflow | 100-500ms | Medium |
+| n8n_manage_folders | 100-500ms | Small |
 | n8n_manage_credentials | 50-500ms | Small-Medium |
 | n8n_audit_instance | 500-5000ms | Large |
 | n8n_create_workflow | 100-500ms | Medium |
@@ -368,9 +451,10 @@ If API tools unavailable, use templates and validation-only workflows.
 7. Workflows can be **activated via API** (`activateWorkflow` operation)
 8. Workflows are built **iteratively** (56s avg between edits)
 9. **Data tables** managed with `n8n_manage_datatable` (CRUD + filtering)
-10. **Credentials** managed with `n8n_manage_credentials` (CRUD + schema discovery)
-11. **Security audits** via `n8n_audit_instance` (built-in + custom deep scan)
-12. **AI agent guide** available via `tools_documentation({topic: "ai_agents_guide", depth: "full"})`
+10. **Folders** managed with `n8n_manage_folders`; workflow placement is write-only (verify via folder counts, not the workflow)
+11. **Credentials** managed with `n8n_manage_credentials` (CRUD + schema discovery)
+12. **Security audits** via `n8n_audit_instance` (built-in + custom deep scan)
+13. **AI agent guide** available via `tools_documentation({topic: "ai_agents_guide", depth: "full"})`
 
 **Common Workflow**:
 1. search_nodes → find node

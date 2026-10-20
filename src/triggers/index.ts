@@ -28,6 +28,7 @@ export {
 // Detector
 export {
   detectTriggerFromWorkflow,
+  classifyTriggerNode,
   buildTriggerUrl,
   describeTrigger,
 } from './trigger-detector';

@@ -135,11 +135,14 @@ describe('WorkflowValidator - false-positive audit fixes (Stage 1)', () => {
       expect(result.warnings.filter(w => w.message.includes("missing onError: 'continueErrorOutput'"))).toHaveLength(0);
     });
 
-    it('does not warn for Switch with all rule outputs wired and no onError', async () => {
+    // Only `options.fallbackOutput: 'extra'` adds an output after the rule outputs; without it
+    // a 2-rule Switch has 2 outputs and a third wired branch is a genuine, unaccounted output
+    // (not an implicit fallback), so it must declare the option to stay unflagged.
+    it('does not warn for Switch with a fallbackOutput: extra branch wired and no onError', async () => {
       const workflow = {
         nodes: [
           { id: '1', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
-          { id: '2', name: 'Router', type: 'n8n-nodes-base.switch', position: [200, 0], parameters: { rules: { values: [{ v: 'a' }, { v: 'b' }] } } },
+          { id: '2', name: 'Router', type: 'n8n-nodes-base.switch', typeVersion: 3.2, position: [200, 0], parameters: { rules: { values: [{ v: 'a' }, { v: 'b' }] }, options: { fallbackOutput: 'extra' } } },
           { id: '3', name: 'A', type: 'nodes-base.set', position: [400, 0], parameters: {} },
           { id: '4', name: 'B', type: 'nodes-base.set', position: [400, 100], parameters: {} },
           { id: '5', name: 'Fallback', type: 'nodes-base.set', position: [400, 200], parameters: {} },
@@ -157,6 +160,32 @@ describe('WorkflowValidator - false-positive audit fixes (Stage 1)', () => {
       };
       const result = await validator.validateWorkflow(workflow as any);
       expect(result.warnings.filter(w => w.message.includes("missing onError: 'continueErrorOutput'"))).toHaveLength(0);
+    });
+
+    it('warns for a Switch with a third wired branch but no fallbackOutput: extra and no onError', async () => {
+      const workflow = {
+        nodes: [
+          { id: '1', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
+          { id: '2', name: 'Router', type: 'n8n-nodes-base.switch', typeVersion: 3.2, position: [200, 0], parameters: { rules: { values: [{ v: 'a' }, { v: 'b' }] } } },
+          { id: '3', name: 'A', type: 'nodes-base.set', position: [400, 0], parameters: {} },
+          { id: '4', name: 'B', type: 'nodes-base.set', position: [400, 100], parameters: {} },
+          { id: '5', name: 'Fallback', type: 'nodes-base.set', position: [400, 200], parameters: {} },
+        ],
+        connections: {
+          'Trigger': { main: [[{ node: 'Router', type: 'main', index: 0 }]] },
+          'Router': {
+            main: [
+              [{ node: 'A', type: 'main', index: 0 }],
+              [{ node: 'B', type: 'main', index: 0 }],
+              [{ node: 'Fallback', type: 'main', index: 0 }],
+            ],
+          },
+        },
+      };
+      const result = await validator.validateWorkflow(workflow as any);
+      expect(result.warnings.filter(w =>
+        w.nodeName === 'Router' && w.message.includes("error output connections in main[2] but missing onError")
+      )).toHaveLength(1);
     });
 
     it('guard: single-output node with main[1] wired and no onError still warns', async () => {

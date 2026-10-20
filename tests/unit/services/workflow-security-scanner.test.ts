@@ -316,6 +316,40 @@ describe('workflow-security-scanner', () => {
       const report = scanOne(wf, ['error_handling']);
       expect(findingsOf(report, 'error_handling')).toHaveLength(1);
     });
+
+    it('should NOT flag a workflow with settings.errorWorkflow assigned', () => {
+      const wf = makeWorkflow({
+        nodes: [
+          { name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', parameters: {} },
+          { name: 'Step 1', type: 'n8n-nodes-base.set', parameters: {} },
+          { name: 'Step 2', type: 'n8n-nodes-base.httpRequest', parameters: {} },
+        ],
+        settings: {
+          errorWorkflow: 'some-error-workflow-id',
+        },
+      });
+      const report = scanOne(wf, ['error_handling']);
+      expect(findingsOf(report, 'error_handling')).toHaveLength(0);
+    });
+
+    it.each([
+      ['an empty string', ''],
+      ['a whitespace-only string', '   '],
+      ['a non-string value', 123],
+    ])('should still flag a workflow whose settings.errorWorkflow is %s', (_label, value) => {
+      const wf = makeWorkflow({
+        nodes: [
+          { name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', parameters: {} },
+          { name: 'Step 1', type: 'n8n-nodes-base.set', parameters: {} },
+          { name: 'Step 2', type: 'n8n-nodes-base.httpRequest', parameters: {} },
+        ],
+        settings: {
+          errorWorkflow: value,
+        },
+      });
+      const report = scanOne(wf, ['error_handling']);
+      expect(findingsOf(report, 'error_handling')).toHaveLength(1);
+    });
   });
 
   // ===========================================================================

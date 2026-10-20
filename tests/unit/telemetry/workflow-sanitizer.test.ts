@@ -26,14 +26,14 @@ describe('WorkflowSanitizer', () => {
       const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
 
       expect(sanitized.nodes[0].parameters.apiKey).toBe('[REDACTED]');
-      expect(sanitized.nodes[0].parameters.headers.Authorization).toBe('[REDACTED]');
+      expect(sanitized.nodes[0].parameters.headers.Authorization).toBe('Bearer [REDACTED]');
     });
 
     it('should redact webhook URL fields and keep other fields', () => {
       // Post-GHSA-f3rg-xqjj-cj9w: URL-named fields are fully redacted regardless
       // of value, so we no longer try to preserve the `https://[webhook-url]`
-      // shape. The webhook short-circuit in sanitizeString still applies to
-      // non-URL-named fields whose value embeds a /webhook/ URL (see below).
+      // shape. A /webhook/ URL embedded in a non-URL-named field is redacted
+      // in place (see below).
       const workflow = {
         nodes: [
           {
@@ -74,7 +74,7 @@ describe('WorkflowSanitizer', () => {
         connections: {}
       };
       const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
-      expect(sanitized.nodes[0].parameters.note).toBe('https://[webhook-url]');
+      expect(sanitized.nodes[0].parameters.note).toBe('Trigger fires at [REDACTED_WEBHOOK] when ready.');
     });
 
     it('should remove credentials entirely', () => {
@@ -162,7 +162,7 @@ describe('WorkflowSanitizer', () => {
 
       expect(params.url).toBe('[REDACTED_URL]');
       expect(params.endpoint).toBe('[REDACTED_URL]');
-      expect(params.headers.Authorization).toBe('[REDACTED]');
+      expect(params.headers.Authorization).toBe('Bearer [REDACTED]');
 
       // Nothing from the original path/query string should survive anywhere.
       for (const leak of [
@@ -579,7 +579,7 @@ describe('WorkflowSanitizer', () => {
       expect(params.api_key).toBe('[REDACTED]');
       expect(params.accessToken).toBe('[REDACTED]');
       expect(params.secret_token).toBe('[REDACTED]');
-      expect(params.authKey).toBe('[REDACTED]');
+      expect(params.authKey).toBe('Bearer [REDACTED]');
       expect(params.clientSecret).toBe('[REDACTED]');
       // Post-GHSA-f3rg-xqjj-cj9w: URL-named fields are fully redacted to
       // [REDACTED_URL] regardless of pattern matches inside the value.
@@ -620,7 +620,7 @@ describe('WorkflowSanitizer', () => {
       const headers = sanitized.nodes[0].parameters.headers;
       expect(headers[0].value).toBe('Bearer [REDACTED]'); // Authorization (Bearer prefix preserved)
       expect(headers[1].value).toBe('application/json'); // Content-Type (safe)
-      expect(headers[2].value).toBe('[REDACTED_TOKEN]'); // X-API-Key (32+ chars)
+      expect(headers[2].value).toBe('[REDACTED]'); // X-API-Key: secret-named header
       expect(sanitized.nodes[0].parameters.methods).toEqual(['GET', 'POST']); // Array should remain
     });
 
@@ -801,7 +801,8 @@ describe('WorkflowSanitizer', () => {
             jsCode:
               "const KEY = 'sk-proj-HjL38eurXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';\n" +
               "const SUPA = 'sb_secret_8vSVYqplak7kizRcykjm0w_Xb2fObQ5x';\n" +
-              "const E = 'jane.doe@example.org'; const P = '+1-604-555-1234';"
+              "const E = 'jane.doe@example.org'; const P = '+1-604-555-1234';\n" +
+              "const H = { auth: 'Bearer abc123def456' };"
           },
         }],
         connections: {},
@@ -1030,8 +1031,636 @@ describe('WorkflowSanitizer', () => {
       };
       const out = (WorkflowSanitizer.sanitizeWorkflow(wf).nodes[0].parameters as any).jsCode;
       expect(out).not.toContain('[REDACTED_PHONE]');
-      // The UUID will be redacted by the long-token (32+ char) fallback as
-      // [REDACTED_TOKEN] — that's correct behaviour. Phone redaction must not fire.
+      // UUIDs are identifiers (node ids, webhook paths, resource ids), not
+      // secrets: the long-token fallback must leave them alone too.
+      expect(out).toContain('a1b2c3d4-1234-5678-9abc-123456789012');
+    });
+  });
+
+  describe('sticky notes', () => {
+    const wf = () => ({
+      nodes: [
+        { id: 's1', name: 'Note', type: 'n8n-nodes-base.stickyNote', typeVersion: 1, position: [0, 0], parameters: { content: 'sticky prose text', width: 300 } },
+        { id: 'h1', name: 'Html', type: 'n8n-nodes-base.html', typeVersion: 1, position: [0, 0], parameters: { content: '<p>template body</p>' } },
+      ],
+      connections: {},
+    });
+
+    it.each([
+      ['sanitizeWorkflow', (w: any) => WorkflowSanitizer.sanitizeWorkflow(w)],
+      ['sanitizeWorkflowRaw', (w: any) => WorkflowSanitizer.sanitizeWorkflowRaw(w)],
+    ])('%s removes sticky-note content and keeps other node content', (_label, sanitize) => {
+      const out = sanitize(wf());
+      expect(JSON.stringify(out)).not.toContain('sticky prose text');
+      expect(out.nodes[0].parameters).toEqual({ width: 300 });
+      expect(out.nodes[1].parameters.content).toBe('<p>template body</p>');
+    });
+
+    it('removes sticky-note content from operations that target a sticky node', () => {
+      const ops = WorkflowSanitizer.sanitizeOperations<any[]>([
+        { type: 'addNode', node: { name: 'Note2', type: 'n8n-nodes-base.stickyNote', parameters: { content: 'added sticky text', color: 3 } } },
+        { type: 'updateNode', nodeName: 'Note', updates: { 'parameters.content': 'dotted sticky text', 'parameters.width': 400 } },
+        { type: 'updateNode', nodeId: 's1', updates: { parameters: { content: 'nested sticky text', height: 200 } } },
+        { type: 'patchNodeField', nodeId: 's1', fieldPath: 'parameters.content', patches: [{ find: 'a', replace: 'patched sticky text' }] },
+        { type: 'updateNode', nodeName: 'Html', updates: { 'parameters.content': '<p>kept</p>' } },
+        { type: 'patchNodeField', nodeName: 'Html', fieldPath: 'parameters.content', patches: [{ find: 'a', replace: 'kept patch' }] },
+      ], [wf()]);
+      const json = JSON.stringify(ops);
+      for (const text of ['added sticky text', 'dotted sticky text', 'nested sticky text', 'patched sticky text']) {
+        expect(json).not.toContain(text);
+      }
+      expect(ops[0].node.parameters).toEqual({ color: 3 });
+      expect(ops[1].updates).toEqual({ 'parameters.width': 400 });
+      expect(ops[2].updates.parameters).toEqual({ height: 200 });
+      expect(ops[3]).not.toHaveProperty('patches');
+      expect(ops[4].updates['parameters.content']).toBe('<p>kept</p>');
+      expect(ops[5].patches).toEqual([{ find: 'a', replace: 'kept patch' }]);
+    });
+  });
+
+  describe('sticky-note content in operations resolves targets conservatively', () => {
+    const before = () => ({
+      nodes: [
+        { id: 's1', name: 'Note', type: 'n8n-nodes-base.stickyNote', parameters: { content: 'x' } },
+        { id: 'h1', name: 'Html', type: 'n8n-nodes-base.html', parameters: { content: 'y' } },
+      ],
+    });
+    const content = (op: any) => JSON.stringify(op);
+
+    it.each([
+      ['id used as a name', { type: 'updateNode', nodeId: 'Note', updates: { 'parameters.content': 'leak-a' } }],
+      ['whitespace in the name', { type: 'updateNode', nodeName: ' Note ', updates: { 'parameters.content': 'leak-b' } }],
+      ['unknown target', { type: 'updateNode', nodeName: 'Ghost', updates: { 'parameters.content': 'leak-c' } }],
+      ['patch with id used as a name', { type: 'patchNodeField', nodeId: 'Note', fieldPath: 'parameters.content', patches: [{ find: 'a', replace: 'leak-d' }] }],
+    ])('drops content for %s', (_label, op) => {
+      const out = WorkflowSanitizer.sanitizeOperations<any[]>([op], [before()]);
+      expect(content(out)).not.toMatch(/leak-/);
+    });
+
+    it('drops content for names that exist only in the middle of a batch', () => {
+      const out = WorkflowSanitizer.sanitizeOperations<any[]>([
+        { type: 'updateNode', nodeName: 'Note', updates: { name: 'Mid' } },
+        { type: 'updateNode', nodeName: 'Mid', updates: { 'parameters.content': 'leak-rename' } },
+        { type: 'updateNode', nodeName: 'Mid', updates: { name: 'Note B' } },
+        { type: 'addNode', node: { name: 'Tmp', type: 'n8n-nodes-base.stickyNote', parameters: {} } },
+        { type: 'updateNode', nodeName: 'Tmp', updates: { 'parameters.content': 'leak-added' } },
+        { type: 'removeNode', nodeName: 'Tmp' },
+      ], [before()]);
+      expect(content(out)).not.toMatch(/leak-/);
+    });
+
+    it.each([
+      ['retype and content in one update', [
+        { type: 'updateNode', nodeName: 'Html', updates: { type: 'n8n-nodes-base.stickyNote', 'parameters.content': 'leak-retype-same' } },
+        { type: 'removeNode', nodeName: 'Html' },
+      ]],
+      ['retype by id, edit by name, retype back', [
+        { type: 'updateNode', nodeId: 'h1', updates: { type: 'n8n-nodes-base.stickyNote' } },
+        { type: 'updateNode', nodeName: 'Html', updates: { 'parameters.content': 'leak-alias' } },
+        { type: 'updateNode', nodeId: 'h1', updates: { type: 'n8n-nodes-base.html' } },
+      ]],
+      ['retype through a type patch', [
+        { type: 'patchNodeField', nodeId: 'h1', fieldPath: 'type', patches: [{ find: 'html', replace: 'stickyNote' }] },
+        { type: 'patchNodeField', nodeId: 'h1', fieldPath: 'parameters.content', patches: [{ find: 'a', replace: 'leak-type-patch' }] },
+        { type: 'removeNode', nodeId: 'h1' },
+      ]],
+      ['temporary name reuse through name patches', [
+        { type: 'patchNodeField', nodeName: 'Html', fieldPath: 'name', patches: [{ find: 'Html', replace: 'Page' }] },
+        { type: 'patchNodeField', nodeName: 'Note', fieldPath: 'name', patches: [{ find: 'Note', replace: 'Html' }] },
+        { type: 'updateNode', nodeName: 'Html', updates: { 'parameters.content': 'leak-name-patch' } },
+        { type: 'patchNodeField', nodeName: 'Html', fieldPath: 'name', patches: [{ find: 'Html', replace: 'Note' }] },
+        { type: 'patchNodeField', nodeName: 'Page', fieldPath: 'name', patches: [{ find: 'Page', replace: 'Html' }] },
+      ]],
+      ['sticky added later in the batch under a removed node name', [
+        { type: 'removeNode', nodeName: 'Html' },
+        { type: 'addConnection', source: 'Start', target: 'Html' },
+        { type: 'updateNode', nodeName: 'Html', updates: { 'parameters.content': 'leak-hoisted' } },
+        { type: 'addNode', node: { name: 'Html', type: 'n8n-nodes-base.stickyNote', parameters: {} } },
+        { type: 'removeNode', nodeName: 'Html' },
+      ]],
+    ])('drops content when the batch changes types or patches names: %s', (_label, batch) => {
+      const out = WorkflowSanitizer.sanitizeOperations<any[]>(batch as any[], [before()]);
+      expect(content(out)).not.toMatch(/leak-/);
+    });
+
+    it('keeps content edits on a known non-sticky node, including after a rename', () => {
+      const out = WorkflowSanitizer.sanitizeOperations<any[]>([
+        { type: 'updateNode', nodeName: 'Html', updates: { 'parameters.content': '<p>kept-1</p>' } },
+        { type: 'updateNode', nodeId: 'h1', updates: { name: 'Page' } },
+        { type: 'patchNodeField', nodeName: 'Page', fieldPath: 'parameters.content', patches: [{ find: 'a', replace: 'kept-2' }] },
+      ], [before()]);
+      expect(out[0].updates['parameters.content']).toBe('<p>kept-1</p>');
+      expect(out[2].patches).toEqual([{ find: 'a', replace: 'kept-2' }]);
+    });
+
+    it('does not modify its inputs', () => {
+      const ops = [{ type: 'updateNode', nodeName: 'Note', updates: { 'parameters.content': 'text', notes: 'n' }, description: 'd' }];
+      const wf = before();
+      const snapshot = JSON.stringify([ops, wf]);
+      WorkflowSanitizer.sanitizeOperations(ops, [wf]);
+      expect(JSON.stringify([ops, wf])).toBe(snapshot);
+    });
+  });
+
+  describe('sanitizeOperations', () => {
+    it('tolerates malformed operation lists', () => {
+      expect(WorkflowSanitizer.sanitizeOperations(null)).toBeNull();
+      expect(WorkflowSanitizer.sanitizeOperations('Bearer abcdefghijklmnop1234')).toBe('Bearer [REDACTED]');
+      expect(WorkflowSanitizer.sanitizeOperations([null, 'x', [1], { type: 'addNode', node: null, updates: [] }]))
+        .toEqual([null, 'x', [1], { type: 'addNode', node: null, updates: [] }]);
+    });
+  });
+
+  describe('node and workflow free-text fields', () => {
+    const KEY_A = 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD';
+    const KEY_B = 'sk-proj-zyxwvutsrqponmlkjihgfedcba9876543210WXYZ';
+    const node = (name: string, extra: Record<string, unknown> = {}) => ({
+      id: `id-${name.length}-${name.slice(-4)}`,
+      name,
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3,
+      position: [0, 0] as [number, number],
+      parameters: {},
+      ...extra,
+    });
+    const graph = () => ({
+      nodes: [
+        node('Start'),
+        node(`Call ${KEY_A}`, { notes: 'Bearer note-secret-value', notesInFlow: true }),
+        node(`Call ${KEY_B}`),
+        node('Code1'),
+      ],
+      connections: {
+        Start: { main: [[
+          { node: `Call ${KEY_A}`, type: 'main', index: 0 },
+          { node: `Call ${KEY_B}`, type: 'main', index: 0 },
+        ]] },
+        [`Call ${KEY_A}`]: { main: [[{ node: 'Code1', type: 'main', index: 0 }]] },
+      },
+    });
+
+    it.each([
+      ['sanitizeWorkflow', (wf: any) => WorkflowSanitizer.sanitizeWorkflow(wf)],
+      ['sanitizeWorkflowRaw', (wf: any) => WorkflowSanitizer.sanitizeWorkflowRaw(wf)],
+    ])('%s removes node notes and keeps notesInFlow', (_label, sanitize) => {
+      const out = sanitize(graph());
+      const json = JSON.stringify(out);
+      expect(json).not.toContain('note-secret-value');
+      expect(out.nodes.every((n: any) => !('notes' in n))).toBe(true);
+      expect(out.nodes[1].notesInFlow).toBe(true);
+    });
+
+    it.each([
+      ['sanitizeWorkflow', (wf: any) => WorkflowSanitizer.sanitizeWorkflow(wf)],
+      ['sanitizeWorkflowRaw', (wf: any) => WorkflowSanitizer.sanitizeWorkflowRaw(wf)],
+    ])('%s sanitizes node names and keeps connections consistent', (_label, sanitize) => {
+      const out = sanitize(graph());
+      const json = JSON.stringify(out);
+      expect(json).not.toContain(KEY_A);
+      expect(json).not.toContain(KEY_B);
+
+      const names = out.nodes.map((n: any) => n.name);
+      expect(new Set(names).size).toBe(names.length);
+      expect(names).toContain('Start');
+      expect(names).toContain('Code1');
+
+      const nameSet = new Set(names);
+      for (const [source, byType] of Object.entries<any>(out.connections)) {
+        expect(nameSet.has(source)).toBe(true);
+        for (const outputs of Object.values<any>(byType)) {
+          for (const conns of outputs) {
+            for (const conn of conns) expect(nameSet.has(conn.node)).toBe(true);
+          }
+        }
+      }
+      expect(out.connections.Start.main[0]).toHaveLength(2);
+      expect(out.connections.Start.main[0][0].node).not.toBe(out.connections.Start.main[0][1].node);
+    });
+
+    it('leaves ordinary node names and connections unchanged', () => {
+      const wf = {
+        nodes: [node('Webhook'), node('HTTP Request1')],
+        connections: { Webhook: { main: [[{ node: 'HTTP Request1', type: 'main', index: 0 }]] } },
+      };
+      const out = WorkflowSanitizer.sanitizeWorkflowRaw(wf);
+      expect(out.nodes.map((n: any) => n.name)).toEqual(['Webhook', 'HTTP Request1']);
+      expect(out.connections).toEqual(wf.connections);
+    });
+
+    it('sanitizeWorkflowRaw sanitizes workflow-level fields and drops sharing and description', () => {
+      const out = WorkflowSanitizer.sanitizeWorkflowRaw({
+        ...graph(),
+        name: 'Sync for jane.doe@example.com',
+        description: 'internal runbook text',
+        meta: { comment: 'Bearer meta-secret-value-123' },
+        tags: [{ id: 't1', name: 'owner jane.doe@example.com' }],
+        shared: [{ project: { name: 'Jane Doe <jane.doe@example.com>' } }],
+        homeProject: { name: 'Jane Doe <jane.doe@example.com>' },
+      });
+      const json = JSON.stringify(out);
+      expect(json).not.toContain('jane.doe@example.com');
+      expect(json).not.toContain('meta-secret-value-123');
+      expect(json).not.toContain('internal runbook text');
+      expect(out).not.toHaveProperty('shared');
+      expect(out).not.toHaveProperty('homeProject');
+      expect(out).not.toHaveProperty('description');
+      expect(out.name).toBe('Sync for [REDACTED_EMAIL]');
+    });
+
+    it('gives a redacted node the same name in the before and after snapshots', () => {
+      const before = WorkflowSanitizer.sanitizeWorkflowRaw(graph());
+      const after = WorkflowSanitizer.sanitizeWorkflowRaw({
+        nodes: [node('Start'), node(`Call ${KEY_B}`)],
+        connections: { Start: { main: [[{ node: `Call ${KEY_B}`, type: 'main', index: 0 }]] } },
+      });
+      expect(after.nodes[1].name).toBe(before.nodes[2].name);
+      expect(after.nodes[1].name).not.toBe(before.nodes[1].name);
+    });
+
+    it('sanitizes node fields other than the structural ones', () => {
+      const out = WorkflowSanitizer.sanitizeWorkflowRaw({
+        nodes: [node('Webhook', { extra: { memo: 'Bearer extra-secret-value-123' }, disabled: true, onError: 'continueRegularOutput' })],
+        connections: {},
+      });
+      const json = JSON.stringify(out);
+      expect(json).not.toContain('extra-secret-value-123');
+      expect(out.nodes[0].disabled).toBe(true);
+      expect(out.nodes[0].onError).toBe('continueRegularOutput');
+    });
+
+    it('sanitizes nodes and connections that are not in the expected shape', () => {
+      const out = WorkflowSanitizer.sanitizeWorkflowRaw({
+        nodes: { a: { parameters: { apiKey: 'nodes-object-secret-123' }, notes: 'Bearer nodes-object-note-123' } },
+        connections: {
+          A: 'Bearer conn-string-secret-123',
+          B: { main: 'Bearer conn-type-secret-123' },
+          C: { main: ['Bearer conn-entry-secret-123', [null, 'Bearer conn-item-secret-123']] },
+        },
+      });
+      const json = JSON.stringify(out);
+      for (const marker of ['nodes-object-secret-123', 'nodes-object-note-123', 'conn-string-secret-123', 'conn-type-secret-123', 'conn-entry-secret-123', 'conn-item-secret-123']) {
+        expect(json).not.toContain(marker);
+      }
+    });
+
+    it('sanitizeWorkflowRaw applies the full workflow pass to arrays of workflow versions', () => {
+      const out = WorkflowSanitizer.sanitizeWorkflowRaw({
+        ...graph(),
+        versions: [{ versionId: 'v1', ...graph() }],
+      });
+      const json = JSON.stringify(out.versions);
+      expect(json).not.toContain(KEY_A);
+      expect(json).not.toContain('note-secret-value');
+    });
+
+    it('sanitizeWorkflowRaw keeps workflow metadata the backend reads', () => {
+      const wf = {
+        ...graph(),
+        id: 'Ab3dE5gH7jK9mN1p',
+        versionId: '7d0a6f3c-1b2e-4c5d-8e9f-0a1b2c3d4e5f',
+        active: true,
+        createdAt: '2026-10-01T10:00:00.000Z',
+        updatedAt: '2026-10-18T10:00:00.000Z',
+        settings: { executionOrder: 'v1', timezone: 'Europe/Warsaw', saveManualExecutions: true },
+      };
+      const out = WorkflowSanitizer.sanitizeWorkflowRaw(wf);
+      expect(out.id).toBe(wf.id);
+      expect(out.versionId).toBe(wf.versionId);
+      expect(out.active).toBe(true);
+      expect(out.createdAt).toBe(wf.createdAt);
+      expect(out.updatedAt).toBe(wf.updatedAt);
+      expect(out.settings).toEqual(wf.settings);
+    });
+
+    it('sanitizeWorkflowRaw applies the full workflow pass to a nested active version', () => {
+      const out = WorkflowSanitizer.sanitizeWorkflowRaw({
+        ...graph(),
+        activeVersion: {
+          versionId: '7d0a6f3c-1b2e-4c5d-8e9f-0a1b2c3d4e5f',
+          nodes: [node('HTTP', {
+            parameters: { headerParameters: { parameters: [{ name: 'Authorization', value: 'Bearer active-secret-123456' }] } },
+            credentials: { httpHeaderAuth: { id: '1', name: 'Prod key' } },
+            notes: 'active note text',
+          })],
+          connections: {},
+        },
+      });
+      const json = JSON.stringify(out.activeVersion);
+      expect(json).not.toContain('active-secret-123456');
+      expect(json).not.toContain('active note text');
+      expect(out.activeVersion.nodes[0]).not.toHaveProperty('credentials');
+      expect(out.activeVersion.versionId).toBe('7d0a6f3c-1b2e-4c5d-8e9f-0a1b2c3d4e5f');
+    });
+  });
+
+  describe('non-secret workflow structure survives (n8n-mcp-backend#151)', () => {
+    const NODE_ID = '6f1a2b3c-4d5e-4f60-8a9b-0c1d2e3f4a5b';
+
+    function single(type: string, parameters: Record<string, unknown>): Record<string, any> {
+      return WorkflowSanitizer.sanitizeWorkflow({
+        nodes: [{ id: '1', name: 'N', type, position: [0, 0], typeVersion: 1, parameters }],
+        connections: {},
+      }).nodes[0].parameters;
+    }
+
+    it('keeps the HTTP Request authentication enum trio while still redacting the url', () => {
+      const params = single('n8n-nodes-base.httpRequest', {
+        method: 'POST',
+        url: 'https://api.example.com/v1/customers/123',
+        authentication: 'predefinedCredentialType',
+        nodeCredentialType: 'slackApi',
+        genericAuthType: 'httpHeaderAuth',
+        options: { batching: { batch: { batchSize: 1 } } },
+      });
+      expect(params.authentication).toBe('predefinedCredentialType');
+      expect(params.nodeCredentialType).toBe('slackApi');
+      expect(params.genericAuthType).toBe('httpHeaderAuth');
+      expect(params.url).toBe('[REDACTED_URL]');
+      expect(params.options.batching.batch.batchSize).toBe(1);
+    });
+
+    it('keeps identifiers, expressions and static-data calls in Code nodes', () => {
+      const jsCode =
+        "const sd = $getWorkflowStaticData('global');\n" +
+        "const status = $input.first().json.customerSubscriptionStatus;\n" +
+        "const previous = $('Send_Slack_Notification_Message').first().json;\n" +
+        'return [{ json: { thisIsAVeryLongCamelCaseIdentifierWithoutDigits: status, previous } }];';
+      expect(single('n8n-nodes-base.code', { mode: 'runOnceForAllItems', jsCode }).jsCode).toBe(jsCode);
+    });
+
+    it('keeps enum values, long field names and expressions in parameters', () => {
+      const params = single('n8n-nodes-base.set', {
+        mode: 'manual',
+        includeOtherFields: false,
+        assignments: {
+          assignments: [{
+            id: NODE_ID,
+            name: 'customerSubscriptionStatus',
+            value: '={{ $json.customerSubscriptionStatus }}',
+            type: 'string',
+          }],
+        },
+        options: { tokenizer: 'cl100k_base', maxTokens: 1024 },
+      });
+      expect(params.mode).toBe('manual');
+      expect(params.assignments.assignments[0]).toEqual({
+        id: NODE_ID,
+        name: 'customerSubscriptionStatus',
+        value: '={{ $json.customerSubscriptionStatus }}',
+        type: 'string',
+      });
+      expect(params.options).toEqual({ tokenizer: 'cl100k_base', maxTokens: 1024 });
+    });
+
+    it('keeps node ids, webhookId, webhook path and onError in update operations', () => {
+      const operations = [{
+        type: 'addNode',
+        node: {
+          id: NODE_ID,
+          name: 'Receive_Order_Created_Webhook',
+          type: 'n8n-nodes-base.webhook',
+          typeVersion: 2,
+          position: [0, 0],
+          webhookId: NODE_ID,
+          onError: 'continueRegularOutput',
+          parameters: { path: NODE_ID, httpMethod: 'POST', options: {} },
+        },
+      }];
+      expect(WorkflowSanitizer.sanitizeTelemetryObject(operations)).toEqual(operations);
+    });
+
+    it('still redacts values of secret-named header and query parameters', () => {
+      const params = single('n8n-nodes-base.httpRequest', {
+        headerParameters: {
+          parameters: [
+            { name: 'X-API-Key', value: 'short-secret-12' },
+            { name: 'Authorization', value: 'Basic dXNlcjpwYXNz' },
+            { name: 'Cookie', value: 'session=abc123' },
+            { name: 'Content-Type', value: 'application/json' },
+          ],
+        },
+        queryParameters: {
+          parameters: [
+            { name: 'access_token', value: 'ya29.short' },
+            { name: 'page', value: '2' },
+          ],
+        },
+      });
+      expect(params.headerParameters.parameters.map((p: any) => p.value)).toEqual([
+        '[REDACTED]', 'Basic [REDACTED]', '[REDACTED]', 'application/json',
+      ]);
+      expect(params.queryParameters.parameters.map((p: any) => p.value)).toEqual(['[REDACTED]', '2']);
+    });
+
+    it('still redacts secret-named keys matched by whole word', () => {
+      const params = single('n8n-nodes-base.httpRequest', {
+        accessToken: 'ya29.short',
+        client_secret: 'abc',
+        sshPrivateKey: '-----BEGIN',
+        passphrase: 'hunter2',
+        credentials: { slackApi: { id: '1', name: "Jane's Slack" } },
+        tokenizer: 'cl100k_base',
+        authentication: 'none',
+      });
+      expect(params.accessToken).toBe('[REDACTED]');
+      expect(params.client_secret).toBe('[REDACTED]');
+      expect(params.sshPrivateKey).toBe('[REDACTED]');
+      expect(params.passphrase).toBe('[REDACTED]');
+      expect(params.credentials).toBe('[REDACTED]');
+      expect(params.tokenizer).toBe('cl100k_base');
+      expect(params.authentication).toBe('none');
+    });
+
+    it('still redacts opaque 32+ character tokens in code and free text', () => {
+      const jsCode =
+        "const hex = '3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a';\n" +
+        "const b64 = 'Q2xhdWRlIGlzIGEgaGVscGZ1bCBhc3Npc3RhbnQ0MjQy';\n" +
+        "const name = 'thisIsAVeryLongIdentifierWithoutAnyDigitsAtAll';";
+      const out = single('n8n-nodes-base.code', { jsCode }).jsCode;
+      expect(out).not.toContain('3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a');
+      expect(out).not.toContain('Q2xhdWRlIGlzIGEgaGVscGZ1bCBhc3Npc3RhbnQ0MjQy');
+      expect(out).toContain("const hex = '[REDACTED_TOKEN]'");
+      expect(out).toContain('thisIsAVeryLongIdentifierWithoutAnyDigitsAtAll');
+    });
+
+    it('redacts a webhook URL inside code without destroying the rest of the code', () => {
+      const jsCode = "const r = await fetch('https://n8n.example.com/webhook/order-created');\nreturn r;";
+      const out = single('n8n-nodes-base.code', { jsCode }).jsCode;
+      expect(out).toBe("const r = await fetch('[REDACTED_WEBHOOK]');\nreturn r;");
+      expect(single('n8n-nodes-base.set', {
+        link: "=https://n8n.example.com/webhook/approve?id={{ $json.body['id'] }}",
+      }).link).toBe("=[REDACTED_WEBHOOK]{{ $json.body['id'] }}");
+    });
+
+    it('keeps the n8n auto-generated $fromAI comment and slug-like identifiers', () => {
+      const expression = "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Sheet', ``, 'string') }}";
+      const params = single('n8n-nodes-base.googleSheetsTool', {
+        sheetName: expression,
+        range: 'users-current-day-1-minute-before-midnight-plus-7-days-iso',
+        hex: '3f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a',
+      });
+      expect(params.sheetName).toBe(expression);
+      expect(params.range).toBe('users-current-day-1-minute-before-midnight-plus-7-days-iso');
+      expect(params.hex).toBe('[REDACTED_TOKEN]');
+    });
+
+    it('keeps resource-locator ids and objects while redacting their cached URL', () => {
+      const sheetId = '1iGBmgNtQ1FOfEKQ2WvQIjzd0YMa800Ir43Rp0Tm7bBE';
+      const params = single('n8n-nodes-base.googleSheets', {
+        documentId: {
+          __rl: true,
+          mode: 'list',
+          value: sheetId,
+          cachedResultUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`,
+          cachedResultName: 'Customers',
+        },
+        databaseId: { __rl: true, mode: 'id', value: '2aa0fed15bbf424bb3a4f9c9537ab058' },
+      });
+      expect(params.documentId).toEqual({
+        __rl: true,
+        mode: 'list',
+        value: sheetId,
+        cachedResultUrl: '[REDACTED_URL]',
+        cachedResultName: 'Customers',
+      });
+      expect(params.databaseId).toEqual({ __rl: true, mode: 'id', value: '2aa0fed15bbf424bb3a4f9c9537ab058' });
+    });
+
+    it('keeps UUIDs whose hex segments contain long digit runs', () => {
+      const id = 'dcaee1a8-ea32-4a9d-b32f-f0418644027c';
+      const jsCode = `const target = '${id}'; const other = '9783e878-e864-4632-9b89-d78567204053';`;
+      expect(single('n8n-nodes-base.code', { jsCode }).jsCode).toBe(jsCode);
+      const operations = [{ type: 'addNode', node: { id, name: 'X', type: 'n8n-nodes-base.noOp', parameters: {} } }];
+      expect(WorkflowSanitizer.sanitizeTelemetryObject(operations)).toEqual(operations);
+    });
+
+    it('does not let the URL-with-auth pattern span lines of code', () => {
+      const jsCode =
+        "const clean = m[0].replace(/^(?:https?:\\/\\/)?(?:www\\.)?/i, 'https://www.');\n" +
+        'const handle = /@([a-zA-Z0-9._]{1,30})/gi;\n' +
+        "const db = 'postgres://user:password@localhost:5432/db';\n" +
+        'return handle;';
+      const out = single('n8n-nodes-base.code', { jsCode }).jsCode;
+      expect(out).toContain("'https://www.');");
+      expect(out).toContain('const handle = /@([a-zA-Z0-9._]{1,30})/gi;');
+      expect(out).toContain("const db = '[REDACTED_URL_WITH_AUTH]';");
+      expect(out).not.toContain('user:password');
+    });
+
+    it('redacts Basic credentials in code but not the word Basic in prose', () => {
+      const jsCode = "const h = { Authorization: 'Basic dXNlcjpwYXNzd29yZDEyMzQ1Ng==' }; // Basic Authentication is required";
+      const out = single('n8n-nodes-base.code', { jsCode }).jsCode;
+      expect(out).toBe("const h = { Authorization: 'Basic [REDACTED]' }; // Basic Authentication is required");
+    });
+
+    it('redacts digit-poor secrets: prefixed provider keys and alphanumeric 32+ runs', () => {
+      const jsCode =
+        "const g = 'AIzatwwFK8DstRByGGbAz8iyqzuQUCWoRzzeoPs';\n" +
+        "const o = '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';\n" +
+        "const a = 'FOcPUbwmE4plrUXSUPettrUNRi8BwjjCeZyNqZci';\n" +
+        "const b = 'HVJZfVOUYqJb9qTP8dpDKxpsqCXzIxTe';";
+      const out = single('n8n-nodes-base.code', { jsCode }).jsCode;
+      for (const leak of ['AIzatwwFK8', 'GOCSPX-mhYU', 'FOcPUbwmE4', 'HVJZfVOUYq']) {
+        expect(out).not.toContain(leak);
+      }
+      expect(out).toContain("const g = '[REDACTED_API_TOKEN]'");
+      expect(out).toContain("const a = '[REDACTED_TOKEN]'");
+    });
+
+    it('redacts the value of a patchNodeField operation on a secret field', () => {
+      const ops = [
+        { type: 'patchNodeField', nodeName: 'HTTP', field: 'parameters.apiKey', value: 'AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf' },
+        { type: 'patchNodeField', nodeName: 'HTTP', field: 'parameters.method', value: 'POST' },
+      ];
+      const out = WorkflowSanitizer.sanitizeTelemetryObject<typeof ops>(ops);
+      expect(out[0].value).toBe('[REDACTED]');
+      expect(out[1].value).toBe('POST');
+    });
+
+    it('classifies acronym plurals, numbered keys, all-caps keys and exact secret keys', () => {
+      const params = single('n8n-nodes-base.httpRequest', {
+        URLs: 'https://a.example.com',
+        url2: 'https://b.example.com',
+        accessTokenUrl: 'https://auth.example.com/oauth/token',
+        ACCESSTOKEN: 'abcdefghijklmnopqrstuvwx',
+        auth: 'abcdefghijklmnopqrstuvwx',
+        sshKey: 'abcdefghijklmnopqrstuvwx',
+        genericAuthType: 'httpBasicAuth',
+        curlCommand: 'curl https://c.example.com',
+      });
+      expect(params.URLs).toBe('[REDACTED_URL]');
+      expect(params.url2).toBe('[REDACTED_URL]');
+      expect(params.accessTokenUrl).toBe('[REDACTED_URL]');
+      expect(params.ACCESSTOKEN).toBe('[REDACTED]');
+      expect(params.auth).toBe('[REDACTED]');
+      expect(params.sshKey).toBe('[REDACTED]');
+      expect(params.genericAuthType).toBe('httpBasicAuth');
+      expect(params.curlCommand).toBe('curl https://c.example.com');
+    });
+
+    it('redacts a resource locator in url mode and ignores __rl without a mode', () => {
+      const params = single('n8n-nodes-base.googleSheets', {
+        sheet: { __rl: true, mode: 'url', value: 'https://docs.google.com/spreadsheets/d/1AbCdEf/edit?key=SEcretKeyNoDigitsHere' },
+        bogus: { __rl: true, value: 'AbCdEf0123456789AbCdEf0123456789AbCd' },
+      });
+      expect(params.sheet).toEqual({ __rl: true, mode: 'url', value: '[REDACTED_URL]' });
+      expect(params.bogus).toEqual({ __rl: true, value: '[REDACTED_TOKEN]' });
+    });
+
+    it('redacts Slack, Discord and upper-case webhook URLs and query-string secrets in free text', () => {
+      const params = single('n8n-nodes-base.set', {
+        // Assembled at runtime so the fixture does not trip push protection.
+        slack: `post to https://hooks.slack.com/${['services', 'T00000000', 'B00000000', 'AbCdEfGhIjKlMnOpQrStUvWx'].join('/')} now`,
+        discord: 'https://discord.com/api/webhooks/1234567890/AbCdEfGhIjKlMnOpQrStUvWxYz-_0123456789abcdefghijklmnopqrstu',
+        upper: 'HTTPS://N8N.EXAMPLE.COM/WEBHOOK/abc and HTTPS://alice:shortsecret@localhost/path',
+        error: 'Request failed: https://api.customer.example/v1/tenants/acme?access_token=short-secret&page=2',
+      });
+      expect(params.slack).toBe('post to [REDACTED_WEBHOOK] now');
+      expect(params.discord).toBe('[REDACTED_WEBHOOK]');
+      expect(params.upper).toBe('[REDACTED_WEBHOOK] and [REDACTED_URL_WITH_AUTH]/path');
+      expect(params.error).toBe('Request failed: https://api.customer.example/v1/tenants/acme?access_token=[REDACTED]&page=2');
+    });
+
+    it('does not let the URL-with-auth pattern run across statements on one line', () => {
+      const jsCode = 'const base = "https://host:"; notify("x@y.com"); const db = "postgres://u:p@h/db";';
+      expect(single('n8n-nodes-base.code', { jsCode }).jsCode)
+        .toBe('const base = "https://host:"; notify("[REDACTED_EMAIL]"); const db = "[REDACTED_URL_WITH_AUTH]";');
+    });
+
+    it('keeps model names, count keys, id keys and typed flags under secret or URL-named keys', () => {
+      const params = single('n8n-nodes-base.httpRequest', {
+        model: 'meta-llama/llama-4-maverick-17b-128e-instruct',
+        maxTokenLimit: 4000,
+        apiKeyId: 'connector-id',
+        certificateId: 'certificate-guid',
+        previewUrl: false,
+        returnImageUrls: true,
+        urls: ['={{ $json.url }}', 'https://a.example.com'],
+        fields: [{ name: 'token_length', value: 500 }, { name: 'X-Auth', value: 'abcdefghijklmnopqrstuv' }],
+        values: ['Bearer abc123def456', 'user@example.com', 'plain'],
+      });
+      expect(params.model).toBe('meta-llama/llama-4-maverick-17b-128e-instruct');
+      expect(params.maxTokenLimit).toBe(4000);
+      expect(params.apiKeyId).toBe('connector-id');
+      expect(params.certificateId).toBe('certificate-guid');
+      expect(params.previewUrl).toBe(false);
+      expect(params.returnImageUrls).toBe(true);
+      expect(params.urls).toEqual(['[REDACTED_URL]', '[REDACTED_URL]']);
+      expect(params.fields).toEqual([{ name: 'token_length', value: 500 }, { name: 'X-Auth', value: '[REDACTED]' }]);
+      expect(params.values).toEqual(['Bearer [REDACTED]', '[REDACTED_EMAIL]', 'plain']);
+    });
+
+    it('keeps Bearer expressions and template references, redacting only literal tokens', () => {
+      const params = single('n8n-nodes-base.httpRequest', {
+        expression: '=Bearer {{ $json.config.bearerToken }}',
+        template: 'Bearer ${token}',
+        literal: 'Bearer abc123def456',
+        dollar: 'Bearer abc$SUP3RSECRETTAIL0123456789',
+      });
+      expect(params.expression).toBe('=Bearer {{ $json.config.bearerToken }}');
+      expect(params.template).toBe('Bearer ${token}');
+      expect(params.literal).toBe('Bearer [REDACTED]');
+      expect(params.dollar).toBe('Bearer [REDACTED]');
     });
   });
 });

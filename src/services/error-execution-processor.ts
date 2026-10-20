@@ -18,6 +18,14 @@ import {
   ErrorSuggestion,
 } from '../types/n8n-api';
 import { logger } from '../utils/logger';
+import {
+  countRunItems,
+  getRunError,
+  latestStartTime,
+  hasRunOutputData,
+  sampleRunItems,
+  totalExecutionTime,
+} from './execution-run-data';
 
 /**
  * Options for error processing
@@ -132,7 +140,7 @@ function extractPrimaryError(
 
   // Also check runData for node-level errors
   const nodeRunData = runData[nodeName];
-  const nodeError = nodeRunData?.[0]?.error;
+  const nodeError = getRunError(nodeRunData);
 
   const stackTrace = (error?.stack || nodeError?.stack) as string | undefined;
 
@@ -177,12 +185,13 @@ function extractUpstreamContext(
     .filter(([name, data]) => {
       if (name === errorNodeName) return false;
       const runs = data as any[];
-      return runs?.[0]?.data?.main?.[0]?.length > 0 && !runs?.[0]?.error;
+      return countRunItems(runs) > 0 && !getRunError(runs);
     })
     .map(([name, data]) => ({
       name,
-      executionTime: (data as any[])?.[0]?.executionTime || 0,
-      startTime: (data as any[])?.[0]?.startTime || 0
+      executionTime: totalExecutionTime(data) ?? 0,
+      // The most recent run decides recency for a node that ran more than once
+      startTime: latestStartTime(data)
     }))
     .sort((a, b) => b.startTime - a.startTime);
 
@@ -252,9 +261,10 @@ function extractNodeOutput(
   itemsLimit: number
 ): ErrorAnalysis['upstreamContext'] | undefined {
   const nodeData = runData[nodeName];
-  if (!nodeData?.[0]?.data?.main?.[0]) return undefined;
+  if (!hasRunOutputData(nodeData)) return undefined;
 
-  const items = nodeData[0].data.main[0];
+  // Merge only the samples; the count covers every port and comes from a pass that copies nothing.
+  const items = sampleRunItems(nodeData, Math.max(itemsLimit, 1));
 
   // Sanitize sample items to remove sensitive data
   const rawSamples = items.slice(0, itemsLimit);
@@ -263,7 +273,7 @@ function extractNodeOutput(
   return {
     nodeName,
     nodeType: '', // Will be enriched if workflow available
-    itemCount: items.length,
+    itemCount: countRunItems(nodeData),
     sampleItems: sanitizedSamples,
     dataStructure: extractStructure(items[0])
   };
@@ -287,14 +297,14 @@ function buildExecutionPath(
     for (const nodeName of upstreamNodes) {
       const nodeData = runData[nodeName];
       const runs = nodeData as any[] | undefined;
-      const hasError = runs?.[0]?.error;
-      const itemCount = runs?.[0]?.data?.main?.[0]?.length || 0;
+      const hasError = getRunError(runs);
+      const itemCount = countRunItems(runs);
 
       path.push({
         nodeName,
         status: hasError ? 'error' : (runs ? 'success' : 'skipped'),
         itemCount,
-        executionTime: runs?.[0]?.executionTime
+        executionTime: totalExecutionTime(runs)
       });
     }
 
@@ -304,7 +314,7 @@ function buildExecutionPath(
       nodeName: errorNodeName,
       status: 'error',
       itemCount: 0,
-      executionTime: errorNodeData?.[0]?.executionTime
+      executionTime: totalExecutionTime(errorNodeData)
     });
   } else {
     // Without workflow, list all executed nodes by execution order (best effort)
@@ -312,16 +322,16 @@ function buildExecutionPath(
       .map(([name, data]) => ({
         name,
         data: data as any[],
-        startTime: (data as any[])?.[0]?.startTime || 0
+        startTime: latestStartTime(data)
       }))
       .sort((a, b) => a.startTime - b.startTime);
 
     for (const { name, data } of nodesByTime) {
       path.push({
         nodeName: name,
-        status: data?.[0]?.error ? 'error' : 'success',
-        itemCount: data?.[0]?.data?.main?.[0]?.length || 0,
-        executionTime: data?.[0]?.executionTime
+        status: getRunError(data) ? 'error' : 'success',
+        itemCount: countRunItems(data),
+        executionTime: totalExecutionTime(data)
       });
     }
   }
@@ -342,7 +352,7 @@ function findAdditionalErrors(
     if (nodeName === primaryErrorNode) continue;
 
     const runs = data as any[];
-    const error = runs?.[0]?.error;
+    const error = getRunError(runs);
     if (error) {
       additional.push({
         nodeName,

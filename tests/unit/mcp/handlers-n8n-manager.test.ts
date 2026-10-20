@@ -11,6 +11,8 @@ import {
   N8nServerError,
 } from '@/utils/n8n-errors';
 import { ExecutionStatus } from '@/types/n8n-api';
+import { WorkflowAutoFixer } from '@/services/workflow-auto-fixer';
+import { WorkflowDiffEngine } from '@/services/workflow-diff-engine';
 
 const telemetryMocks = vi.hoisted(() => ({
   trackEvent: vi.fn(),
@@ -29,13 +31,26 @@ vi.mock('@/services/workflow-versioning-service', () => ({
   })),
 }));
 vi.mock('@/config/n8n-api', () => ({
-  getN8nApiConfig: vi.fn()
+  getN8nApiConfig: vi.fn(),
+  // Official MCP is not under test here; keep it "not configured" so
+  // buildOfficialMcpHealth (called by handleHealthCheck/handleDiagnostic)
+  // resolves without a network probe.
+  getOfficialMcpConfig: vi.fn().mockReturnValue(null),
+  getOfficialMcpConfigFromContext: vi.fn().mockReturnValue(null),
 }));
-vi.mock('@/services/n8n-validation', () => ({
-  validateWorkflowStructure: vi.fn(),
-  hasWebhookTrigger: vi.fn(),
-  getWebhookUrl: vi.fn(),
-}));
+vi.mock('@/services/n8n-validation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/n8n-validation')>();
+  return {
+    ...actual,
+    validateWorkflowStructure: vi.fn(),
+    hasWebhookTrigger: vi.fn(),
+    getWebhookUrl: vi.fn(),
+    // cleanWorkflowForUpdate is left real: handlers-workflow-diff.ts (reached indirectly
+    // through handleAutofixWorkflow) needs the genuine implementation for its
+    // sameWritableContent rollback comparisons, which silently return false — not throw —
+    // when this is missing, masking the gap as a spurious "restore incomplete" outcome.
+  };
+});
 vi.mock('@/utils/logger', () => ({
   logger: {
     info: vi.fn(),
@@ -63,6 +78,16 @@ vi.mock('@/telemetry/telemetry-manager', () => ({
     trackWorkflowMutation: telemetryMocks.trackWorkflowMutation,
   },
 }));
+// Only handleAutofixWorkflow's own "applying fixes failed" pass-through test overrides
+// these; nothing else in this file calls WorkflowAutoFixer or reaches WorkflowDiffEngine.
+vi.mock('@/services/workflow-auto-fixer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/workflow-auto-fixer')>();
+  return { ...actual, WorkflowAutoFixer: vi.fn() };
+});
+vi.mock('@/services/workflow-diff-engine', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/workflow-diff-engine')>();
+  return { ...actual, WorkflowDiffEngine: vi.fn() };
+});
 
 describe('handlers-n8n-manager', () => {
   let mockApiClient: any;
@@ -71,6 +96,31 @@ describe('handlers-n8n-manager', () => {
   let handlers: any;
   let getN8nApiConfig: any;
   let n8nValidation: any;
+
+  it('preserves a saved template and reports autofix failure envelopes', async () => {
+    const workflow = createTestWorkflow({ active: false });
+    const templateService = { getTemplate: vi.fn().mockResolvedValue({ name: workflow.name, workflow }) };
+    mockApiClient.createWorkflow.mockResolvedValue(workflow);
+    // The real autofix handler converts this read failure to { success: false }.
+    mockApiClient.getWorkflow.mockRejectedValue(new Error('Synthetic post-save read failure'));
+    const result = await handlers.handleDeployTemplate({ templateId: 1000, autoUpgradeVersions: false, autoFix: true }, templateService, mockRepository);
+    expect(mockApiClient.createWorkflow).toHaveBeenCalledTimes(1);
+    expect(mockApiClient.getWorkflow).toHaveBeenCalledWith(workflow.id);
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({ workflowId: workflow.id, autoFixStatus: 'failed', active: false });
+    expect(result.message).toContain('Auto-fix failed (workflow deployed successfully).');
+  });
+
+  it('reports autofix as skipped only when it was not requested', async () => {
+    const workflow = createTestWorkflow({ active: false });
+    const templateService = { getTemplate: vi.fn().mockResolvedValue({ name: workflow.name, workflow }) };
+    mockApiClient.createWorkflow.mockResolvedValue(workflow);
+    const result = await handlers.handleDeployTemplate({ templateId: 1000, autoUpgradeVersions: false, autoFix: false }, templateService, mockRepository);
+    expect(result.success).toBe(true);
+    expect(result.data.autoFixStatus).toBe('skipped');
+    expect(mockApiClient.getWorkflow).not.toHaveBeenCalled();
+    expect(result.message).not.toContain('Auto-fix failed');
+  });
 
   // Helper function to create test data
   const createTestWorkflow = (overrides = {}) => ({
@@ -280,6 +330,109 @@ describe('handlers-n8n-manager', () => {
   });
 
   describe('handleCreateWorkflow', () => {
+    describe('malformed nodes with the real structure validator (#1071)', () => {
+      beforeEach(async () => {
+        const actual = await vi.importActual<typeof import('@/services/n8n-validation')>(
+          '@/services/n8n-validation'
+        );
+        vi.mocked(n8nValidation.validateWorkflowStructure).mockImplementation(actual.validateWorkflowStructure);
+      });
+
+      const validNode = {
+        id: '2', name: 'Bad Node', type: 'n8n-nodes-base.set',
+        typeVersion: 1, position: [200, 0], parameters: {},
+      };
+      const cases = [
+        { label: 'null entry', node: null },
+        { label: 'string entry', node: 'strayString' },
+        { label: 'number entry', node: 123 },
+        { label: 'array entry', node: [] },
+        { label: 'missing name', node: { ...validNode, name: undefined } },
+        { label: 'non-string name', node: { ...validNode, name: 123 } },
+        { label: 'missing type', node: { ...validNode, type: undefined } },
+        { label: 'non-string type', node: { ...validNode, type: 123 } },
+      ];
+
+      it.each(cases.flatMap(testCase => [
+        { ...testCase, connected: false },
+        { ...testCase, connected: true },
+      ]))('rejects $label (connected=$connected) before creating a workflow', async ({ node, connected }) => {
+        const input = {
+          name: 'Malformed workflow',
+          nodes: [
+            { ...validNode, id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger' },
+            node,
+          ],
+          connections: connected ? {
+            'Manual Trigger': { main: [[{
+              node: typeof node === 'string' ? node : 'Bad Node', type: 'main', index: 0,
+            }]] },
+          } : {},
+        };
+
+        const result = await handlers.handleCreateWorkflow(input);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toBe('Workflow validation failed');
+        expect(result.details.errors).toEqual(expect.arrayContaining([
+          expect.stringContaining('Invalid node at index 1:'),
+        ]));
+        expect(mockApiClient.createWorkflow).not.toHaveBeenCalled();
+        expect(telemetryMocks.trackWorkflowCreation).toHaveBeenCalledWith(input, false);
+      });
+
+      it('still creates a valid connected workflow', async () => {
+        const input = {
+          name: 'Valid workflow',
+          nodes: [
+            { ...validNode, id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger' },
+            { ...validNode, name: 'Process Data' },
+          ],
+          connections: { 'Manual Trigger': { main: [[{ node: 'Process Data', type: 'main', index: 0 }]] } },
+        };
+        mockApiClient.createWorkflow.mockResolvedValue({ ...input, id: 'created-id', active: false });
+
+        const result = await handlers.handleCreateWorkflow(input);
+
+        expect(result.success).toBe(true);
+        expect(mockApiClient.createWorkflow).toHaveBeenCalledOnce();
+        expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input, expect.any(Object));
+      });
+
+      // The same class one level down (#1094): the graph traversal walked these before the
+      // connection schema parsed them, so a null source entry threw out of the validator.
+      it.each([
+        { label: 'a null source entry', connections: { 'Manual Trigger': null } },
+        { label: 'a null output', connections: { 'Manual Trigger': { main: null } } },
+        { label: 'a flattened branch', connections: { 'Manual Trigger': { main: [{ node: 'Process Data', type: 'main', index: 0 }] } } },
+        { label: 'a null connection', connections: { 'Manual Trigger': { main: [[null]] } } },
+      ])('rejects $label before creating a workflow', async ({ connections }) => {
+        const input = {
+          name: 'Malformed connections',
+          nodes: [
+            { ...validNode, id: '1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger' },
+            { ...validNode, name: 'Process Data' },
+          ],
+          connections,
+        };
+
+        const result = await handlers.handleCreateWorkflow(input);
+
+        expect(result.success).toBe(false);
+        expect(result.error).toBe('Workflow validation failed');
+        expect(mockApiClient.createWorkflow).not.toHaveBeenCalled();
+
+        // The old trailing parse also produced an "Invalid connections:" line, so matching only
+        // that would pass against the unfixed code. What changed is that the line is collapsed
+        // rather than the Zod issue array serialized as JSON, and that it is the whole answer -
+        // the graph findings computed over the broken connection are gone.
+        const [connectionError, ...rest] = result.details.errors;
+        expect(connectionError).toMatch(/^Invalid connections: /);
+        expect(connectionError).not.toContain('{');
+        expect(rest).toEqual([]);
+      });
+    });
+
     it('should create workflow successfully', async () => {
       const testWorkflow = createTestWorkflow();
       const input = {
@@ -306,6 +459,101 @@ describe('handlers-n8n-manager', () => {
       // Should send input as-is to API (n8n expects FULL form: n8n-nodes-base.*)
       expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(input, expect.objectContaining({ onWarning: expect.any(Function) }));
       expect(n8nValidation.validateWorkflowStructure).toHaveBeenCalledWith(input);
+    });
+
+    it('should forward settings keys outside the typed schema, such as availableInMCP (issue #1026)', async () => {
+      // Regression: the create schema was a closed z.object, so Zod stripped every settings key
+      // it did not list before the payload reached the API client. The update path forwards them.
+      const testWorkflow = createTestWorkflow();
+      const input = {
+        name: 'Test Workflow',
+        nodes: testWorkflow.nodes,
+        connections: testWorkflow.connections,
+        settings: {
+          executionOrder: 'v1',
+          availableInMCP: true,
+          callerPolicy: 'workflowsFromSameOwner',
+          timeSavedPerExecution: 5,
+        },
+      };
+
+      mockApiClient.createWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleCreateWorkflow(input);
+
+      expect(result.success).toBe(true);
+      const sentWorkflow = mockApiClient.createWorkflow.mock.calls[0][0];
+      expect(sentWorkflow.settings).toEqual(input.settings);
+    });
+
+    it('should still reject invalid values for the typed settings keys', async () => {
+      const testWorkflow = createTestWorkflow();
+      const result = await handlers.handleCreateWorkflow({
+        name: 'Test Workflow',
+        nodes: testWorkflow.nodes,
+        connections: testWorkflow.connections,
+        settings: { executionOrder: 'v2', availableInMCP: true },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid input');
+      expect(mockApiClient.createWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('forwards parentFolderId to the create payload (folder placement, n8n 2.32+)', async () => {
+      const testWorkflow = createTestWorkflow();
+      const input = {
+        name: 'Test Workflow',
+        nodes: testWorkflow.nodes,
+        connections: testWorkflow.connections,
+        parentFolderId: 'folder-abc',
+      };
+
+      mockApiClient.createWorkflow.mockResolvedValue(testWorkflow);
+
+      const result = await handlers.handleCreateWorkflow(input);
+
+      expect(result.success).toBe(true);
+      expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({ parentFolderId: 'folder-abc' }),
+        expect.anything()
+      );
+    });
+
+    it('trims a padded parentFolderId before it reaches the API', async () => {
+      const testWorkflow = createTestWorkflow();
+      const input = {
+        name: 'Test Workflow',
+        nodes: testWorkflow.nodes,
+        connections: testWorkflow.connections,
+        parentFolderId: '  folder-abc  ',
+      };
+
+      mockApiClient.createWorkflow.mockResolvedValue(testWorkflow);
+
+      await handlers.handleCreateWorkflow(input);
+
+      expect(mockApiClient.createWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({ parentFolderId: 'folder-abc' }),
+        expect.anything()
+      );
+    });
+
+    it('treats a blank parentFolderId as omitted (lossy MCP clients, #774)', async () => {
+      const testWorkflow = createTestWorkflow();
+      const input = {
+        name: 'Test Workflow',
+        nodes: testWorkflow.nodes,
+        connections: testWorkflow.connections,
+        parentFolderId: '',
+      };
+
+      mockApiClient.createWorkflow.mockResolvedValue(testWorkflow);
+
+      await handlers.handleCreateWorkflow(input);
+
+      const payload = mockApiClient.createWorkflow.mock.calls[0][0];
+      expect(payload.parentFolderId).toBeUndefined();
     });
 
     it('normalizes HTTP MCP serialized workflow fields before validation and create (#814)', async () => {
@@ -1578,6 +1826,26 @@ describe('handlers-n8n-manager', () => {
       });
     });
 
+    it('should explain a missing version rather than leaving it blank', async () => {
+      // Every n8n from 1.119.0 withholds its version from API clients, so an empty field here is
+      // the norm and not a lookup worth retrying.
+      mockApiClient.healthCheck.mockResolvedValue({ status: 'ok', features: [] });
+
+      const result = await handlers.handleHealthCheck();
+
+      expect(result.success).toBe(true);
+      expect((result.data as any).n8nVersion).toBeUndefined();
+      expect((result.data as any).n8nVersionNote).toMatch(/1\.119\.0/);
+    });
+
+    it('should not annotate a version the instance did report', async () => {
+      mockApiClient.healthCheck.mockResolvedValue({ status: 'ok', n8nVersion: '1.100.0' });
+
+      const result = await handlers.handleHealthCheck();
+
+      expect((result.data as any).n8nVersionNote).toBeUndefined();
+    });
+
     it('should handle API errors', async () => {
       const apiError = new N8nServerError('Service unavailable');
       mockApiClient.healthCheck.mockRejectedValue(apiError);
@@ -1923,6 +2191,43 @@ describe('handlers-n8n-manager', () => {
     });
   });
 
+  describe('handleWorkflowVersions - mode default (#1051)', () => {
+    async function mockHistory(versions: unknown[]) {
+      const { WorkflowVersioningService } = await import('@/services/workflow-versioning-service');
+      const getVersionHistory = vi.fn().mockResolvedValue(versions);
+      vi.mocked(WorkflowVersioningService).mockImplementation(() => ({ getVersionHistory }) as any);
+      return getVersionHistory;
+    }
+
+    it('lists versions when mode is omitted', async () => {
+      const getVersionHistory = await mockHistory([{ versionId: 1 }, { versionId: 2 }]);
+
+      const result = await handlers.handleWorkflowVersions({ workflowId: 'wf-1' }, mockRepository);
+
+      expect(getVersionHistory).toHaveBeenCalledWith('wf-1', undefined);
+      expect(result.success).toBe(true);
+      expect((result.data as any).count).toBe(2);
+    });
+
+    it('treats a blank mode as omitted', async () => {
+      await mockHistory([]);
+
+      const result = await handlers.handleWorkflowVersions({ mode: '', workflowId: 'wf-1' }, mockRepository);
+
+      expect(result.success).toBe(true);
+      expect((result.data as any).count).toBe(0);
+    });
+
+    it('still rejects an unknown mode', async () => {
+      await mockHistory([]);
+
+      const result = await handlers.handleWorkflowVersions({ mode: 'history', workflowId: 'wf-1' }, mockRepository);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid input');
+    });
+  });
+
   describe('handleWorkflowVersions - rollback', () => {
     // Regression: the handler resolved its API client only when an InstanceContext was supplied,
     // which skipped getN8nApiClient's environment-variable fallback. On a plain N8N_API_URL setup
@@ -1975,6 +2280,28 @@ describe('handlers-n8n-manager', () => {
       expect(result.error).not.toContain('not configured');
     });
 
+    it('passes the restore result\'s code and draftVersionId through on a PUBLISH_FORBIDDEN failure (#1124)', async () => {
+      await mockRestore({
+        success: false,
+        message: 'Failed to restore workflow: the content was saved as a draft but not published (insufficient_api_key_scope). The published version is unchanged.',
+        workflowId: 'wf-1',
+        toVersionId: 1,
+        backupCreated: true,
+        backupVersionId: 2,
+        code: 'PUBLISH_FORBIDDEN',
+        draftVersionId: 'draft-1',
+      });
+
+      const result = await handlers.handleWorkflowVersions(
+        { mode: 'rollback', workflowId: 'wf-1', versionId: 1 },
+        mockRepository
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('PUBLISH_FORBIDDEN');
+      expect((result.details as any)?.draftVersionId).toBe('draft-1');
+    });
+
     it('still refuses when no n8n API is configured at all', async () => {
       await mockRestore({ success: true, message: 'ok', workflowId: 'wf-1', toVersionId: 1, backupCreated: true });
       vi.mocked(getN8nApiConfig).mockReturnValue(null);
@@ -1988,6 +2315,46 @@ describe('handlers-n8n-manager', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('not configured');
+    });
+  });
+
+  describe('handleUpdateWorkflow - malformed nodes with the real structure validator (#1071)', () => {
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof import('@/services/n8n-validation')>(
+        '@/services/n8n-validation'
+      );
+      vi.mocked(n8nValidation.validateWorkflowStructure).mockImplementation(actual.validateWorkflowStructure);
+
+      const workflow = createTestWorkflow({
+        id: 'wf-1',
+        nodes: [{ id: 'node-1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [0, 0], parameters: {} }],
+      });
+      mockApiClient.getWorkflow.mockResolvedValue(workflow);
+      mockApiClient.updateWorkflow.mockResolvedValue(workflow);
+    });
+
+    // The credential-preservation merge reads node.credentials off every submitted entry, and
+    // it runs before the validator - so a null entry threw there instead of being reported.
+    it.each([
+      { label: 'null', node: null },
+      { label: 'a string', node: 'strayString' },
+      { label: 'a non-string type', node: { id: '2', name: 'Bad', type: 123, typeVersion: 1, position: [200, 0], parameters: {} } },
+    ])('rejects $label in nodes without calling the update API', async ({ node }) => {
+      const result = await handlers.handleUpdateWorkflow({
+        id: 'wf-1',
+        nodes: [
+          { id: 'node-1', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3, position: [0, 0], parameters: {} },
+          node,
+        ],
+        connections: {},
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Workflow validation failed');
+      expect(result.details.errors).toEqual(expect.arrayContaining([
+        expect.stringContaining('Invalid node at index 1:'),
+      ]));
+      expect(mockApiClient.updateWorkflow).not.toHaveBeenCalled();
     });
   });
 
@@ -2081,6 +2448,94 @@ describe('handlers-n8n-manager', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Invalid input');
+    });
+  });
+
+  describe('handleUpdateWorkflow - PUBLISH_FORBIDDEN (n8n 2.39+ publish-on-save, #1118)', () => {
+    it('reports draft/publish state honestly when n8n refuses to publish on save', async () => {
+      mockApiClient.getWorkflow.mockResolvedValue(createTestWorkflow({ id: 'wf-1' }));
+      const publishForbidden = new N8nApiError(
+        "Your change was saved as a draft. It wasn't published because this API key does not have the workflow:activate scope.",
+        403,
+        'PUBLISH_FORBIDDEN',
+        { reason: 'insufficient_api_key_scope', versionId: 'draft-1' },
+      );
+      mockApiClient.updateWorkflow.mockRejectedValue(publishForbidden);
+
+      const result = await handlers.handleUpdateWorkflow({ id: 'wf-1', name: 'Renamed' });
+
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('PUBLISH_FORBIDDEN');
+      expect(result.error).toContain('n8n did not publish this change');
+      expect(result.error).toContain('published version is unchanged');
+      expect(result.error).toContain('draft');
+      expect(result.error).toContain('draft-1');
+      expect(result.error).toContain('another draft without publishing');
+      expect(result.error).toContain('workflow:activate');
+      expect(result.error).toContain('workflow:publish');
+      expect(result.details).toMatchObject({
+        reason: 'insufficient_api_key_scope',
+        draftVersionId: 'draft-1',
+        publishedVersionUnchanged: true,
+      });
+    });
+  });
+
+  describe('handleAutofixWorkflow - update failure pass-through (#1124)', () => {
+    it('passes the partial-update failure\'s details through under updateDetails', async () => {
+      // Drive the failure through the real handleUpdatePartialWorkflow (its PUBLISH_FORBIDDEN
+      // outcomes are already covered in depth in handlers-workflow-diff.test.ts) rather than
+      // mocking it away, since that module and this one import each other
+      // (handleUpdatePartialWorkflow calls back into getN8nApiClient here) and module-mocking
+      // one from the other's test file does not reliably override the live binding the source
+      // actually calls. WorkflowDiffEngine is mocked to return the workflow completely
+      // unchanged, so the outcome is deterministic: version AND content both come back
+      // unchanged after the failed PUT, landing in the simplest PUBLISH_FORBIDDEN state.
+      const testWorkflow = createTestWorkflow();
+      mockApiClient.getWorkflow.mockResolvedValue(testWorkflow);
+      mockApiClient.updateWorkflow.mockRejectedValue(
+        new N8nApiError(
+          "Your change was saved as a draft. It wasn't published because this API key does not have the workflow:activate scope.",
+          403,
+          'PUBLISH_FORBIDDEN',
+          { reason: 'insufficient_api_key_scope', versionId: 'draft-1' },
+        )
+      );
+      mockValidator.validateWorkflow.mockResolvedValue({ errors: [], warnings: [] });
+      vi.mocked(WorkflowAutoFixer).mockImplementation(() => ({
+        generateFixes: vi.fn().mockResolvedValue({
+          fixes: [{ nodeId: 'node1', nodeName: 'Start', field: 'typeVersion', type: 'typeversion-correction', description: 'Upgrade typeVersion', confidence: 'high' }],
+          operations: [{ type: 'updateNode', nodeId: 'node1', updates: { typeVersion: 1 } }],
+          summary: 'Applied 1 fix',
+          stats: { totalFixes: 1 },
+        }),
+      }) as any);
+      vi.mocked(WorkflowDiffEngine).mockImplementation(() => ({
+        applyDiff: vi.fn().mockResolvedValue({
+          success: true,
+          workflow: testWorkflow,
+          operationsApplied: 1,
+          message: 'ok',
+          errors: [],
+        }),
+      }) as any);
+
+      const result = await handlers.handleAutofixWorkflow(
+        { id: 'test-workflow-id', applyFixes: true },
+        mockRepository
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Failed to apply fixes');
+      expect(result.code).toBe('PUBLISH_FORBIDDEN');
+      expect((result.details as any).updateError).toContain('could not be confirmed');
+      // The regression this test guards: the wrapper used to drop updateResult.details
+      // entirely, leaving callers only the flattened error string to parse.
+      expect((result.details as any).updateDetails).toMatchObject({
+        reason: 'insufficient_api_key_scope',
+        draftVersionId: 'draft-1',
+        rollbackPerformed: false,
+      });
     });
   });
 

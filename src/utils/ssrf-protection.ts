@@ -1,9 +1,10 @@
 import { URL } from 'url';
 import { lookup } from 'dns/promises';
-import { isIPv6 } from 'net';
+import net, { isIPv4, isIPv6 } from 'net';
 import http from 'http';
 import https from 'https';
 import ipaddr from 'ipaddr.js';
+import { Agent as UndiciAgent, fetch as undiciFetch } from 'undici';
 import { logger } from './logger';
 
 export interface PinnedAgents {
@@ -11,12 +12,32 @@ export interface PinnedAgents {
   httpsAgent: https.Agent;
 }
 
+export interface PinnedFetch {
+  fetch: (url: string | URL, init?: RequestInit) => Promise<Response>;
+  close(): Promise<void>;
+}
+
 export interface WebhookUrlValidationResult {
   valid: boolean;
   reason?: string;
+  /** First validated address, kept for backward compat. See {@link addresses} for the full set. */
   address?: string;
   family?: 4 | 6;
+  /**
+   * Every address the hostname resolved to, in DNS-answer order, each of
+   * which passed the SSRF policy. Pass this to {@link SSRFProtection.createPinnedAgents}
+   * so the transport can fail over across all validated candidates (e.g.
+   * `localhost` resolving to `::1` first on a host where the server only
+   * listens on IPv4) instead of being pinned to a single answer forever.
+   */
+  addresses?: Array<{ address: string; family: 4 | 6 }>;
 }
+
+// SECURITY (#978/#989/#990 resilience follow-up to GHSA-cmrh-wvq6-wm9r):
+// `autoSelectFamily`/`autoSelectFamilyAttemptTimeout` were added in Node 18.13
+// and are stable by 20.x. Guard for older runtimes; computed once at module
+// scope rather than probed per-socket.
+const supportsAutoSelectFamily = typeof (net as any).getDefaultAutoSelectFamily === 'function';
 
 /**
  * SSRF Protection Utility with Configurable Security Modes
@@ -45,6 +66,11 @@ const CLOUD_METADATA = new Set([
   '100.100.100.200', // Alibaba Cloud metadata
   // Oracle Cloud
   '192.0.0.192',     // Oracle Cloud metadata
+  // SECURITY (GHSA-xf82-4743-c4gm): IPv6 metadata endpoints
+  'fd00:ec2::254',   // AWS IMDS (IPv6)
+  'fd20:ce::254',    // GCP metadata (IPv6)
+  'fe80::a9fe:a9fe', // OpenStack metadata (IPv6)
+  'fd00:a9fe:a9fe::1', // Linode metadata (IPv6)
 ]);
 
 // Localhost patterns
@@ -64,19 +90,65 @@ const PRIVATE_IP_RANGES = [
   /^169\.254\./,                    // 169.254.0.0/16 (Link-local)
   /^127\./,                         // 127.0.0.0/8 (Loopback)
   /^0\./,                           // 0.0.0.0/8 (Invalid)
+  // SECURITY (GHSA-2x5j-hrmv-ccrq): IANA special-purpose blocks that are not
+  // globally reachable and therefore never a legitimate outbound target.
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // 100.64.0.0/10 (RFC 6598 shared address space)
+  /^192\.0\.0\./,                   // 192.0.0.0/24 (RFC 6890 IETF protocol assignments)
+  /^(22[4-9]|23\d)\./,              // 224.0.0.0/4 (Multicast)
+  /^(24\d|25[0-5])\./,              // 240.0.0.0/4 (Reserved, incl. 255.255.255.255 broadcast)
 ];
 
 export class SSRFProtection {
   /**
-   * IPv6 addresses that must be blocked: loopback, unspecified, link-local,
-   * unique-local, site-local (deprecated), IPv4-mapped, IPv4-compatible, and
-   * any IPv6→IPv4 tunneling address (NAT64, 6to4, Teredo) whose embedded IPv4
-   * is private or a cloud-metadata endpoint. Tunneling prefixes with a public
-   * embedded IPv4 are allowed so legitimate DNS64/NAT64 environments work.
+   * SECURITY (GHSA-xf82-4743-c4gm): canonical WHATWG form of an IPv6
+   * address, or null when it does not parse as a URL host.
+   */
+  private static canonicalIPv6(addr: string): string | null {
+    try {
+      return new URL(`http://[${addr}]/`).hostname.slice(1, -1);
+    } catch {
+      return null;
+    }
+  }
+
+  /** SECURITY (GHSA-xf82-4743-c4gm): cloud metadata check on the canonical form. */
+  private static isCloudMetadata(host: string): boolean {
+    if (CLOUD_METADATA.has(host)) return true;
+    if (!isIPv6(host)) return false;
+    const canonical = SSRFProtection.canonicalIPv6(host);
+    return canonical !== null && CLOUD_METADATA.has(canonical);
+  }
+
+  /**
+   * Whether a bracket-stripped host names the local machine: a LOCALHOST_PATTERNS entry
+   * (these include `0.0.0.0`, the unspecified address rather than a loopback one) or any
+   * 127.0.0.0/8 literal.
    *
-   * Hostname must be lowercased and bracket-stripped. WHATWG URL parser
-   * canonicalizes IPv6 literals (zero compression, dotted-quad → hex pairs),
-   * so prefix matching works against the normalized form.
+   * Shared by {@link validateUrlSync} and {@link validateResolvedAddress} so
+   * both agree on what `moderate` allows. Before #1033 they disagreed on
+   * literals: `http://localhost` passed the sync check while the same host
+   * spelled `http://127.0.0.1` was refused as a private IP.
+   *
+   * All of 127.0.0.0/8 is loopback, not just `127.0.0.1`, but the prefix test
+   * is gated on {@link isIPv4} so the DNS name `127.example.com` is not
+   * mistaken for a literal (same reasoning as the #984 gate on
+   * PRIVATE_IP_RANGES).
+   */
+  private static isLoopbackHost(host: string): boolean {
+    return LOCALHOST_PATTERNS.has(host) || (isIPv4(host) && host.startsWith('127.'));
+  }
+
+  /**
+   * IPv6 addresses that must be blocked: loopback, unspecified, link-local,
+   * unique-local, site-local (deprecated), multicast, IPv4-mapped,
+   * IPv4-compatible, and any IPv6→IPv4 tunneling address (NAT64, 6to4, Teredo)
+   * whose embedded IPv4 is private or a cloud-metadata endpoint. Tunneling
+   * prefixes with a public embedded IPv4 are allowed so legitimate DNS64/NAT64
+   * environments work.
+   *
+   * Hostname must be bracket-stripped. WHATWG URL parser canonicalizes IPv6
+   * literals (zero compression, dotted-quad → hex pairs), so prefix matching
+   * works against the normalized form.
    *
    * @security See GHSA-56c3-vfp2-5qqj. The sync validator previously had no
    * IPv6 gate, letting `::ffff:169.254.169.254`, `::169.254.169.254`,
@@ -87,6 +159,10 @@ export class SSRFProtection {
     // (e.g. "fcexample.com") are never misclassified as private IPv6.
     if (!isIPv6(hostname)) return false;
 
+    // SECURITY (GHSA-2x5j-hrmv-ccrq): normalize case here so the helper holds
+    // its own precondition regardless of what the caller passes.
+    hostname = hostname.toLowerCase();
+
     // ::/96 reserved block: unspecified (`::`), loopback (`::1`), IPv4-mapped
     // (`::ffff:X`), and deprecated IPv4-compatible (`::X:Y` per RFC 4291) all
     // live here. Blocking the whole prefix avoids enumerating subforms.
@@ -96,14 +172,17 @@ export class SSRFProtection {
     // but keep the check in case normalization ever changes.
     if (hostname.startsWith('0:0:0:0:0:ffff:')) return true;
 
-    // Link-local fe80::/10
-    if (hostname.startsWith('fe80:')) return true;
-
-    // Site-local fec0::/10 (deprecated, RFC 3879) — still honored by some stacks.
-    if (/^fe[c-f]/.test(hostname)) return true;
-
-    // Unique local fc00::/7 (RFC 4193). Covers fc00-fdff in the first hextet.
-    if (/^f[cd]/.test(hostname)) return true;
+    // SECURITY (GHSA-2x5j-hrmv-ccrq): these blocks are matched numerically on
+    // the first hextet so each covers its full CIDR span.
+    const hextet = SSRFProtection.firstHextet(hostname);
+    // Reaching here means net.isIPv6 accepted the input, so a parse failure
+    // means the two parsers disagree about it. Fail closed rather than skip
+    // the checks below.
+    if (hextet === null) return true;
+    if ((hextet & 0xffc0) === 0xfe80) return true; // Link-local fe80::/10 (RFC 4291)
+    if ((hextet & 0xffc0) === 0xfec0) return true; // Site-local fec0::/10 (deprecated, RFC 3879)
+    if ((hextet & 0xfe00) === 0xfc00) return true; // Unique local fc00::/7 (RFC 4193)
+    if ((hextet & 0xff00) === 0xff00) return true; // Multicast ff00::/8 (RFC 4291)
 
     // Tunneling prefixes (NAT64, 6to4, Teredo) carry an embedded IPv4. Extract
     // it and reuse the IPv4 policy so we don't blanket-block legitimate users
@@ -139,12 +218,18 @@ export class SSRFProtection {
   private static tryExtractTunneledIPv4(hostname: string): string | 'non_canonical' | null {
     let parsed: ReturnType<typeof ipaddr.parse>;
     try {
-      parsed = ipaddr.parse(hostname);
+      parsed = ipaddr.parse(SSRFProtection.canonicalIPv6(hostname) ?? hostname);
     } catch {
       return null;
     }
     if (parsed.kind() !== 'ipv6') return null;
     const p = (parsed as ipaddr.IPv6).parts;
+
+    // SECURITY (GHSA-xf82-4743-c4gm): ::/96, ::ffff:0:0/96 and ::ffff:0:0:0/96
+    if (p[0] === 0 && p[1] === 0 && p[2] === 0 && p[3] === 0 &&
+        ((p[4] === 0 && (p[5] === 0 || p[5] === 0xffff)) || (p[4] === 0xffff && p[5] === 0))) {
+      return SSRFProtection.hextetsToIPv4(p[6], p[7]);
+    }
 
     // NAT64 64:ff9b: family — both layouts here put the IPv4 in the last 32
     // bits, so we recognize only the /96 well-known position for each.
@@ -180,6 +265,22 @@ export class SSRFProtection {
     return null;
   }
 
+  /**
+   * First 16-bit group of an IPv6 address, or null when the input does not
+   * parse as IPv6. Parsing is delegated to `ipaddr.js` for the same reason
+   * {@link tryExtractTunneledIPv4} does — a homegrown expander that disagreed
+   * with the OS resolver would be a hole.
+   */
+  private static firstHextet(hostname: string): number | null {
+    try {
+      const parsed = ipaddr.parse(hostname);
+      if (parsed.kind() !== 'ipv6') return null;
+      return (parsed as ipaddr.IPv6).parts[0];
+    } catch {
+      return null;
+    }
+  }
+
   private static hextetsToIPv4(hi: number, lo: number): string {
     return `${(hi >>> 8) & 0xff}.${hi & 0xff}.${(lo >>> 8) & 0xff}.${lo & 0xff}`;
   }
@@ -205,6 +306,8 @@ export class SSRFProtection {
    */
   private static tunneledIPv6BlockReason(addr: string): string | null {
     if (!isIPv6(addr)) return null;
+    // SECURITY (GHSA-xf82-4743-c4gm): fail closed
+    if (SSRFProtection.canonicalIPv6(addr) === null) return 'IPv6 private/mapped address not allowed';
     const embedded = SSRFProtection.tryExtractTunneledIPv4(addr);
     if (embedded === 'non_canonical') return 'IPv6 private/mapped address not allowed';
     if (typeof embedded === 'string' && CLOUD_METADATA.has(embedded)) {
@@ -250,21 +353,34 @@ export class SSRFProtection {
       }
 
       // Step 2: ALWAYS block cloud metadata endpoints (all modes)
-      if (CLOUD_METADATA.has(hostname)) {
+      if (SSRFProtection.isCloudMetadata(hostname)) {
         logger.warn('SSRF blocked: Cloud metadata endpoint', { hostname, mode });
         return { valid: false, reason: 'Cloud metadata endpoint blocked' };
       }
 
-      // Step 3: Resolve DNS to get actual IP address
-      // This prevents DNS rebinding attacks where hostname resolves to different IPs
-      let resolvedIP: string;
-      let resolvedFamily: 4 | 6;
+      // Step 3: Resolve DNS to get every address this hostname answers with.
+      // Validating the full record set (not just the first answer) prevents
+      // a mixed-record DNS-rebinding attack where a public address ships
+      // alongside a private/metadata one and only the public one is checked.
+      let resolved: Array<{ address: string; family: 4 | 6 }>;
       try {
-        const { address, family } = await lookup(hostname);
-        resolvedIP = address;
-        resolvedFamily = family === 6 ? 6 : 4;
+        const raw = await lookup(hostname, { all: true }) as any;
+        // Real Node with { all: true } always returns an array; normalize
+        // defensively in case a caller/mock returns a single record.
+        const list: any[] = Array.isArray(raw) ? raw : [raw];
+        if (list.length === 0) {
+          throw new Error('DNS lookup returned no addresses');
+        }
+        resolved = list.map((entry) => ({
+          address: entry.address,
+          family: entry.family === 6 ? 6 : 4,
+        }));
 
-        logger.debug('DNS resolved for SSRF check', { hostname, resolvedIP, mode });
+        logger.debug('DNS resolved for SSRF check', {
+          hostname,
+          resolvedIPs: resolved.map(r => r.address),
+          mode
+        });
       } catch (error) {
         logger.warn('DNS resolution failed for webhook URL', {
           hostname,
@@ -273,112 +389,162 @@ export class SSRFProtection {
         return { valid: false, reason: 'DNS resolution failed' };
       }
 
-      // Step 4: ALWAYS block cloud metadata IPs (all modes)
-      if (CLOUD_METADATA.has(resolvedIP)) {
-        logger.warn('SSRF blocked: Hostname resolves to cloud metadata IP', {
-          hostname,
-          resolvedIP,
-          mode
-        });
-        return { valid: false, reason: 'Hostname resolves to cloud metadata endpoint' };
+      // Steps 4-7: validate every resolved address. FAIL CLOSED — if any
+      // address in the record set is disallowed, reject the whole hostname
+      // instead of only checking the first.
+      for (const { address } of resolved) {
+        const check = SSRFProtection.validateResolvedAddress(hostname, address, mode);
+        if (!check.valid) {
+          return { valid: false, reason: check.reason };
+        }
       }
 
-      // Step 4b: All-mode IPv6 tunneling gate — runs before the permissive
-      // early-return. Rejects (a) tunneled cloud-metadata (any mode) and
-      // (b) non-canonical tunneling prefixes (the fail-safe promise must
-      // hold in permissive too, not just strict/moderate).
-      const tunneledReason = SSRFProtection.tunneledIPv6BlockReason(resolvedIP);
-      if (tunneledReason !== null) {
-        logger.warn('SSRF blocked: IPv6 tunneling rejection (all-mode gate)', {
-          hostname,
-          resolvedIP,
-          mode,
-          reason: tunneledReason
-        });
-        return { valid: false, reason: tunneledReason };
-      }
-
-      // Step 5: Mode-specific validation
-
-      // MODE: permissive - Allow everything except cloud metadata
       if (mode === 'permissive') {
         logger.warn('SSRF protection in permissive mode (localhost and private IPs allowed)', {
           hostname,
-          resolvedIP
+          resolvedIPs: resolved.map(r => r.address)
         });
-        return { valid: true, address: resolvedIP, family: resolvedFamily };
       }
 
-      // Check if target is localhost
-      const isLocalhost = LOCALHOST_PATTERNS.has(hostname) ||
-                        resolvedIP === '::1' ||
-                        resolvedIP.startsWith('127.');
-
-      // MODE: strict - Block localhost and private IPs
-      if (mode === 'strict' && isLocalhost) {
-        logger.warn('SSRF blocked: Localhost not allowed in strict mode', {
-          hostname,
-          resolvedIP
-        });
-        return { valid: false, reason: 'Localhost access is blocked in strict mode' };
-      }
-
-      // MODE: moderate - Allow localhost, block private IPs
-      if (mode === 'moderate' && isLocalhost) {
-        logger.info('Localhost webhook allowed (moderate mode)', { hostname, resolvedIP });
-        return { valid: true, address: resolvedIP, family: resolvedFamily };
-      }
-
-      // Step 6: Check private IPv4 ranges (strict & moderate modes)
-      if (PRIVATE_IP_RANGES.some(regex => regex.test(resolvedIP))) {
-        logger.warn('SSRF blocked: Private IP address', { hostname, resolvedIP, mode });
-        return {
-          valid: false,
-          reason: mode === 'strict'
-            ? 'Private IP addresses not allowed'
-            : 'Private IP addresses not allowed (use WEBHOOK_SECURITY_MODE=permissive if needed)'
-        };
-      }
-
-      // Step 7: IPv6 private address check (strict & moderate modes)
-      if (SSRFProtection.isPrivateOrMappedIpv6(resolvedIP)) {
-        logger.warn('SSRF blocked: IPv6 private address', {
-          hostname,
-          resolvedIP,
-          mode
-        });
-        return { valid: false, reason: 'IPv6 private address not allowed' };
-      }
-
-      return { valid: true, address: resolvedIP, family: resolvedFamily };
+      const [first] = resolved;
+      return { valid: true, address: first.address, family: first.family, addresses: resolved };
     } catch (error) {
       return { valid: false, reason: 'Invalid URL format' };
     }
   }
 
   /**
+   * Validate a single resolved address against the cloud-metadata, IPv6
+   * tunneling, and mode-specific (localhost / private-range) policy. Shared
+   * by {@link validateWebhookUrl}'s loop over every DNS answer, so a
+   * hostname with a mixed record set is checked address-by-address instead
+   * of only on the first answer.
+   */
+  private static validateResolvedAddress(
+    hostname: string,
+    resolvedIP: string,
+    mode: SecurityMode
+  ): { valid: boolean; reason?: string } {
+    // Step 4: ALWAYS block cloud metadata IPs (all modes)
+    if (SSRFProtection.isCloudMetadata(resolvedIP)) {
+      logger.warn('SSRF blocked: Hostname resolves to cloud metadata IP', {
+        hostname,
+        resolvedIP,
+        mode
+      });
+      return { valid: false, reason: 'Hostname resolves to cloud metadata endpoint' };
+    }
+
+    // Step 4b: All-mode IPv6 tunneling gate — runs before the permissive
+    // early-return. Rejects (a) tunneled cloud-metadata (any mode) and
+    // (b) non-canonical tunneling prefixes (the fail-safe promise must
+    // hold in permissive too, not just strict/moderate).
+    const tunneledReason = SSRFProtection.tunneledIPv6BlockReason(resolvedIP);
+    if (tunneledReason !== null) {
+      logger.warn('SSRF blocked: IPv6 tunneling rejection (all-mode gate)', {
+        hostname,
+        resolvedIP,
+        mode,
+        reason: tunneledReason
+      });
+      return { valid: false, reason: tunneledReason };
+    }
+
+    // Step 5: Mode-specific validation
+
+    // MODE: permissive - Allow everything except cloud metadata
+    if (mode === 'permissive') {
+      return { valid: true };
+    }
+
+    // Check if target is localhost
+    // The literal check is shared with validateUrlSync; the resolved address keeps the narrower
+    // test it always had, so a DNS name that resolves to 0.0.0.0 stays refused under moderate.
+    const isLocalhost = SSRFProtection.isLoopbackHost(hostname) ||
+                        resolvedIP === '::1' ||
+                        resolvedIP.startsWith('127.');
+
+    // MODE: strict - Block localhost and private IPs
+    if (mode === 'strict' && isLocalhost) {
+      logger.warn('SSRF blocked: Localhost not allowed in strict mode', {
+        hostname,
+        resolvedIP
+      });
+      return { valid: false, reason: 'Localhost access is blocked in strict mode' };
+    }
+
+    // MODE: moderate - Allow localhost, block private IPs
+    if (mode === 'moderate' && isLocalhost) {
+      logger.info('Localhost webhook allowed (moderate mode)', { hostname, resolvedIP });
+      return { valid: true };
+    }
+
+    // Step 6: Check private IPv4 ranges (strict & moderate modes)
+    if (PRIVATE_IP_RANGES.some(regex => regex.test(resolvedIP))) {
+      logger.warn('SSRF blocked: Private IP address', { hostname, resolvedIP, mode });
+      return {
+        valid: false,
+        reason: mode === 'strict'
+          ? 'Private IP addresses not allowed'
+          : 'Private IP addresses not allowed (use WEBHOOK_SECURITY_MODE=permissive if needed)'
+      };
+    }
+
+    // Step 7: IPv6 private address check (strict & moderate modes)
+    if (SSRFProtection.isPrivateOrMappedIpv6(resolvedIP)) {
+      logger.warn('SSRF blocked: IPv6 private address', {
+        hostname,
+        resolvedIP,
+        mode
+      });
+      return { valid: false, reason: 'IPv6 private address not allowed' };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Build a dns lookup callback that always resolves to the given, already
+   * validated addresses, regardless of hostname. Shared by
+   * {@link createPinnedAgents} (axios/http.Agent callers) and
+   * {@link createPinnedFetch} (undici/fetch callers).
+   */
+  private static buildPinnedLookup(addresses: Array<{ address: string; family: 4 | 6 }>) {
+    return (_hostname: string, options: any, callback: any): void => {
+      // Node's lookup contract: when options.all is true, callback receives
+      // an array of {address, family}; otherwise (address, family) for the
+      // first candidate. validateWebhookUrl resolved and validated the full
+      // set — return all of it for `all`, and the first for the scalar shape.
+      if (options && options.all) {
+        callback(null, addresses.map(a => ({ address: a.address, family: a.family })));
+      } else {
+        callback(null, addresses[0].address, addresses[0].family);
+      }
+    };
+  }
+
+  /**
    * Build a pair of HTTP/HTTPS agents that resolve every hostname to a fixed
-   * IP via a custom dns lookup callback. Pair with {@link validateWebhookUrl}
-   * so the transport connects to the IP that was just validated, regardless
-   * of what subsequent DNS queries would return.
+   * set of validated addresses via a custom dns lookup callback. Pair with
+   * {@link validateWebhookUrl} so the transport only ever connects to
+   * addresses that were just validated, regardless of what subsequent DNS
+   * queries would return.
+   *
+   * `addresses` should be the full, ordered set from
+   * {@link WebhookUrlValidationResult.addresses}, not just the first answer.
+   * Passing every validated candidate lets `net.connect`'s Happy-Eyeballs
+   * fallback (`autoSelectFamily`) try each one in turn — e.g. when `localhost`
+   * resolves to `::1` first but the server only listens on IPv4 — instead of
+   * hard-failing on a single pinned address (#978/#989/#990).
    *
    * @security GHSA-cmrh-wvq6-wm9r
    */
-  static createPinnedAgents(address: string, family: 4 | 6): PinnedAgents {
-    const pinnedLookup = (
-      _hostname: string,
-      options: any,
-      callback: any
-    ): void => {
-      // Node's lookup contract: when options.all is true, callback receives
-      // an array of {address, family}; otherwise (address, family).
-      // validateWebhookUrl resolved a single IP — return that for both shapes.
-      if (options && options.all) {
-        callback(null, [{ address, family }]);
-      } else {
-        callback(null, address, family);
-      }
-    };
+  static createPinnedAgents(addresses: Array<{ address: string; family: 4 | 6 }>): PinnedAgents {
+    if (!addresses || addresses.length === 0) {
+      throw new Error('createPinnedAgents requires at least one validated address');
+    }
+
+    const pinnedLookup = SSRFProtection.buildPinnedLookup(addresses);
 
     const httpAgent = new http.Agent({ keepAlive: false });
     const httpsAgent = new https.Agent({ keepAlive: false });
@@ -390,7 +556,16 @@ export class SSRFProtection {
       const proto = Object.getPrototypeOf(agent);
       const original = proto.createConnection;
       (agent as any).createConnection = function (options: any, cb: any) {
-        return original.call(this, { ...options, lookup: pinnedLookup }, cb);
+        const connectOptions: any = { ...options, lookup: pinnedLookup };
+        // Try every pinned candidate (Happy-Eyeballs) instead of hard-failing
+        // on the first — all candidates already passed SSRF validation, so
+        // this doesn't weaken the pinning guarantee. Guarded for Node
+        // runtimes that predate autoSelectFamily.
+        if (supportsAutoSelectFamily) {
+          connectOptions.autoSelectFamily = true;
+          connectOptions.autoSelectFamilyAttemptTimeout = 250;
+        }
+        return original.call(this, connectOptions, cb);
       };
       // Expose for tests; not load-bearing at runtime.
       (agent as any).options = { ...((agent as any).options || {}), lookup: pinnedLookup };
@@ -400,6 +575,39 @@ export class SSRFProtection {
     return {
       httpAgent: wrap(httpAgent),
       httpsAgent: wrap(httpsAgent),
+    };
+  }
+
+  /**
+   * A fetch implementation whose sockets only ever connect to the given
+   * validated addresses. For callers that speak fetch (the MCP SDK's
+   * Streamable HTTP transport) rather than axios — see createPinnedAgents.
+   * TLS still verifies against the URL hostname; only name resolution is pinned.
+   *
+   * Redirects are never followed (`redirect: 'manual'`). Pinning constrains
+   * the addresses of the URL the caller asked for; a 3xx would hand the
+   * choice of the next request's host, port and path to the server, and
+   * undici would re-resolve it through the same pinned lookup — reaching a
+   * different port on a validated address, or a URL that never went through
+   * validateWebhookUrl at all. The 3xx is returned to the caller as an
+   * ordinary non-ok response instead.
+   *
+   * @security GHSA-cmrh-wvq6-wm9r
+   */
+  static createPinnedFetch(addresses: Array<{ address: string; family: 4 | 6 }>): PinnedFetch {
+    if (!addresses || addresses.length === 0) {
+      throw new Error('createPinnedFetch requires at least one validated address');
+    }
+    const lookup = SSRFProtection.buildPinnedLookup(addresses);
+    const dispatcher = new UndiciAgent({
+      // `connect` options are spread into net.connect/tls.connect by undici.
+      connect: { lookup, autoSelectFamily: supportsAutoSelectFamily, autoSelectFamilyAttemptTimeout: 250 } as any,
+      keepAliveTimeout: 1_000,
+    });
+    return {
+      fetch: (url, init) =>
+        undiciFetch(url as any, { ...(init as any), dispatcher, redirect: 'manual' }) as unknown as Promise<Response>,
+      close: () => dispatcher.close(),
     };
   }
 
@@ -439,7 +647,7 @@ export class SSRFProtection {
       hostname = hostname.slice(1, -1);
     }
 
-    if (CLOUD_METADATA.has(hostname)) {
+    if (SSRFProtection.isCloudMetadata(hostname)) {
       return { valid: false, reason: 'Cloud metadata endpoint blocked' };
     }
 
@@ -456,11 +664,25 @@ export class SSRFProtection {
       return { valid: true };
     }
 
-    if (mode === 'strict' && LOCALHOST_PATTERNS.has(hostname)) {
+    const isLocalhost = SSRFProtection.isLoopbackHost(hostname);
+
+    if (mode === 'strict' && isLocalhost) {
       return { valid: false, reason: 'Localhost access is blocked in strict mode' };
     }
 
-    if (PRIVATE_IP_RANGES.some(regex => regex.test(hostname))) {
+    // MODE: moderate - Allow localhost, block private IPs. Must run before the
+    // PRIVATE_IP_RANGES and IPv6 gates below, which also cover loopback
+    // (127.0.0.0/8, ::1) and would otherwise refuse the literals moderate
+    // exists to permit. Same ordering as validateResolvedAddress.
+    if (mode === 'moderate' && isLocalhost) {
+      return { valid: true };
+    }
+
+    // SECURITY (#984): PRIVATE_IP_RANGES are prefix regexes, so gate them on
+    // isIPv4 — otherwise a DNS name like `247.example.com` is misread as an
+    // IPv4 literal and wrongly refused. What a name resolves to is still
+    // checked by the async validateWebhookUrl and the DNS-pinned agents.
+    if (isIPv4(hostname) && PRIVATE_IP_RANGES.some(regex => regex.test(hostname))) {
       return {
         valid: false,
         reason: mode === 'strict'

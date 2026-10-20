@@ -158,13 +158,34 @@ export class TelemetryCircuitBreaker {
   }
 
   /**
-   * Get current state
+   * Pure (side-effect-free) read of whether a real attempt would currently
+   * be let through. Mirrors shouldAllow()'s logic exactly, but never
+   * transitions open -> half-open and never consumes a half-open probe slot
+   * — only an actual shouldAllow() call (i.e. a real send attempt) may do
+   * that. Used by getState() so that merely reading metrics can never burn
+   * through the limited half-open budget that a real recovery attempt needs.
+   */
+  private canRetryNow(): boolean {
+    switch (this.state) {
+      case 'closed':
+        return true;
+      case 'open':
+        return Date.now() - this.lastFailureTime > this.resetTimeout;
+      case 'half-open':
+        return this.halfOpenCount < this.halfOpenRequests;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Get current state. Side-effect free — see canRetryNow().
    */
   getState(): { state: string; failureCount: number; canRetry: boolean } {
     return {
       state: this.state,
       failureCount: this.failureCount,
-      canRetry: this.shouldAllow()
+      canRetry: this.canRetryNow()
     };
   }
 

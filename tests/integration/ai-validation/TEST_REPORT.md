@@ -176,7 +176,7 @@ NodeTypeNormalizer.normalizeToFullForm(sourceNode.type) === 'nodes-langchain.cha
 2. **Automatic Cleanup**
    - TestContext tracks all created workflows
    - Automatic cleanup in afterEach
-   - Orphaned workflow cleanup in afterAll
+   - Orphaned workflow sweep once before the suite (vitest globalSetup, integration config only)
    - Tagged with `mcp-integration-test` and `ai-validation`
 
 3. **Independent Tests**

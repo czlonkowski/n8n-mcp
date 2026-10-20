@@ -5,12 +5,11 @@
  * Covers successful deletion, error handling, and cleanup verification.
  */
 
-import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestContext, TestContext, createTestWorkflowName } from '../utils/test-context';
 import { getTestN8nClient } from '../utils/n8n-client';
 import { N8nApiClient } from '../../../../src/services/n8n-api-client';
 import { SIMPLE_WEBHOOK_WORKFLOW } from '../utils/fixtures';
-import { cleanupOrphanedWorkflows } from '../utils/cleanup-helpers';
 import { createMcpContext } from '../utils/mcp-context';
 import { InstanceContext } from '../../../../src/types/instance-context';
 import { handleDeleteWorkflow } from '../../../../src/mcp/handlers-n8n-manager';
@@ -30,12 +29,6 @@ describe('Integration: handleDeleteWorkflow', () => {
     await context.cleanup();
   });
 
-  afterAll(async () => {
-    if (!process.env.CI) {
-      await cleanupOrphanedWorkflows();
-    }
-  });
-
   // ======================================================================
   // Successful Deletion
   // ======================================================================
@@ -53,8 +46,12 @@ describe('Integration: handleDeleteWorkflow', () => {
       expect(created.id).toBeTruthy();
       if (!created.id) throw new Error('Workflow ID is missing');
 
-      // Do NOT track workflow since we're testing deletion
-      // context.trackWorkflow(created.id);
+      // Track it even though this test deletes it itself: if the deletion
+      // under test fails (the thing this test exists to catch), afterEach's
+      // cleanup() still removes it instead of leaking it on the instance.
+      // cleanup() tolerates a workflow that's already gone (catches and
+      // logs, doesn't throw), so this is a no-op on the success path.
+      context.trackWorkflow(created.id);
 
       // Delete using MCP handler
       const response = await handleDeleteWorkflow(
@@ -105,6 +102,10 @@ describe('Integration: handleDeleteWorkflow', () => {
       const created = await client.createWorkflow(workflow);
       expect(created.id).toBeTruthy();
       if (!created.id) throw new Error('Workflow ID is missing');
+
+      // Track it so a failed deletion (this test's own assertion) doesn't
+      // leak the workflow; cleanup() tolerates it already being gone.
+      context.trackWorkflow(created.id);
 
       // Verify workflow exists
       const beforeDelete = await client.getWorkflow(created.id);

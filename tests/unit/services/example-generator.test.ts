@@ -158,9 +158,17 @@ describe('ExampleGenerator', () => {
     it('should provide Python example', () => {
       const examples = ExampleGenerator.getExamples('nodes-base.code.pythonExample');
 
-      expect(examples.minimal?.pythonCode).toContain('_input.all()');
-      expect(examples.minimal?.pythonCode).toContain('to_py()');
-      expect(examples.minimal?.pythonCode).toContain('import json');
+      expect(examples.minimal?.language).toBe('pythonNative');
+      expect(examples.minimal?.pythonCode).toContain('_items');
+      expect(examples.minimal?.pythonCode).toContain('item["json"]');
+      expect(examples.minimal?.pythonCode).not.toContain('import ');
+      // Import-free address checks: exactly one @, a dotted domain with no
+      // empty labels, and no whitespace - so "a@." and "a@b@c.d" are rejected.
+      const code = examples.minimal?.pythonCode as string;
+      expect(code).toContain('"@" not in domain');
+      expect(code).toContain('all(labels)');
+      expect(code).toContain('len(labels) > 1');
+      expect(code).toContain('ch.isspace()');
     });
 
     it('should provide AI tool example', () => {

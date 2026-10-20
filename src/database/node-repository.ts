@@ -1,8 +1,16 @@
 import { DatabaseAdapter } from './database-adapter';
-import { ParsedNode } from '../parsers/node-parser';
+import {
+  compressColumnJson,
+  compressColumnText,
+  decompressColumnJson,
+  decompressColumnText,
+  isCompressedColumn,
+} from './compressed-column';
+import { ParsedNode, normalizeNodeVersion } from '../parsers/node-parser';
 import { SQLiteStorageService } from '../services/sqlite-storage-service';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
 import { logger } from '../utils/logger';
+import { NPM_MISSING_README_PLACEHOLDER } from '../constants/npm-readme';
 
 // Default retention window for workflow version backups (days). Configurable
 // via WORKFLOW_VERSION_RETENTION_DAYS; set to 0 to disable age-based pruning.
@@ -32,6 +40,14 @@ export class NodeRepository {
     }
 
     this.db = dbOrService;
+  }
+
+  /**
+   * Run several repository writes as one unit, so a failure part-way through
+   * leaves no half-applied state behind.
+   */
+  transaction<T>(fn: () => T): T {
+    return this.db.transaction(fn);
   }
 
   /**
@@ -99,11 +115,13 @@ export class NodeRepository {
       node.hasToolVariant ? 1 : 0,
       node.version,
       node.documentation || null,
-      JSON.stringify(node.properties, null, 2),
-      JSON.stringify(node.operations, null, 2),
-      JSON.stringify(node.credentials, null, 2),
-      node.outputs ? JSON.stringify(node.outputs, null, 2) : null,
-      node.outputNames ? JSON.stringify(node.outputNames, null, 2) : null,
+      // properties_schema is stored gzip+base64 above COMPRESSION_MIN_LENGTH (#1067). The JSON
+      // columns below stay plain, compact: nodes_fts indexes operations, and none are large.
+      compressColumnJson(node.properties),
+      JSON.stringify(node.operations),
+      JSON.stringify(node.credentials),
+      node.outputs ? JSON.stringify(node.outputs) : null,
+      node.outputNames ? JSON.stringify(node.outputNames) : null,
       // Community node fields
       node.isCommunity ? 1 : 0,
       node.isVerified ? 1 : 0,
@@ -388,7 +406,7 @@ export class NodeRepository {
       toolVariantOf: row.tool_variant_of || null,
       hasToolVariant: Number(row.has_tool_variant) === 1,
       version: row.version,
-      properties: this.safeJsonParse(row.properties_schema, []),
+      properties: decompressColumnJson(row.properties_schema, []),
       operations: this.safeJsonParse(row.operations, []),
       credentials: this.safeJsonParse(row.credentials_required, []),
       hasDocumentation: !!row.documentation,
@@ -404,7 +422,7 @@ export class NodeRepository {
       npmDownloads: row.npm_downloads || 0,
       communityFetchedAt: row.community_fetched_at || null,
       // AI documentation fields
-      npmReadme: row.npm_readme || null,
+      npmReadme: row.npm_readme ? decompressColumnText(row.npm_readme) : null,
       aiDocumentationSummary: row.ai_documentation_summary
         ? this.safeJsonParse(row.ai_documentation_summary, null)
         : null,
@@ -690,29 +708,51 @@ export class NodeRepository {
   }
 
   /**
-   * Get node by npm package name
+   * Get every node stored for an npm package. A package can ship several nodes,
+   * each of which gets its own row (#967).
    */
-  getNodeByNpmPackage(npmPackageName: string): any | null {
-    const row = this.db.prepare(
-      'SELECT * FROM nodes WHERE npm_package_name = ?'
-    ).get(npmPackageName) as any;
+  getNodesByNpmPackage(npmPackageName: string): any[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM nodes WHERE npm_package_name = ? ORDER BY node_type'
+    ).all(npmPackageName) as any[];
 
-    if (!row) return null;
-    return this.parseNodeRow(row);
+    return rows.map(row => this.parseNodeRow(row));
   }
 
   /**
-   * Delete unverified community rows for an npm package that are keyed by a
-   * node type other than the given one. Rows are keyed by node_type, so a sync
-   * that resolves a corrected node type for a package would otherwise insert a
-   * second row and leave the outdated one in search results (#949).
+   * Delete unverified community rows for an npm package that are keyed by a node
+   * type outside the given set, returning how many rows were removed. Rows are
+   * keyed by node_type, so a sync that resolves a corrected (#949) or larger
+   * (#967) set of node types for a package would otherwise insert new rows and
+   * leave the outdated ones in search results.
    */
-  deleteStaleCommunityNodes(npmPackageName: string, keepNodeType: string): number {
-    const result = this.db.prepare(`
-      DELETE FROM nodes
-      WHERE npm_package_name = ? AND node_type != ? AND is_community = 1 AND is_verified = 0
-    `).run(npmPackageName, keepNodeType);
-    return result.changes;
+  deleteStaleCommunityNodes(npmPackageName: string, keepNodeTypes: string[]): number {
+    // "Keep nothing" is a caller bug, not an intent to wipe the package: deleting
+    // every unverified row of a package is deleteCommunityNodes' job, not this one.
+    if (keepNodeTypes.length === 0) {
+      return 0;
+    }
+
+    // Both statements are built from one WHERE so the reported count cannot drift
+    // from what is deleted. The count comes from a SELECT rather than the run
+    // result because the sql.js adapter reports a fixed change count of 1.
+    const where = `
+      WHERE npm_package_name = ? AND is_community = 1 AND is_verified = 0
+        AND node_type NOT IN (${keepNodeTypes.map(() => '?').join(', ')})
+    `;
+    const params = [npmPackageName, ...keepNodeTypes];
+
+    const stale = this.db.prepare(
+      `SELECT COUNT(*) as count FROM nodes ${where}`
+    ).get(...params) as { count: number } | undefined;
+
+    const staleCount = stale?.count ?? 0;
+    if (staleCount === 0) {
+      return 0;
+    }
+
+    this.db.prepare(`DELETE FROM nodes ${where}`).run(...params);
+    return staleCount;
   }
 
   /**
@@ -732,11 +772,75 @@ export class NodeRepository {
   /**
    * Update the README content for a node
    */
-  updateNodeReadme(nodeType: string, readme: string): void {
-    const stmt = this.db.prepare(`
-      UPDATE nodes SET npm_readme = ? WHERE node_type = ?
-    `);
-    stmt.run(readme, nodeType);
+  updateNodeReadme(nodeType: string, readme: string, options: { clearSummary?: boolean } = {}): void {
+    // clearSummary drops a summary that was generated from the README being replaced.
+    const stmt = this.db.prepare(options.clearSummary
+      ? 'UPDATE nodes SET npm_readme = ?, ai_documentation_summary = NULL, ai_summary_generated_at = NULL WHERE node_type = ?'
+      : 'UPDATE nodes SET npm_readme = ? WHERE node_type = ?');
+    stmt.run(compressColumnText(readme), nodeType);
+  }
+
+  /**
+   * Remove a node's README and the AI summary generated from it
+   */
+  clearNodeReadme(nodeType: string): void {
+    this.db.prepare(`
+      UPDATE nodes SET npm_readme = NULL, ai_documentation_summary = NULL, ai_summary_generated_at = NULL
+      WHERE node_type = ?
+    `).run(nodeType);
+  }
+
+  /**
+   * Rewrites rows whose bulk columns are still stored as plain text into the compressed
+   * layout that saveNode() and updateNodeReadme() write. The rebuild only rewrites core
+   * nodes, so community rows keep whatever layout they were written with until this runs.
+   * Idempotent: rows already compressed or below the size threshold are left alone.
+   */
+  compressStoredColumns(): { rewritten: number } {
+    type BulkColumnRow = {
+      node_type: string;
+      properties_schema: string | null;
+      npm_readme: string | null;
+    };
+
+    // No size filter in SQL: SQLite's length() counts characters and the threshold counts
+    // UTF-16 units, so the two disagree on astral text. compressColumnText() decides per row.
+    const rows = this.db.prepare(`
+      SELECT node_type, properties_schema, npm_readme FROM nodes
+      WHERE properties_schema IS NOT NULL OR npm_readme IS NOT NULL
+    `).all() as BulkColumnRow[];
+
+    let rewritten = 0;
+    this.transaction(() => {
+      for (const row of rows) {
+        // A NULL column stays NULL; the pack helpers return anything already compressed,
+        // or below the threshold, unchanged.
+        const packedSchema = row.properties_schema && this.repackStoredJson(row.properties_schema);
+        const packedReadme = row.npm_readme && compressColumnText(row.npm_readme);
+        if (packedSchema === row.properties_schema && packedReadme === row.npm_readme) continue;
+        // Prepared per row: the sql.js adapter frees a statement after its first run().
+        this.db.prepare(
+          'UPDATE nodes SET properties_schema = ?, npm_readme = ? WHERE node_type = ?'
+        ).run(packedSchema, packedReadme, row.node_type);
+        rewritten++;
+      }
+    });
+    return { rewritten };
+  }
+
+  /**
+   * The stored form saveNode() would write for a legacy JSON column: compact JSON, then the
+   * size threshold. Rows written before this change are pretty-printed, and applying the
+   * threshold to that whitespace would compress schemas the writer keeps plain. A value that
+   * is not JSON is kept as the text it is.
+   */
+  private repackStoredJson(stored: string): string {
+    if (isCompressedColumn(stored)) return stored;
+    try {
+      return compressColumnJson(JSON.parse(stored));
+    } catch {
+      return compressColumnText(stored);
+    }
   }
 
   /**
@@ -755,11 +859,12 @@ export class NodeRepository {
    * Get community nodes that are missing README content
    */
   getCommunityNodesWithoutReadme(): any[] {
+    // npm's placeholder is short enough to be stored uncompressed, so SQL can match it.
     const rows = this.db.prepare(`
       SELECT * FROM nodes
-      WHERE is_community = 1 AND (npm_readme IS NULL OR npm_readme = '')
+      WHERE is_community = 1 AND (npm_readme IS NULL OR npm_readme = '' OR npm_readme = ?)
       ORDER BY npm_downloads DESC
-    `).all() as any[];
+    `).all(NPM_MISSING_README_PLACEHOLDER) as any[];
     return rows.map(row => this.parseNodeRow(row));
   }
 
@@ -770,10 +875,10 @@ export class NodeRepository {
     const rows = this.db.prepare(`
       SELECT * FROM nodes
       WHERE is_community = 1
-        AND npm_readme IS NOT NULL AND npm_readme != ''
+        AND npm_readme IS NOT NULL AND npm_readme != '' AND npm_readme != ?
         AND (ai_documentation_summary IS NULL OR ai_documentation_summary = '')
       ORDER BY npm_downloads DESC
-    `).all() as any[];
+    `).all(NPM_MISSING_README_PLACEHOLDER) as any[];
     return rows.map(row => this.parseNodeRow(row));
   }
 
@@ -792,12 +897,13 @@ export class NodeRepository {
     ).get() as any).count;
 
     const withReadme = (this.db.prepare(
-      "SELECT COUNT(*) as count FROM nodes WHERE is_community = 1 AND npm_readme IS NOT NULL AND npm_readme != ''"
-    ).get() as any).count;
+      "SELECT COUNT(*) as count FROM nodes WHERE is_community = 1 AND npm_readme IS NOT NULL AND npm_readme != '' AND npm_readme != ?"
+    ).get(NPM_MISSING_README_PLACEHOLDER) as any).count;
 
+    // Only summaries of rows that count as having a README, so needingAISummary cannot go negative.
     const withAISummary = (this.db.prepare(
-      "SELECT COUNT(*) as count FROM nodes WHERE is_community = 1 AND ai_documentation_summary IS NOT NULL AND ai_documentation_summary != ''"
-    ).get() as any).count;
+      "SELECT COUNT(*) as count FROM nodes WHERE is_community = 1 AND npm_readme IS NOT NULL AND npm_readme != '' AND npm_readme != ? AND ai_documentation_summary IS NOT NULL AND ai_documentation_summary != ''"
+    ).get(NPM_MISSING_README_PLACEHOLDER) as any).count;
 
     return {
       total,
@@ -852,7 +958,7 @@ export class NodeRepository {
       versionData.description || null,
       versionData.category || null,
       versionData.isCurrentMax ? 1 : 0,
-      versionData.propertiesSchema ? JSON.stringify(versionData.propertiesSchema) : null,
+      versionData.propertiesSchema ? compressColumnJson(versionData.propertiesSchema) : null,
       versionData.operations ? JSON.stringify(versionData.operations) : null,
       versionData.credentialsRequired ? JSON.stringify(versionData.credentialsRequired) : null,
       versionData.outputs ? JSON.stringify(versionData.outputs) : null,
@@ -867,29 +973,41 @@ export class NodeRepository {
   /**
    * Get all available versions for a specific node type
    */
-  getNodeVersions(nodeType: string): any[] {
+  /**
+   * Version rows are recorded for base nodes only. A generated Tool variant
+   * accepts the same typeVersions as its base node, so it resolves to the base
+   * recorded in `tool_variant_of`. Real nodes whose name ends in "Tool"
+   * (mcpClientTool, agentTool) are not variants and keep their own lookups.
+   */
+  private versionLookupType(nodeType: string): string {
     const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
+    const row = this.db.prepare(`
+      SELECT tool_variant_of FROM nodes WHERE node_type = ? AND is_tool_variant = 1
+    `).get(normalizedType) as { tool_variant_of?: string } | undefined;
+    return row?.tool_variant_of || normalizedType;
+  }
 
+  getNodeVersions(nodeType: string): any[] {
     const rows = this.db.prepare(`
       SELECT * FROM node_versions
       WHERE node_type = ?
-      ORDER BY version DESC
-    `).all(normalizedType) as any[];
+    `).all(this.versionLookupType(nodeType)) as any[];
 
-    return rows.map(row => this.parseNodeVersionRow(row));
+    // Versions are stored as text; order numerically, newest first
+    return rows
+      .map(row => this.parseNodeVersionRow(row))
+      .sort((a, b) => Number(b.version) - Number(a.version));
   }
 
   /**
    * Get the latest (current max) version for a node type
    */
   getLatestNodeVersion(nodeType: string): any | null {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-
     const row = this.db.prepare(`
       SELECT * FROM node_versions
       WHERE node_type = ? AND is_current_max = 1
       LIMIT 1
-    `).get(normalizedType) as any;
+    `).get(this.versionLookupType(nodeType)) as any;
 
     if (!row) return null;
     return this.parseNodeVersionRow(row);
@@ -899,118 +1017,14 @@ export class NodeRepository {
    * Get a specific version of a node
    */
   getNodeVersion(nodeType: string, version: string): any | null {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-
+    // Rows store versions the way workflows do ("1", "4.1"); accept "1.0" style input too
     const row = this.db.prepare(`
       SELECT * FROM node_versions
       WHERE node_type = ? AND version = ?
-    `).get(normalizedType, version) as any;
+    `).get(this.versionLookupType(nodeType), normalizeNodeVersion(version)) as any;
 
     if (!row) return null;
     return this.parseNodeVersionRow(row);
-  }
-
-  /**
-   * Save a property change between versions
-   */
-  savePropertyChange(changeData: {
-    nodeType: string;
-    fromVersion: string;
-    toVersion: string;
-    propertyName: string;
-    changeType: 'added' | 'removed' | 'renamed' | 'type_changed' | 'requirement_changed' | 'default_changed';
-    isBreaking?: boolean;
-    oldValue?: string;
-    newValue?: string;
-    migrationHint?: string;
-    autoMigratable?: boolean;
-    migrationStrategy?: any;
-    severity?: 'LOW' | 'MEDIUM' | 'HIGH';
-  }): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO version_property_changes (
-        node_type, from_version, to_version, property_name, change_type,
-        is_breaking, old_value, new_value, migration_hint, auto_migratable,
-        migration_strategy, severity
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    stmt.run(
-      changeData.nodeType,
-      changeData.fromVersion,
-      changeData.toVersion,
-      changeData.propertyName,
-      changeData.changeType,
-      changeData.isBreaking ? 1 : 0,
-      changeData.oldValue || null,
-      changeData.newValue || null,
-      changeData.migrationHint || null,
-      changeData.autoMigratable ? 1 : 0,
-      changeData.migrationStrategy ? JSON.stringify(changeData.migrationStrategy) : null,
-      changeData.severity || 'MEDIUM'
-    );
-  }
-
-  /**
-   * Get property changes between two versions
-   */
-  getPropertyChanges(nodeType: string, fromVersion: string, toVersion: string): any[] {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-
-    const rows = this.db.prepare(`
-      SELECT * FROM version_property_changes
-      WHERE node_type = ? AND from_version = ? AND to_version = ?
-      ORDER BY severity DESC, property_name
-    `).all(normalizedType, fromVersion, toVersion) as any[];
-
-    return rows.map(row => this.parsePropertyChangeRow(row));
-  }
-
-  /**
-   * Get all breaking changes for upgrading from one version to another
-   * Can handle multi-step upgrades (e.g., 1.0 -> 2.0 via 1.5)
-   */
-  getBreakingChanges(nodeType: string, fromVersion: string, toVersion?: string): any[] {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-
-    let sql = `
-      SELECT * FROM version_property_changes
-      WHERE node_type = ? AND is_breaking = 1
-    `;
-    const params: any[] = [normalizedType];
-
-    if (toVersion) {
-      // Get changes between specific versions
-      sql += ` AND from_version >= ? AND to_version <= ?`;
-      params.push(fromVersion, toVersion);
-    } else {
-      // Get all breaking changes from this version onwards
-      sql += ` AND from_version >= ?`;
-      params.push(fromVersion);
-    }
-
-    sql += ` ORDER BY from_version, to_version, severity DESC`;
-
-    const rows = this.db.prepare(sql).all(...params) as any[];
-    return rows.map(row => this.parsePropertyChangeRow(row));
-  }
-
-  /**
-   * Get auto-migratable changes for a version upgrade
-   */
-  getAutoMigratableChanges(nodeType: string, fromVersion: string, toVersion: string): any[] {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
-
-    const rows = this.db.prepare(`
-      SELECT * FROM version_property_changes
-      WHERE node_type = ?
-        AND from_version = ?
-        AND to_version = ?
-        AND auto_migratable = 1
-      ORDER BY severity DESC
-    `).all(normalizedType, fromVersion, toVersion) as any[];
-
-    return rows.map(row => this.parsePropertyChangeRow(row));
   }
 
   /**
@@ -1018,10 +1032,9 @@ export class NodeRepository {
    * Distinguishes "no known changes" from "no data" for get_node version modes.
    */
   hasVersionMetadata(nodeType: string): boolean {
-    const normalizedType = NodeTypeNormalizer.normalizeToFullForm(nodeType);
     const row = this.db.prepare(`
       SELECT 1 FROM node_versions WHERE node_type = ? LIMIT 1
-    `).get(normalizedType) as any;
+    `).get(this.versionLookupType(nodeType)) as any;
     return !!row;
   }
 
@@ -1063,7 +1076,7 @@ export class NodeRepository {
       description: row.description,
       category: row.category,
       isCurrentMax: Number(row.is_current_max) === 1,
-      propertiesSchema: row.properties_schema ? this.safeJsonParse(row.properties_schema, []) : null,
+      propertiesSchema: row.properties_schema ? decompressColumnJson(row.properties_schema, []) : null,
       operations: row.operations ? this.safeJsonParse(row.operations, []) : null,
       credentialsRequired: row.credentials_required ? this.safeJsonParse(row.credentials_required, []) : null,
       outputs: row.outputs ? this.safeJsonParse(row.outputs, null) : null,
@@ -1072,28 +1085,6 @@ export class NodeRepository {
       deprecatedProperties: row.deprecated_properties ? this.safeJsonParse(row.deprecated_properties, []) : [],
       addedProperties: row.added_properties ? this.safeJsonParse(row.added_properties, []) : [],
       releasedAt: row.released_at,
-      createdAt: row.created_at
-    };
-  }
-
-  /**
-   * Parse property change row from database
-   */
-  private parsePropertyChangeRow(row: any): any {
-    return {
-      id: row.id,
-      nodeType: row.node_type,
-      fromVersion: row.from_version,
-      toVersion: row.to_version,
-      propertyName: row.property_name,
-      changeType: row.change_type,
-      isBreaking: Number(row.is_breaking) === 1,
-      oldValue: row.old_value,
-      newValue: row.new_value,
-      migrationHint: row.migration_hint,
-      autoMigratable: Number(row.auto_migratable) === 1,
-      migrationStrategy: row.migration_strategy ? this.safeJsonParse(row.migration_strategy, null) : null,
-      severity: row.severity,
       createdAt: row.created_at
     };
   }

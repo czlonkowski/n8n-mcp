@@ -26,8 +26,11 @@ async function main() {
     console.log(`Cleanup Tag: ${creds.cleanup.tag}`);
     console.log(`Cleanup Prefix: ${creds.cleanup.namePrefix}\n`);
 
-    // Run cleanup
-    const result = await cleanupAllTestResources();
+    // Run cleanup. This script only runs when no test suite is live (manual
+    // or scheduled CI invocation), so the age guard that protects the
+    // globalSetup sweep from racing in-flight test files doesn't apply here
+    // - disable it (minAgeMs: 0) so it also clears freshly-created leaks.
+    const result = await cleanupAllTestResources({ minAgeMs: 0 });
 
     console.log('\n✅ Cleanup complete!');
     console.log(`   Workflows deleted: ${result.workflows}`);

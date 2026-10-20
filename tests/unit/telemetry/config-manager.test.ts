@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, MockInstance } from 'vitest';
 import { TelemetryConfigManager } from '../../../src/telemetry/config-manager';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
@@ -16,19 +16,51 @@ vi.mock('fs', async () => {
   };
 });
 
+// The opt-out variables this suite reasons about. The test environment disables
+// telemetry globally (vitest.config.ts) so no test run can reach the backend;
+// this suite owns the opt-out logic itself, so it controls them explicitly
+// instead of inheriting whatever the ambient environment says.
+const OPT_OUT_VARS = [
+  'N8N_MCP_TELEMETRY_DISABLED',
+  'TELEMETRY_DISABLED',
+  'DISABLE_TELEMETRY'
+] as const;
+
 describe('TelemetryConfigManager', () => {
   let manager: TelemetryConfigManager;
+  let savedOptOutVars: Record<string, string | undefined>;
+  // Owned here so individual tests can assert on them without re-spying.
+  let stderrWrite: MockInstance;
+  let stdoutWrite: MockInstance;
+  let consoleLog: MockInstance;
 
   beforeEach(() => {
     vi.clearAllMocks();
     // Clear singleton instance
     (TelemetryConfigManager as any).instance = null;
 
-    // Mock console.log to suppress first-run notice in tests
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    savedOptOutVars = {};
+    for (const name of OPT_OUT_VARS) {
+      savedOptOutVars[name] = process.env[name];
+      delete process.env[name];
+    }
+
+    // Suppress the first-run notice in test output. It goes to stderr, never
+    // stdout — stdout is the JSON-RPC channel in stdio mode.
+    stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
+    for (const [name, value] of Object.entries(savedOptOutVars)) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+
     vi.restoreAllMocks();
   });
 
@@ -55,6 +87,23 @@ describe('TelemetryConfigManager', () => {
         { recursive: true }
       );
       expect(vi.mocked(writeFileSync)).toHaveBeenCalled();
+    });
+
+    // In stdio mode process.stdout is the JSON-RPC channel. This notice used to
+    // be console.log'd, so every fresh install fed 34 lines of box-drawing
+    // characters into the client's JSON parser.
+    it('should write the first-run notice to stderr and never to stdout', () => {
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      manager = TelemetryConfigManager.getInstance();
+      manager.loadConfig();
+
+      const stderrOutput = stderrWrite.mock.calls.map(c => String(c[0])).join('');
+      expect(stderrOutput).toContain('Usage Telemetry');
+
+      // The protocol channel must stay untouched.
+      expect(stdoutWrite).not.toHaveBeenCalled();
+      expect(consoleLog).not.toHaveBeenCalled();
     });
 
     it('should load existing config from disk', () => {
@@ -122,6 +171,106 @@ describe('TelemetryConfigManager', () => {
 
       manager = TelemetryConfigManager.getInstance();
       expect(manager.isEnabled()).toBe(false);
+    });
+  });
+
+  describe('recordServerDisable', () => {
+    it('makes isEnabled() false and persists disabledByServer for the current version', () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+        enabled: true,
+        userId: 'test-id',
+        version: '9.9.9'
+      }));
+
+      manager = TelemetryConfigManager.getInstance();
+      // getPackageVersion() re-reads through the same mocked fs calls, so it
+      // resolves to the config's own 'version' field ('9.9.9') here.
+      const currentVersion = (manager as any).getPackageVersion();
+      expect(currentVersion).toBe('9.9.9');
+
+      manager.recordServerDisable(currentVersion);
+
+      expect(manager.isEnabled()).toBe(false);
+
+      const calls = vi.mocked(writeFileSync).mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      const lastCall = calls[calls.length - 1];
+      const written = JSON.parse(lastCall[1] as string);
+      expect(written.disabledByServer.version).toBe('9.9.9');
+      expect(written.disabledByServer.at).toBeDefined();
+    });
+
+    it('keeps isEnabled() true when disabledByServer.version is an older version', () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+        enabled: true,
+        userId: 'test-id',
+        version: '9.9.9',
+        disabledByServer: { version: '1.0.0', at: '2020-01-01T00:00:00Z' }
+      }));
+
+      manager = TelemetryConfigManager.getInstance();
+      expect(manager.isEnabled()).toBe(true);
+    });
+
+    it('env var opt-out still wins with no disabledByServer set', () => {
+      process.env.N8N_MCP_TELEMETRY_DISABLED = 'true';
+
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+        enabled: true,
+        userId: 'test-id',
+        version: '9.9.9'
+      }));
+
+      manager = TelemetryConfigManager.getInstance();
+      expect(manager.isEnabled()).toBe(false);
+
+      delete process.env.N8N_MCP_TELEMETRY_DISABLED;
+    });
+  });
+
+  describe('getPackageVersion caching', () => {
+    it('reads package.json only once across repeated getPackageVersion() calls', () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+        enabled: true,
+        userId: 'test-id',
+        version: '9.9.9'
+      }));
+
+      manager = TelemetryConfigManager.getInstance();
+
+      expect(manager.getPackageVersion()).toBe('9.9.9');
+      const readCallsAfterFirst = vi.mocked(readFileSync).mock.calls.length;
+
+      expect(manager.getPackageVersion()).toBe('9.9.9');
+      expect(manager.getPackageVersion()).toBe('9.9.9');
+
+      expect(vi.mocked(readFileSync).mock.calls.length).toBe(readCallsAfterFirst);
+    });
+
+    it('does not re-read package.json on every isEnabled() check once disabledByServer is set', () => {
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+        enabled: true,
+        userId: 'test-id',
+        version: '9.9.9',
+        disabledByServer: { version: '9.9.9', at: '2020-01-01T00:00:00Z' }
+      }));
+
+      manager = TelemetryConfigManager.getInstance();
+
+      expect(manager.isEnabled()).toBe(false);
+      const readCallsAfterFirst = vi.mocked(readFileSync).mock.calls.length;
+
+      // Neither the config (already cached by loadConfig) nor the package
+      // version should be re-read from disk on subsequent checks.
+      expect(manager.isEnabled()).toBe(false);
+      expect(manager.isEnabled()).toBe(false);
+
+      expect(vi.mocked(readFileSync).mock.calls.length).toBe(readCallsAfterFirst);
     });
   });
 
@@ -311,8 +460,15 @@ describe('TelemetryConfigManager', () => {
 
       expect(manager.isEnabled()).toBe(true);
 
-      // Restore original environment
-      process.env.N8N_MCP_TELEMETRY_DISABLED = originalEnv;
+      // Restore original environment. Assigning an undefined value would set the
+      // literal string "undefined", which config-manager reads as an invalid
+      // opt-out value; afterEach restores it either way, but keep the local
+      // restore honest.
+      if (originalEnv === undefined) {
+        delete process.env.N8N_MCP_TELEMETRY_DISABLED;
+      } else {
+        process.env.N8N_MCP_TELEMETRY_DISABLED = originalEnv;
+      }
     });
 
     it('should handle invalid JSON in config file gracefully', () => {

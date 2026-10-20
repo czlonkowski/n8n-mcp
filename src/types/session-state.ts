@@ -55,10 +55,16 @@ export interface SessionState {
    * Contains the n8n API credentials and instance-specific settings.
    * This is the critical data needed to reconnect to the correct n8n instance.
    *
-   * Note: API keys are stored in plaintext. The downstream application
-   * MUST encrypt this data before persisting to disk.
+   * Derived from {@link InstanceContext} so every field the live context carries —
+   * including `n8nMcpAccessToken` and any field added later — is part of the
+   * persistence contract instead of being silently dropped on export/restore
+   * (#1045). Only `n8nApiUrl` and `n8nApiKey` are narrowed to required: a session
+   * without both cannot be restored (GHSA-2cf7-hpwf-47h9 hardening, #844).
+   *
+   * Note: API keys and access tokens are stored in plaintext. The downstream
+   * application MUST encrypt this data before persisting to disk.
    */
-  context: {
+  context: Omit<InstanceContext, 'n8nApiUrl' | 'n8nApiKey'> & {
     /**
      * n8n instance API URL
      * Example: "https://n8n.example.com"
@@ -70,23 +76,5 @@ export interface SessionState {
      * Example: "n8n_api_1234567890abcdef"
      */
     n8nApiKey: string;
-
-    /**
-     * Instance identifier (optional)
-     * Custom identifier for tracking which n8n instance this session belongs to
-     */
-    instanceId?: string;
-
-    /**
-     * Session-specific ID (optional)
-     * May differ from top-level sessionId in some proxy configurations
-     */
-    sessionId?: string;
-
-    /**
-     * Additional metadata (optional)
-     * Extensible field for custom application data
-     */
-    metadata?: Record<string, any>;
   };
 }

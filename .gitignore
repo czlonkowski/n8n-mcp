@@ -150,3 +150,9 @@ ui-apps/node_modules/
 
 # Telemetry configuration (user-specific)
 ~/.n8n-mcp/
+
+# Local UI protocol snapshots and test artifacts
+ui-apps/.lab-smoke.json
+ui-apps/coverage/
+ui-apps/test-results/
+ui-apps/playwright-report/

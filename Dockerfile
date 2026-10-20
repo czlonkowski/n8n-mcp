@@ -1,8 +1,21 @@
 # syntax=docker/dockerfile:1.7
 # Ultra-optimized Dockerfile - minimal runtime dependencies (no n8n packages)
 
-# Stage 1: Builder (TypeScript compilation only)
-FROM node:22-alpine AS builder
+# Build the self-contained UI assets independently of server dependencies.
+# Both build stages run on the build host's own platform: they produce only
+# HTML and JavaScript, which are the same for every target platform, so there is
+# no reason to run npm under emulation for the non-native target.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS ui-builder
+WORKDIR /app/ui-apps
+COPY ui-apps/package.json ui-apps/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
+COPY ui-apps/tsconfig.json ui-apps/vite.config.ts ./
+COPY ui-apps/src/apps ./src/apps
+COPY ui-apps/src/shared ./src/shared
+RUN npm run build
+
+# Server builder (TypeScript compilation only)
+FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
 WORKDIR /app
 
 # Copy tsconfig files for TypeScript compilation
@@ -16,12 +29,20 @@ COPY tsconfig*.json ./
 # compiles src against older type definitions (a range would resolve through the
 # `latest` dist-tag, which lags the release n8n ships), and a stale zod fails
 # `npm install` outright, because n8n-workflow declares an exact zod peer dependency.
+# Any new direct runtime dependency imported by src/ (e.g. undici) must also be added
+# here, or tsc fails with TS2307 because the scratch package.json never installed it.
+#
+# The overrides mirror package.json. isolated-vm is a native module pulled in through
+# n8n-workflow (@n8n/expression-runtime); it is never used here, and from 7.x it ships
+# no prebuilt binary for Node 22, so without the stub npm tries to compile it and fails
+# on this image (no Python or build tools).
 RUN --mount=type=cache,target=/root/.npm \
-    echo '{}' > package.json && \
+    echo '{"overrides":{"isolated-vm":"npm:empty-npm-package@1.0.0"}}' > package.json && \
     npm install --no-save typescript@^5.8.3 @types/node@^22.15.30 @types/express@^5.0.3 \
-        @modelcontextprotocol/sdk@1.28.0 dotenv@^16.5.0 express@^5.1.0 axios@^1.18.1 \
-        n8n-workflow@2.31.3 uuid@^11.1.1 @types/uuid@^10.0.0 \
-        openai@^4.77.0 zod@3.25.67 lru-cache@^11.2.1 @supabase/supabase-js@^2.57.4
+        @modelcontextprotocol/sdk@1.30.0 dotenv@^16.5.0 express@^5.1.0 axios@^1.20.0 \
+        n8n-workflow@2.43.3 uuid@^11.1.1 @types/uuid@^10.0.0 \
+        openai@^4.77.0 zod@3.25.76 lru-cache@^11.2.1 \
+        undici@^6.29.0
 
 # Copy source and build
 COPY src ./src
@@ -50,6 +71,9 @@ RUN --mount=type=cache,target=/root/.npm \
 
 # Copy built application
 COPY --from=builder /app/dist ./dist
+COPY --from=ui-builder /app/ui-apps/dist ./ui-apps/dist
+RUN --mount=type=bind,source=scripts/ui-package-smoke.cjs,target=/tmp/ui-package-smoke.cjs \
+    node /tmp/ui-package-smoke.cjs /app
 
 # Copy pre-built database and required files
 # Cache bust: 2025-07-06-trigger-fix-v3 - includes is_trigger=true for webhook,cron,interval,emailReadImap

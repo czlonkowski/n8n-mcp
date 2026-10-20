@@ -18,17 +18,19 @@ import dotenv from 'dotenv';
 import { getStartupBaseUrl, formatEndpointUrls, detectBaseUrl } from './utils/url-detector';
 import { PROJECT_VERSION } from './utils/version';
 import { v4 as uuidv4 } from 'uuid';
-import { createHash } from 'crypto';
+import { createHmac } from 'crypto';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import {
   negotiateProtocolVersion,
   logProtocolNegotiation,
   STANDARD_PROTOCOL_VERSION
 } from './utils/protocol-version';
-import { InstanceContext, validateInstanceContext } from './types/instance-context';
+import { InstanceContext, pickInstanceContextFields, validateInstanceContext } from './types/instance-context';
+import { runWithRequestContext } from './utils/request-context';
 import { SessionState } from './types/session-state';
 import type { AdditionalTool } from './types/additional-tools';
 import { closeSharedDatabase } from './database/shared-database';
+import { clearOfficialMcpClientCache } from './mcp/official-mcp-access';
 
 dotenv.config();
 
@@ -39,6 +41,11 @@ const DEFAULT_PROTOCOL_VERSION = STANDARD_PROTOCOL_VERSION;
 interface MultiTenantHeaders {
   'x-n8n-url'?: string;
   'x-n8n-key'?: string;
+  // MCP access token for n8n's instance-level MCP server (n8n_manage_agents,
+  // n8n_explore_node_resources, the team-project fallback in n8n_list_catalog).
+  // Separate secret from x-n8n-key; the env-level equivalent is
+  // N8N_MCP_ACCESS_TOKEN.
+  'x-n8n-mcp-token'?: string;
   'x-instance-id'?: string;
   'x-session-id'?: string;
 }
@@ -46,6 +53,56 @@ interface MultiTenantHeaders {
 // Session management constants
 const MAX_SESSIONS = Math.max(1, parseInt(process.env.N8N_MCP_MAX_SESSIONS || '100', 10));
 const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+// Interval between SSE keep-alive comment frames on the Streamable HTTP
+// transport's open streams — the legacy SSEServerTransport path below has no
+// equivalent option. The frames are what keep an idle GET stream, or a POST
+// stream held open through a long tool call, from being closed by a reverse
+// proxy or an idle timeout, which reaches the client as
+// `SSE stream disconnected: TypeError: terminated`.
+//
+// 15s is the SDK's own default, set explicitly so the behavior is visible here
+// and does not move with a future change to that default.
+const STREAMABLE_HTTP_KEEP_ALIVE_MS = 15_000;
+
+// The JSON-RPC surface this server implements, as exact method names plus
+// namespace prefixes. Gating on the namespace rather than an exact method list
+// means a method added inside a namespace we already serve keeps reaching the
+// SDK instead of being rejected as unknown while the surface drifts.
+// Namespaces cover every request and notification defined by
+// @modelcontextprotocol/sdk 1.30.0; tests/unit/http-server/method-not-found.test.ts
+// fails if a later SDK introduces one outside them.
+//
+// The cost of that choice: an unregistered method inside an accepted namespace
+// (`tools/not-real`) is admitted rather than answered -32601 here. With a
+// session it still gets -32601, from the SDK's own dispatch; without one it
+// falls through to the session error. No client probes that way — the probe
+// this guard exists for is `server/discover` — and narrowing to an exact list
+// would trade this corner for falsely rejecting the next method the SDK adds.
+const IMPLEMENTED_MCP_METHODS = new Set(['initialize', 'ping']);
+const IMPLEMENTED_MCP_METHOD_PREFIXES = [
+  'tools/',
+  'resources/',
+  'prompts/',
+  'completion/',
+  'logging/',
+  'notifications/',
+  'sampling/',
+  'roots/',
+  'elicitation/',
+  'tasks/',
+];
+
+/**
+ * Whether `method` falls inside the surface described by the two lists above.
+ * Exported so tests can assert the surface without driving a request through.
+ */
+export function isImplementedMcpMethod(method: string): boolean {
+  return (
+    IMPLEMENTED_MCP_METHODS.has(method) ||
+    IMPLEMENTED_MCP_METHOD_PREFIXES.some(prefix => method.startsWith(prefix))
+  );
+}
 
 interface SessionMetrics {
   totalSessions: number;
@@ -61,6 +118,7 @@ function extractMultiTenantHeaders(req: express.Request): MultiTenantHeaders {
   return {
     'x-n8n-url': req.headers['x-n8n-url'] as string | undefined,
     'x-n8n-key': req.headers['x-n8n-key'] as string | undefined,
+    'x-n8n-mcp-token': req.headers['x-n8n-mcp-token'] as string | undefined,
     'x-instance-id': req.headers['x-instance-id'] as string | undefined,
     'x-session-id': req.headers['x-session-id'] as string | undefined,
   };
@@ -273,7 +331,86 @@ export class SingleSessionHTTPServer {
     }
     return isSingleNotification(body);
   }
-  
+
+  /**
+   * Answer methods outside the implemented JSON-RPC surface with -32601, before
+   * any session or tenant handling touches the request.
+   *
+   * The session check used to run first, so an unimplemented method came back as
+   * a session error (-32000, "No valid session ID provided and not an initialize
+   * request"). Clients speaking MCP revision 2026-07-28 probe every remote server
+   * with a session-less `server/discover` and read -32601 as "this server is
+   * 2025-era", which is what makes them fall back to the `initialize` handshake.
+   * Without it they cannot classify the server, re-probe until their retry
+   * counter runs out, and disable the connector (#994).
+   *
+   * The status code depends on whether a session id is present. The 2026-07-28
+   * Streamable HTTP spec asks for 404 alongside -32601, but to a 2025-era client
+   * a 404 on a request that carries `Mcp-Session-Id` means "session gone,
+   * re-initialize", so answering 404 there would provoke a needless teardown.
+   * Both branches carry -32601, which is what clients key on.
+   *
+   * @returns true when the request has been answered and must not be processed further
+   */
+  private handleUnimplementedMethod(req: express.Request, res: express.Response): boolean {
+    // Only single objects are classified here. Batches — removed from MCP in
+    // revision 2025-06-18 — and non-object bodies fall through to the existing
+    // handling unchanged.
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+
+    const { jsonrpc, method, id } = body as {
+      jsonrpc?: unknown;
+      method?: unknown;
+      id?: unknown;
+    };
+
+    // A body that asserts a different JSON-RPC version is not ours to answer.
+    // A body that simply omits the member still is: "the client never sees
+    // -32601" is the whole of #994, and answering it is inert — no session is
+    // touched, no state written, no outbound request made — so there is nothing
+    // to be gained by withholding it from a client that sends a minimal probe.
+    if (jsonrpc !== undefined && jsonrpc !== '2.0') return false;
+    if (typeof method !== 'string' || isImplementedMcpMethod(method)) return false;
+
+    // A response is already on the wire, so there is nothing left to answer;
+    // report the request handled rather than writing to it twice.
+    if (res.headersSent) return true;
+
+    // The body limit is 10mb, so the method is caller-controlled and unbounded.
+    // Truncate before it reaches the log or the response.
+    const safeMethod = method.length > 128 ? `${method.slice(0, 128)}…` : method;
+
+    // Notifications carry no id, so there is no response channel to put an error on.
+    if (this.isJsonRpcNotification(body)) {
+      logger.info('Unimplemented JSON-RPC notification ignored', { method: safeMethod });
+      res.status(202).end();
+      return true;
+    }
+
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+    logger.info('Unimplemented JSON-RPC method', { method: safeMethod, hasSessionId: !!sessionId });
+
+    if (!sessionId && res.locals) {
+      // Exempt this one response from the auth limiter's failure count. The
+      // limiter only skips responses below 400 (#265), so without this the 404
+      // branch — the steady-state answer to every new client's first probe —
+      // spends one of the 20 tokens per 15 minutes that all users share behind
+      // a proxy when TRUST_PROXY is unset. Set only here, on the 404 branch.
+      res.locals.mcpMethodNotFound = true;
+    }
+
+    res.status(sessionId ? 200 : 404).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32601,
+        message: `Method not found: ${safeMethod}`
+      },
+      id: id ?? null
+    });
+    return true;
+  }
+
   /**
    * Sanitize error information for client responses
    */
@@ -370,19 +507,37 @@ export class SingleSessionHTTPServer {
   }
 
   /**
-   * Switch session context with locking to prevent race conditions
+   * Switch session context with locking to prevent race conditions.
+   *
+   * With `mergeOverStored`, `newContext` holds only the fields a request supplied and
+   * is merged over the stored context once this call holds the lock. Merging before
+   * the wait would let a queued request write back values that a request ahead of it
+   * has since replaced.
    */
-  private async switchSessionContext(sessionId: string, newContext: InstanceContext): Promise<void> {
-    // Check if there's already a switch in progress for this session
-    const existingLock = this.contextSwitchLocks.get(sessionId);
-    if (existingLock) {
-      // Wait for the existing switch to complete
-      await existingLock;
-      return;
+  private async switchSessionContext(
+    sessionId: string,
+    newContext: InstanceContext,
+    mergeOverStored = false
+  ): Promise<InstanceContext | undefined> {
+    // Wait for any switch already in progress for this session, then apply this
+    // request's context as well. Returning after the wait would drop it, leaving the
+    // session on the context of whichever request got there first.
+    let existingLock = this.contextSwitchLocks.get(sessionId);
+    while (existingLock) {
+      await existingLock.catch(() => undefined);
+      existingLock = this.contextSwitchLocks.get(sessionId);
+    }
+
+    let contextToApply = newContext;
+    if (mergeOverStored) {
+      const storedContext = this.sessionContexts[sessionId];
+      // The session went away while this request waited; there is nothing to refresh.
+      if (!storedContext) return undefined;
+      contextToApply = { ...storedContext, ...newContext };
     }
 
     // Create a promise for this switch operation
-    const switchPromise = this.performContextSwitch(sessionId, newContext);
+    const switchPromise = this.performContextSwitch(sessionId, contextToApply);
     this.contextSwitchLocks.set(sessionId, switchPromise);
 
     try {
@@ -391,6 +546,7 @@ export class SingleSessionHTTPServer {
       // Clean up the lock after completion
       this.contextSwitchLocks.delete(sessionId);
     }
+    return contextToApply;
   }
 
   /**
@@ -401,7 +557,7 @@ export class SingleSessionHTTPServer {
 
     // Only switch if the context has actually changed
     if (JSON.stringify(existingContext) !== JSON.stringify(newContext)) {
-      logger.info('Multi-tenant shared mode: Updating instance context for session', {
+      logger.info('Multi-tenant mode: Updating instance context for session', {
         sessionId,
         oldInstanceId: existingContext?.instanceId,
         newInstanceId: newContext.instanceId
@@ -534,6 +690,14 @@ export class SingleSessionHTTPServer {
     // Wrap all operations to prevent console interference
     return this.consoleManager.wrapOperation(async () => {
       try {
+        // An unimplemented method needs neither a session nor an instance
+        // context, so it is answered before either is looked at (#994). The
+        // POST /mcp route runs the same guard earlier; this call covers
+        // embedders that reach handleRequest directly (see mcp-engine.ts).
+        if (this.handleUnimplementedMethod(req, res)) {
+          return;
+        }
+
         // SECURITY (GHSA-4ggg-h7ph-26qr): validate instance-supplied URL.
         if (instanceContext?.n8nApiUrl) {
           const { SSRFProtection } = await import('./utils/ssrf-protection');
@@ -557,6 +721,28 @@ export class SingleSessionHTTPServer {
           }
         }
 
+        // #1152: embedders hand the context over directly, and it may come from untyped
+        // JSON. A non-boolean switch (the string "false") would read as enabled here and
+        // would later make validateInstanceContext reject the whole context, so refuse
+        // it up front instead of storing it on a session.
+        if (instanceContext?.uiAppsEnabled !== undefined && typeof instanceContext.uiAppsEnabled !== 'boolean') {
+          logger.warn('Instance context rejected: uiAppsEnabled must be a boolean', {
+            receivedType: typeof instanceContext.uiAppsEnabled,
+            instanceId: instanceContext.instanceId
+          });
+          if (!res.headersSent) {
+            res.status(400).json({
+              jsonrpc: '2.0',
+              error: {
+                code: -32602,
+                message: 'Invalid instance configuration: uiAppsEnabled must be a boolean'
+              },
+              id: req.body?.id ?? null
+            });
+          }
+          return;
+        }
+
         const sessionId = req.headers['mcp-session-id'] as string | undefined;
         const isInitialize = req.body ? isInitializeRequest(req.body) : false;
 
@@ -572,6 +758,9 @@ export class SingleSessionHTTPServer {
         });
         
         let transport: StreamableHTTPServerTransport;
+        // SECURITY (GHSA-74jq-crxq-6x63): the context this request runs with.
+        let requestContext: InstanceContext | undefined = instanceContext;
+        let requestServer: N8NDocumentationMCPServer | undefined;
         
         if (isInitialize) {
           // Check session limits before creating new session
@@ -587,7 +776,7 @@ export class SingleSessionHTTPServer {
                 code: -32000,
                 message: `Session limit reached (${MAX_SESSIONS}). Please wait for existing sessions to expire.`
               },
-              id: req.body?.id || null
+              id: req.body?.id ?? null
             });
             return;
           }
@@ -638,11 +827,22 @@ export class SingleSessionHTTPServer {
           if (isMultiTenantEnabled && sessionStrategy === 'instance' && instanceContext?.instanceId) {
             // In multi-tenant mode with instance strategy, create session per instance
             // This ensures each tenant gets isolated sessions
-            // Include configuration hash to prevent collisions with different configs
-            const configHash = createHash('sha256')
+            // Include configuration hash to prevent collisions with different configs.
+            // The credentials are part of the config identity (#1045): rotating the n8n
+            // API key or the instance-level MCP access token must change the hash, so a
+            // routing layer comparing hashes stops matching sessions bound to the old
+            // secrets. The secrets only feed the digest — the session ID and logs carry
+            // just its first 8 hex chars, never the values — and the digest is keyed
+            // with the server's auth token, so the truncated fingerprint is not an
+            // offline confirmation oracle for credential guesses (CodeQL
+            // js/insufficient-password-hash). Any legitimate hash-comparing consumer
+            // already holds AUTH_TOKEN, so cross-process comparability is preserved.
+            const configHash = createHmac('sha256', this.authToken ?? '')
               .update(JSON.stringify({
                 url: instanceContext.n8nApiUrl,
-                instanceId: instanceContext.instanceId
+                instanceId: instanceContext.instanceId,
+                n8nApiKey: instanceContext.n8nApiKey,
+                n8nMcpAccessToken: instanceContext.n8nMcpAccessToken
               }))
               .digest('hex')
               .substring(0, 8);
@@ -660,10 +860,13 @@ export class SingleSessionHTTPServer {
 
           const server = new N8NDocumentationMCPServer(instanceContext, undefined, {
             additionalTools: this.additionalTools,
+            requireRequestContext: isMultiTenantEnabled && sessionStrategy === 'shared',
           });
+          requestServer = server;
 
           transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => sessionIdToUse,
+            keepAliveMs: STREAMABLE_HTTP_KEEP_ALIVE_MS,
             onsessioninitialized: (initializedSessionId: string) => {
               // Store both transport and server by session ID when session is initialized
               logger.info('handleRequest: Session initialized, storing transport and server', { 
@@ -715,7 +918,7 @@ export class SingleSessionHTTPServer {
                 code: -32602,
                 message: 'Invalid session ID format'
               },
-              id: req.body?.id || null
+              id: req.body?.id ?? null
             });
             return;
           }
@@ -732,7 +935,7 @@ export class SingleSessionHTTPServer {
                 code: -32000,
                 message: 'Session uses SSE transport. Send messages to POST /messages?sessionId=<id> instead.'
               },
-              id: req.body?.id || null
+              id: req.body?.id ?? null
             });
             return;
           }
@@ -750,7 +953,7 @@ export class SingleSessionHTTPServer {
             res.status(404).json({
               jsonrpc: '2.0',
               error: { code: -32000, message: 'Session not found or expired' },
-              id: req.body?.id || null,
+              id: req.body?.id ?? null,
             });
             return;
           }
@@ -759,9 +962,36 @@ export class SingleSessionHTTPServer {
           const isMultiTenantEnabled = process.env.ENABLE_MULTI_TENANT === 'true';
           const sessionStrategy = process.env.MULTI_TENANT_SESSION_STRATEGY || 'instance';
 
-          if (isMultiTenantEnabled && sessionStrategy === 'shared' && instanceContext) {
+          requestContext = this.sessionContexts[sessionId];
+          requestServer = this.servers[sessionId];
+          if (isMultiTenantEnabled && sessionStrategy === 'shared') {
             // Update the context for this session with locking to prevent race conditions
-            await this.switchSessionContext(sessionId, instanceContext);
+            requestContext = instanceContext
+              ? await this.switchSessionContext(sessionId, instanceContext)
+              : undefined;
+          } else if (isMultiTenantEnabled && sessionStrategy === 'instance' && instanceContext) {
+            // #1045: in instance strategy the context used to be frozen at creation, so a
+            // rotated n8n API key or MCP access token kept being served until the session
+            // idled out or the client re-initialized. Refresh it — but only from a request
+            // that carries the COMPLETE tenant identity for the SAME instance AND the SAME
+            // n8n URL this session is bound to. A partial context (GHSA-2cf7-hpwf-47h9,
+            // #844) or a different instanceId must never overwrite a session's
+            // credentials, and a changed URL is a different config identity that has to go
+            // through initialize, not mutate an existing session. Fields the request omits
+            // mean "unchanged" — merging over the stored context keeps a request without
+            // e.g. the MCP access token header from clearing a configured token.
+            const storedContext = this.sessionContexts[sessionId];
+            if (
+              instanceContext.n8nApiUrl &&
+              instanceContext.n8nApiKey &&
+              instanceContext.instanceId &&
+              storedContext?.instanceId === instanceContext.instanceId &&
+              storedContext?.n8nApiUrl === instanceContext.n8nApiUrl
+            ) {
+              requestContext =
+                await this.switchSessionContext(sessionId, pickInstanceContextFields(instanceContext), true)
+                ?? storedContext;
+            }
           }
 
           // Update session access time
@@ -805,7 +1035,7 @@ export class SingleSessionHTTPServer {
               code: -32000,
               message: errorMessage
             },
-            id: req.body?.id || null
+            id: req.body?.id ?? null
           });
           return;
         }
@@ -815,7 +1045,11 @@ export class SingleSessionHTTPServer {
           sessionId: isInitialize ? 'new' : sessionId,
           isInitialize 
         });
-        await transport.handleRequest(req, res, req.body);
+        if (requestServer) {
+          await runWithRequestContext(requestServer, requestContext, () => transport.handleRequest(req, res, req.body));
+        } else {
+          await transport.handleRequest(req, res, req.body);
+        }
         
         const duration = Date.now() - startTime;
         logger.info('MCP request completed', { duration, sessionId: transport.sessionId });
@@ -847,7 +1081,7 @@ export class SingleSessionHTTPServer {
                 code: sanitizedError.code
               }
             },
-            id: req.body?.id || null
+            id: req.body?.id ?? null
           });
         }
       }
@@ -985,6 +1219,13 @@ export class SingleSessionHTTPServer {
       standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
       legacyHeaders: false, // Disable `X-RateLimit-*` headers
       skipSuccessfulRequests: true, // Only count failed auth attempts (#617)
+      // A "method not found" answer is a correct protocol response, not a failed
+      // authentication attempt, but it carries 404 on the session-less branch and
+      // the default predicate counts anything at or above 400. The guard that
+      // emits it runs after authentication, so an unauthenticated caller can
+      // never reach it and this cannot help a brute-forcer (#994, #265).
+      requestWasSuccessful: (_req: express.Request, res: express.Response) =>
+        res.statusCode < 400 || res.locals?.mcpMethodNotFound === true,
       handler: (req, res) => {
         logger.warn('Rate limit exceeded', {
           ip: req.ip,
@@ -1191,7 +1432,7 @@ export class SingleSessionHTTPServer {
         res.status(400).json({
           jsonrpc: '2.0',
           error: { code: -32602, message: 'Missing sessionId query parameter' },
-          id: req.body?.id || null
+          id: req.body?.id ?? null
         });
         return;
       }
@@ -1202,7 +1443,7 @@ export class SingleSessionHTTPServer {
         res.status(400).json({
           jsonrpc: '2.0',
           error: { code: -32000, message: 'SSE session not found or expired' },
-          id: req.body?.id || null
+          id: req.body?.id ?? null
         });
         return;
       }
@@ -1218,7 +1459,7 @@ export class SingleSessionHTTPServer {
           res.status(500).json({
             jsonrpc: '2.0',
             error: { code: -32603, message: 'Internal error processing SSE message' },
-            id: req.body?.id || null
+            id: req.body?.id ?? null
           });
         }
       }
@@ -1331,6 +1572,11 @@ export class SingleSessionHTTPServer {
         activeSessions: this.getActiveSessionCount()
       });
 
+      // Answer unimplemented methods ahead of the multi-tenant header check: a
+      // probe such as `server/discover` carries no tenant headers, and rejecting
+      // it as a missing-tenant error would hide the -32601 the client waits for.
+      if (this.handleUnimplementedMethod(req, res)) return;
+
       // Extract instance context from headers if present (for multi-tenant support)
       let instanceContext: InstanceContext | undefined;
       {
@@ -1338,31 +1584,54 @@ export class SingleSessionHTTPServer {
         const headers = extractMultiTenantHeaders(req);
         const hasUrl = headers['x-n8n-url'];
         const hasKey = headers['x-n8n-key'];
+        const hasMcpToken = headers['x-n8n-mcp-token'];
 
         // SECURITY (GHSA-jxx9-px88-pj69, GHSA-2cf7-hpwf-47h9): in multi-tenant
         // mode both tenant headers are required; an incomplete context is
         // rejected.
-        if (process.env.ENABLE_MULTI_TENANT === 'true' && (!hasUrl || !hasKey)) {
-          logger.warn('Multi-tenant request missing tenant headers', {
+        const multiTenantIncomplete = process.env.ENABLE_MULTI_TENANT === 'true' && (!hasUrl || !hasKey);
+        // The same completeness rule applies to x-n8n-mcp-token in any mode:
+        // the MCP endpoint is derived from x-n8n-url, so a token on its own
+        // cannot address the caller's instance. Without this the request
+        // would fall through to N8N_MCP_ACCESS_TOKEN from the environment —
+        // the operator's own token, against the operator's own instance.
+        const mcpTokenWithoutUrl = !!hasMcpToken && !hasUrl;
+        if (multiTenantIncomplete || mcpTokenWithoutUrl) {
+          logger.warn('Request with an incomplete instance header set', {
             hasUrl: !!hasUrl,
-            hasKey: !!hasKey
+            hasKey: !!hasKey,
+            hasMcpToken: !!hasMcpToken,
+            multiTenant: process.env.ENABLE_MULTI_TENANT === 'true'
           });
           res.status(400).json({
             jsonrpc: '2.0',
             error: {
               code: -32602,
-              message: 'Multi-tenant headers required'
+              message: multiTenantIncomplete
+                ? 'Multi-tenant headers required'
+                : 'x-n8n-mcp-token requires x-n8n-url'
             },
             id: req.body?.id ?? null
           });
           return;
         }
 
-        if (hasUrl || hasKey) {
-          // Create context with proper type handling
+        if (hasUrl || hasKey || hasMcpToken) {
+          // Create context with proper type handling. A context carrying
+          // n8nApiUrl plus either credential is authoritative for official-MCP
+          // calls (resolveOfficialMcpConfig never falls back to the
+          // environment for it). getN8nApiClient (the Public API client) is
+          // stricter: without n8nApiKey it falls back to the environment
+          // client in single-tenant mode, so a url+token-only context routes
+          // official calls to the header instance while Public API calls
+          // (the consent write behind exposeToMcp, and the pinned/direct
+          // trigger-detection read) resolve to the operator's own instance —
+          // mcp-exposure.ts refuses those with NOT_CONFIGURED rather than
+          // letting them proceed against the wrong instance.
           const candidate: InstanceContext = {
             n8nApiUrl: hasUrl || undefined,
             n8nApiKey: hasKey || undefined,
+            n8nMcpAccessToken: hasMcpToken || undefined,
             instanceId: headers['x-instance-id'] || undefined,
             sessionId: headers['x-session-id'] || undefined
           };
@@ -1415,7 +1684,7 @@ export class SingleSessionHTTPServer {
       logger.info('POST /mcp request completed - checking response status', {
         responseHeadersSent: res.headersSent,
         responseStatusCode: res.statusCode,
-        responseFinished: res.finished
+        responseFinished: res.writableEnded
       });
     });
     
@@ -1547,6 +1816,26 @@ export class SingleSessionHTTPServer {
       });
     }
 
+    // Ship queued telemetry before the process exits. This server closes each
+    // session's MCP server directly rather than calling its shutdown(), so the
+    // flush there does not cover this path. Lazy-required so telemetry stays off
+    // the module load path. Bounded and non-throwing.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { telemetry } = require('./telemetry');
+      await telemetry.flushBeforeExit();
+    } catch (error) {
+      logger.debug('Telemetry flush during shutdown failed:', error);
+    }
+
+    // Close every cached n8n MCP client, so their transports and pinned
+    // undici dispatchers do not keep the process alive.
+    try {
+      await clearOfficialMcpClientCache();
+    } catch (error) {
+      logger.warn('Error closing n8n MCP clients:', error);
+    }
+
     // Close the shared database connection (only during process shutdown)
     // This must happen after all sessions are closed
     try {
@@ -1630,7 +1919,7 @@ export class SingleSessionHTTPServer {
 
       // Skip sessions without context - these can't be restored meaningfully
       // (Context is required to reconnect to the correct n8n instance)
-      if (!context || !context.n8nApiUrl || !context.n8nApiKey) {
+      if (!context?.n8nApiUrl || !context?.n8nApiKey) {
         logger.debug(`Skipping session ${sessionId} - missing required context`);
         continue;
       }
@@ -1642,12 +1931,16 @@ export class SingleSessionHTTPServer {
           createdAt: metadata.createdAt.toISOString(),
           lastAccess: metadata.lastAccess.toISOString()
         },
+        // Copy every declared InstanceContext field instead of re-listing them here:
+        // a hand-maintained list silently dropped n8nMcpAccessToken (and the
+        // timeout/retry tuning) when those fields were added to InstanceContext
+        // (#1045). The pick keeps embedder-supplied extra properties out of the
+        // persisted plaintext; its key list is compile-time checked for completeness.
         context: {
+          ...pickInstanceContextFields(context),
           n8nApiUrl: context.n8nApiUrl,
           n8nApiKey: context.n8nApiKey,
-          instanceId: context.instanceId || sessionId, // Use sessionId as fallback
-          sessionId: context.sessionId,
-          metadata: context.metadata
+          instanceId: context.instanceId || sessionId // Use sessionId as fallback
         }
       });
     }
@@ -1773,14 +2066,14 @@ export class SingleSessionHTTPServer {
           lastAccess
         };
 
-        // Restore session context
-        this.sessionContexts[sessionState.sessionId] = {
-          n8nApiUrl: sessionState.context.n8nApiUrl,
-          n8nApiKey: sessionState.context.n8nApiKey,
-          instanceId: sessionState.context.instanceId,
-          sessionId: sessionState.context.sessionId,
-          metadata: sessionState.context.metadata
-        };
+        // Restore session context. Copy every declared InstanceContext field — a
+        // hand-maintained field list silently dropped n8nMcpAccessToken for every
+        // restored session (#1045) — while keeping unknown keys from the persisted
+        // JSON out of the live context. The context has already passed
+        // validateInstanceContext plus the credential-completeness guard above.
+        this.sessionContexts[sessionState.sessionId] = pickInstanceContextFields(
+          sessionState.context
+        );
 
         logger.debug(`Restored session ${sessionState.sessionId}`);
         logSecurityEvent('session_restore', {

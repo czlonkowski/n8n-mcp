@@ -27,9 +27,6 @@ import {
   WebhookRequest,
   WorkflowExport,
   WorkflowImport,
-  SourceControlStatus,
-  SourceControlPullResult,
-  SourceControlPushResult,
   DataTable,
   DataTableColumn,
   DataTableListParams,
@@ -40,8 +37,13 @@ import {
   DataTableUpsertRowParams,
   DataTableDeleteRowsParams,
   WorkflowNodeGroup,
+  Folder,
+  FolderListParams,
+  FolderListResponse,
+  ProjectSummary,
+  Project,
 } from '../types/n8n-api';
-import { handleN8nApiError, logN8nError, N8nValidationError } from '../utils/n8n-errors';
+import { enrichUnknownPropertyError, handleN8nApiError, isUnknownSettingsPropertyError, logN8nError, N8nApiError, N8nValidationError, unknownSettingsKeysNamedBy } from '../utils/n8n-errors';
 import { encodeApiPathSegment } from '../utils/validation-schemas';
 import { cleanWorkflowForCreate, cleanWorkflowForUpdate } from './n8n-validation';
 import {
@@ -55,6 +57,8 @@ import {
   fetchN8nVersion,
   cleanSettingsForVersion,
   getCachedVersion,
+  settingsRejectionLadder,
+  versionAtLeast,
 } from './n8n-version';
 import type { PinnedAgents } from '../utils/ssrf-protection';
 
@@ -75,11 +79,64 @@ const GROUPS_UNSUPPORTED_WARNING =
   'This n8n version does not support canvas groups (added in 2.28); the workflow was saved without them.';
 const GROUP_DESCRIPTIONS_UNSUPPORTED_WARNING =
   'This n8n version does not support canvas group descriptions (added in 2.32); the descriptions were not saved.';
+const settingsRejectedWarning = (keys: string[]) =>
+  `This n8n version rejects the workflow settings ${keys.join(', ')}; they were left out of the write ` +
+  '(on an update, the values the instance already stores are unchanged). Upgrade n8n to set them.';
+
+/**
+ * Statuses that mean "this instance does not serve that route". A router without the route may
+ * answer 404 or 405 depending on whether it matches the path prefix before the method, and a
+ * politely retired alias may answer 410 rather than disappearing outright.
+ */
+const ROUTE_ABSENT_STATUSES = new Set([404, 405, 410]);
+
+/**
+ * HTTP status of a failed request from this client.
+ *
+ * The response interceptor converts every rejection to an `N8nApiError`, which carries
+ * `statusCode` and no `response`. Reading `error.response.status` on a rejection from
+ * `this.client` therefore always yields undefined - which silently disables any fallback
+ * keyed on a specific status. The raw-axios branch is kept for callers that bypass the
+ * interceptor, such as tests.
+ */
+function failureStatus(error: unknown): number | undefined {
+  if (error instanceof N8nApiError) return error.statusCode;
+  return (error as any)?.response?.status;
+}
+
+/**
+ * Whether a response carries an RFC 9745 `Deprecation` header.
+ *
+ * n8n sets one on the legacy activate/deactivate routes (`Deprecation: @<epoch>`), from a
+ * middleware that runs before the permission checks. Its presence proves the instance knows those
+ * routes are superseded, and therefore serves the routes that replaced them. The value is not
+ * parsed: a deprecation date tells us nothing we act on, only the header's presence does.
+ *
+ * Absence proves nothing - an older n8n has no header, and a proxy may drop it - so this is only
+ * ever read as a positive signal.
+ */
+function hasDeprecationHeader(headers: unknown): boolean {
+  if (!headers || typeof headers !== 'object') return false;
+  // Axios lowercases response header names, but a mock or a raw response may not.
+  return Object.entries(headers as Record<string, unknown>).some(
+    ([name, value]) => name.toLowerCase() === 'deprecation' && value !== undefined && value !== ''
+  );
+}
 
 /** The same write payload without `nodeGroups`, for instances whose schema has no such field. */
 function withoutNodeGroups(payload: Record<string, unknown>): Record<string, unknown> {
   const { nodeGroups, ...rest } = payload;
   return rest;
+}
+
+/** The payload with the given settings keys removed. An emptied object gets the minimal default n8n accepts (#431). */
+function withoutSettings(payload: Record<string, unknown>, keys: Iterable<string>): Record<string, unknown> {
+  const drop = new Set(keys);
+  const settings = payload.settings as Record<string, unknown> | undefined;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return payload;
+  const kept = Object.fromEntries(Object.entries(settings).filter(([key]) => !drop.has(key)));
+  if (Object.keys(kept).length === Object.keys(settings).length) return payload;
+  return { ...payload, settings: Object.keys(kept).length > 0 ? kept : { executionOrder: 'v1' } };
 }
 
 /** Options for workflow writes that carry canvas groups. */
@@ -100,8 +157,15 @@ export class N8nApiClient {
   private baseUrl: string;
   private versionInfo: N8nVersionInfo | null = null;
   private versionPromise: Promise<N8nVersionInfo | null> | null = null;
+  /** Resolved `personal` project alias, cached for the client's lifetime (see resolvePersonalProjectId). */
+  private personalProjectId: string | null = null;
   // SECURITY (GHSA-cmrh-wvq6-wm9r): cached pinned transport agents.
   private pinnedAgentsPromise: Promise<PinnedAgents> | null = null;
+  // #978/#989/#990: when the cached agents were last (re-)resolved, so a
+  // long-lived client periodically re-validates DNS instead of pinning to
+  // one address (possibly a stale CDN/Cloudflare edge) for its whole life.
+  private pinnedAgentsResolvedAt = 0;
+  private static readonly PINNED_AGENTS_TTL_MS = 60_000;
   private cfClientId?: string;
   private cfClientSecret?: string;
   /**
@@ -110,6 +174,18 @@ export class N8nApiClient {
    * group would permanently disable groups for the instance. Per-client, which is per-instance.
    */
   private groupSupport = { groups: true, descriptions: true };
+  /**
+   * Settings keys this instance has rejected as unknown; stripped from later writes with a warning.
+   * Like groupSupport, remembered for the client's lifetime: an instance upgraded mid-session keeps
+   * losing the key until the client is recreated, and the warning says so on every write.
+   */
+  private rejectedSettings = new Set<string>();
+  /**
+   * Whether this instance is known to serve the modern publish/unpublish routes. Positive-only,
+   * and per-client, which is per-instance: it is set when the instance proves the routes exist
+   * and never cleared, because no response proves the opposite. See postPublishRoute.
+   */
+  private modernPublishRoute = false;
 
   constructor(config: N8nApiClientConfig) {
     const { baseUrl, apiKey, timeout = 30000, maxRetries = 3, cfClientId, cfClientSecret } = config;
@@ -177,14 +253,30 @@ export class N8nApiClient {
       }
     );
 
-    // Response interceptor for logging
+    // Response interceptor for logging + connection-failure retry
     this.client.interceptors.response.use(
       (response: any) => {
         logger.debug(`n8n API Response: ${response.status} ${response.config.url}`);
         return response;
       },
-      (error: unknown) => {
+      async (error: unknown) => {
+        // #978/#989/#990: retry connection-level failures (no response at
+        // all) before mapping to N8nApiError. Re-issuing goes back through
+        // this same interceptor pipeline, so a further failure is retried
+        // again automatically until maxRetries is exhausted.
+        const retryAttempt = this.tryRetry(error);
+        if (retryAttempt) {
+          return retryAttempt;
+        }
+
         const n8nError = handleN8nApiError(error);
+        if (n8nError.code === 'NO_RESPONSE') {
+          // SECURITY (GHSA-cmrh-wvq6-wm9r resilience): the pinned IP may be
+          // dead (CDN edge rotated, instance moved) - clear the cache so the
+          // *next* request re-resolves DNS instead of retrying the same bad
+          // address forever.
+          this.pinnedAgentsPromise = null;
+        }
         logN8nError(n8nError, 'n8n API Response');
         return Promise.reject(n8nError);
       }
@@ -192,13 +284,103 @@ export class N8nApiClient {
   }
 
   /**
+   * Retry a connection-level axios failure (no response received) when it
+   * looks safe to retry and attempts remain. Returns a promise for the
+   * retried request when a retry is attempted, or `undefined` when the
+   * caller should fall through to normal error mapping.
+   *
+   * @security GHSA-cmrh-wvq6-wm9r follow-up (#978/#989/#990) - the failure
+   * may mean the pinned IP has gone stale, so the pinned-agent cache is
+   * cleared before each retry to force fresh DNS resolution.
+   */
+  private tryRetry(error: unknown): Promise<any> | undefined {
+    const axiosError = error as any;
+    const config = axiosError?.config;
+    const noResponse = !!(axiosError && axiosError.request && !axiosError.response);
+    if (!noResponse || !config) {
+      return undefined;
+    }
+
+    const retryCount = (config as any).__retryCount || 0;
+    if (retryCount >= this.maxRetries) {
+      return undefined;
+    }
+
+    // Default to a non-idempotent classification when the method is missing:
+    // only pre-connection failures are then eligible for retry.
+    const method = String(config.method || '');
+    if (!this.isRetryableConnectionError(axiosError, method)) {
+      return undefined;
+    }
+
+    (config as any).__retryCount = retryCount + 1;
+    // Force fresh DNS on the retried attempt.
+    this.pinnedAgentsPromise = null;
+
+    const backoffMs = 250 * Math.pow(2, retryCount);
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        this.client.request(config).then(resolve, reject);
+      }, backoffMs);
+    });
+  }
+
+  /**
+   * Whether a connection-level axios error is safe to retry for the given
+   * HTTP method. Errors that occurred before any bytes reached the wire
+   * (connection refused/unreachable/DNS failure) are safe to retry
+   * regardless of method - the server never saw the request. Errors that may
+   * have interrupted an in-flight request (reset, timeout) are only retried
+   * for idempotent methods.
+   */
+  private isRetryableConnectionError(axiosError: any, method: string): boolean {
+    const codes = this.extractErrorCodes(axiosError);
+    if (codes.length === 0) return false;
+
+    const isIdempotent = method.toUpperCase() === 'GET' || method.toUpperCase() === 'HEAD';
+    const anyMethodCodes = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ENOTFOUND', 'EAI_AGAIN']);
+    const idempotentOnlyCodes = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED']);
+
+    return codes.some(code => anyMethodCodes.has(code) || (isIdempotent && idempotentOnlyCodes.has(code)));
+  }
+
+  /**
+   * Collect every error `code` relevant to the retry decision: the error's
+   * own code, plus each member's code when the error is an AggregateError
+   * (e.g. from `autoSelectFamily` trying multiple pinned addresses).
+   */
+  private extractErrorCodes(error: any): string[] {
+    const codes: string[] = [];
+    if (error?.code) codes.push(error.code);
+
+    const aggregateMembers = error?.errors ?? error?.cause?.errors;
+    if (Array.isArray(aggregateMembers)) {
+      for (const member of aggregateMembers) {
+        if (member?.code) codes.push(member.code);
+      }
+    }
+    return codes;
+  }
+
+  /**
    * Resolve the configured baseUrl once and return HTTP/HTTPS agents that
-   * pin every connection to the validated IP.
+   * pin every connection to the validated address(es). Re-resolved when the
+   * cache is empty, has expired (TTL), or was invalidated after a
+   * connection failure — see {@link tryRetry} and the NO_RESPONSE branch of
+   * the response interceptor.
    *
    * @security GHSA-cmrh-wvq6-wm9r — without this, axios performs an
    * independent DNS lookup on every request, opening a TOCTOU window.
    */
   private getPinnedAgents(): Promise<PinnedAgents> {
+    const isExpired = this.pinnedAgentsPromise !== null &&
+      Date.now() - this.pinnedAgentsResolvedAt > N8nApiClient.PINNED_AGENTS_TTL_MS;
+    if (isExpired) {
+      // #978/#989/#990: don't stay pinned to a possibly-stale address (e.g.
+      // a rotated CDN/Cloudflare edge) for the whole process lifetime.
+      this.pinnedAgentsPromise = null;
+    }
+
     if (!this.pinnedAgentsPromise) {
       const promise = (async () => {
         const { SSRFProtection } = await import('../utils/ssrf-protection');
@@ -206,8 +388,21 @@ export class N8nApiClient {
         if (!validation.valid || !validation.address || !validation.family) {
           throw new Error(`SSRF protection: ${validation.reason || 'baseUrl rejected'}`);
         }
-        return SSRFProtection.createPinnedAgents(validation.address, validation.family);
+        return SSRFProtection.createPinnedAgents(
+          validation.addresses ?? [{ address: validation.address, family: validation.family }]
+        );
       })();
+      // Stamp at dispatch so concurrent callers during an in-flight
+      // re-resolution see a fresh TTL and don't each kick off their own
+      // lookup; refresh on fulfillment (only while still the current
+      // promise) so the window restarts from when the addresses actually
+      // became valid.
+      this.pinnedAgentsResolvedAt = Date.now();
+      promise.then(() => {
+        if (this.pinnedAgentsPromise === promise) {
+          this.pinnedAgentsResolvedAt = Date.now();
+        }
+      }, () => {});
       // Reset on rejection so transient DNS failures don't brick the client.
       promise.catch(() => {
         if (this.pinnedAgentsPromise === promise) {
@@ -222,6 +417,16 @@ export class N8nApiClient {
   /**
    * Get the n8n version, fetching it if not already cached.
    * Uses promise-based locking to prevent concurrent requests.
+   *
+   * **Returns null against every n8n from 1.119.0 onward**, which in practice means every
+   * instance: the version is only reachable through an internal editor route that answers
+   * Public API clients without it, and the Public API exposes no version of its own. See
+   * {@link fetchN8nVersion}.
+   *
+   * So do not gate behaviour on this. Null means "unknown", never "old", and a feature gated on
+   * a minimum version here is a feature that is off for everyone. Probe the instance instead -
+   * `groupSupport` and {@link postPublishRoute} read what the API actually answers - and keep the
+   * unprobed path the one that works on every version.
    */
   async getVersion(): Promise<N8nVersionInfo | null> {
     // If we already have version info, return it
@@ -373,6 +578,119 @@ export class N8nApiClient {
   }
 
   /**
+   * Send a workflow write. This is the one seam where the outgoing body is still in scope when
+   * n8n rejects it, so an unlocatable "must NOT have additional properties" 400 is enriched here
+   * with the keys that were sent (#1047) before it propagates to the handlers.
+   *
+   * The group ladder can retry with a different body than the caller's payload (groups dropped,
+   * or the field omitted when the instance is known not to support it), so each failed attempt
+   * records the body it actually sent and the enrichment reports that one — never a key the
+   * failing request did not carry. handleN8nApiError returns an existing N8nApiError unchanged,
+   * so the ladder's own mapping rethrows the same tracked instance.
+   */
+  private async sendWorkflowWrite(
+    payload: Record<string, unknown>,
+    send: (body: Record<string, unknown>) => Promise<Workflow>,
+    options: WorkflowWriteOptions
+  ): Promise<Workflow> {
+    const sentBodies = new WeakMap<N8nApiError, Record<string, unknown>>();
+    const trackedSend = async (body: Record<string, unknown>): Promise<Workflow> => {
+      try {
+        return await send(body);
+      } catch (error) {
+        const apiError = handleN8nApiError(error);
+        sentBodies.set(apiError, body);
+        throw apiError;
+      }
+    };
+    try {
+      return await this.sendWorkflowWriteWithSettingsFallback(payload, trackedSend, options);
+    } catch (error) {
+      const apiError = handleN8nApiError(error);
+      const enriched = enrichUnknownPropertyError(apiError, sentBodies.get(apiError) ?? payload);
+      if (enriched !== apiError) {
+        // The axios interceptor has already logged n8n's generic message; without this
+        // line the key list reaches only the MCP caller, never the server logs (#1047).
+        logger.warn('n8n rejected a workflow write with an unnamed additional property', {
+          message: enriched.message
+        });
+      }
+      throw enriched;
+    }
+  }
+
+  /**
+   * Send a workflow write, dropping settings properties the instance rejects as unknown.
+   *
+   * Settings are forwarded untouched by default (see SETTINGS_PASS_THROUGH_FLOOR): our table
+   * trails n8n, and a property dropped up front is dropped silently. The cost of forwarding is
+   * a 400 whose AJV message names the path but not the key, so this ladder finds the key the
+   * only way it can, by retrying without candidates in the order settingsRejectionLadder gives.
+   * n8n answers in one of two wordings. The zod one (create on n8n 2.37+) names the keys, so
+   * they are dropped in a single retry and remembered. The AJV one does not, so the ladder
+   * guesses one step at a time; only a step that dropped a single key is remembered, since the
+   * first step drops every unknown key together and remembering all of them would keep stripping
+   * a key the instance accepts. Every drop is reported through onWarning. The loop adds at most
+   * steps.length plus one write per settings key, each of which may run the group ladder in
+   * full; a write that still fails after that surfaces the last rejection.
+   */
+  private async sendWorkflowWriteWithSettingsFallback(
+    payload: Record<string, unknown>,
+    send: (body: Record<string, unknown>) => Promise<Workflow>,
+    options: WorkflowWriteOptions
+  ): Promise<Workflow> {
+    const settings = payload.settings as Record<string, unknown> | undefined;
+    const remembered = settings
+      ? [...this.rejectedSettings].filter(key => Object.prototype.hasOwnProperty.call(settings, key))
+      : [];
+    let body = withoutSettings(payload, remembered);
+    if (remembered.length > 0) options.onWarning?.(settingsRejectedWarning(remembered));
+
+    const steps = settingsRejectionLadder(body.settings);
+    const dropped: string[] = [];
+    // Keys n8n itself named are proven. A ladder guess is proven only if the write succeeded
+    // right after it and it dropped a single key; earlier guesses may have been innocent.
+    const namedByN8n: string[] = [];
+    let lastGuess: string[] = [];
+    // Bound: a retry either consumes a ladder step or removes a named key, so both counts cap it.
+    const settingsKeys = () => Object.keys((body.settings as object | undefined) ?? {});
+    const maxSettingsRetries = steps.length + settingsKeys().length;
+    for (let step = 0, retries = 0; ; ) {
+      try {
+        const result = await this.sendWorkflowWriteWithGroupFallback(body, send, options);
+        if (dropped.length > 0) {
+          const certain = lastGuess.length === 1 ? [...namedByN8n, ...lastGuess] : namedByN8n;
+          for (const key of certain) this.rejectedSettings.add(key);
+          options.onWarning?.(settingsRejectedWarning(dropped));
+        }
+        return result;
+      } catch (error) {
+        const apiError = handleN8nApiError(error);
+        if (!isUnknownSettingsPropertyError(apiError) || retries++ >= maxSettingsRetries) throw apiError;
+        // A wording that names the keys settles the matter in one retry; the AJV wording does
+        // not, so the ladder guesses one step at a time. Only keys still in the payload count:
+        // a name n8n reports that is not there, or a ladder step already emptied by a named
+        // retry, would be a retry without progress.
+        const present = new Set(settingsKeys());
+        const named = unknownSettingsKeysNamedBy(apiError).filter(key => present.has(key));
+        let drop = named;
+        while (drop.length === 0 && step < steps.length) {
+          drop = steps[step++].filter(key => present.has(key));
+        }
+        if (drop.length === 0) throw apiError;
+        if (named.length > 0) {
+          namedByN8n.push(...named);
+          lastGuess = [];
+        } else {
+          lastGuess = drop;
+        }
+        body = withoutSettings(body, drop);
+        dropped.push(...drop);
+      }
+    }
+  }
+
+  /**
    * Send a workflow write, degrading `nodeGroups` only as far as the instance forces.
    *
    * n8n validates canvas groups on every write and names the offending group when it rejects one,
@@ -387,7 +705,7 @@ export class N8nApiClient {
    * Omitting the field is not a fix for case 3: n8n backfills the stored groups when the field is
    * absent, so the same rejection returns. Each attempt must make progress or the loop stops.
    */
-  private async sendWorkflowWrite(
+  private async sendWorkflowWriteWithGroupFallback(
     payload: Record<string, unknown>,
     send: (body: Record<string, unknown>) => Promise<Workflow>,
     options: WorkflowWriteOptions
@@ -439,8 +757,11 @@ export class N8nApiClient {
           let result: Workflow;
           try {
             result = await send(withoutNodeGroups(payload));
-          } catch {
-            throw apiError;
+          } catch (retryError) {
+            // A settings rejection on the retry is the more specific complaint, and the settings
+            // ladder around this one can act on it; anything else keeps the original.
+            const second = handleN8nApiError(retryError);
+            throw isUnknownSettingsPropertyError(second) ? second : apiError;
           }
           this.groupSupport.groups = false;
           options.onWarning?.(GROUPS_UNSUPPORTED_WARNING);
@@ -456,8 +777,8 @@ export class N8nApiClient {
   }
 
   /**
-   * Decide how to retry after n8n rejected a write, per the ladder in sendWorkflowWrite: the groups
-   * to send next, `omit-field` to send no groups at all, or `give-up` to surface n8n's error.
+   * Decide how to retry after n8n rejected a write, per the ladder in sendWorkflowWriteWithGroupFallback:
+   * the groups to send next, `omit-field` to send no groups at all, or `give-up` to surface n8n's error.
    */
   private degradeGroupsAfterRejection(
     classification: GroupErrorClassification,
@@ -474,7 +795,7 @@ export class N8nApiClient {
     }
 
     // Deliberately does not latch groupSupport or warn: whether the field really is the problem is
-    // only known once the retry without it succeeds. sendWorkflowWrite records it there.
+    // only known once the retry without it succeeds. sendWorkflowWriteWithGroupFallback records it there.
     if (classification.kind === 'schema-field') return 'omit-field';
 
     if (classification.kind !== 'semantic') return 'give-up';
@@ -522,7 +843,7 @@ export class N8nApiClient {
       const response = await this.client.put(`/workflows/${safeId}`, body);
       return response.data;
     } catch (putError: any) {
-      if (putError.response?.status !== 405) throw putError;
+      if (failureStatus(putError) !== 405) throw putError;
       logger.debug('PUT method not supported, falling back to PATCH');
       const response = await this.client.patch(`/workflows/${safeId}`, body);
       return response.data;
@@ -609,8 +930,9 @@ export class N8nApiClient {
           versionInfo
         );
       } else {
-        logger.warn('Could not determine n8n version, sending all known settings properties');
-        // Without version info, we send all known properties (might fail on old n8n)
+        // The normal case since n8n 1.119.0 (see getVersion). Settings are forwarded untouched;
+        // n8n rejects anything it does not accept, which reads better than dropping it silently.
+        logger.debug('n8n version unknown, forwarding workflow settings unfiltered');
       }
 
       const safeId = encodeApiPathSegment(id, 'workflowId');
@@ -648,22 +970,120 @@ export class N8nApiClient {
     }
   }
 
-  async activateWorkflow(id: string): Promise<Workflow> {
-    try {
-      const response = await this.client.post(`/workflows/${encodeApiPathSegment(id, 'workflowId')}/activate`, {});
+  /**
+   * POST the publish-family route a workflow needs, preferring the name the target n8n uses.
+   *
+   * n8n 2.33 renamed `/activate` to `/publish` and `/deactivate` to `/unpublish`, and marked the
+   * old pair deprecated (2026-07-23). The deprecated routes are literal aliases of the new
+   * handlers — same service call, same result — so this is a rename, not a behaviour change.
+   * `/publish` additionally accepts an optional body naming a version to publish; we send none,
+   * which keeps the semantics identical to `/activate`.
+   *
+   * The new route is used only when the instance is *confirmed* to have it. The legacy pair
+   * works on every supported version - on 2.33+ they are the same handler - so an unconfirmed
+   * instance is served by the legacy route rather than probed, which would waste a request per
+   * call on every pre-2.33 instance.
+   *
+   * Confirmation comes from the instance, not from a version number, because version detection
+   * returns null on every n8n from 1.119.0 (see {@link getVersion}). Two things confirm it, both
+   * one-way: a `Deprecation` header on a legacy response, which only an n8n that has the
+   * replacement sends, and a fallback to the modern route that succeeds. A version reading is
+   * still honoured when one is somehow available.
+   *
+   * The fallback runs in both directions on a 404, 405 or 410. A router with no route may report
+   * either, depending on whether it matches the path prefix before the method; n8n answers 405
+   * here, so keying on 404 alone left the fallback dead in practice. Symmetry matters because
+   * the legacy routes are deprecated (2026-07-23, no sunset announced): when n8n eventually
+   * removes them, an instance we could not version-detect would otherwise lose activation
+   * entirely, rather than moving to the route that replaced it.
+   *
+   * The cost is one extra request on a workflow id that does not exist, since n8n answers 404
+   * for an absent workflow and an absent route alike. Both attempts end in the same error. That
+   * also costs the confirmation: the response interceptor keeps a failure's status but not its
+   * headers, so only a legacy call that succeeds can carry the deprecation signal.
+   */
+  private async postPublishRoute(
+    id: string,
+    modernPath: 'publish' | 'unpublish',
+    legacyPath: 'activate' | 'deactivate'
+  ): Promise<Workflow> {
+    const safeId = encodeApiPathSegment(id, 'workflowId');
+    let preferModern = this.modernPublishRoute;
+    if (!preferModern) {
+      // Only read while the routes are unconfirmed: once they are, no version could change the
+      // choice, and asking costs a request every time the version cache has expired.
+      const version = await this.getVersion();
+      preferModern = version !== null && versionAtLeast(version, 2, 33, 0);
+    }
+    const [primaryPath, fallbackPath] = preferModern
+      ? [modernPath, legacyPath]
+      : [legacyPath, modernPath];
+    const post = async (path: string): Promise<Workflow> => {
+      const response = await this.client.post(`/workflows/${safeId}/${path}`, {});
+      if (path === legacyPath && hasDeprecationHeader(response.headers)) {
+        this.confirmModernPublishRoute(`/${legacyPath} answered with a Deprecation header`);
+      }
       return response.data;
-    } catch (error) {
-      throw handleN8nApiError(error);
+    };
+    let status: number | undefined;
+
+    let primaryError: unknown;
+    try {
+      return await post(primaryPath);
+    } catch (error: any) {
+      status = failureStatus(error);
+      if (!ROUTE_ABSENT_STATUSES.has(status as number)) {
+        throw handleN8nApiError(error);
+      }
+      primaryError = error;
+    }
+
+    // n8n answers 404 for a workflow that does not exist as well as for a route it does not
+    // have, so this retry also fires on a bad workflow ID. That costs one request and ends in
+    // the same error, which is why the status is logged as a route probe, not a failure.
+    logger.debug(
+      `POST /workflows/{id}/${primaryPath} returned ${status} - retrying /${fallbackPath} ` +
+        '(this n8n does not serve that route, or the workflow does not exist)'
+    );
+    try {
+      const workflow = await post(fallbackPath);
+      if (fallbackPath === modernPath) {
+        this.confirmModernPublishRoute(`/${legacyPath} is absent and /${modernPath} answered`);
+      }
+      return workflow;
+    } catch (fallbackError) {
+      // When the fallback fails the same way, neither route exists and the first attempt is the
+      // more faithful account - a missing workflow should read as a missing workflow rather than
+      // as confusion about the second route. A substantive failure (say a 400 naming a missing
+      // trigger) is the useful one, so that is surfaced instead.
+      const fallbackStatus = failureStatus(fallbackError);
+      throw handleN8nApiError(
+        ROUTE_ABSENT_STATUSES.has(fallbackStatus as number) ? primaryError : fallbackError
+      );
     }
   }
 
+  /**
+   * Latch that this instance serves the modern publish routes, so later calls go there first.
+   * Only ever called from evidence that the routes exist; nothing clears it.
+   *
+   * Nothing clears it because no response proves the routes are absent - a 404 is equally a
+   * missing workflow. If some intermediary ever produced the evidence spuriously (a proxy that
+   * adds a Deprecation header while blocking `/publish`), the cost is one wasted request per
+   * call, not a failure: the fallback still lands on the legacy route.
+   */
+  private confirmModernPublishRoute(evidence: string): void {
+    if (this.modernPublishRoute) return;
+    this.modernPublishRoute = true;
+    logger.debug(`Using the publish/unpublish routes for this instance: ${evidence}`);
+  }
+
+  async activateWorkflow(id: string): Promise<Workflow> {
+    return this.postPublishRoute(id, 'publish', 'activate');
+  }
+
   async deactivateWorkflow(id: string): Promise<Workflow> {
-    try {
-      const response = await this.client.post(`/workflows/${encodeApiPathSegment(id, 'workflowId')}/deactivate`, {});
-      return response.data;
-    } catch (error) {
-      throw handleN8nApiError(error);
-    }
+    return this.postPublishRoute(id, 'unpublish', 'deactivate');
   }
 
   /**
@@ -875,7 +1295,9 @@ export class N8nApiClient {
 
       // SECURITY (GHSA-cmrh-wvq6-wm9r): pin transport to validated IP.
       const pinned = validation.address && validation.family
-        ? SSRFProtection.createPinnedAgents(validation.address, validation.family)
+        ? SSRFProtection.createPinnedAgents(
+            validation.addresses ?? [{ address: validation.address, family: validation.family }]
+          )
         : undefined;
 
       // Create a new axios instance for webhook requests to avoid API interceptors
@@ -1019,9 +1441,10 @@ export class N8nApiClient {
     }
   }
 
-  async updateTag(id: string, tag: Partial<Tag>): Promise<Tag> {
+  // n8n exposes only PUT /tags/{id}, and since 2.41 its body DTO is strict: send the name alone.
+  async updateTag(id: string, name: string): Promise<Tag> {
     try {
-      const response = await this.client.patch(`/tags/${encodeApiPathSegment(id, 'tagId')}`, tag);
+      const response = await this.client.put(`/tags/${encodeApiPathSegment(id, 'tagId')}`, { name });
       return response.data;
     } catch (error) {
       throw handleN8nApiError(error);
@@ -1045,41 +1468,7 @@ export class N8nApiClient {
     }
   }
 
-  // Source Control Management (Enterprise feature)
-  async getSourceControlStatus(): Promise<SourceControlStatus> {
-    try {
-      const response = await this.client.get('/source-control/status');
-      return response.data;
-    } catch (error) {
-      throw handleN8nApiError(error);
-    }
-  }
-
-  async pullSourceControl(force = false): Promise<SourceControlPullResult> {
-    try {
-      const response = await this.client.post('/source-control/pull', { force });
-      return response.data;
-    } catch (error) {
-      throw handleN8nApiError(error);
-    }
-  }
-
-  async pushSourceControl(
-    message: string,
-    fileNames?: string[]
-  ): Promise<SourceControlPushResult> {
-    try {
-      const response = await this.client.post('/source-control/push', {
-        message,
-        fileNames,
-      });
-      return response.data;
-    } catch (error) {
-      throw handleN8nApiError(error);
-    }
-  }
-
-  // Variable Management (via Source Control API)
+  // Variable Management
   async getVariables(): Promise<Variable[]> {
     try {
       const response = await this.client.get('/variables');
@@ -1165,7 +1554,7 @@ export class N8nApiClient {
     try {
       const response = await this.client.get(`/data-tables/${encodeApiPathSegment(id, 'dataTableId')}/rows`, {
         params,
-        paramsSerializer: (p) => this.serializeDataTableParams(p),
+        paramsSerializer: (p) => this.serializeQueryParams(p),
       });
       return this.validateListResponse<DataTableRow>(response.data, 'data-table-rows');
     } catch (error) {
@@ -1204,7 +1593,7 @@ export class N8nApiClient {
     try {
       const response = await this.client.delete(`/data-tables/${encodeApiPathSegment(id, 'dataTableId')}/rows/delete`, {
         params,
-        paramsSerializer: (p) => this.serializeDataTableParams(p),
+        paramsSerializer: (p) => this.serializeQueryParams(p),
       });
       return response.data;
     } catch (error) {
@@ -1212,11 +1601,195 @@ export class N8nApiClient {
     }
   }
 
+  // Folder operations (/projects/{projectId}/folders, n8n public API 2.19+).
+  // Only createFolder accepts the literal `personal` as projectId — n8n resolves
+  // it server-side for that route alone. Every other folder route needs a real
+  // project ID; resolvePersonalProjectId() below turns the alias into one.
+
+  async createFolder(
+    projectId: string,
+    data: { name: string; parentFolderId?: string }
+  ): Promise<Folder> {
+    try {
+      const response = await this.client.post(
+        `/projects/${encodeApiPathSegment(projectId, 'projectId')}/folders`,
+        data
+      );
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async listFolders(projectId: string, params: FolderListParams = {}): Promise<FolderListResponse> {
+    try {
+      const { filter, select, ...rest } = params;
+      const response = await this.client.get(
+        `/projects/${encodeApiPathSegment(projectId, 'projectId')}/folders`,
+        {
+          params: {
+            ...rest,
+            // n8n expects these two as JSON-encoded strings, not repeated params
+            ...(filter && Object.keys(filter).length > 0 ? { filter: JSON.stringify(filter) } : {}),
+            ...(select && select.length > 0 ? { select: JSON.stringify(select) } : {}),
+          },
+          // The JSON values carry reserved chars ({ } [ ] " :) that axios's default
+          // serializer leaves raw and n8n's validator rejects ("must be url encoded").
+          paramsSerializer: (p) => this.serializeQueryParams(p),
+        }
+      );
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async getFolder(projectId: string, folderId: string): Promise<Folder> {
+    try {
+      const response = await this.client.get(
+        `/projects/${encodeApiPathSegment(projectId, 'projectId')}/folders/${encodeApiPathSegment(folderId, 'folderId')}`
+      );
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async updateFolder(
+    projectId: string,
+    folderId: string,
+    data: { name?: string; parentFolderId?: string }
+  ): Promise<Folder> {
+    try {
+      const response = await this.client.patch(
+        `/projects/${encodeApiPathSegment(projectId, 'projectId')}/folders/${encodeApiPathSegment(folderId, 'folderId')}`,
+        data
+      );
+      return response.data;
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  async deleteFolder(projectId: string, folderId: string, transferToFolderId?: string): Promise<void> {
+    try {
+      await this.client.delete(
+        `/projects/${encodeApiPathSegment(projectId, 'projectId')}/folders/${encodeApiPathSegment(folderId, 'folderId')}`,
+        { params: transferToFolderId ? { transferToFolderId } : {} }
+      );
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
   /**
-   * Serializes data table query params with explicit encodeURIComponent.
-   * Axios's default serializer doesn't encode some reserved chars that n8n rejects.
+   * GET /projects. Team projects are a licensed feature: unlicensed instances answer
+   * 403 (older ones 404). Callers decide the fallback; this method only reports.
    */
-  private serializeDataTableParams(params: Record<string, any>): string {
+  async listProjects(limit = 100): Promise<Project[]> {
+    try {
+      const response = await this.client.get('/projects', { params: { limit } });
+      const payload = response.data;
+      return Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  /**
+   * Resolve the `personal` project alias to a real project ID, for the folder
+   * routes that don't accept the alias. Two-step ladder:
+   *
+   * 1. GET /projects (Enterprise-licensed): when the listing is available it is
+   *    authoritative — exactly one visible personal project resolves, anything
+   *    else (none, several, or a truncated listing) errors out rather than
+   *    guessing another project.
+   * 2. GET /workflows?limit=1, ONLY when the projects API answered 403/404
+   *    (Community / pre-projects instances): there, every project is the
+   *    caller's personal one and workflow sharing does not exist, so any
+   *    workflow's `shared[].projectId` is the personal project. On an instance
+   *    where /projects merely failed transiently or showed no personal project,
+   *    this probe could return a team project - which is why it never runs then.
+   *
+   * The result is cached for the client's lifetime — project IDs never change.
+   */
+  async resolvePersonalProjectId(): Promise<string> {
+    if (this.personalProjectId) return this.personalProjectId;
+
+    let projects: ProjectSummary[] = [];
+    let truncated = false;
+    let projectsApiAvailable = true;
+    try {
+      const response = await this.client.get('/projects', { params: { limit: 100 } });
+      if (Array.isArray(response.data?.data)) projects = response.data.data;
+      truncated = Boolean(response.data?.nextCursor);
+    } catch (error) {
+      // Community answers 403 (projects API is enterprise-licensed) and very old
+      // instances 404 - both mean "no projects API here", where the workflow probe
+      // below is authoritative. Anything else (timeout, 429, 5xx) must NOT fall
+      // through: on a multi-project instance the probe would silently resolve
+      // 'personal' to whatever project the first workflow lives in, and cache it.
+      const apiError = handleN8nApiError(error);
+      if (apiError.statusCode !== 403 && apiError.statusCode !== 404) throw apiError;
+      projectsApiAvailable = false;
+    }
+
+    if (projectsApiAvailable) {
+      if (truncated) {
+        // The caller's personal project may sit beyond page 1; filtering a truncated
+        // listing could quietly pick another user's personal project instead.
+        throw new N8nValidationError(
+          `This instance has more projects than one listing page; resolving 'personal' from a ` +
+            `truncated listing could pick the wrong project. Pass an explicit projectId.`
+        );
+      }
+
+      const personal = projects.filter(p => p.type === 'personal');
+      if (personal.length === 1) {
+        this.personalProjectId = personal[0].id;
+        return personal[0].id;
+      }
+      if (personal.length > 1) {
+        throw new N8nValidationError(
+          `This API key sees ${personal.length} personal projects, so 'personal' is ambiguous. ` +
+            `Pass an explicit projectId. Visible personal projects: ` +
+            personal.map(p => `${p.id} (${p.name})`).join(', ')
+        );
+      }
+      // A successful listing with zero personal projects is authoritative too:
+      // probing a workflow here could resolve to a team project.
+      throw new N8nValidationError(
+        `The projects listing shows no personal project for this API key. Pass an explicit projectId.`
+      );
+    }
+
+    // Community / pre-projects instances only (see doc comment).
+    try {
+      const response = await this.client.get('/workflows', { params: { limit: 1 } });
+      const workflow = Array.isArray(response.data?.data) ? response.data.data[0] : undefined;
+      const projectId = workflow?.shared?.[0]?.projectId;
+      if (typeof projectId === 'string' && projectId.length > 0) {
+        this.personalProjectId = projectId;
+        return projectId;
+      }
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+
+    throw new N8nValidationError(
+      `Could not resolve the 'personal' project: the projects API is not available on this instance ` +
+        `and no workflow exists to infer the project from. Create any workflow first, or pass an ` +
+        `explicit projectId. (The folder 'create' action itself accepts 'personal' directly.)`
+    );
+  }
+
+  /**
+   * Serializes query params with explicit encodeURIComponent. Axios's default
+   * serializer leaves some reserved chars raw ([ ] : ,) that n8n's OpenAPI
+   * validator rejects — which breaks any JSON-in-a-query-param endpoint (data
+   * table rows, folder filter/select).
+   */
+  private serializeQueryParams(params: Record<string, any>): string {
     const parts: string[] = [];
     for (const [key, value] of Object.entries(params)) {
       // Skip blank strings as well so MCP clients that serialize all fields

@@ -15,6 +15,7 @@ import { DatabaseAdapter } from '../database/database-adapter';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
 import { TypeStructureService } from './type-structure-service';
 import type { NodePropertyTypes } from 'n8n-workflow';
+import { validateConditionNodeStructure } from './n8n-validation';
 
 export type ValidationMode = 'full' | 'operation' | 'minimal';
 export type ValidationProfile = 'strict' | 'runtime' | 'ai-friendly' | 'minimal';
@@ -76,7 +77,18 @@ export class EnhancedConfigValidator extends ConfigValidator {
     if (!Array.isArray(properties)) {
       throw new Error(`Invalid properties: expected array, got ${typeof properties}`);
     }
-    
+
+    // `@version` is caller-supplied and reaches displayOptions comparisons (`>=`) before any
+    // other check; an object there throws "Cannot convert object to primitive value"
+    // (#1094). Only a number or numeric string is a version; anything else means version 1.
+    const rawVersion = config['@version'];
+    if (rawVersion !== undefined) {
+      const numeric = typeof rawVersion === 'number' ? rawVersion
+        : typeof rawVersion === 'string' && rawVersion.trim() !== '' ? Number(rawVersion) : NaN;
+      // Stored as a number so every version gate below compares numerically.
+      config = { ...config, '@version': Number.isFinite(numeric) ? numeric : 1 };
+    }
+
     // Extract operation context from config
     const operationContext = this.extractOperationContext(config);
 
@@ -511,7 +523,8 @@ export class EnhancedConfigValidator extends ConfigValidator {
     const valueErrors = result.errors.filter(e => e.type === 'invalid_value');
     
     if (requiredErrors.length > 0) {
-      steps.push(`Add required fields: ${requiredErrors.map(e => e.property).join(', ')}`);
+      const properties = [...new Set(requiredErrors.map(e => e.property))];
+      steps.push(`Add required fields: ${properties.join(', ')}`);
     }
     
     if (typeErrors.length > 0) {
@@ -542,19 +555,28 @@ export class EnhancedConfigValidator extends ConfigValidator {
     const seen = new Map<string, ValidationError>();
     
     for (const error of errors) {
-      const key = `${error.property}-${error.type}`;
+      // Includes the message: two distinct findings on the same property (e.g.
+      // several native-Python rules on pythonCode) are different defects and the
+      // user needs to see all of them. Only exact repeats collapse.
+      //
+      // Except for missing_required: "the property is missing" is one defect
+      // however many validators phrase it, so those still collapse per property.
+      const key = error.type === 'missing_required'
+        ? `${error.property}-${error.type}`
+        : `${error.property}-${error.type}-${error.message}`;
       const existing = seen.get(key);
-      
+
       if (!existing) {
         seen.set(key, error);
-      } else {
-        // Keep the error with more specific message or fix
+        continue;
+      }
+
+      // Only missing_required can collapse two differently worded errors, so
+      // only there is there a choice to make: keep the most specific wording.
+      if (error.type === 'missing_required') {
         const existingLength = (existing.message?.length || 0) + (existing.fix?.length || 0);
         const newLength = (error.message?.length || 0) + (error.fix?.length || 0);
-        
-        if (newLength > existingLength) {
-          seen.set(key, error);
-        }
+        if (newLength > existingLength) seen.set(key, error);
       }
     }
     
@@ -738,8 +760,17 @@ export class EnhancedConfigValidator extends ConfigValidator {
     const validationResult = FixedCollectionValidator.validate(nodeType, config);
     
     if (!validationResult.isValid) {
+      // Nested patterns describe one defect at different depths: a config with
+      // `rules.conditions.values` matches both "rules.conditions" and
+      // "rules.conditions.values". Report only the most specific match so the
+      // user sees the defect once, with the more informative message.
+      const patterns = validationResult.errors.map(e => e.pattern);
+      const specificErrors = validationResult.errors.filter(error =>
+        !patterns.some(other => other !== error.pattern && other.startsWith(`${error.pattern}.`))
+      );
+
       // Add errors to the result
-      for (const error of validationResult.errors) {
+      for (const error of specificErrors) {
         result.errors.push({
           type: 'invalid_value',
           property: error.pattern.split('.')[0], // Get the root property
@@ -747,7 +778,7 @@ export class EnhancedConfigValidator extends ConfigValidator {
           fix: error.fix
         });
       }
-      
+
       // Apply autofix if available
       if (validationResult.autofix) {
         // For nodes like If/Filter where the entire config might be replaced,
@@ -788,11 +819,19 @@ export class EnhancedConfigValidator extends ConfigValidator {
     );
     
     if (hasFixedCollectionError) return;
-    
+
+    this.validateConditionOperators('n8n-nodes-base.switch', config, result);
+
     // Validate rules.values structure if present
     if (config.rules.values && Array.isArray(config.rules.values)) {
       config.rules.values.forEach((rule: any, index: number) => {
-        if (!rule.conditions) {
+        // An entry that is not a rule at all gets a precise error from
+        // validateConditionNodeStructure ("rules.values[i]: rule is missing or not an object").
+        // Describing it as a rule missing its "conditions" property on top of that is noise
+        // pointing at the wrong repair (#1097).
+        if (!rule || typeof rule !== 'object' || Array.isArray(rule)) return;
+
+        if (!rule?.conditions) {
           result.warnings.push({
             type: 'missing_common',
             property: 'rules',
@@ -800,7 +839,7 @@ export class EnhancedConfigValidator extends ConfigValidator {
             suggestion: 'Each rule in the values array should have a "conditions" property'
           });
         }
-        if (!rule.outputKey && rule.renameOutput !== false) {
+        if (!rule?.outputKey && rule?.renameOutput !== false) {
           result.warnings.push({
             type: 'missing_common',
             property: 'rules',
@@ -827,8 +866,8 @@ export class EnhancedConfigValidator extends ConfigValidator {
     );
     
     if (hasFixedCollectionError) return;
-    
-    // Add any If-node-specific validation here in the future
+
+    this.validateConditionOperators('n8n-nodes-base.if', config, result);
   }
   
   /**
@@ -846,8 +885,46 @@ export class EnhancedConfigValidator extends ConfigValidator {
     );
     
     if (hasFixedCollectionError) return;
-    
-    // Add any Filter-node-specific validation here in the future
+
+    this.validateConditionOperators('n8n-nodes-base.filter', config, result);
+  }
+
+  /**
+   * Run the operator-structure checks the workflow paths run (validateWorkflowStructure for
+   * the write tools, WorkflowValidator for validate_workflow) on a single node config, so
+   * validate_node stops passing operators those paths reject (#1103). The config carries
+   * `@version` from the validate_node handler; without it the version gates in
+   * validateConditionNodeStructure see version 1 and skip the checks.
+   */
+  private static validateConditionOperators(
+    nodeType: string,
+    config: Record<string, any>,
+    result: EnhancedValidationResult
+  ): void {
+    const rawVersion = config['@version'];
+    // Caller-supplied: an object can throw on coercion (#1094), so only a number or string counts.
+    const typeVersion = typeof rawVersion === 'number' || typeof rawVersion === 'string' ? Number(rawVersion) : NaN;
+    const messages = validateConditionNodeStructure({
+      id: 'node',
+      name: 'node',
+      type: nodeType,
+      typeVersion: Number.isFinite(typeVersion) ? typeVersion : 1,
+      parameters: config,
+      position: [0, 0]
+    });
+
+    for (const message of messages) {
+      const property = message.split(/[.[:]/, 1)[0];
+      if (result.errors.some(e => e.message === message)) continue;
+      result.errors.push({
+        type: 'invalid_value',
+        property,
+        message,
+        ...(message.includes('operator')
+          ? { fix: 'Each condition needs an operator object with "type" (string, number, boolean, dateTime, array, object, any) and "operation" (for example equals, contains, exists).' }
+          : {})
+      });
+    }
   }
 
   /**
@@ -1345,7 +1422,7 @@ export class EnhancedConfigValidator extends ConfigValidator {
 
     for (let i = 0; i < conditions.length; i++) {
       const condition = conditions[i];
-      if (!condition.operator || typeof condition.operator !== 'object') continue;
+      if (!condition?.operator || typeof condition.operator !== 'object') continue;
 
       const { type, operation } = condition.operator;
       if (!type || !operation) continue;

@@ -144,9 +144,63 @@ class N8nDependencyUpdater {
       'utf8'
     );
 
+    this.syncPeerPins(packageJson, updates);
     this.syncDockerfilePins(packageJson);
 
     return true;
+  }
+
+  /**
+   * Align our own pins with the exact peer dependencies the new n8n packages demand.
+   *
+   * n8n-workflow pins `zod` to an exact version and bumps it between releases. Because the
+   * repo's local .npmrc sets legacy-peer-deps, a mismatch installs fine here and fails only in
+   * the Dockerfile's builder stage, which installs into a scratch directory with no .npmrc and
+   * so enforces peers: `npm error ERESOLVE ... peer zod@"3.25.76" from n8n-workflow@2.34.3`.
+   * That is a CI-only failure discovered after the update looked successful, so the pin is
+   * brought along with the update that moved it.
+   *
+   * Only peers the repo already depends on directly are touched; a peer we do not declare is
+   * left to npm.
+   */
+  syncPeerPins(packageJson, updates) {
+    const updated = new Map(updates.map(update => [update.package, update.latest]));
+    const synced = [];
+
+    for (const [name, version] of updated) {
+      let peers;
+      try {
+        const output = execSync(`npm view ${name}@${version} peerDependencies --json`, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore']
+        });
+        peers = output.trim() ? JSON.parse(output) : {};
+      } catch (error) {
+        console.log(`   ⚠️  Could not read peer dependencies of ${name}@${version} - skipping`);
+        continue;
+      }
+
+      for (const [peer, range] of Object.entries(peers || {})) {
+        // Only an exact pin is safe to copy; a range is npm's to resolve.
+        if (!/^\d+\.\d+\.\d+$/.test(range)) continue;
+        if (updated.has(peer)) continue; // an n8n package this update already set
+        const current = packageJson.dependencies?.[peer];
+        if (!current || current === range) continue;
+
+        packageJson.dependencies[peer] = range;
+        synced.push(`${peer} ${current} -> ${range} (peer of ${name}@${version})`);
+      }
+    }
+
+    if (!synced.length) return;
+
+    fs.writeFileSync(
+      this.packageJsonPath,
+      JSON.stringify(packageJson, null, 2) + '\n',
+      'utf8'
+    );
+    console.log(`   Synced ${synced.length} peer pin(s):`);
+    for (const entry of synced) console.log(`     ${entry}`);
   }
 
   /**
@@ -207,6 +261,26 @@ class N8nDependencyUpdater {
       return true;
     } catch (error) {
       console.error('❌ npm install failed:', error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Fail the update when n8n changed the workflowSettings schema, so a new setting is added to
+   * src/constants/workflow-settings.ts deliberately instead of being silently dropped from
+   * every workflow write.
+   */
+  checkSettingsDrift() {
+    console.log('\n🔍 Checking workflow settings schema against the new n8n...');
+    try {
+      execSync('npm run check:settings-drift', {
+        cwd: path.join(__dirname, '..'),
+        stdio: 'inherit'
+      });
+      return true;
+    } catch (error) {
+      console.error('\n❌ Workflow settings schema drifted - see above.');
+      console.error('   Update src/constants/workflow-settings.ts, then re-run the update.');
       return false;
     }
   }
@@ -298,6 +372,12 @@ class N8nDependencyUpdater {
       process.exit(1);
     }
     
+    // Check the settings schema before the rebuild - it is the cheap check of the two
+    if (!this.checkSettingsDrift()) {
+      console.error('\n❌ Update failed at settings drift check step');
+      process.exit(1);
+    }
+
     // Rebuild database
     if (!this.rebuildDatabase()) {
       console.error('\n❌ Update failed at database rebuild step');

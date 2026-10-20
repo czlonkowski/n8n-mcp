@@ -5,12 +5,11 @@
  * Covers filtering, pagination, and various list parameters.
  */
 
-import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestContext, TestContext, createTestWorkflowName } from '../utils/test-context';
 import { getTestN8nClient } from '../utils/n8n-client';
 import { N8nApiClient } from '../../../../src/services/n8n-api-client';
 import { SIMPLE_WEBHOOK_WORKFLOW, SIMPLE_HTTP_WORKFLOW } from '../utils/fixtures';
-import { cleanupOrphanedWorkflows } from '../utils/cleanup-helpers';
 import { createMcpContext } from '../utils/mcp-context';
 import { InstanceContext } from '../../../../src/types/instance-context';
 import { handleListWorkflows } from '../../../../src/mcp/handlers-n8n-manager';
@@ -28,12 +27,6 @@ describe('Integration: handleListWorkflows', () => {
 
   afterEach(async () => {
     await context.cleanup();
-  });
-
-  afterAll(async () => {
-    if (!process.env.CI) {
-      await cleanupOrphanedWorkflows();
-    }
   });
 
   // ======================================================================

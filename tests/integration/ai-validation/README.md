@@ -124,7 +124,7 @@ npm test -- tests/integration/ai-validation/e2e-validation.test.ts --run
 - All tests use `TestContext` for automatic workflow cleanup
 - Workflows are tagged with `mcp-integration-test` and `ai-validation`
 - Cleanup runs in `afterEach` hooks
-- Orphaned workflow cleanup runs in `afterAll` (non-CI only)
+- Orphaned workflow cleanup runs once before the integration suite via a Vitest `globalSetup` (non-CI only, `npm run test:integration` / `test:integration:n8n`), not per-file and not on a plain `npm test`, to avoid deleting in-flight workflows from other test files running in parallel
 
 ### Workflow Naming
 - All test workflows use timestamps: `[MCP-TEST] Description 1696723200000`

@@ -8,6 +8,7 @@
 
 import { createHash } from 'crypto';
 import { SSRFProtection } from '../utils/ssrf-protection';
+import { isValidMcpAccessToken } from '../config/n8n-api';
 
 export interface InstanceContext {
   /**
@@ -20,6 +21,13 @@ export interface InstanceContext {
   n8nApiMaxRetries?: number;
 
   /**
+   * MCP API key for n8n's instance-level MCP server (Settings → Instance-level MCP).
+   * Optional; enables the official-MCP-backed tools. Separate from n8nApiKey.
+   * The endpoint is derived from n8nApiUrl — there is no URL field for it.
+   */
+  n8nMcpAccessToken?: string;
+
+  /**
    * Instance identification
    * Used for session management and logging
    */
@@ -27,10 +35,67 @@ export interface InstanceContext {
   sessionId?: string;
 
   /**
+   * MCP Apps (UI cards) switch. Unset or `true` keeps the default behaviour; `false`
+   * stops the server from advertising UI: no `_meta.ui` on tool definitions, no
+   * `_meta['n8n-mcp/toolName']` on tool results, no `ui://` entries in resources/list.
+   * `resources/read` of a `ui://` URI keeps working, because hosts cache tool lists.
+   * The `N8N_MCP_DISABLE_UI_APPS=true` environment variable overrides `true`.
+   */
+  uiAppsEnabled?: boolean;
+
+  /**
+   * Per-call instance targeting. `true` advertises an optional `instance` argument on
+   * every management tool, for embedders that route one credential to several n8n
+   * instances and read the argument themselves. The server never acts on it and drops
+   * it before dispatch. Unset or `false` leaves the tool schemas unchanged.
+   */
+  instanceArgument?: boolean;
+
+  /**
    * Extensible metadata for future use
    * Allows passing additional configuration without interface changes
    */
   metadata?: Record<string, any>;
+}
+
+/**
+ * Every InstanceContext field, as a value-level list. `satisfies` keeps each entry a real
+ * key, and the exhaustiveness assertion below turns a field added to InstanceContext but
+ * not listed here into a compile error — the silent-field-drop class of #1045 cannot recur.
+ */
+const INSTANCE_CONTEXT_KEYS = [
+  'n8nApiUrl',
+  'n8nApiKey',
+  'n8nApiTimeout',
+  'n8nApiMaxRetries',
+  'n8nMcpAccessToken',
+  'instanceId',
+  'sessionId',
+  'uiAppsEnabled',
+  'instanceArgument',
+  'metadata'
+] as const satisfies readonly (keyof InstanceContext)[];
+
+type MissingInstanceContextKeys = Exclude<keyof InstanceContext, (typeof INSTANCE_CONTEXT_KEYS)[number]>;
+const _instanceContextKeysExhaustive: MissingInstanceContextKeys extends never ? true : never = true;
+void _instanceContextKeysExhaustive;
+
+/**
+ * Copy exactly the declared InstanceContext fields from a context-shaped object.
+ *
+ * Structural typing lets embedders hand over a larger record (a tenant row, a config
+ * object), and restore reads persisted JSON — a plain spread would carry every extra
+ * enumerable property across the session-persistence boundary. Undefined fields are
+ * omitted rather than written as explicit `undefined`.
+ */
+export function pickInstanceContextFields(source: InstanceContext): InstanceContext {
+  const picked: Record<string, unknown> = {};
+  for (const key of INSTANCE_CONTEXT_KEYS) {
+    if (source[key] !== undefined) {
+      picked[key] = source[key];
+    }
+  }
+  return picked as InstanceContext;
 }
 
 /**
@@ -99,6 +164,18 @@ function isValidApiKey(key: string): boolean {
 }
 
 /**
+ * Validate an MCP access token: non-empty, no whitespace, bounded size (the
+ * shared shape check in `isValidMcpAccessToken`), and not an obvious
+ * placeholder. The token is a secret — callers must never log or echo the
+ * value itself, only the validation result.
+ */
+function isValidMcpAccessTokenField(token: unknown): boolean {
+  if (!isValidMcpAccessToken(token)) return false;
+  const lowered = token.toLowerCase();
+  return !['placeholder', 'your_token_here', 'your-token-here', 'example', 'test-token'].includes(lowered);
+}
+
+/**
  * Type guard to check if an object is an InstanceContext
  */
 export function isInstanceContext(obj: any): obj is InstanceContext {
@@ -117,13 +194,20 @@ export function isInstanceContext(obj: any): obj is InstanceContext {
   const hasValidRetries = obj.n8nApiMaxRetries === undefined ||
     (typeof obj.n8nApiMaxRetries === 'number' && obj.n8nApiMaxRetries >= 0);
 
+  const hasValidMcpAccessToken = obj.n8nMcpAccessToken === undefined ||
+    isValidMcpAccessTokenField(obj.n8nMcpAccessToken);
+
   const hasValidInstanceId = obj.instanceId === undefined || typeof obj.instanceId === 'string';
   const hasValidSessionId = obj.sessionId === undefined || typeof obj.sessionId === 'string';
   const hasValidMetadata = obj.metadata === undefined ||
     (typeof obj.metadata === 'object' && obj.metadata !== null);
+  const hasValidUiAppsEnabled = obj.uiAppsEnabled === undefined || typeof obj.uiAppsEnabled === 'boolean';
+  const hasValidInstanceArgument = obj.instanceArgument === undefined || typeof obj.instanceArgument === 'boolean';
 
   return hasValidUrl && hasValidKey && hasValidTimeout && hasValidRetries &&
-         hasValidInstanceId && hasValidSessionId && hasValidMetadata;
+         hasValidMcpAccessToken &&
+         hasValidInstanceId && hasValidSessionId && hasValidMetadata &&
+         hasValidUiAppsEnabled && hasValidInstanceArgument;
 }
 
 /**
@@ -177,6 +261,12 @@ export function validateInstanceContext(context: InstanceContext): {
     }
   }
 
+  // Validate MCP access token if provided
+  if (context.n8nMcpAccessToken !== undefined && !isValidMcpAccessTokenField(context.n8nMcpAccessToken)) {
+    // Never include the value: it is a secret.
+    errors.push('Invalid n8nMcpAccessToken: must be a non-empty string without whitespace (max 4 KB) and not a placeholder value');
+  }
+
   // Validate timeout
   if (context.n8nApiTimeout !== undefined) {
     if (typeof context.n8nApiTimeout !== 'number') {
@@ -197,6 +287,16 @@ export function validateInstanceContext(context: InstanceContext): {
     } else if (!isFinite(context.n8nApiMaxRetries)) {
       errors.push(`Invalid n8nApiMaxRetries: ${context.n8nApiMaxRetries} - Must be a finite number (not Infinity or NaN)`);
     }
+  }
+
+  // Validate the UI apps switch. No coercion: a string "false" read as true (or the
+  // reverse) would silently invert the caller's choice.
+  if (context.uiAppsEnabled !== undefined && typeof context.uiAppsEnabled !== 'boolean') {
+    errors.push(`Invalid uiAppsEnabled: Must be a boolean, got ${typeof context.uiAppsEnabled}`);
+  }
+
+  if (context.instanceArgument !== undefined && typeof context.instanceArgument !== 'boolean') {
+    errors.push(`Invalid instanceArgument: Must be a boolean, got ${typeof context.instanceArgument}`);
   }
 
   return {

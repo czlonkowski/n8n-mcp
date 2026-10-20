@@ -83,3 +83,52 @@ export function getN8nApiConfigFromContext(context: {
 
 // Type export
 export type N8nApiConfig = NonNullable<ReturnType<typeof getN8nApiConfig>>;
+
+/** Upper bound for an instance-level MCP API key. n8n's keys are JWTs of a few hundred bytes. */
+const MCP_ACCESS_TOKEN_MAX_BYTES = 4096;
+
+export function isValidMcpAccessToken(token: unknown): token is string {
+  return typeof token === 'string'
+    && token.length > 0
+    && !/\s/.test(token)
+    && Buffer.byteLength(token, 'utf8') <= MCP_ACCESS_TOKEN_MAX_BYTES;
+}
+
+/**
+ * n8n serves its instance-level MCP server at a fixed path on the instance origin.
+ * The configured API URL may or may not end in /api/v1; only the origin is used.
+ * Instances that split the MCP host with N8N_MCP_BASE_URL are not supported here.
+ */
+export function deriveOfficialMcpEndpoint(instanceUrl: string): string {
+  return new URL(instanceUrl).origin + '/mcp-server/http';
+}
+
+export interface OfficialMcpConfig {
+  endpoint: string;
+  token: string;
+}
+
+export function getOfficialMcpConfigFromContext(context: {
+  n8nApiUrl?: string;
+  n8nMcpAccessToken?: string;
+}): OfficialMcpConfig | null {
+  if (!context.n8nApiUrl || !isValidMcpAccessToken(context.n8nMcpAccessToken)) return null;
+  try {
+    return { endpoint: deriveOfficialMcpEndpoint(context.n8nApiUrl), token: context.n8nMcpAccessToken };
+  } catch {
+    return null;
+  }
+}
+
+export function getOfficialMcpConfig(): OfficialMcpConfig | null {
+  const api = getN8nApiConfig();
+  if (!api) return null;
+  return getOfficialMcpConfigFromContext({
+    n8nApiUrl: api.baseUrl,
+    n8nMcpAccessToken: process.env.N8N_MCP_ACCESS_TOKEN,
+  });
+}
+
+export function isOfficialMcpConfigured(): boolean {
+  return getOfficialMcpConfig() !== null;
+}

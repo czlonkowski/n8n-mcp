@@ -15,6 +15,12 @@ export interface TelemetryConfig {
   firstRun?: string;
   lastModified?: string;
   version?: string;
+  /**
+   * Set when the ingest server told us (HTTP 410) that this client version is
+   * no longer accepted. Only suppresses telemetry while the installed package
+   * version still matches — an upgrade past this version re-enables it.
+   */
+  disabledByServer?: { version: string; at: string };
 }
 
 export class TelemetryConfigManager {
@@ -22,6 +28,13 @@ export class TelemetryConfigManager {
   private readonly configDir: string;
   private readonly configPath: string;
   private config: TelemetryConfig | null = null;
+  /**
+   * Cache of getPackageVersion()'s result. isEnabled() calls getPackageVersion()
+   * on every check once disabledByServer is set, and the version cannot change
+   * within a running process, so there is no reason to re-read and re-parse
+   * package.json from disk synchronously on every call.
+   */
+  private cachedPackageVersion: string | null = null;
 
   private constructor() {
     this.configDir = join(homedir(), '.n8n-mcp');
@@ -36,7 +49,7 @@ export class TelemetryConfigManager {
   }
 
   /**
-   * Generate a deterministic anonymous user ID based on machine characteristics
+   * Generate a deterministic installation ID based on machine characteristics
    * Uses Docker/cloud-specific method for containerized environments
    */
   private generateUserId(): string {
@@ -248,7 +261,26 @@ export class TelemetryConfigManager {
     }
 
     const config = this.loadConfig();
+
+    // Server-side disable (HTTP 410 from the ingest API) applies only to the
+    // client version that was told to stop; an upgrade clears it implicitly.
+    if (config.disabledByServer && config.disabledByServer.version === this.getPackageVersion()) {
+      return false;
+    }
+
     return config.enabled;
+  }
+
+  /**
+   * Record that the ingest server rejected this client version with HTTP 410
+   * (permanently gone). Persists so the disable survives process restarts;
+   * isEnabled() only honors it while the installed version still matches.
+   */
+  recordServerDisable(version: string): void {
+    const config = this.loadConfig();
+    config.disabledByServer = { version, at: new Date().toISOString() };
+    this.config = config;
+    this.saveConfig();
   }
 
   /**
@@ -285,7 +317,7 @@ export class TelemetryConfigManager {
   }
 
   /**
-   * Get the anonymous user ID
+   * Get the installation ID
    */
   getUserId(): string {
     const config = this.loadConfig();
@@ -307,7 +339,7 @@ export class TelemetryConfigManager {
     config.enabled = true;
     this.config = config;
     this.saveConfig();
-    console.log('✓ Anonymous telemetry enabled');
+    console.log('✓ Telemetry enabled');
   }
 
   /**
@@ -318,7 +350,7 @@ export class TelemetryConfigManager {
     config.enabled = false;
     this.config = config;
     this.saveConfig();
-    console.log('✓ Anonymous telemetry disabled');
+    console.log('✓ Telemetry disabled');
   }
 
   /**
@@ -337,7 +369,7 @@ export class TelemetryConfigManager {
 
     return `
 Telemetry Status: ${status}
-Anonymous ID: ${config.userId}
+Installation ID: ${config.userId}
 First Run: ${config.firstRun || 'Unknown'}
 Config Path: ${this.configPath}
 
@@ -349,51 +381,86 @@ For Docker: Set N8N_MCP_TELEMETRY_DISABLED=true
   }
 
   /**
-   * Show first-run notice to user
+   * Show first-run notice to user.
+   *
+   * Written to stderr, never stdout: in stdio mode stdout is the JSON-RPC
+   * channel, and this notice landing there produced a burst of
+   * `is not valid JSON` parse errors in the client on every fresh install.
+   * stderr is the channel the MCP spec reserves for logging, and Claude Desktop
+   * persists it to mcp-server-*.log, so the notice is more visible here than it
+   * was before — the published bin stubs console.* entirely, so on that path it
+   * previously reached nobody at all.
+   *
+   * Uses process.stderr.write rather than console.error so the notice survives
+   * the console silencing installed by stdio-wrapper.ts (see utils/stdio-guard.ts).
    */
   private showFirstRunNotice(): void {
-    console.log(`
-╔════════════════════════════════════════════════════════════╗
-║              Anonymous Usage Statistics                     ║
-╠════════════════════════════════════════════════════════════╣
-║                                                             ║
-║  n8n-mcp collects anonymous usage data to improve the      ║
-║  tool and understand how it's being used.                  ║
-║                                                             ║
-║  We track:                                                 ║
-║  • Which MCP tools are used (no parameters)                ║
-║  • Workflow structures (sanitized, no sensitive data)      ║
-║  • Error patterns (hashed, no details)                     ║
-║  • Performance metrics (timing, success rates)             ║
-║                                                             ║
-║  We NEVER collect:                                         ║
-║  • URLs, API keys, or credentials                          ║
-║  • Workflow content or actual data                         ║
-║  • Personal or identifiable information                    ║
-║  • n8n instance details or locations                       ║
-║                                                             ║
-║  Your anonymous ID: ${this.config?.userId || 'generating...'}          ║
-║                                                             ║
-║  This helps me understand usage patterns and improve       ║
-║  n8n-mcp for everyone. Thank you for your support!         ║
-║                                                             ║
-║  To opt-out at any time:                                   ║
-║  npx n8n-mcp telemetry disable                            ║
-║                                                             ║
-║  Data deletion requests:                                   ║
-║  Email romuald@n8n-mcp.com with your anonymous ID          ║
-║                                                             ║
-║  Learn more:                                               ║
-║  https://github.com/czlonkowski/n8n-mcp/blob/main/PRIVACY.md ║
-║                                                             ║
-╚════════════════════════════════════════════════════════════╝
-`);
+    const width = 60;
+    const row = (text = ''): string => `║ ${text.padEnd(width)}║`;
+    const id = this.config?.userId || 'generating...';
+    const lines = [
+      `╔${'═'.repeat(width + 1)}╗`,
+      row('Usage Telemetry'),
+      `╠${'═'.repeat(width + 1)}╣`,
+      row(),
+      row('n8n-mcp sends pseudonymous usage data to improve the tool'),
+      row('and to build datasets and models for workflow generation.'),
+      row(),
+      row('We collect:'),
+      row('• Which MCP tools are used, timing, and success rates'),
+      row('• Workflow structures, including node settings after'),
+      row('  credentials, URLs, emails, and keys are removed'),
+      row('• The "intent" text passed to workflow update tools'),
+      row('• Error categories and system information'),
+      row(),
+      row('We never collect:'),
+      row('• API keys, tokens, or credentials'),
+      row('• URLs, hostnames, or your n8n instance address'),
+      row('• Names, emails, or account details'),
+      row('• Workflow execution data or pinned data'),
+      row(),
+      row(`Your installation ID: ${id}`),
+      row(),
+      row('Leaving telemetry enabled means you accept the terms'),
+      row('in the policy linked below.'),
+      row(),
+      row('To opt out at any time:'),
+      row('npx n8n-mcp telemetry disable'),
+      row(),
+      row('Data deletion requests:'),
+      row('Email romuald@n8n-mcp.com with your installation ID'),
+      row(),
+      row('Full policy:'),
+      row('https://github.com/czlonkowski/n8n-mcp/blob/main/PRIVACY.md'),
+      row(),
+      `╚${'═'.repeat(width + 1)}╝`,
+    ];
+    process.stderr.write(`\n${lines.join('\n')}\n`);
   }
 
   /**
-   * Get package version safely
+   * Get package version safely. Public: the telemetry manager and the ingest
+   * client need it too (client version header, server-disable matching).
+   *
+   * Cached after the first successful call: the version is fixed for the
+   * life of the process, and isEnabled() calls this on every check once
+   * disabledByServer is set, so re-reading package.json from disk each time
+   * would be pure waste. An 'unknown' result is not cached, in case an
+   * earlier call raced package.json being unavailable.
    */
-  private getPackageVersion(): string {
+  getPackageVersion(): string {
+    if (this.cachedPackageVersion !== null) {
+      return this.cachedPackageVersion;
+    }
+
+    const version = this.resolvePackageVersion();
+    if (version !== 'unknown') {
+      this.cachedPackageVersion = version;
+    }
+    return version;
+  }
+
+  private resolvePackageVersion(): string {
     try {
       // Try multiple approaches to find package.json
       const possiblePaths = [

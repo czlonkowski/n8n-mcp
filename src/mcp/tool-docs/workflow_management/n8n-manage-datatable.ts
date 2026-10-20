@@ -4,17 +4,18 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
   name: 'n8n_manage_datatable',
   category: 'workflow_management',
   essentials: {
-    description: 'Manage n8n data tables and rows. Unified tool for table CRUD and row operations with filtering, pagination, and dry-run support.',
-    keyParameters: ['action', 'tableId', 'name', 'columns', 'data', 'filter'],
+    description: 'Manage n8n data tables, rows and columns. Unified tool for table CRUD, row operations with filtering, pagination and dry-run support, plus column changes on an existing table.',
+    keyParameters: ['action', 'tableId', 'name', 'columns', 'data', 'filter', 'column', 'columnId'],
     example: 'n8n_manage_datatable({action: "createTable", name: "Contacts", columns: [{name: "email", type: "string"}]})',
     performance: 'Fast (100-500ms)',
     tips: [
       'Table actions: createTable, listTables, getTable, updateTable (rename only), deleteTable',
       'Row actions: getRows, insertRows, updateRows, upsertRows, deleteRows',
+      'Column actions: addColumn, deleteColumn, renameColumn - these need N8N_MCP_ACCESS_TOKEN (n8n 2.34+)',
       'Use dryRun: true to preview update/upsert/delete before applying',
       'Filter supports: eq, neq, like, ilike, gt, gte, lt, lte conditions',
       'Use returnData: true to get affected rows back from update/upsert/delete',
-      'Requires N8N_API_URL and N8N_API_KEY configured'
+      'Requires N8N_API_URL and N8N_API_KEY configured; the column actions additionally need N8N_MCP_ACCESS_TOKEN'
     ]
   },
   full: {
@@ -22,7 +23,7 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
 - **createTable**: Create a new data table with one or more typed columns (columns are required)
 - **listTables**: List all data tables (paginated)
 - **getTable**: Get table details and column definitions by ID
-- **updateTable**: Rename an existing table (name only — column modifications not supported via API)
+- **updateTable**: Rename an existing table (name only — see the column actions below to change columns)
 - **deleteTable**: Permanently delete a table and all its rows
 
 **Row Actions:**
@@ -31,6 +32,15 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
 - **updateRows**: Update rows matching a filter condition
 - **upsertRows**: Update matching row or insert if none match
 - **deleteRows**: Delete rows matching a filter condition (filter required)
+
+**Column Actions** (routed to n8n's own MCP server - need N8N_MCP_ACCESS_TOKEN and n8n 2.34+):
+- **addColumn**: Add a typed column to an existing table
+- **deleteColumn**: Remove a column and its values (columnId from getTable)
+- **renameColumn**: Rename an existing column
+
+Column names must start with a letter, contain only letters, digits and underscores, and be at most 63 characters; the type is one of string, number, boolean, date. Renaming a TABLE is not a column action - use updateTable, which goes through the public API.
+
+**projectId for column actions:** the official server addresses a table by project. When the instance has exactly one accessible project, it is used automatically; when several are accessible the call returns PROJECT_REQUIRED and lists the candidates, and when none can be resolved it returns PROJECT_REQUIRED asking for an explicit projectId. Pass projectId to skip resolution entirely (list them with n8n_list_catalog({kind: "projects"})).
 
 **Filter System:** Used in getRows, updateRows, upsertRows, deleteRows
 - Combine conditions with "and" (default) or "or"
@@ -52,6 +62,10 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
       returnType: { type: 'string', required: false, description: 'For insertRows: "count" (default), "id", or "all"' },
       returnData: { type: 'boolean', required: false, description: 'For updateRows/upsertRows/deleteRows: return affected rows (default: false)' },
       dryRun: { type: 'boolean', required: false, description: 'For updateRows/upsertRows/deleteRows: preview without applying (default: false)' },
+      projectId: { type: 'string', required: false, description: 'For createTable: project to create the table in. For the column actions: project owning the table - auto-resolved when exactly one project is accessible' },
+      column: { type: 'object', required: false, description: 'For addColumn: {name, type} - name must match ^[a-zA-Z][a-zA-Z0-9_]*$ and be at most 63 characters; type is string, number, boolean or date' },
+      columnId: { type: 'string', required: false, description: 'For deleteColumn/renameColumn: ID of the column (read it from getTable)' },
+      timeoutMs: { type: 'integer', required: false, description: 'For the column actions: client timeout in ms (5000-600000, default 30000)' },
     },
     returns: `Depends on action:
 - createTable: {id, name}
@@ -63,7 +77,8 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
 - insertRows: Depends on returnType (count/ids/rows)
 - updateRows: Update result with optional rows
 - upsertRows: Upsert result with action type
-- deleteRows: Delete result with optional rows`,
+- deleteRows: Delete result with optional rows
+- addColumn/deleteColumn/renameColumn: {success, action, backend: "official-mcp", data} - data is n8n's own answer ({success, message, column?})`,
     examples: [
       '// Create a table\nn8n_manage_datatable({action: "createTable", name: "Contacts", columns: [{name: "email", type: "string"}, {name: "score", type: "number"}]})',
       '// List all tables\nn8n_manage_datatable({action: "listTables"})',
@@ -76,6 +91,9 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
       '// Update rows (dry run)\nn8n_manage_datatable({action: "updateRows", tableId: "dt-123", filter: {filters: [{columnName: "score", condition: "lt", value: 5}]}, data: {status: "inactive"}, dryRun: true})',
       '// Upsert a row\nn8n_manage_datatable({action: "upsertRows", tableId: "dt-123", filter: {filters: [{columnName: "email", condition: "eq", value: "a@b.com"}]}, data: {score: 15}, returnData: true})',
       '// Delete rows\nn8n_manage_datatable({action: "deleteRows", tableId: "dt-123", filter: {filters: [{columnName: "status", condition: "eq", value: "deleted"}]}})',
+      '// Add a column to an existing table\nn8n_manage_datatable({action: "addColumn", tableId: "dt-123", column: {name: "score", type: "number"}})',
+      '// Rename a column (columnId from getTable)\nn8n_manage_datatable({action: "renameColumn", tableId: "dt-123", columnId: "col-7", name: "total_score"})',
+      '// Delete a column on a multi-project instance\nn8n_manage_datatable({action: "deleteColumn", tableId: "dt-123", columnId: "col-7", projectId: "proj-1"})',
     ],
     useCases: [
       'Persist structured workflow data across executions',
@@ -85,6 +103,7 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
       'Upsert to maintain unique records by key column',
       'Clean up old or invalid rows with filtered delete',
       'Preview changes with dryRun before modifying data',
+      'Adjust a table schema after creation (add, rename or drop a column)',
     ],
     performance: 'Table operations: 50-300ms. Row operations: 100-500ms depending on data size and filters.',
     bestPractices: [
@@ -94,14 +113,17 @@ export const n8nManageDatatableDoc: ToolDocumentation = {
       'Use filter with specific conditions to avoid unintended bulk operations',
       'Use cursor-based pagination for large result sets',
       'Use sortBy for deterministic row ordering',
+      'Read columnId from getTable before deleteColumn or renameColumn',
+      'Pass projectId for the column actions on instances with several projects',
     ],
     pitfalls: [
       'deleteTable permanently deletes all rows — cannot be undone',
       'deleteRows requires a filter — cannot delete all rows without one',
-      'Column types cannot be changed after table creation via API',
-      'updateTable can only rename the table (no column modifications via public API)',
-      'createTable requires at least one column — schema cannot be changed after creation',
+      'A column type cannot be changed after the column is created — drop and re-add the column instead',
+      'updateTable only renames the table; use addColumn/deleteColumn/renameColumn to change columns',
+      'The column actions are unavailable without N8N_MCP_ACCESS_TOKEN (NOT_CONFIGURED) or on n8n below 2.34 (OFFICIAL_MCP_TOOL_UNAVAILABLE)',
+      'deleteColumn drops the column values along with the column',
     ],
-    relatedTools: ['n8n_create_workflow', 'n8n_list_workflows', 'n8n_health_check'],
+    relatedTools: ['n8n_create_workflow', 'n8n_list_workflows', 'n8n_list_catalog', 'n8n_health_check'],
   },
 };

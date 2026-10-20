@@ -86,7 +86,7 @@ describe('UI_APP_CONFIGS', () => {
     expect(config!.toolPatterns).toContain('n8n_update_full_workflow');
     expect(config!.toolPatterns).toContain('n8n_delete_workflow');
     expect(config!.toolPatterns).toContain('n8n_test_workflow');
-    expect(config!.toolPatterns).not.toContain('n8n_deploy_template');
+    expect(config!.toolPatterns).toContain('n8n_deploy_template');
   });
 
   it('should contain the validation-summary config', () => {
@@ -98,14 +98,14 @@ describe('UI_APP_CONFIGS', () => {
     expect(config!.toolPatterns).toContain('n8n_validate_workflow');
   });
 
-  it('should have exactly 2 configs', () => {
-    expect(UI_APP_CONFIGS.length).toBe(2);
+  it('should have exactly 5 configs', () => {
+    expect(UI_APP_CONFIGS.length).toBe(5);
   });
 
-  it('should not contain disabled apps', () => {
-    expect(UI_APP_CONFIGS.find(c => c.id === 'workflow-list')).toBeUndefined();
-    expect(UI_APP_CONFIGS.find(c => c.id === 'execution-history')).toBeUndefined();
-    expect(UI_APP_CONFIGS.find(c => c.id === 'health-dashboard')).toBeUndefined();
+  it('should contain the restored inspection apps', () => {
+    expect(UI_APP_CONFIGS.find(c => c.id === 'workflow-list')).toBeDefined();
+    expect(UI_APP_CONFIGS.find(c => c.id === 'execution-history')).toBeDefined();
+    expect(UI_APP_CONFIGS.find(c => c.id === 'health-dashboard')).toBeDefined();
   });
 
   it('should have IDs that are valid URI path segments (no spaces or special chars)', () => {

@@ -250,20 +250,20 @@ describe('PropertyFilter - Edge Cases', () => {
       const properties = [
         { name: 'resource', type: 'options', required: true },
         { name: 'operation', type: 'options', required: true },
-        { name: 'channel', type: 'string' },
+        { name: 'channelId', type: 'string' },
         { name: 'text', type: 'string' },
         { name: 'attachments', type: 'collection' },
         { name: 'ts', type: 'string' },
         { name: 'advancedOption1', type: 'string' },
         { name: 'advancedOption2', type: 'boolean' }
       ];
-      
+
       const result = PropertyFilter.getEssentials(properties, 'nodes-base.slack');
-      
+
       // In the actual config, resource and operation are in common, not required
       expect(result.common.some(p => p.name === 'resource')).toBe(true);
       expect(result.common.some(p => p.name === 'operation')).toBe(true);
-      expect(result.common.some(p => p.name === 'channel')).toBe(true);
+      expect(result.common.some(p => p.name === 'channelId')).toBe(true);
       expect(result.common.some(p => p.name === 'text')).toBe(true);
     });
   });

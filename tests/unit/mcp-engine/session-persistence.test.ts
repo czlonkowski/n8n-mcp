@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { N8NMCPEngine } from '../../../src/mcp-engine';
 import { SessionState } from '../../../src/types/session-state';
+import { PROJECT_VERSION } from '../../../src/utils/version';
 
 describe('N8NMCPEngine - Session Persistence', () => {
   let engine: N8NMCPEngine;
@@ -250,6 +251,12 @@ describe('N8NMCPEngine - Session Persistence', () => {
       // Note: getSessionInfo() reflects metadata, not transports
       // Restored sessions won't have transports until first request
       expect(info).toBeDefined();
+    });
+  });
+  describe('healthCheck()', () => {
+    it('reports the package version, not a hard-coded one', async () => {
+      const health = await engine.healthCheck();
+      expect(health.version).toBe(PROJECT_VERSION);
     });
   });
 });

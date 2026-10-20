@@ -82,6 +82,21 @@ export class PropertyExtractor {
     return this.extractOperationsFromDescription(description);
   }
   
+  /**
+   * Extract the per-version details (properties, operations, credentials) from
+   * one concrete node description. Used to record every version of a node, not
+   * only the latest one that extractProperties/extractOperations return.
+   */
+  extractVersionDetails(description: any): { properties: any[]; operations: any[]; credentials: any[] } {
+    return {
+      properties: Array.isArray(description?.properties)
+        ? this.normalizeProperties(description.properties)
+        : [],
+      operations: this.extractOperationsFromDescription(description),
+      credentials: Array.isArray(description?.credentials) ? description.credentials : []
+    };
+  }
+
   private extractOperationsFromDescription(description: any): any[] {
     const operations: any[] = [];
     

@@ -21,6 +21,16 @@ class TestableN8NMCPServer extends N8NDocumentationMCPServer {
   public async testExecuteTool(name: string, args: any): Promise<any> {
     return (this as any).executeTool(name, args);
   }
+
+  /**
+   * Drives the real CallTool request handler, which is where the policy gate
+   * that clients hit lives — `executeTool` only carries the defence-in-depth
+   * copy of it, and the two normalise their arguments differently.
+   */
+  public async testCallTool(name: string, args: any): Promise<any> {
+    const handler = (this as any).server._requestHandlers.get('tools/call');
+    return handler({ method: 'tools/call', params: { name, arguments: args } }, {});
+  }
 }
 
 describe('Disabled Tool Operations Feature (Issue #714)', () => {
@@ -400,6 +410,21 @@ describe('Disabled Tool Operations Feature (Issue #714)', () => {
     });
 
     it('should recompute annotations to read-only when all destructive ops are disabled', () => {
+      // 'expose' is the virtual consent-write operation behind exposeToMcp; it
+      // has to be disabled too before the tool is read-only.
+      const disabledOps = new Map([
+        ['n8n_workflow_versions', new Set(['delete', 'rollback', 'prune', 'expose'])]
+      ]);
+      server = new TestableN8NMCPServer();
+      const cache = server.testBuildFilteredToolDefinitions(disabledOps);
+
+      const filtered = cache.get('n8n_workflow_versions');
+      // Only read modes (list/get/diff) remain → tool is effectively read-only.
+      expect(filtered.annotations.readOnlyHint).toBe(true);
+      expect(filtered.annotations.destructiveHint).toBe(false);
+    });
+
+    it('should keep destructiveHint while the virtual expose operation is enabled', () => {
       const disabledOps = new Map([
         ['n8n_workflow_versions', new Set(['delete', 'rollback', 'prune'])]
       ]);
@@ -407,9 +432,8 @@ describe('Disabled Tool Operations Feature (Issue #714)', () => {
       const cache = server.testBuildFilteredToolDefinitions(disabledOps);
 
       const filtered = cache.get('n8n_workflow_versions');
-      // Only read modes (list/get) remain → tool is effectively read-only.
-      expect(filtered.annotations.readOnlyHint).toBe(true);
-      expect(filtered.annotations.destructiveHint).toBe(false);
+      expect(filtered.annotations.destructiveHint).toBe(true);
+      expect(filtered.annotations.readOnlyHint).toBe(false);
     });
 
     it('should keep destructiveHint when a destructive op remains', () => {
@@ -501,4 +525,140 @@ describe('Disabled Tool Operations Feature (Issue #714)', () => {
       expect(result).toContain('prune');
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Dispatch enforcement — n8n_test_workflow, whose operation parameter has a
+  // per-tool default: an omitted `method` is the `auto` operation.
+  // ---------------------------------------------------------------------------
+
+  describe('executeTool() - Dispatch Enforcement for n8n_test_workflow', () => {
+    it('should treat an omitted method as auto', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:auto,trigger';
+      server = new TestableN8NMCPServer();
+
+      await expect(
+        server.testExecuteTool('n8n_test_workflow', { workflowId: 'w' })
+      ).rejects.toThrow("Operation 'auto' on tool 'n8n_test_workflow' is disabled by server policy");
+    });
+
+    it('should treat a blank method as auto', async () => {
+      // Lossy MCP clients send '' for an unset optional string. The handler's
+      // schema maps that to the default operation, so the gate must too —
+      // otherwise a rule naming `auto` is sidestepped by a blank parameter.
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:auto';
+      server = new TestableN8NMCPServer();
+
+      await expect(
+        server.testExecuteTool('n8n_test_workflow', { workflowId: 'w', method: '' })
+      ).rejects.toThrow("Operation 'auto' on tool 'n8n_test_workflow' is disabled by server policy");
+
+      await expect(
+        server.testExecuteTool('n8n_test_workflow', { workflowId: 'w', method: '   ' })
+      ).rejects.toThrow("Operation 'auto' on tool 'n8n_test_workflow' is disabled by server policy");
+    });
+
+    it('should refuse a blank method through the CallTool gate without executing', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:auto';
+      server = new TestableN8NMCPServer();
+      const executeSpy = vi.spyOn(server as any, 'executeTool');
+
+      const result = await server.testCallTool('n8n_test_workflow', { workflowId: 'w', method: '' });
+
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(result.content[0].text);
+      expect(payload).toMatchObject({ error: 'OPERATION_DISABLED', tool: 'n8n_test_workflow', operation: 'auto' });
+      expect(executeSpy).not.toHaveBeenCalled();
+    });
+
+    it('should block an explicit trigger method', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:auto,trigger';
+      server = new TestableN8NMCPServer();
+
+      await expect(
+        server.testExecuteTool('n8n_test_workflow', { workflowId: 'w', method: 'trigger' })
+      ).rejects.toThrow("Operation 'trigger' on tool 'n8n_test_workflow' is disabled by server policy");
+    });
+
+    it('should not block prepare when the run methods are disabled', async () => {
+      expect.assertions(1);
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_test_workflow:auto,trigger';
+      server = new TestableN8NMCPServer();
+
+      // The call gets past the policy gate and then fails on something else
+      // (no n8n API configured here) — either way exactly one assertion runs.
+      try {
+        const result = await server.testExecuteTool('n8n_test_workflow', { workflowId: 'w', method: 'prepare' });
+        expect(result).toBeDefined();
+      } catch (error: any) {
+        expect(error.message).not.toContain('disabled by server policy');
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // n8n_manage_datatable — registered for per-operation policy alongside the
+  // column actions that route to n8n's own MCP server.
+  // ---------------------------------------------------------------------------
+
+  describe('n8n_manage_datatable operations', () => {
+    it('should strip the disabled actions from the enum but stay destructive', () => {
+      const disabledOps = new Map([['n8n_manage_datatable', new Set(['deletetable', 'deleterows'])]]);
+      server = new TestableN8NMCPServer();
+      const cache = server.testBuildFilteredToolDefinitions(disabledOps);
+
+      const filtered = cache.get('n8n_manage_datatable');
+      const enumValues: string[] = filtered.inputSchema.properties.action.enum;
+      expect(enumValues).not.toContain('deleteTable');
+      expect(enumValues).not.toContain('deleteRows');
+      expect(enumValues).toContain('getRows');
+      expect(enumValues).toContain('addColumn');
+      // Other writes (createTable, insertRows, the column actions) remain.
+      expect(filtered.annotations.destructiveHint).toBe(true);
+      expect(filtered.annotations.readOnlyHint).toBe(false);
+    });
+
+    it('should recompute annotations to read-only when every write action is disabled', () => {
+      const disabledOps = new Map([[
+        'n8n_manage_datatable',
+        new Set([
+          'createtable', 'updatetable', 'deletetable',
+          'insertrows', 'updaterows', 'upsertrows', 'deleterows',
+          'addcolumn', 'deletecolumn', 'renamecolumn',
+        ]),
+      ]]);
+      server = new TestableN8NMCPServer();
+      const cache = server.testBuildFilteredToolDefinitions(disabledOps);
+
+      const filtered = cache.get('n8n_manage_datatable');
+      const enumValues: string[] = filtered.inputSchema.properties.action.enum;
+      expect(enumValues).toEqual(['listTables', 'getTable', 'getRows']);
+      expect(filtered.annotations.readOnlyHint).toBe(true);
+      expect(filtered.annotations.destructiveHint).toBe(false);
+    });
+
+    it('should refuse a disabled action at call time', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_manage_datatable:deleteTable,deleteRows';
+      server = new TestableN8NMCPServer();
+
+      await expect(
+        server.testExecuteTool('n8n_manage_datatable', { action: 'deleteRows', tableId: 't1' })
+      ).rejects.toThrow("Operation 'deleteRows' on tool 'n8n_manage_datatable' is disabled by server policy");
+    });
+
+    it('should not refuse an action that stays enabled', async () => {
+      expect.assertions(1);
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_manage_datatable:deleteTable,deleteRows';
+      server = new TestableN8NMCPServer();
+
+      // The call gets past the policy gate and then fails on something else
+      // (no n8n API configured here) - either way exactly one assertion runs.
+      try {
+        const result = await server.testExecuteTool('n8n_manage_datatable', { action: 'listTables' });
+        expect(result).toBeDefined();
+      } catch (error: any) {
+        expect(error.message).not.toContain('disabled by server policy');
+      }
+    });
+  });
+
 });

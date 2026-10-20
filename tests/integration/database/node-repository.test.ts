@@ -4,6 +4,7 @@ import { NodeRepository } from '../../../src/database/node-repository';
 import { DatabaseAdapter } from '../../../src/database/database-adapter';
 import { TestDatabase, TestDataGenerator, MOCK_NODES, createTestDatabaseAdapter } from './test-utils';
 import { ParsedNode } from '../../../src/parsers/node-parser';
+import { isCompressedColumn } from '../../../src/database/compressed-column';
 
 describe('NodeRepository Integration Tests', () => {
   let testDb: TestDatabase;
@@ -458,6 +459,71 @@ describe('NodeRepository Integration Tests', () => {
     });
   });
 
+  describe('community node set-diff', () => {
+    // Exercises the generated NOT IN statement against a real SQLite engine —
+    // the unit-level mock re-implements the predicate in JS (#967).
+    const communityNode = (nodeType: string, isVerified = false): any => ({
+      ...createParsedNode(MOCK_NODES.webhook),
+      nodeType,
+      isCommunity: true,
+      isVerified,
+      npmPackageName: 'n8n-nodes-multi',
+    });
+
+    beforeEach(() => {
+      repository.saveNode(communityNode('n8n-nodes-multi.first'));
+      repository.saveNode(communityNode('n8n-nodes-multi.second'));
+      repository.saveNode(communityNode('n8n-nodes-multi.stale'));
+      repository.saveNode(communityNode('n8n-nodes-multi.verified', true));
+      repository.saveNode({
+        ...createParsedNode(MOCK_NODES.httpRequest),
+        isCommunity: true,
+        isVerified: false,
+        npmPackageName: 'n8n-nodes-other',
+      });
+    });
+
+    it('should return every row of a package', () => {
+      const nodes = repository.getNodesByNpmPackage('n8n-nodes-multi');
+
+      expect(nodes.map((n: any) => n.nodeType)).toEqual([
+        'n8n-nodes-multi.first',
+        'n8n-nodes-multi.second',
+        'n8n-nodes-multi.stale',
+        'n8n-nodes-multi.verified',
+      ]);
+    });
+
+    it('should delete only the unverified rows outside the keep set', () => {
+      const removed = repository.deleteStaleCommunityNodes('n8n-nodes-multi', [
+        'n8n-nodes-multi.first',
+        'n8n-nodes-multi.second',
+      ]);
+
+      expect(removed).toBe(1);
+      expect(repository.getNodesByNpmPackage('n8n-nodes-multi').map((n: any) => n.nodeType)).toEqual(
+        ['n8n-nodes-multi.first', 'n8n-nodes-multi.second', 'n8n-nodes-multi.verified']
+      );
+      expect(repository.getNodesByNpmPackage('n8n-nodes-other')).toHaveLength(1);
+    });
+
+    it('should treat node types as data, not SQL', () => {
+      const removed = repository.deleteStaleCommunityNodes('n8n-nodes-multi', [
+        "n8n-nodes-multi.first'; DROP TABLE nodes; --",
+      ]);
+
+      expect(removed).toBe(3);
+      expect(repository.getNodeCount()).toBe(2); // verified row + the other package
+    });
+
+    it('should no-op on an empty keep set', () => {
+      const removed = repository.deleteStaleCommunityNodes('n8n-nodes-multi', []);
+
+      expect(removed).toBe(0);
+      expect(repository.getNodesByNpmPackage('n8n-nodes-multi')).toHaveLength(4);
+    });
+  });
+
   describe('searchNodeProperties', () => {
     beforeEach(() => {
       const node: ParsedNode = {
@@ -601,6 +667,173 @@ describe('NodeRepository Integration Tests', () => {
 
       expect(searchDuration).toBeLessThan(50); // Search should be fast
       expect(results.length).toBe(100); // Respects limit
+    });
+  });
+
+  describe('compressed bulk columns (#1067)', () => {
+    const largeProperties = Array.from({ length: 200 }, (_, i) => ({
+      name: `field${i}`,
+      displayName: `Field ${i}`,
+      type: 'string',
+      default: '',
+      displayOptions: { show: { resource: ['message'], operation: ['send'] } },
+    }));
+    const longReadme = '# Community node\n\nInstall with `npm install`.\n'.repeat(60);
+
+    type RawColumns = { properties_schema: string; npm_readme: string | null };
+
+    const rawColumns = (nodeType: string): RawColumns =>
+      db.prepare('SELECT properties_schema, npm_readme FROM nodes WHERE node_type = ?').get(nodeType) as RawColumns;
+
+    it('stores a large properties schema gzip-compressed and reads it back intact', () => {
+      const node = { ...createParsedNode(MOCK_NODES.webhook), properties: largeProperties };
+      repository.saveNode(node);
+
+      const stored = rawColumns(node.nodeType).properties_schema;
+      expect(isCompressedColumn(stored)).toBe(true);
+      expect(stored.length).toBeLessThan(JSON.stringify(largeProperties).length);
+      expect(repository.getNode(node.nodeType).properties).toEqual(largeProperties);
+    });
+
+    it('keeps a small properties schema as plain JSON', () => {
+      const node = createParsedNode(MOCK_NODES.webhook);
+      repository.saveNode(node);
+
+      expect(rawColumns(node.nodeType).properties_schema).toBe(JSON.stringify(node.properties));
+    });
+
+    it('stores a README compressed, reads it back, and keeps it through an upsert', () => {
+      const node = { ...createParsedNode(MOCK_NODES.webhook), isCommunity: true, isVerified: false };
+      repository.saveNode(node);
+      repository.updateNodeReadme(node.nodeType, longReadme);
+
+      expect(isCompressedColumn(rawColumns(node.nodeType).npm_readme)).toBe(true);
+      expect(repository.getNode(node.nodeType).npmReadme).toBe(longReadme);
+      expect(repository.getDocumentationStats().withReadme).toBe(1);
+      expect(repository.getCommunityNodesWithoutReadme()).toEqual([]);
+
+      repository.saveNode(node);
+      expect(repository.getNode(node.nodeType).npmReadme).toBe(longReadme);
+    });
+
+    it('reads rows written as plain text and rewrites them once with compressStoredColumns', () => {
+      db.prepare(`
+        INSERT INTO nodes (
+          node_type, package_name, display_name, description, category, development_style,
+          is_ai_tool, is_trigger, is_webhook, is_versioned, version, documentation,
+          properties_schema, operations, credentials_required, is_community, npm_readme
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, 1, '1', NULL, ?, '[]', '[]', 1, ?)
+      `).run(
+        'n8n-nodes-legacy.plain', 'n8n-nodes-legacy', 'Plain', 'Written before compression', 'automation',
+        'programmatic', JSON.stringify(largeProperties, null, 2), longReadme
+      );
+      const small = createParsedNode(MOCK_NODES.webhook);
+      repository.saveNode(small);
+
+      // Pretty-printed it crosses the threshold, compact it does not: the repack must apply
+      // the threshold to the compact form saveNode() writes, so this row stays plain.
+      const mediumProperties = Array.from({ length: 25 }, (_, i) => ({ name: `f${i}`, type: 'string' }));
+      const prettyMedium = JSON.stringify(mediumProperties, null, 2);
+      expect(prettyMedium.length).toBeGreaterThanOrEqual(1024);
+      expect(JSON.stringify(mediumProperties).length).toBeLessThan(1024);
+      db.prepare(`
+        INSERT INTO nodes (node_type, package_name, display_name, description, category, development_style,
+          is_ai_tool, is_trigger, is_webhook, is_versioned, version, properties_schema, operations, credentials_required)
+        VALUES ('n8n-nodes-legacy.medium', 'n8n-nodes-legacy', 'Medium', 'Pretty-printed but small', 'automation',
+          'programmatic', 0, 0, 0, 1, '1', ?, '[]', '[]')
+      `).run(prettyMedium);
+
+      const before = repository.getNode('n8n-nodes-legacy.plain');
+      expect(before.properties).toEqual(largeProperties);
+      expect(before.npmReadme).toBe(longReadme);
+
+      expect(repository.compressStoredColumns()).toEqual({ rewritten: 2 });
+      expect(rawColumns('n8n-nodes-legacy.medium').properties_schema).toBe(JSON.stringify(mediumProperties));
+      expect(repository.getNode('n8n-nodes-legacy.medium').properties).toEqual(mediumProperties);
+
+      // The UPDATE fires the nodes_fts update trigger; the index must still match the row.
+      const ftsHits = db.prepare("SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH 'compression'").all() as Array<{ rowid: number }>;
+      const legacyRowid = (db.prepare("SELECT rowid FROM nodes WHERE node_type = 'n8n-nodes-legacy.plain'").get() as { rowid: number }).rowid;
+      expect(ftsHits.map(hit => hit.rowid)).toEqual([legacyRowid]);
+      expect(() => db.prepare("INSERT INTO nodes_fts(nodes_fts, rank) VALUES('integrity-check', 1)").run()).not.toThrow();
+      const stored = rawColumns('n8n-nodes-legacy.plain');
+      expect(isCompressedColumn(stored.properties_schema)).toBe(true);
+      expect(isCompressedColumn(stored.npm_readme)).toBe(true);
+      expect(rawColumns(small.nodeType).properties_schema).toBe(JSON.stringify(small.properties));
+
+      const after = repository.getNode('n8n-nodes-legacy.plain');
+      expect(after.properties).toEqual(largeProperties);
+      expect(after.npmReadme).toBe(longReadme);
+
+      expect(repository.compressStoredColumns()).toEqual({ rewritten: 0 });
+    });
+  });
+
+  describe("npm's missing-README placeholder", () => {
+    const placeholder = 'ERROR: No README data found!';
+
+    const insertCommunityRow = (nodeType: string, readme: string | null, summary: string | null) =>
+      db.prepare(`
+        INSERT INTO nodes (node_type, package_name, display_name, description, category, development_style,
+          is_ai_tool, is_trigger, is_webhook, is_versioned, version, properties_schema, operations, credentials_required,
+          is_community, npm_readme, ai_documentation_summary, ai_summary_generated_at)
+        VALUES (?, 'n8n-nodes-docs', ?, '', 'automation', 'declarative', 0, 0, 0, 0, '1', '[]', '[]', '[]',
+          1, ?, ?, ?)
+      `).run(nodeType, nodeType, readme, summary, summary ? '2026-09-01T00:00:00.000Z' : null);
+
+    beforeEach(() => {
+      insertCommunityRow('n8n-nodes-docs.placeholder', placeholder, '{"purpose":"guessed"}');
+      insertCommunityRow('n8n-nodes-docs.real', '# Real README', null);
+      insertCommunityRow('n8n-nodes-docs.missing', null, null);
+    });
+
+    it('selects a stored placeholder as a node without a README', () => {
+      const nodeTypes = repository.getCommunityNodesWithoutReadme().map((node) => node.nodeType).sort();
+
+      expect(nodeTypes).toEqual(['n8n-nodes-docs.missing', 'n8n-nodes-docs.placeholder']);
+    });
+
+    it('does not select a stored placeholder for summary generation', () => {
+      db.prepare("UPDATE nodes SET ai_documentation_summary = NULL WHERE node_type = 'n8n-nodes-docs.placeholder'").run();
+
+      const nodeTypes = repository.getCommunityNodesWithoutAISummary().map((node) => node.nodeType);
+
+      expect(nodeTypes).toEqual(['n8n-nodes-docs.real']);
+    });
+
+    it('does not count a stored placeholder as a README in the documentation stats', () => {
+      expect(repository.getDocumentationStats()).toEqual({
+        total: 3,
+        withReadme: 1,
+        withAISummary: 0,
+        needingReadme: 2,
+        needingAISummary: 1,
+      });
+    });
+
+    it('replaces a README and, when asked, drops the summary generated from the old one', () => {
+      repository.updateNodeReadme('n8n-nodes-docs.placeholder', '# Recovered README', { clearSummary: true });
+
+      const node = repository.getNode('n8n-nodes-docs.placeholder');
+      expect(node.npmReadme).toBe('# Recovered README');
+      expect(node.aiDocumentationSummary).toBeNull();
+      expect(node.aiSummaryGeneratedAt).toBeNull();
+    });
+
+    it('keeps the summary when a README is replaced without clearSummary', () => {
+      repository.updateNodeReadme('n8n-nodes-docs.placeholder', '# Recovered README');
+
+      expect(repository.getNode('n8n-nodes-docs.placeholder').aiDocumentationSummary).toEqual({ purpose: 'guessed' });
+    });
+
+    it('clears the README, the summary and its timestamp', () => {
+      repository.clearNodeReadme('n8n-nodes-docs.placeholder');
+
+      const node = repository.getNode('n8n-nodes-docs.placeholder');
+      expect(node.npmReadme).toBeNull();
+      expect(node.aiDocumentationSummary).toBeNull();
+      expect(node.aiSummaryGeneratedAt).toBeNull();
+      expect(repository.getNode('n8n-nodes-docs.real').npmReadme).toBe('# Real README');
     });
   });
 });

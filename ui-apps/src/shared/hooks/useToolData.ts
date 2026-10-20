@@ -1,50 +1,32 @@
-import { useState, useCallback } from 'react';
+import { useReducer, useCallback, useEffect, useState } from 'react';
 import { useApp, useHostStyles } from '@modelcontextprotocol/ext-apps/react';
-import type { App } from '@modelcontextprotocol/ext-apps/react';
+import type { App, McpUiHostContext } from '@modelcontextprotocol/ext-apps/react';
+import { initialResultState, reduceResult } from '../result-state';
 
-interface UseToolDataResult<T> {
-  data: T | null;
-  error: string | null;
-  isConnected: boolean;
-  app: App | null;
-  toolName: string | null;
-}
-
-export function useToolData<T>(): UseToolDataResult<T> {
-  const [data, setData] = useState<T | null>(null);
-
+export function useToolData<T = Record<string, unknown>>() {
+  const [state, dispatch] = useReducer(reduceResult, initialResultState);
+  const [context, setContext] = useState<McpUiHostContext | null>(null);
   const onAppCreated = useCallback((app: App) => {
-    app.ontoolresult = (result) => {
-      if (result?.content) {
-        const textItem = Array.isArray(result.content)
-          ? result.content.find((c) => c.type === 'text')
-          : null;
-        if (textItem && 'text' in textItem) {
-          try {
-            setData(JSON.parse(textItem.text) as T);
-          } catch {
-            setData(textItem.text as unknown as T);
-          }
-        }
-      }
-    };
+    app.ontoolinput = input => dispatch({ type: 'input', input: input.arguments });
+    app.ontoolresult = result => dispatch({ type: 'result', result, receivedAt: new Date().toISOString() });
+    app.ontoolcancelled = params => dispatch({ type: 'cancel', reason: params.reason });
+    // SDK protocol diagnostics do not necessarily end the tool invocation.
+    app.onerror = error => dispatch({ type: 'host-warning', error: error.message });
+    app.addEventListener('hostcontextchanged', ctx => setContext(previous => ({ ...previous, ...ctx })));
   }, []);
-
   const { app, isConnected, error } = useApp({
-    appInfo: { name: 'n8n-mcp-ui', version: '1.0.0' },
-    capabilities: {},
-    onAppCreated,
+    appInfo: { name: 'n8n-mcp-ui', version: '1.1.0' }, capabilities: {}, onAppCreated,
   });
-
-  useHostStyles(app, app?.getHostContext());
-
-  const toolName = app?.getHostContext()?.toolInfo?.tool.name ?? null;
-
+  useEffect(() => {
+    if (isConnected) setContext(app?.getHostContext() ?? null);
+  }, [app, isConnected]);
+  useEffect(() => {
+    if (error) dispatch({ type: 'error', error: error.message });
+  }, [error]);
+  useHostStyles(app, context);
   return {
-    data,
-    error: error?.message ?? null,
-    isConnected,
-    app,
-    toolName,
+    ...state, data: state.data as T | null,
+    isConnected, app, toolName: state.toolName ?? context?.toolInfo?.tool.name ?? null,
+    standalone: typeof window !== 'undefined' && window.parent === window,
   };
 }

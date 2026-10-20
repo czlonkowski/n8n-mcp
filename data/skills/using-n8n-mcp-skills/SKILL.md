@@ -22,9 +22,12 @@ but breaks in production.
 
 1. **Invoke the relevant skill before any n8n action** — not just before MCP calls.
    Before writing an expression, configuring a node, designing a workflow, wiring a
-   connection, or writing Code, invoke the matching skill. The PreToolUse hooks remind
-   you on the highest-impact tool calls *only when the plugin bundle is installed*; on
-   Claude.ai (plain skill uploads, no hooks) the responsibility is entirely yours.
+   connection, or writing Code, invoke the matching skill. PreToolUse hooks remind you on
+   the highest-impact tool calls, but they exist **only in the Claude Code plugin
+   install**. Everywhere else — Claude.ai skill uploads, and any client that loads this
+   pack as an Agent Plugin (Codex, Cursor, Copilot and the rest) — nothing nudges you and
+   the responsibility is entirely yours. Assume you are un-hooked unless you have seen a
+   hook fire this session.
 2. **Validate AND verify before activating.** Run `validate_workflow` (or
    `n8n_validate_workflow` by id) before you activate, and call `n8n_get_workflow` after
    every create or update to inspect the `connections` object. Validation alone misses
@@ -104,6 +107,20 @@ If you catch yourself thinking any of these, stop and invoke the named skill fir
 Qualified names look like `mcp__<server>__<tool>` (`<server>` is usually `n8n-mcp`). This
 closes the gap where a tool's full description isn't loaded until first use.
 
+**Two tiers, and how to tell which one you have.** The documentation and validation tools
+below work offline and are always present. The `n8n_*` management tools talk to a live n8n
+instance and appear **only once one is connected**. If they are absent, nothing is broken
+and there is nothing to retry — say so plainly and point the user at the right fix for
+their install:
+
+- **Hosted (`https://api.n8n-mcp.com/mcp`)** — sign in through the OAuth prompt the client
+  shows on first use, then connect the n8n instance in the dashboard. No environment
+  variables, and no API key pasted into a config file.
+- **Self-hosted (`npx n8n-mcp`, Docker)** — the server needs `N8N_API_URL` and
+  `N8N_API_KEY` in its environment, exported before the client starts.
+
+`n8n_health_check` confirms a working connection and returns the resolved instance.
+
 **Discovery & docs**
 - `tools_documentation` — meta-docs for every tool; `{topic:"ai_agents_guide", depth:"full"}` for the agent guide.
 - `search_nodes` — find nodes by keyword.
@@ -126,17 +143,24 @@ closes the gap where a tool's full description isn't loaded until first use.
 **Inspect & lifecycle**
 - `n8n_get_workflow` — fetch a workflow (full / structure / active / filtered / minimal). Use it to verify `connections` after edits; `mode="filtered"` + `nodeNames` reads one heavy node (e.g. long Code source) without pulling the whole workflow, which can truncate client-side.
 - `n8n_list_workflows` — list/filter (search before duplicating logic).
-- `n8n_delete_workflow`, `n8n_workflow_versions` (history/rollback), `n8n_instances` (multi-instance accounts only: list/switch the target instance — see `n8n-multi-instance`), `n8n_health_check` (returns the resolved `instanceName`).
+- `n8n_delete_workflow`, `n8n_workflow_versions` (history/rollback/diff; `source: "local"` = n8n-mcp's own snapshots, `source: "native"` = n8n's own history including edits people made in the UI — see `n8n-mcp-tools-expert`), `n8n_instances` (multi-instance accounts only: list/switch the target instance — see `n8n-multi-instance`), `n8n_health_check` (returns the resolved `instanceName`, plus an `officialMcp` block saying whether the instance-level MCP server below is configured and reachable).
 
 **Test & run**
-- `n8n_test_workflow` — runs real nodes (Code, HTTP, DB writes, sends all fire). Ask the user before running when side effects exist.
+- `n8n_test_workflow` — runs real nodes (Code, HTTP, DB writes, sends all fire). Ask the user before running when side effects exist. `method` picks the path: `auto` (default) and `trigger` fire a webhook/form/chat trigger over HTTP on an **active** workflow; `prepare`/`pinned`/`direct` route through n8n's own MCP server and can run a workflow that has no HTTP trigger at all (Manual, Schedule, sub-workflow) — see `n8n-mcp-tools-expert`.
 - `n8n_executions` — list/inspect executions. **There is no `execute_workflow` tool.**
-- `n8n_evaluations` — read evaluation test runs (n8n ≥ 2.30): list runs, aggregated metrics, per-case results. Read-only — runs are started from the n8n editor, not the API; a 403 usually means the API key predates 2.30 (re-create it for the testRun scopes).
+- `n8n_evaluations` — evaluation test runs: list runs, aggregated metrics, per-case results (n8n ≥ 2.30), plus `run`/`cancel` to start or stop a run (n8n ≥ 2.32). `run` executes the workflow against its whole dataset — real nodes fire, so ask the user first. A 403 can mean the API key was created before the action's minimum version (re-create it for the testRun scopes), evaluations aren't licensed on the plan, or the key's owner lacks access to the workflow — for `run`/`cancel`, specifically the `workflow:execute` scope.
 
-**Data, credentials, audit**
-- `n8n_manage_datatable` — Data Table CRUD, filtering, dry-run.
+**Data, folders, credentials, audit**
+- `n8n_manage_datatable` — Data Table CRUD, filtering, dry-run. `addColumn`/`deleteColumn`/`renameColumn` change an existing table's columns (the Public API cannot) through n8n's MCP server — `deleteColumn` drops the column's values along with it.
+- `n8n_manage_folders` — workflow folder CRUD with contents counts (n8n ≥ 2.19, registered Community tier and up; `projectId` defaults to `personal`). Place workflows via `parentFolderId` on `n8n_create_workflow` or the `moveToFolder` op (n8n ≥ 2.32). Placement is write-only — verify via a folder's `get` counts, never by reading the workflow. `delete` without `transferToFolderId` moves the folder's workflows to the project root and ARCHIVES them — they still exist, but deactivated (`transferToFolderId: "0"` = transfer to project root without archiving).
 - `n8n_manage_credentials` — credential CRUD + `getSchema` discovery.
 - `n8n_audit_instance` — security audit (hardcoded secrets, unauthenticated webhooks, error-handling gaps).
+
+**Instance-level MCP server** — a second endpoint alongside the Public API, gated on `N8N_MCP_ACCESS_TOKEN` (n8n 2.34+). `n8n_health_check` reports whether it is reachable; without it these calls answer `NOT_CONFIGURED` rather than failing obscurely.
+- `n8n_manage_agents` — persisted n8n **Agents**: a standalone assistant artifact with its own lifecycle (model, instructions, skills, tasks, memory, channels), **not** the AI Agent workflow node. `call` runs it live with real credentials and may return `approvals[]`; `publish` only when the user asks. See `n8n-agents`.
+- `n8n_explore_node_resources` — resolve a node's live dropdown / resource-locator values through a real credential instead of guessing an ID. See `n8n-node-configuration`.
+- `n8n_list_catalog` — list `projects` (to get a `projectId`) or `tags`. The one tool here that also works without the token.
+- The same server backs `n8n_test_workflow` `prepare`/`pinned`/`direct`, `n8n_workflow_versions` `source: "native"`, and the `n8n_manage_datatable` column actions. Those are additionally gated per workflow on its "Available in MCP" setting; a refusal reads `WORKFLOW_NOT_EXPOSED`, and turning the setting on (`exposeToMcp: true`) is a visible, persistent change — ask the user first.
 
 > **Node-type form trap:** `get_node` / `validate_node` take SHORT form (`nodes-base.set`);
 > workflow JSON inside `validate_workflow` / `n8n_create_workflow` uses LONG form

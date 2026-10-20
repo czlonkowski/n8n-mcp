@@ -396,3 +396,18 @@ describe('node-groups', () => {
     });
   });
 });
+
+describe('classifyGroupError with the zod wording (n8n 2.37 create)', () => {
+  const err = (message: string) => ({ statusCode: 400, message });
+
+  it('treats an unnamed top-level rejection as the field candidate', async () => {
+    const { classifyGroupError } = await import('../../../src/services/node-groups');
+    expect(classifyGroupError(err("request/body Unrecognized key(s) in object: 'nodeGroups'")).kind).toBe('schema-field');
+  });
+
+  it('treats a rejection inside a group as the description case, and other paths as unrelated', async () => {
+    const { classifyGroupError } = await import('../../../src/services/node-groups');
+    expect(classifyGroupError(err("request/body/nodeGroups/0 Unrecognized key(s) in object: 'description'")).kind).toBe('schema-description');
+    expect(classifyGroupError(err("request/body/settings Unrecognized key(s) in object: 'x'")).kind).toBe('unrelated');
+  });
+});

@@ -22,58 +22,30 @@ process.env.MCP_MODE = 'stdio';
 process.env.DISABLE_CONSOLE_OUTPUT = 'true';
 process.env.LOG_LEVEL = 'error';
 
-// Suppress all console output before anything else
-const originalConsoleLog = console.log;
-const originalConsoleError = console.error;
-const originalConsoleWarn = console.warn;
-const originalConsoleInfo = console.info;
-const originalConsoleDebug = console.debug;
-const originalConsoleTrace = console.trace;
-const originalConsoleDir = console.dir;
-const originalConsoleTime = console.time;
-const originalConsoleTimeEnd = console.timeEnd;
+// Suppress console output and shield the JSON-RPC channel before anything else.
+// Lazy-required (like the telemetry fast path above) so the guard installs before
+// any `import` in this file is resolved — that ordering is the whole point of this
+// wrapper. See utils/stdio-guard.ts for the filter and for why silenceConsole is
+// set here but not on the index.ts entrypoint.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { installStdioGuard } = require('../utils/stdio-guard');
+const originalConsoleError = installStdioGuard({ silenceConsole: true }).error;
 
-// Override ALL console methods to prevent any output
-console.log = () => {};
-console.error = () => {};
-console.warn = () => {};
-console.info = () => {};
-console.debug = () => {};
-console.trace = () => {};
-console.dir = () => {};
-console.time = () => {};
-console.timeEnd = () => {};
-console.timeLog = () => {};
-console.group = () => {};
-console.groupEnd = () => {};
-console.table = () => {};
-console.clear = () => {};
-console.count = () => {};
-console.countReset = () => {};
+// Load the server AFTER the guard is installed.
+//
+// The type-only import is erased at compile time, so it cannot pull ./server in
+// early; the value comes from the require below. A static value import would work
+// under the current commonjs emit — tsc keeps the require at this position — but
+// would be hoisted above the guard under an ESM emit, silently defeating the
+// ordering this whole file exists to guarantee. The require makes that invariant
+// explicit rather than dependent on the module target.
+import type { N8NDocumentationMCPServer as N8NDocumentationMCPServerType } from './server';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { N8NDocumentationMCPServer } = require('./server') as {
+  N8NDocumentationMCPServer: typeof import('./server').N8NDocumentationMCPServer;
+};
 
-// CRITICAL: Intercept process.stdout.write to prevent non-JSON-RPC output (#628, #627, #567)
-// Console suppression alone is insufficient — native modules (better-sqlite3), n8n packages,
-// and third-party code can call process.stdout.write() directly, corrupting the JSON-RPC stream.
-// Only allow writes that look like JSON-RPC messages; redirect everything else to stderr.
-const originalStdoutWrite = process.stdout.write.bind(process.stdout);
-const stderrWrite = process.stderr.write.bind(process.stderr);
-
-process.stdout.write = function (chunk: any, encodingOrCallback?: any, callback?: any): boolean {
-  const str = typeof chunk === 'string' ? chunk : chunk.toString();
-  // JSON-RPC messages are JSON objects with "jsonrpc" field — let those through
-  // The MCP SDK sends one JSON object per write call
-  const trimmed = str.trimStart();
-  if (trimmed.startsWith('{') && trimmed.includes('"jsonrpc"')) {
-    return originalStdoutWrite(chunk, encodingOrCallback, callback);
-  }
-  // Redirect everything else to stderr so it doesn't corrupt the protocol
-  return stderrWrite(chunk, encodingOrCallback, callback);
-} as typeof process.stdout.write;
-
-// Import and run the server AFTER suppressing output
-import { N8NDocumentationMCPServer } from './server';
-
-let server: N8NDocumentationMCPServer | null = null;
+let server: N8NDocumentationMCPServerType | null = null;
 
 async function main() {
   try {

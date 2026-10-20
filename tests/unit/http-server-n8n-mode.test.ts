@@ -298,9 +298,10 @@ describe('HTTP Server n8n Mode', () => {
       const { req, res } = createMockReqRes();
       req.headers = { authorization: `Bearer ${TEST_AUTH_TOKEN}` };
       req.method = 'POST';
+      // An implemented method: unknown ones are answered -32601 before handleRequest (#994).
       req.body = {
         jsonrpc: '2.0',
-        method: 'test',
+        method: 'tools/list',
         params: {},
         id: 1
       };
@@ -326,9 +327,10 @@ describe('HTTP Server n8n Mode', () => {
       const { req, res } = createMockReqRes();
       req.headers = { authorization: `Bearer ${TEST_AUTH_TOKEN}` };
       req.method = 'POST';
+      // An implemented method: unknown ones are answered -32601 before handleRequest (#994).
       req.body = {
         jsonrpc: '2.0',
-        method: 'test',
+        method: 'tools/list',
         params: {},
         id: 1
       };
@@ -725,7 +727,8 @@ describe('HTTP Server n8n Mode', () => {
       const { req, res } = createMockReqRes();
       req.headers = { authorization: `Bearer ${TEST_AUTH_TOKEN}` };
       req.method = 'POST';
-      req.body = { jsonrpc: '2.0', method: 'test', id: 1 };
+      // An implemented method: unknown ones are answered -32601 before handleRequest (#994).
+      req.body = { jsonrpc: '2.0', method: 'tools/list', id: 1 };
       
       await handler(req, res);
 

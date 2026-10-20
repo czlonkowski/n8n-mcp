@@ -97,6 +97,32 @@ describe('WorkflowAutoFixer - Connection Fixes', () => {
       expect(connFixes).toHaveLength(2);
     });
 
+    // A null branch is n8n's own "nothing wired to this output" and survives into a fetched
+    // workflow (#1096); spreading it threw "nodeConn.main[index] is not iterable" out of
+    // n8n_autofix_workflow, which the handler's catch-all returned as an opaque error.
+    it('merges a numeric key into a null main branch instead of throwing', async () => {
+      const workflow = createMockWorkflow(
+        [createMockNode('id1', 'Node1'), createMockNode('id2', 'Node2'), createMockNode('id3', 'Node3')],
+        {
+          Node1: {
+            main: [[{ node: 'Node2', type: 'main', index: 0 }], null],
+            '1': [[{ node: 'Node3', type: 'main', index: 0 }]]
+          }
+        }
+      );
+
+      const result = await autoFixer.generateFixes(workflow, emptyValidation, []);
+
+      const connFixes = result.fixes.filter(f => f.type === 'connection-numeric-keys');
+      expect(connFixes).toHaveLength(1);
+      // The null slot held nothing, so this is a conversion, not a merge into existing entries.
+      expect(connFixes[0].confidence).toBe('high');
+
+      const replaceOp = result.operations.find(op => op.type === 'replaceConnections') as any;
+      expect(replaceOp.connections.Node1['main'][1]).toEqual([{ node: 'Node3', type: 'main', index: 0 }]);
+      expect(replaceOp.connections.Node1['1']).toBeUndefined();
+    });
+
     it('should merge with existing main entries', async () => {
       const workflow = createMockWorkflow(
         [createMockNode('id1', 'Node1'), createMockNode('id2', 'Node2'), createMockNode('id3', 'Node3')],

@@ -63,11 +63,17 @@ export class MCPEngine {
       };
     }
 
-    // CRITICAL FIX: Extract user-provided keys before validation
-    // This prevents false warnings about default values
-    const userProvidedKeys = new Set(Object.keys(args.config || {}));
-
-    return ConfigValidator.validate(args.nodeType, args.config, node.properties || [], userProvidedKeys);
+    // Routed through the enhanced validator so the embedding API sees the same
+    // node-specific checks as validate_node and workflow validation - it also
+    // derives the user-provided keys itself, which keeps default values from
+    // raising false warnings. The result is a superset of ValidationResult.
+    return EnhancedConfigValidator.validateWithMode(
+      args.nodeType,
+      args.config || {},
+      node.properties || [],
+      args.mode ?? 'operation',
+      args.profile ?? 'ai-friendly'
+    );
   }
 
   async validateNodeMinimal(args: any) {

@@ -9,6 +9,7 @@ import { NodeRepository } from '../database/node-repository';
 import { N8nApiClient } from './n8n-api-client';
 import { WorkflowValidator } from './workflow-validator';
 import { EnhancedConfigValidator } from './enhanced-config-validator';
+import { N8nApiError } from '../utils/n8n-errors';
 
 export interface WorkflowVersion {
   id: number;
@@ -49,6 +50,16 @@ export interface RestoreResult {
    * n8n validates groups on write. The graph is restored either way; this says what else changed.
    */
   warnings?: string[];
+  /**
+   * Machine-readable failure code (e.g. 'PUBLISH_FORBIDDEN' — n8n 2.39+ refused to
+   * publish the restore PUT). Callers should branch on this rather than parsing `message`.
+   */
+  code?: string;
+  /**
+   * The versionId of the draft n8n saved the restored content as, when the restore PUT
+   * was saved as an unpublished draft (PUBLISH_FORBIDDEN) instead of being published.
+   */
+  draftVersionId?: string;
 }
 
 export interface BackupResult {
@@ -73,6 +84,13 @@ export interface WorkflowStorageInfo {
   totalSizeFormatted: string;
   lastBackup: string;
 }
+
+/**
+ * The tail of the error `compareVersions` throws when a snapshot belongs to a
+ * different workflow. Exported so callers can tell that caller mistake from a
+ * storage failure without re-typing the wording.
+ */
+export const VERSION_OWNERSHIP_ERROR_PREFIX = 'does not belong to workflow';
 
 export interface VersionDiff {
   versionId1: number;
@@ -281,6 +299,23 @@ export class WorkflowVersioningService {
         ...(warnings.length > 0 ? { warnings } : {})
       };
     } catch (error: any) {
+      // PUBLISH_FORBIDDEN (n8n 2.39+): the restore PUT was saved as a draft, not
+      // published, because the caller may edit but not publish. Say so plainly
+      // rather than surfacing n8n's raw "saved as a draft" message under a
+      // "Failed to restore" prefix, which reads as if nothing happened at all.
+      if (error instanceof N8nApiError && error.code === 'PUBLISH_FORBIDDEN') {
+        const body = error.details as { reason?: string; versionId?: string } | undefined;
+        return {
+          success: false,
+          message: `Failed to restore workflow: the content was saved as a draft but not published${body?.reason ? ` (${body.reason})` : ''}. The published version is unchanged. The draft now holds the restored snapshot, so publishing it completes the restore.`,
+          workflowId,
+          toVersionId: versionToRestore.id,
+          backupCreated: true,
+          backupVersionId: backupResult.versionId,
+          code: error.code,
+          ...(body?.versionId ? { draftVersionId: body.versionId } : {})
+        };
+      }
       return {
         success: false,
         message: `Failed to restore workflow: ${error.message}`,
@@ -369,14 +404,24 @@ export class WorkflowVersioningService {
   }
 
   /**
-   * Compare two versions
+   * Compare two versions of one workflow.
+   *
+   * `workflowId` is required: version ids are global to the instance scope, so
+   * without it a caller could diff two unrelated workflows' snapshots against
+   * each other and read a workflow it never named.
    */
-  async compareVersions(versionId1: number, versionId2: number): Promise<VersionDiff> {
+  async compareVersions(versionId1: number, versionId2: number, workflowId: string): Promise<VersionDiff> {
     const v1 = this.nodeRepository.getWorkflowVersion(versionId1, this.instanceId);
     const v2 = this.nodeRepository.getWorkflowVersion(versionId2, this.instanceId);
 
     if (!v1 || !v2) {
       throw new Error(`One or both versions not found: ${versionId1}, ${versionId2}`);
+    }
+
+    for (const version of [v1, v2]) {
+      if (version.workflowId !== workflowId) {
+        throw new Error(`Version ${version.id} ${VERSION_OWNERSHIP_ERROR_PREFIX} ${workflowId}`);
+      }
     }
 
     // Compare nodes

@@ -352,9 +352,12 @@ describe('TaskTemplates', () => {
     it('should have Python data analysis template', () => {
       const template = TaskTemplates.getTaskTemplate('python_data_analysis');
 
-      expect(template?.configuration.language).toBe('python');
-      expect(template?.configuration.pythonCode).toContain('_input.all()');
-      expect(template?.configuration.pythonCode).toContain('statistics');
+      expect(template?.configuration.language).toBe('pythonNative');
+      expect(template?.configuration.pythonCode).toContain('_items');
+      expect(template?.configuration.pythonCode).not.toContain('_input');
+      expect(template?.configuration.pythonCode).not.toContain('import ');
+      // The output contract still carries stdev, computed without statistics
+      expect(template?.configuration.pythonCode).toContain('"stdev": stdev');
     });
   });
 

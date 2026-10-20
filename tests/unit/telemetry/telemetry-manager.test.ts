@@ -3,7 +3,7 @@ import { TelemetryManager, telemetry } from '../../../src/telemetry/telemetry-ma
 import { TelemetryConfigManager } from '../../../src/telemetry/config-manager';
 import { TelemetryEventTracker } from '../../../src/telemetry/event-tracker';
 import { TelemetryBatchProcessor } from '../../../src/telemetry/batch-processor';
-import { createClient } from '@supabase/supabase-js';
+import { IngestClient } from '../../../src/telemetry/ingest-client';
 import { TELEMETRY_BACKEND } from '../../../src/telemetry/telemetry-types';
 import { TelemetryError, TelemetryErrorType } from '../../../src/telemetry/telemetry-error';
 
@@ -17,10 +17,7 @@ vi.mock('../../../src/utils/logger', () => ({
   }
 }));
 
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: vi.fn()
-}));
-
+vi.mock('../../../src/telemetry/ingest-client');
 vi.mock('../../../src/telemetry/config-manager');
 vi.mock('../../../src/telemetry/event-tracker');
 vi.mock('../../../src/telemetry/batch-processor');
@@ -41,19 +38,21 @@ describe('TelemetryManager', () => {
     mockConfigManager = {
       isEnabled: vi.fn().mockReturnValue(true),
       getUserId: vi.fn().mockReturnValue('test-user-123'),
+      getPackageVersion: vi.fn().mockReturnValue('2.90.0'),
+      recordServerDisable: vi.fn(),
       disable: vi.fn(),
       enable: vi.fn(),
       getStatus: vi.fn().mockReturnValue('enabled')
     };
     vi.mocked(TelemetryConfigManager.getInstance).mockReturnValue(mockConfigManager);
 
-    // Mock Supabase client
+    // Mock the ingest client (replaces the old Supabase client mock)
     mockSupabaseClient = {
       from: vi.fn().mockReturnValue({
-        insert: vi.fn().mockResolvedValue({ data: null, error: null })
+        insert: vi.fn().mockResolvedValue({ error: null, status: 201 })
       })
     };
-    vi.mocked(createClient).mockReturnValue(mockSupabaseClient);
+    vi.mocked(IngestClient).mockImplementation(() => mockSupabaseClient);
 
     // Mock EventTracker
     mockEventTracker = {
@@ -153,14 +152,12 @@ describe('TelemetryManager', () => {
       manager.trackEvent('test', {});
 
       expect(mockConfigManager.isEnabled).toHaveBeenCalled();
-      expect(createClient).toHaveBeenCalledWith(
-        TELEMETRY_BACKEND.URL,
-        TELEMETRY_BACKEND.ANON_KEY,
+      expect(IngestClient).toHaveBeenCalledWith(
         expect.objectContaining({
-          auth: {
-            persistSession: false,
-            autoRefreshToken: false
-          }
+          url: TELEMETRY_BACKEND.URL,
+          key: TELEMETRY_BACKEND.KEY,
+          version: '2.90.0',
+          onControl: expect.any(Function)
         })
       );
       expect(mockBatchProcessor.start).toHaveBeenCalled();
@@ -168,8 +165,8 @@ describe('TelemetryManager', () => {
     });
 
     it('should use environment variables if provided', () => {
-      process.env.SUPABASE_URL = 'https://custom.supabase.co';
-      process.env.SUPABASE_ANON_KEY = 'custom-anon-key';
+      process.env.N8N_MCP_TELEMETRY_URL = 'https://custom.telemetry.example';
+      process.env.N8N_MCP_TELEMETRY_KEY = 'custom-key';
 
       // Reset instance to trigger re-initialization
       TelemetryManager.resetInstance();
@@ -178,15 +175,16 @@ describe('TelemetryManager', () => {
       // Trigger initialization
       manager.trackEvent('test', {});
 
-      expect(createClient).toHaveBeenCalledWith(
-        'https://custom.supabase.co',
-        'custom-anon-key',
-        expect.any(Object)
+      expect(IngestClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: 'https://custom.telemetry.example',
+          key: 'custom-key'
+        })
       );
 
       // Clean up
-      delete process.env.SUPABASE_URL;
-      delete process.env.SUPABASE_ANON_KEY;
+      delete process.env.N8N_MCP_TELEMETRY_URL;
+      delete process.env.N8N_MCP_TELEMETRY_KEY;
     });
 
     it('should not initialize when disabled', () => {
@@ -196,13 +194,13 @@ describe('TelemetryManager', () => {
       TelemetryManager.resetInstance();
       manager = TelemetryManager.getInstance();
 
-      expect(createClient).not.toHaveBeenCalled();
+      expect(IngestClient).not.toHaveBeenCalled();
       expect(mockBatchProcessor.start).not.toHaveBeenCalled();
     });
 
     it('should handle initialization errors', () => {
-      vi.mocked(createClient).mockImplementation(() => {
-        throw new Error('Supabase initialization failed');
+      vi.mocked(IngestClient).mockImplementation(() => {
+        throw new Error('Ingest client initialization failed');
       });
 
       // Reset instance to trigger re-initialization
@@ -355,9 +353,9 @@ describe('TelemetryManager', () => {
       expect(mockBatchProcessor.flush).not.toHaveBeenCalled();
     });
 
-    it('should not flush without Supabase client', async () => {
+    it('should not flush without an ingest client', async () => {
       // Simulate initialization failure
-      vi.mocked(createClient).mockImplementation(() => {
+      vi.mocked(IngestClient).mockImplementation(() => {
         throw new Error('Init failed');
       });
 
@@ -395,6 +393,85 @@ describe('TelemetryManager', () => {
     });
   });
 
+  describe('flushBeforeExit()', () => {
+    beforeEach(() => {
+      manager = TelemetryManager.getInstance();
+      // Initialize so the shutdown flush has a client to work with
+      manager.trackEvent('test', {});
+    });
+
+    it('should ship queued data so shutdown does not rely on beforeExit', async () => {
+      const events = [{ user_id: 'user1', event: 'test', properties: {} }];
+      mockEventTracker.getEventQueue.mockReturnValue(events);
+      mockEventTracker.getWorkflowQueue.mockReturnValue([]);
+      mockEventTracker.getMutationQueue.mockReturnValue([]);
+
+      await manager.flushBeforeExit();
+
+      expect(mockBatchProcessor.flush).toHaveBeenCalledWith(events, [], []);
+    });
+
+    it('should return by the deadline when the backend never responds', async () => {
+      // A flush that never settles: shutdown must not hang behind it. Fake timers
+      // keep this deterministic instead of asserting on wall-clock elapsed time.
+      vi.useFakeTimers();
+      try {
+        mockBatchProcessor.flush.mockReturnValue(new Promise(() => {}));
+
+        let settled = false;
+        const pending = manager.flushBeforeExit(5000).then(() => {
+          settled = true;
+        });
+
+        await vi.advanceTimersByTimeAsync(4999);
+        expect(settled).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(1);
+        await pending;
+        expect(settled).toBe(true);
+        expect(mockBatchProcessor.flush).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('should not throw when the flush rejects', async () => {
+      // Reject from flush() itself rather than the batch processor: flush()
+      // swallows its own errors, so mocking the processor would leave
+      // flushBeforeExit's catch block unexercised.
+      vi.spyOn(manager, 'flush').mockRejectedValue(new Error('network down'));
+
+      await expect(manager.flushBeforeExit(50)).resolves.toBeUndefined();
+    });
+
+    it('should do nothing when telemetry is disabled', async () => {
+      mockConfigManager.isEnabled.mockReturnValue(false);
+
+      await manager.flushBeforeExit();
+
+      expect(mockBatchProcessor.flush).not.toHaveBeenCalled();
+    });
+
+    it('should not initialize telemetry when it never was', async () => {
+      // The load-bearing safety property: a shutdown must never be the thing
+      // that creates an ingest client. Tests and telemetry-disabled users hit
+      // this path on every server teardown.
+      TelemetryManager.resetInstance();
+      vi.mocked(IngestClient).mockClear();
+      const untouched = TelemetryManager.getInstance();
+
+      // The assertions below only have teeth while the mocked config manager
+      // reports enabled — otherwise a missing guard would be masked by the
+      // disabled check rather than caught.
+      expect(mockConfigManager.isEnabled()).toBe(true);
+
+      await untouched.flushBeforeExit();
+
+      expect(IngestClient).not.toHaveBeenCalled();
+      expect(mockBatchProcessor.flush).not.toHaveBeenCalled();
+    });
+  });
+
   describe('enable/disable functionality', () => {
     beforeEach(() => {
       manager = TelemetryManager.getInstance();
@@ -416,8 +493,8 @@ describe('TelemetryManager', () => {
       manager.enable();
 
       expect(mockConfigManager.enable).toHaveBeenCalled();
-      // Should initialize (createClient called once)
-      expect(createClient).toHaveBeenCalledTimes(1);
+      // Should initialize (IngestClient called once)
+      expect(IngestClient).toHaveBeenCalledTimes(1);
     });
 
     it('should get status from config manager', () => {
@@ -466,7 +543,7 @@ describe('TelemetryManager', () => {
 
     it('should reflect initialization failure', () => {
       // Simulate initialization failure
-      vi.mocked(createClient).mockImplementation(() => {
+      vi.mocked(IngestClient).mockImplementation(() => {
         throw new Error('Init failed');
       });
 
@@ -486,8 +563,8 @@ describe('TelemetryManager', () => {
     });
 
     it('should aggregate initialization errors', () => {
-      vi.mocked(createClient).mockImplementation(() => {
-        throw new Error('Supabase connection failed');
+      vi.mocked(IngestClient).mockImplementation(() => {
+        throw new Error('Ingest client connection failed');
       });
 
       // Reset instance to trigger re-initialization with error
@@ -551,7 +628,7 @@ describe('TelemetryManager', () => {
 
     it('should prevent operations when not initialized', async () => {
       // Simulate initialization failure
-      vi.mocked(createClient).mockImplementation(() => {
+      vi.mocked(IngestClient).mockImplementation(() => {
         throw new Error('Init failed');
       });
 
@@ -592,12 +669,12 @@ describe('TelemetryManager', () => {
       // Trigger initialization
       manager.trackEvent('test', {});
 
-      expect(TelemetryBatchProcessorMock).toHaveBeenCalledTimes(2); // Once with null, once with Supabase client
+      expect(TelemetryBatchProcessorMock).toHaveBeenCalledTimes(2); // Once with null, once with the ingest client
 
       const lastCall = TelemetryBatchProcessorMock.mock.calls[TelemetryBatchProcessorMock.mock.calls.length - 1];
-      const [supabaseClient, isEnabledCallback, options] = lastCall;
+      const [ingestClient, isEnabledCallback, options] = lastCall;
 
-      expect(supabaseClient).toBe(mockSupabaseClient);
+      expect(ingestClient).toBe(mockSupabaseClient);
       expect(isEnabledCallback()).toBe(true);
       expect(options).toEqual(expect.objectContaining({
         onFlushRequested: expect.any(Function)
@@ -626,32 +703,60 @@ describe('TelemetryManager', () => {
     });
   });
 
-  describe('Supabase client configuration', () => {
+  describe('ingest client configuration', () => {
     beforeEach(() => {
       manager = TelemetryManager.getInstance();
       // Trigger initialization
       manager.trackEvent('test', {});
     });
 
-    it('should configure Supabase client with correct options', () => {
-      expect(createClient).toHaveBeenCalledWith(
-        TELEMETRY_BACKEND.URL,
-        TELEMETRY_BACKEND.ANON_KEY,
-        {
-          auth: {
-            persistSession: false,
-            autoRefreshToken: false
-          },
-          realtime: {
-            params: {
-              eventsPerSecond: 1
-            }
-          },
-          global: {
-            fetch: expect.any(Function)
-          }
-        }
-      );
+    it('should configure the ingest client with correct options', () => {
+      expect(IngestClient).toHaveBeenCalledWith({
+        url: TELEMETRY_BACKEND.URL,
+        key: TELEMETRY_BACKEND.KEY,
+        version: '2.90.0',
+        onControl: expect.any(Function)
+      });
+    });
+  });
+
+  describe('onControl wiring (server-driven disable)', () => {
+    beforeEach(() => {
+      manager = TelemetryManager.getInstance();
+      // Trigger initialization so the ingest client (and its onControl) exists
+      manager.trackEvent('test', {});
+    });
+
+    function capturedOnControl(): (signal: { kind: string; status: number }) => void {
+      const calls = vi.mocked(IngestClient).mock.calls;
+      const [options] = calls[calls.length - 1];
+      return (options as any).onControl;
+    }
+
+    it('disable_version records the server disable with the package version and stops the batch processor', () => {
+      const onControl = capturedOnControl();
+
+      onControl({ kind: 'disable_version', status: 410 });
+
+      expect(mockConfigManager.recordServerDisable).toHaveBeenCalledWith('2.90.0');
+      expect(mockBatchProcessor.stop).toHaveBeenCalled();
+    });
+
+    it('disable_process disables telemetry for the rest of this process', async () => {
+      const onControl = capturedOnControl();
+
+      // Enabled before the signal arrives.
+      expect(manager.getMetrics().status).toBe('enabled');
+
+      onControl({ kind: 'disable_process', status: 401 });
+
+      expect(manager.getMetrics().status).toBe('disabled');
+
+      // isEnabled() is private; flush() is the public surface that reads it,
+      // and it must now decline to reach the (still-configured) batch processor.
+      vi.mocked(mockBatchProcessor.flush).mockClear();
+      await manager.flush();
+      expect(mockBatchProcessor.flush).not.toHaveBeenCalled();
     });
   });
 

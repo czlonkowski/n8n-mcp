@@ -429,26 +429,11 @@ docker compose up -d
    
    ⚠️ **Critical**: The Server URL must include the `/mcp` endpoint path. Without this, the connection will fail.
 
-3. **Test the connection** by selecting a simple tool like `list_nodes`
+3. **Test the connection** by selecting a simple tool like `search_nodes`
 
 ### Available Tools
 
-Once connected, you can use these MCP tools in n8n:
-
-**Documentation Tools** (No API key required):
-- `list_nodes` - List all n8n nodes with filtering
-- `search_nodes` - Search nodes by keyword
-- `get_node_info` - Get detailed node information
-- `get_node_essentials` - Get only essential properties
-- `validate_workflow` - Validate workflow configurations
-- `get_node_documentation` - Get human-readable docs
-
-**Management Tools** (Requires n8n API key):
-- `n8n_create_workflow` - Create new workflows
-- `n8n_update_workflow` - Update existing workflows
-- `n8n_get_workflow` - Retrieve workflow details
-- `n8n_list_workflows` - List all workflows
-- `n8n_trigger_webhook_workflow` - Trigger webhook workflows
+Once connected, you can use these MCP tools in n8n. See the [README's tool table](../README.md#core-tools-7-tools) for the documentation tools (no API key required) and the [n8n Management Tools table](../README.md#n8n-management-tools-21-tools---requires-api-configuration) for the tools that require n8n API key configuration.
 
 ### Using with AI Agents
 
@@ -461,7 +446,7 @@ Connect n8n-MCP to AI Agent nodes for intelligent automation:
 ```
 You are an n8n workflow expert. Use the MCP tools to:
 1. Search for appropriate nodes using search_nodes
-2. Get configuration details with get_node_essentials
+2. Get configuration details with get_node (detail: "standard")
 3. Validate configurations with validate_workflow
 4. Create the workflow if all validations pass
 ```

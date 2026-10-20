@@ -261,34 +261,84 @@ describe('Database Integration Tests', () => {
   });
   
   describe('Performance Testing', () => {
-    it('should handle bulk operations efficiently', async () => {
-      const bulkNodes = Array.from({ length: 1000 }, (_, i) => ({
-        nodeType: `nodes-base.bulk${i}`,
-        displayName: `Bulk Node ${i}`,
-        category: i % 2 === 0 ? 'Category A' : 'Category B',
-        isAITool: i % 10 === 0
-      }));
-      
-      const insertDuration = await measureDatabaseOperation('Bulk Insert 1000 nodes', async () => {
-        await seedTestNodes(nodeRepo, bulkNodes);
-      });
-      
-      // Should complete reasonably quickly
-      expect(insertDuration).toBeLessThan(5000); // 5 seconds max
-      
-      // Test query performance
+    // Scaling is asserted, not wall-clock. An absolute millisecond budget here measures the
+    // machine, not the code: this test ran in ~450ms locally while failing at 6.8s, 10.1s and
+    // 10.9s on shared CI runners, none of which involved a change to the insert path. What the
+    // test is actually worth catching is a regression from batched inserts to per-row work,
+    // which shows up as a rising per-node cost regardless of how fast the host is.
+    it('should keep per-node insert cost flat as the batch grows', async () => {
+      const makeNodes = (count: number, prefix: string, category: string) =>
+        Array.from({ length: count }, (_, i) => ({
+          nodeType: `nodes-base.${prefix}${i}`,
+          displayName: `${prefix} Node ${i}`,
+          category,
+          isAITool: i % 10 === 0
+        }));
+
+      // This suite runs against a persistent file-backed database at a fixed path, so a run
+      // interrupted before the cleanup below leaves rows behind. Clear them first: otherwise
+      // the row-count assertion fails for reasons that have nothing to do with performance.
+      const clearFixtureRows = () =>
+        dbHelpers.executeSql(
+          testDb.adapter,
+          "DELETE FROM nodes WHERE node_type LIKE 'nodes-base.bulk%' OR node_type LIKE 'nodes-base.baseline%'"
+        );
+      clearFixtureRows();
+
+      // Baseline on the same host, in the same run, so both measurements share its conditions
+      const baselineCount = 100;
+      const baselineDuration = await measureDatabaseOperation(
+        `Baseline insert ${baselineCount} nodes`,
+        async () => {
+          await seedTestNodes(nodeRepo, makeNodes(baselineCount, 'baseline', 'Category Baseline'));
+        }
+      );
+
+      const bulkCount = 1000;
+      const bulkNodes = [
+        ...makeNodes(bulkCount / 2, 'bulkA', 'Category A'),
+        ...makeNodes(bulkCount / 2, 'bulkB', 'Category B')
+      ];
+      const insertDuration = await measureDatabaseOperation(
+        `Bulk insert ${bulkCount} nodes`,
+        async () => {
+          await seedTestNodes(nodeRepo, bulkNodes);
+        }
+      );
+
+      // Every row must actually be there - a fast insert that lost rows is not a pass
+      const inserted = testDb.adapter
+        .prepare("SELECT COUNT(*) as count FROM nodes WHERE node_type LIKE 'nodes-base.bulk%'")
+        .get() as { count: number };
+      expect(inserted.count).toBe(bulkCount);
+
+      // Per-node cost must not grow with batch size. Batched inserts make the larger batch
+      // cheaper per node, since fixed overhead is amortised; the ceiling is deliberately loose
+      // because it only needs to separate "flat" from "degrading", not to police small drift.
+      // A sub-millisecond baseline is too small to divide by, so scaling is only asserted when
+      // the baseline is large enough to be a meaningful denominator.
+      const baselinePerNode = baselineDuration / baselineCount;
+      const bulkPerNode = insertDuration / bulkCount;
+      if (baselineDuration >= 5) {
+        expect(bulkPerNode).toBeLessThan(baselinePerNode * 4);
+      }
+
+      // Backstop for an outright hang or an accidental O(n^2) path, generous enough that a
+      // loaded runner cannot trip it
+      expect(insertDuration).toBeLessThan(60_000);
+
+      // An indexed lookup is compared against the insert it follows rather than a fixed budget
       const queryDuration = await measureDatabaseOperation('Query Category A nodes', async () => {
         const categoryA = testDb.adapter
           .prepare('SELECT COUNT(*) as count FROM nodes WHERE category = ?')
           .get('Category A') as { count: number };
-        
-        expect(categoryA.count).toBe(500);
+
+        expect(categoryA.count).toBe(bulkCount / 2);
       });
-      
-      expect(queryDuration).toBeLessThan(100); // Queries should be very fast
-      
-      // Cleanup bulk data
-      dbHelpers.executeSql(testDb.adapter, "DELETE FROM nodes WHERE node_type LIKE 'nodes-base.bulk%'");
+
+      expect(queryDuration).toBeLessThanOrEqual(insertDuration);
+
+      clearFixtureRows();
     });
   });
 });

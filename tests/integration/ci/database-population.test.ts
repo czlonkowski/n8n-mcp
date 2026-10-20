@@ -377,3 +377,54 @@ describe.skipIf(!dbExists)('Database Content Validation', () => {
     });
   });
 });
+
+describe.skipIf(!dbExists)('Version history rows', () => {
+  let db: any;
+
+  beforeAll(async () => {
+    db = await createDatabaseAdapter(dbPath);
+  });
+
+  it('records rows for every bundled node with more than one typeVersion', () => {
+    const missing = db.prepare(`
+      SELECT n.node_type FROM nodes n
+      WHERE n.is_versioned = 1 AND (n.is_community = 0 OR n.is_community IS NULL)
+        AND n.node_type NOT LIKE '%Tool'
+        AND NOT EXISTS (SELECT 1 FROM node_versions v WHERE v.node_type = n.node_type)
+    `).all();
+    expect(missing).toEqual([]);
+  });
+
+  it('marks exactly one current version per node and stores no generated Tool variant rows', () => {
+    const inconsistent = db.prepare(`
+      SELECT node_type FROM node_versions GROUP BY node_type HAVING SUM(is_current_max) != 1
+    `).all();
+    expect(inconsistent).toEqual([]);
+    const variants = db.prepare(`
+      SELECT DISTINCT v.node_type FROM node_versions v
+      JOIN nodes n ON n.node_type = v.node_type WHERE n.is_tool_variant = 1
+    `).all();
+    expect(variants).toEqual([]);
+  });
+
+  it('agrees with the nodes table on the current version', () => {
+    const disagreeing = db.prepare(`
+      SELECT n.node_type, n.version, v.version AS current
+      FROM nodes n JOIN node_versions v ON v.node_type = n.node_type AND v.is_current_max = 1
+      WHERE CAST(n.version AS REAL) != CAST(v.version AS REAL)
+    `).all();
+    expect(disagreeing).toEqual([]);
+  });
+
+  it('keeps every typeVersion HTTP Request accepts, each with its own schema', () => {
+    const rows = new NodeRepository(db).getNodeVersions('nodes-base.httpRequest');
+    const versions = rows.map(r => Number(r.version)).sort((a, b) => a - b);
+    expect(versions).toEqual(expect.arrayContaining([1, 2, 3, 4, 4.1, 4.2]));
+    expect(rows.every(r => Array.isArray(r.propertiesSchema) && r.propertiesSchema.length > 0)).toBe(true);
+    // v3 renamed requestMethod to method; the stored per-version schemas must show it
+    const names = (v: string) => rows.find(r => r.version === v)!.propertiesSchema.map((p: any) => p.name);
+    expect(names('2')).toContain('requestMethod');
+    expect(names('3')).toContain('method');
+    expect(names('3')).not.toContain('requestMethod');
+  });
+});

@@ -4,7 +4,7 @@ export const n8nUpdatePartialWorkflowDoc: ToolDocumentation = {
   name: 'n8n_update_partial_workflow',
   category: 'workflow_management',
   essentials: {
-    description: 'Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, patchNodeField, moveNode, enable/disableNode, addConnection, removeConnection, rewireConnection, cleanStaleConnections, replaceConnections, updateSettings, updateName, setNodeGroups, add/removeTag, activateWorkflow, deactivateWorkflow, transferWorkflow. Supports smart parameters (branch, case) for multi-output nodes. Full support for AI connections (ai_languageModel, ai_tool, ai_memory, ai_embedding, ai_vectorStore, ai_document, ai_textSplitter, ai_outputParser).',
+    description: 'Update workflow incrementally with diff operations. Types: addNode, removeNode, updateNode, patchNodeField, moveNode, enable/disableNode, addConnection, removeConnection, rewireConnection, cleanStaleConnections, replaceConnections, updateSettings, updateName, setNodeGroups, add/removeTag, activateWorkflow, deactivateWorkflow, transferWorkflow, moveToFolder. Supports smart parameters (branch, case) for multi-output nodes. Full support for AI connections (ai_languageModel, ai_tool, ai_memory, ai_embedding, ai_vectorStore, ai_document, ai_textSplitter, ai_outputParser).',
     keyParameters: ['id', 'operations', 'continueOnError'],
     example: 'n8n_update_partial_workflow({id: "wf_123", operations: [{type: "rewireConnection", source: "IF", from: "Old", to: "New", branch: "true"}]})',
     performance: 'Fast (50-200ms)',
@@ -34,7 +34,7 @@ export const n8nUpdatePartialWorkflowDoc: ToolDocumentation = {
 ## Available Operations:
 
 ### Node Operations (7 types):
-- **addNode**: Add a new node with name, type, and position (required)
+- **addNode**: Add a new node with name and type (required). Position is required too, unless a later operation in the same request supplies it - e.g. addNode followed by moveNode
 - **removeNode**: Remove a node by ID or name
 - **updateNode**: Update node properties using dot notation (e.g., 'parameters.url')
 - **patchNodeField**: Surgically edit string fields using find/replace patches. Strict mode: errors if find string not found, errors if multiple matches (ambiguity) unless replaceAll is set. Supports replaceAll and regex flags.
@@ -50,7 +50,7 @@ export const n8nUpdatePartialWorkflowDoc: ToolDocumentation = {
 - **replaceConnections**: Replace entire connections object
 
 ### Metadata Operations (5 types):
-- **updateSettings**: Modify workflow settings
+- **updateSettings**: Modify workflow settings (merged over the current ones). Any key the n8n Public API accepts is forwarded, e.g. \`availableInMCP: true\` exposes the workflow to n8n's instance-level MCP server.
 - **updateName**: Rename the workflow
 - **setNodeGroups**: Replace the workflow's canvas groups (n8n 2.28+). Full replacement — pass every group to keep, or \`[]\` to ungroup everything. Each group takes \`name\` plus either \`nodeNames\` or \`nodeIds\`, and an optional \`description\` (max 155 chars, n8n 2.32+; dropped automatically on older instances). Group members must form a connected run with no trigger among them; n8n validates that on save and its message is returned unchanged if a group you asked for is rejected.
 - **addTag**: Add a workflow tag
@@ -64,8 +64,12 @@ n8n validates canvas groups on every write, including writes that have nothing t
 - **activateWorkflow**: Activate the workflow to enable automatic execution via triggers
 - **deactivateWorkflow**: Deactivate the workflow to prevent automatic execution
 
-### Project Management Operations (1 type):
+n8n 2.33 renamed this to publish/unpublish - what the editor calls "Publish" is what these
+operations do, on every supported version. The operation names are unchanged.
+
+### Project Management Operations (2 types):
 - **transferWorkflow**: Transfer the workflow to a different project. Requires \`destinationProjectId\`. Enterprise/cloud feature.
+- **moveToFolder**: Move the workflow into a folder (n8n 2.32+). Requires \`parentFolderId\`: a folder ID, or null for the project root. The placement is write-only in n8n's API - it cannot be read back, so verify in the n8n UI if needed. Manage folders with n8n_manage_folders. When combined with transferWorkflow in one request, the folder move applies in the SOURCE project before the transfer runs - use a separate moveToFolder call after the transfer instead.
 
 ## Smart Parameters for Multi-Output Nodes
 
@@ -382,7 +386,9 @@ n8n_update_partial_workflow({
       '// Remove entire array property\nn8n_update_partial_workflow({id: "rm5", operations: [{type: "updateNode", nodeName: "HTTP Request", updates: {"parameters.headers": null}}]})',
       '\n// ============ PROJECT TRANSFER EXAMPLES ============',
       '// Transfer workflow to a different project\nn8n_update_partial_workflow({id: "tf1", operations: [{type: "transferWorkflow", destinationProjectId: "project-abc-123"}]})',
-      '// Transfer and activate in one call\nn8n_update_partial_workflow({id: "tf2", operations: [{type: "transferWorkflow", destinationProjectId: "project-abc-123"}, {type: "activateWorkflow"}]})'
+      '// Transfer and activate in one call\nn8n_update_partial_workflow({id: "tf2", operations: [{type: "transferWorkflow", destinationProjectId: "project-abc-123"}, {type: "activateWorkflow"}]})',
+      '// Move workflow into a folder (n8n 2.32+)\nn8n_update_partial_workflow({id: "mf1", operations: [{type: "moveToFolder", parentFolderId: "folder-abc-123"}]})',
+      '// Move workflow back to the project root\nn8n_update_partial_workflow({id: "mf2", operations: [{type: "moveToFolder", parentFolderId: null}]})'
     ],
     useCases: [
       'Rewire connections when replacing nodes',
@@ -456,11 +462,14 @@ n8n_update_partial_workflow({
       '**patchNodeField is strict**: it ERRORS if the find string is not found (unlike __patch_find_replace which only warns)',
       '**patchNodeField detects ambiguity**: if find matches multiple times, it ERRORS unless replaceAll: true is set',
       'When using regex: true in patchNodeField, escape special regex characters (., *, +, etc.) if you want literal matching',
+      'patchNodeField literal mode (regex not set) inserts replace verbatim, so $ needs no escaping. With regex: true, replace supports JS replacement patterns: $1 for a capture group, $$ for a literal $',
+      'Patches to parameters.jsCode or parameters.functionCode are parsed as JavaScript after applying: a patch that breaks previously-valid code fails the operation. Only the final result of one operation\'s patches array is checked, so apply dependent edits in a single operation. A leading = is stripped before parsing, matching how n8n runs these noDataExpression fields. Fields that were already invalid before patching and pythonCode are not checked; code over 1MB is never parsed, and patching valid code into something unverifiable is rejected — set the full value via updateNode (unchecked) if that is intended. The parse runs on the MCP server\'s Node.js: in the rare case it rejects newer syntax your n8n runtime accepts, set the full field value via updateNode instead (not guarded)',
       'To remove a property, set it to null in the updates object',
       'When properties are mutually exclusive (e.g., continueOnFail and onError), setting only the new property will fail - you must remove the old one with null',
       'Removing a required property may cause validation errors - check node documentation first',
       'Nested property removal with dot notation only removes the specific nested field, not the entire parent object',
-      'Array elements are addressed by index in bracket or dot form (e.g., "parameters.assignments.assignments[0].value" or "parameters.assignments.assignments.0.value") - out-of-range indices are rejected, so new elements cannot be appended this way'
+      'Array elements are addressed by index in bracket or dot form (e.g., "parameters.assignments.assignments[0].value" or "parameters.assignments.assignments.0.value") - out-of-range indices are rejected, so new elements cannot be appended this way',
+      '**code: "PUBLISH_FORBIDDEN"** (n8n 2.39+): the API key or user may edit a published workflow but not publish it. n8n rejects the save with 403 and this tool decides what to do by content, not by n8n\'s reported version (2.39 does not bump versionId for name/settings-only changes): a rollback is attempted only when the content on the server no longer matches what was there before. There are five outcomes: (1) version and content both unchanged after the 403 - n8n reports a draft was saved, but nothing on the server shows it, so nothing is rolled back and the outcome is reported as unconfirmed: details.rollbackPerformed=false, details.draftVersionId names the draft n8n reported; (2) rolled back - a rollback was attempted and the draft now matches the content from before this update, details.rollbackPerformed=true, details.supersededDraftVersionId names the draft the restore replaced; (3) change retained - the rollback failed and a read-back confirms the attempted change is still there, details.rollbackPerformed=false, details.changeRetained=true, details.draftVersionId names the current draft; (4) restore incomplete - the rollback failed and the read-back matches neither the attempted change nor the prior content, details.rollbackPerformed=false, details.observedDraftVersionId names what was actually found; (5) unconfirmed (read-back failed) - the rollback failed and the read-back itself failed too, details.rollbackPerformed=false, details.attemptedDraftVersionId names the draft n8n first reported (which the rollback attempt may since have superseded - it is NOT necessarily current). Outcomes (1) and (5) are both reported as "unconfirmed" but are distinguishable: (1) never attempted a rollback at all (no second PUT), while (5) did attempt one and only the verification read-back failed. details.rollbackVerifiedAfterError is set only when outcome (2) was confirmed by a read-back after the rollback PUT itself errored (a rollback PUT that returns 200 is just as clean but won\'t set it). A folder move cannot be rolled back or reliably ruled out (parentFolderId is write-only) - when the request moved the workflow, details.folderMoveMayHavePersisted flags that uncertainty regardless of which of the five outcomes applies. Retrying with the same credentials will not publish - the API key needs the workflow:activate scope and the user needs workflow:publish permission on the workflow'
     ],
     relatedTools: ['n8n_update_full_workflow', 'n8n_get_workflow', 'validate_workflow', 'tools_documentation']
   }

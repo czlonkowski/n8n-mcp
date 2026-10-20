@@ -162,7 +162,7 @@ describe('PropertyFilter', () => {
     it('should include simple display conditions', () => {
       const properties = [
         {
-          name: 'channel',
+          name: 'channelId',
           type: 'string',
           displayOptions: {
             show: {
@@ -175,7 +175,7 @@ describe('PropertyFilter', () => {
 
       const result = PropertyFilter.getEssentials(properties, 'nodes-base.slack');
 
-      const channelProp = result.common.find(p => p.name === 'channel');
+      const channelProp = result.common.find(p => p.name === 'channelId');
       expect(channelProp?.showWhen).toEqual({
         resource: ['message'],
         operation: ['post']
@@ -410,7 +410,7 @@ describe('PropertyFilter', () => {
     it('should add expectedFormat for resourceLocator type properties', () => {
       const properties = [
         {
-          name: 'channel',
+          name: 'channelId',
           type: 'resourceLocator',
           displayName: 'Channel',
           description: 'The channel to send message to',
@@ -425,7 +425,7 @@ describe('PropertyFilter', () => {
 
       const result = PropertyFilter.getEssentials(properties, 'nodes-base.slack');
 
-      const channelProp = result.common.find(p => p.name === 'channel');
+      const channelProp = result.common.find(p => p.name === 'channelId');
       expect(channelProp).toBeDefined();
       expect(channelProp?.expectedFormat).toBeDefined();
       expect(channelProp?.expectedFormat?.structure).toEqual({

@@ -28,6 +28,10 @@ docker/
 .env.*
 !.env.example
 
+# Skill assets are content, not project config: the rules above would otherwise
+# strip the compose files and .env examples that the self-hosting skill ships.
+!data/skills/**
+
 # IDE and OS files
 .vscode/
 .idea/

@@ -30,7 +30,71 @@ describe('MCP Workflow Error Output Validation Integration', () => {
   });
 
   describe('validate_workflow tool - Error Output Configuration', () => {
-    it('should detect incorrect error output configuration via MCP', async () => {
+    // The hard "Incorrect error output configuration" error is gone (#1111). A fan-out to a
+    // node named like an error handler is now only a warning, and only once the source also
+    // sets onError: 'continueErrorOutput' and leaves the error output unwired.
+    it('warns (does not error) when onError leaves the error output unwired via MCP', async () => {
+      const workflow = {
+        nodes: [
+          {
+            id: '1',
+            name: 'Validate Input',
+            type: 'n8n-nodes-base.set',
+            typeVersion: 3.4,
+            position: [-400, 64],
+            parameters: {},
+            onError: 'continueErrorOutput'
+          },
+          {
+            id: '2',
+            name: 'Filter URLs',
+            type: 'n8n-nodes-base.filter',
+            typeVersion: 2.2,
+            position: [-176, 64],
+            parameters: {}
+          },
+          {
+            id: '3',
+            name: 'Error Response1',
+            type: 'n8n-nodes-base.respondToWebhook',
+            typeVersion: 1.5,
+            position: [-160, 240],
+            parameters: {}
+          }
+        ],
+        connections: {
+          'Validate Input': {
+            main: [
+              [
+                { node: 'Filter URLs', type: 'main', index: 0 },
+                { node: 'Error Response1', type: 'main', index: 0 }  // main[0] only - error output unwired
+              ]
+            ]
+          }
+        }
+      };
+
+      const response = await client.callTool({
+        name: 'validate_workflow',
+        arguments: { workflow }
+      });
+
+      expect((response as any).content).toHaveLength(1);
+      expect((response as any).content[0].type).toBe('text');
+
+      const result = JSON.parse(((response as any).content[0]).text);
+
+      expect(Array.isArray(result.errors)).toBe(true);
+      expect(result.errors.some((e: any) => e.message.includes('Incorrect error output configuration'))).toBe(false);
+
+      // The warning names the node and points at main[1] instead
+      const warningMsg = (result.warnings || []).find((w: any) => w.message.includes('named like an error handler'));
+      expect(warningMsg).toBeDefined();
+      expect(warningMsg.message).toContain('Error Response1');
+      expect(warningMsg.message).toContain("onError: 'continueErrorOutput' but the error output (main[1]) is not connected");
+    });
+
+    it('does not warn when there is no onError setting, even with a fan-out named like an error handler via MCP', async () => {
       const workflow = {
         nodes: [
           {
@@ -63,7 +127,7 @@ describe('MCP Workflow Error Output Validation Integration', () => {
             main: [
               [
                 { node: 'Filter URLs', type: 'main', index: 0 },
-                { node: 'Error Response1', type: 'main', index: 0 }  // WRONG! Both in main[0]
+                { node: 'Error Response1', type: 'main', index: 0 }
               ]
             ]
           }
@@ -75,29 +139,10 @@ describe('MCP Workflow Error Output Validation Integration', () => {
         arguments: { workflow }
       });
 
-      expect((response as any).content).toHaveLength(1);
-      expect((response as any).content[0].type).toBe('text');
-
       const result = JSON.parse(((response as any).content[0]).text);
 
-      expect(result.valid).toBe(false);
-      expect(Array.isArray(result.errors)).toBe(true);
-
-      // Check for the specific error message about incorrect configuration
-      const hasIncorrectConfigError = result.errors.some((e: any) =>
-        e.message.includes('Incorrect error output configuration') &&
-        e.message.includes('Error Response1') &&
-        e.message.includes('appear to be error handlers but are in main[0]')
-      );
-      expect(hasIncorrectConfigError).toBe(true);
-
-      // Verify the error message includes the JSON examples
-      const errorMsg = result.errors.find((e: any) =>
-        e.message.includes('Incorrect error output configuration')
-      );
-      expect(errorMsg?.message).toContain('INCORRECT (current)');
-      expect(errorMsg?.message).toContain('CORRECT (should be)');
-      expect(errorMsg?.message).toContain('main[1] = error output');
+      expect(result.errors.some((e: any) => e.message.includes('Incorrect error output configuration'))).toBe(false);
+      expect((result.warnings || []).some((w: any) => w.message.includes('named like an error handler'))).toBe(false);
     });
 
     it('should validate correct error output configuration via MCP', async () => {
@@ -158,6 +203,8 @@ describe('MCP Workflow Error Output Validation Integration', () => {
         e.message.includes('Incorrect error output configuration')
       ) ?? false;
       expect(hasIncorrectConfigError).toBe(false);
+      // The error output is already wired, so the named-like-a-handler warning doesn't fire either.
+      expect((result.warnings || []).some((w: any) => w.message.includes('named like an error handler'))).toBe(false);
     });
 
     it('should detect onError and connection mismatches via MCP', async () => {
@@ -332,15 +379,14 @@ describe('MCP Workflow Error Output Validation Integration', () => {
 
       const result = JSON.parse(((response as any).content[0]).text);
 
-      // Should detect the incorrect error configurations
-      const hasErrors = result.errors && result.errors.length > 0;
-      expect(hasErrors).toBe(true);
+      // The hard error is gone (#1111) - the "wrong placement" nodes (onError set, error
+      // output unwired, fan-out named like a handler) now produce a warning instead.
+      expect(result.errors.some((e: any) => e.message.includes('Incorrect error output configuration'))).toBe(false);
 
-      // Specifically check for incorrect error output configuration errors
-      const incorrectConfigErrors = result.errors.filter((e: any) =>
-        e.message.includes('Incorrect error output configuration')
+      const namedLikeHandlerWarnings = (result.warnings || []).filter((w: any) =>
+        w.message.includes('named like an error handler')
       );
-      expect(incorrectConfigErrors.length).toBeGreaterThan(0);
+      expect(namedLikeHandlerWarnings.length).toBeGreaterThan(0);
     });
 
     it('should handle edge cases gracefully via MCP', async () => {
@@ -402,7 +448,8 @@ describe('MCP Workflow Error Output Validation Integration', () => {
             name: 'API Call',
             type: 'n8n-nodes-base.httpRequest',
             position: [100, 100],
-            parameters: {}
+            parameters: {},
+            onError: 'continueErrorOutput'
           },
           {
             id: '2',
@@ -424,16 +471,15 @@ describe('MCP Workflow Error Output Validation Integration', () => {
             main: [
               [
                 { node: 'Success Handler', type: 'main', index: 0 },
-                { node: 'Error Response', type: 'main', index: 0 }  // Incorrect placement
+                { node: 'Error Response', type: 'main', index: 0 }  // main[0] only - error output unwired
               ]
             ]
           }
         }
       };
 
-      const profiles = ['minimal', 'runtime', 'ai-friendly', 'strict'];
-
-      for (const profile of profiles) {
+      // No profile ever raises this as a hard error any more (#1111).
+      for (const profile of ['minimal', 'runtime', 'ai-friendly', 'strict']) {
         const response = await client.callTool({
           name: 'validate_workflow',
           arguments: {
@@ -443,24 +489,46 @@ describe('MCP Workflow Error Output Validation Integration', () => {
         });
 
         const result = JSON.parse(((response as any).content[0]).text);
-
-        // All profiles should detect this error output configuration issue
-        const hasIncorrectConfigError = result.errors?.some((e: any) =>
-          e.message.includes('Incorrect error output configuration')
-        );
-        expect(hasIncorrectConfigError).toBe(true);
+        expect(result.errors?.some((e: any) => e.message.includes('Incorrect error output configuration')) ?? false).toBe(false);
       }
+
+      // The warning fires under every profile except minimal.
+      for (const profile of ['runtime', 'ai-friendly', 'strict']) {
+        const response = await client.callTool({
+          name: 'validate_workflow',
+          arguments: {
+            workflow,
+            options: { profile }
+          }
+        });
+
+        const result = JSON.parse(((response as any).content[0]).text);
+        expect(
+          (result.warnings || []).some((w: any) => w.message.includes('named like an error handler')),
+          `profile=${profile}`
+        ).toBe(true);
+      }
+
+      const minimalResponse = await client.callTool({
+        name: 'validate_workflow',
+        arguments: { workflow, options: { profile: 'minimal' } }
+      });
+      const minimalResult = JSON.parse(((minimalResponse as any).content[0]).text);
+      expect((minimalResult.warnings || []).some((w: any) => w.message.includes('named like an error handler'))).toBe(false);
     });
   });
 
   describe('Error Message Format Consistency', () => {
-    it('should format error messages consistently across different scenarios', async () => {
+    // No more INCORRECT/CORRECT JSON blocks (#1111) - the warning names the node(s) and points
+    // at the unwired error output index, in singular or plural form as appropriate.
+    it('should format warning messages consistently across single and multiple handler-like names', async () => {
       const scenarios = [
         {
           name: 'Single error handler in wrong place',
+          handlerNames: ['Error Handler'],
           workflow: {
             nodes: [
-              { id: '1', name: 'Source', type: 'n8n-nodes-base.httpRequest', position: [0, 0], parameters: {} },
+              { id: '1', name: 'Source', type: 'n8n-nodes-base.httpRequest', position: [0, 0], parameters: {}, onError: 'continueErrorOutput' },
               { id: '2', name: 'Success', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} },
               { id: '3', name: 'Error Handler', type: 'n8n-nodes-base.set', position: [200, 100], parameters: {} }
             ],
@@ -476,9 +544,10 @@ describe('MCP Workflow Error Output Validation Integration', () => {
         },
         {
           name: 'Multiple error handlers in wrong place',
+          handlerNames: ['Error Handler 1', 'Error Handler 2'],
           workflow: {
             nodes: [
-              { id: '1', name: 'Source', type: 'n8n-nodes-base.httpRequest', position: [0, 0], parameters: {} },
+              { id: '1', name: 'Source', type: 'n8n-nodes-base.httpRequest', position: [0, 0], parameters: {}, onError: 'continueErrorOutput' },
               { id: '2', name: 'Success', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} },
               { id: '3', name: 'Error Handler 1', type: 'n8n-nodes-base.set', position: [200, 100], parameters: {} },
               { id: '4', name: 'Error Handler 2', type: 'n8n-nodes-base.emailSend', position: [200, 200], parameters: {} }
@@ -504,31 +573,18 @@ describe('MCP Workflow Error Output Validation Integration', () => {
 
         const result = JSON.parse(((response as any).content[0]).text);
 
-        const errorConfigError = result.errors.find((e: any) =>
-          e.message.includes('Incorrect error output configuration')
-        );
+        expect(result.errors.some((e: any) => e.message.includes('Incorrect error output configuration'))).toBe(false);
 
-        expect(errorConfigError).toBeDefined();
+        const warning = (result.warnings || []).find((w: any) => w.message.includes('named like an error handler'));
+        expect(warning, scenario.name).toBeDefined();
 
-        // Check that error message follows consistent format
-        expect(errorConfigError.message).toContain('INCORRECT (current):');
-        expect(errorConfigError.message).toContain('CORRECT (should be):');
-        expect(errorConfigError.message).toContain('main[0] = success output');
-        expect(errorConfigError.message).toContain('main[1] = error output');
-        expect(errorConfigError.message).toContain('Also add: "onError": "continueErrorOutput"');
-
-        // Check JSON format is valid
-        const incorrectSection = errorConfigError.message.match(/INCORRECT \(current\):\n([\s\S]*?)\n\nCORRECT/);
-        const correctSection = errorConfigError.message.match(/CORRECT \(should be\):\n([\s\S]*?)\n\nAlso add/);
-
-        expect(incorrectSection).toBeDefined();
-        expect(correctSection).toBeDefined();
-
-        // Verify JSON structure is present (but don't parse due to comments)
-        expect(incorrectSection).toBeDefined();
-        expect(correctSection).toBeDefined();
-        expect(incorrectSection![1]).toContain('main');
-        expect(correctSection![1]).toContain('main');
+        // Consistent format regardless of how many names match
+        expect(warning.message).toContain("onError: 'continueErrorOutput' but the error output (main[1]) is not connected");
+        expect(warning.message).toContain('main[0]');
+        for (const handlerName of scenario.handlerNames) {
+          expect(warning.message).toContain(handlerName);
+        }
+        expect(warning.message).toContain('main[1] instead');
       }
     });
   });

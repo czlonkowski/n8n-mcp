@@ -255,7 +255,7 @@ describe('Integration: handleListExecutions', () => {
         expect(execution).toHaveProperty('id');
 
         if (execution.status) {
-          expect(['success', 'error', 'running', 'waiting']).toContain(execution.status);
+          expect(['success', 'error', 'running', 'waiting', 'canceled', 'crashed', 'new', 'unknown']).toContain(execution.status);
         }
       }
     });

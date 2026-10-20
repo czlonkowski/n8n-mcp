@@ -25,7 +25,6 @@ vi.mock('@/utils/logger', () => ({
  */
 class InMemoryDatabaseAdapter implements DatabaseAdapter {
   private nodes: Map<string, any> = new Map();
-  private nodesByNpmPackage: Map<string, any> = new Map();
 
   prepare = vi.fn((sql: string) => new InMemoryPreparedStatement(sql, this));
 
@@ -39,21 +38,22 @@ class InMemoryDatabaseAdapter implements DatabaseAdapter {
   // Data access methods for the prepared statement
   saveNode(node: any): void {
     this.nodes.set(node.node_type, node);
-    if (node.npm_package_name) {
-      this.nodesByNpmPackage.set(node.npm_package_name, node);
-    }
   }
 
   getNode(nodeType: string): any {
     return this.nodes.get(nodeType);
   }
 
-  getNodeByNpmPackage(npmPackageName: string): any {
-    return this.nodesByNpmPackage.get(npmPackageName);
+  // A package can own several rows (#967), so these derive from the node map
+  // instead of a package-keyed index.
+  getNodesByNpmPackage(npmPackageName: string): any[] {
+    return this.getAllNodes()
+      .filter((n) => n.npm_package_name === npmPackageName)
+      .sort((a, b) => a.node_type.localeCompare(b.node_type));
   }
 
   hasNodeByNpmPackage(npmPackageName: string): boolean {
-    return this.nodesByNpmPackage.has(npmPackageName);
+    return this.getNodesByNpmPackage(npmPackageName).length > 0;
   }
 
   getAllNodes(): any[] {
@@ -72,16 +72,12 @@ class InMemoryDatabaseAdapter implements DatabaseAdapter {
     const communityNodes = this.getCommunityNodes();
     for (const node of communityNodes) {
       this.nodes.delete(node.node_type);
-      if (node.npm_package_name) {
-        this.nodesByNpmPackage.delete(node.npm_package_name);
-      }
     }
     return communityNodes.length;
   }
 
   clear(): void {
     this.nodes.clear();
-    this.nodesByNpmPackage.clear();
   }
 }
 
@@ -106,9 +102,6 @@ class InMemoryPreparedStatement implements PreparedStatement {
     if (this.sql.includes('SELECT * FROM nodes WHERE node_type = ?')) {
       return this.adapter.getNode(params[0]);
     }
-    if (this.sql.includes('SELECT * FROM nodes WHERE npm_package_name = ?')) {
-      return this.adapter.getNodeByNpmPackage(params[0]);
-    }
     if (this.sql.includes('SELECT 1 FROM nodes WHERE npm_package_name = ?')) {
       return this.adapter.hasNodeByNpmPackage(params[0]) ? { '1': 1 } : undefined;
     }
@@ -123,6 +116,9 @@ class InMemoryPreparedStatement implements PreparedStatement {
   });
 
   all = vi.fn((...params: any[]) => {
+    if (this.sql.includes('SELECT * FROM nodes WHERE npm_package_name = ? ORDER BY node_type')) {
+      return this.adapter.getNodesByNpmPackage(params[0]);
+    }
     if (this.sql.includes('SELECT * FROM nodes WHERE is_community = 1')) {
       let nodes = this.adapter.getCommunityNodes();
 
@@ -336,9 +332,9 @@ describe('Community Nodes Integration', () => {
       };
       repository.saveNode(updatedNode);
 
-      const retrieved = repository.getNodeByNpmPackage('n8n-nodes-verified');
-      expect(retrieved).toBeDefined();
-      // Note: The actual update verification depends on parseNodeRow implementation
+      const retrieved = repository.getNodesByNpmPackage('n8n-nodes-verified');
+      expect(retrieved).toHaveLength(1);
+      expect(retrieved[0].displayName).toBe('Updated Verified Node');
     });
 
     it('should handle transition from unverified to verified', () => {

@@ -9,6 +9,7 @@ import {
   validateWorkflowSettings,
   cleanWorkflowForCreate,
   cleanWorkflowForUpdate,
+  cleanNodeForApi,
   validateWorkflowStructure,
   hasWebhookTrigger,
   getWebhookUrl,
@@ -296,6 +297,29 @@ describe('n8n-validation', () => {
 
         expect(() => validateWorkflowConnections(invalidConnections)).toThrow();
       });
+
+      // n8n's own type is `Array<IConnection[] | null>` and its Public API stores such a
+      // workflow verbatim (live-verified POST + GET round-trip), so rejecting the null here
+      // failed creates that validate_workflow had just passed (#1096).
+      it('accepts a null output branch, which n8n stores verbatim (#1096)', () => {
+        const connections = {
+          'Start': {
+            main: [[{ node: 'B', type: 'main', index: 0 }], null],
+          },
+        };
+
+        expect(validateWorkflowConnections(connections)).toEqual(connections);
+      });
+
+      it('still throws for a non-null, non-array branch', () => {
+        const connections = {
+          'Start': {
+            main: [[{ node: 'B', type: 'main', index: 0 }], 'nope'],
+          },
+        };
+
+        expect(() => validateWorkflowConnections(connections)).toThrow();
+      });
     });
 
     describe('validateWorkflowSettings', () => {
@@ -318,6 +342,38 @@ describe('n8n-validation', () => {
 
   describe('Workflow Cleaning Functions', () => {
     describe('cleanWorkflowForCreate', () => {
+      it('should drop derived settings carried over from another instance', () => {
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: {
+            executionOrder: 'v1' as const,
+            redactionPolicy: 'all' as const,
+            binaryMode: 'combined',
+            credentialResolverId: 'resolver-1',
+            engineType: 'v2',
+          },
+        };
+
+        const cleaned = cleanWorkflowForCreate(workflow as any);
+
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1', redactionPolicy: 'all' });
+      });
+
+      it('should fall back to defaults when only derived settings were given', () => {
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: { binaryMode: 'combined' },
+        };
+
+        const cleaned = cleanWorkflowForCreate(workflow as any);
+
+        expect(cleaned.settings).toEqual(defaultWorkflowSettings);
+      });
+
       it('should remove read-only fields', () => {
         const workflow = {
           id: 'should-be-removed',
@@ -408,6 +464,29 @@ describe('n8n-validation', () => {
 
         const cleaned = cleanWorkflowForCreate(workflow as Workflow);
         expect(cleaned.nodes![0].webhookId).toBeUndefined();
+      });
+
+      it('should strip unknown node properties echoed by n8n GET', () => {
+        const workflow = workflowWithNodes([
+          {
+            id: 'n1',
+            name: 'Set',
+            type: 'n8n-nodes-base.set',
+            typeVersion: 3,
+            position: [100, 200],
+            parameters: {},
+            onError: 'continueErrorOutput',
+            issues: { parameters: { missing: true } },
+            runIndex: 0,
+          } as unknown as WorkflowNode,
+        ]);
+
+        const cleaned = cleanWorkflowForCreate(workflow as Workflow);
+        const node = cleaned.nodes![0];
+
+        expect(node.onError).toBe('continueErrorOutput');
+        expect(node).not.toHaveProperty('issues');
+        expect(node).not.toHaveProperty('runIndex');
       });
     });
 
@@ -537,6 +616,26 @@ describe('n8n-validation', () => {
         expect(cleaned.settings).toEqual({ executionOrder: 'v1', availableInMCP: false });
       });
 
+      it('should forward parentFolderId including an explicit null (folder move, n8n 2.32+)', () => {
+        const base = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: { executionOrder: 'v1' },
+        } as any;
+
+        // A folder ID moves the workflow there
+        const moved = cleanWorkflowForUpdate({ ...base, parentFolderId: 'folder-1' });
+        expect(moved.parentFolderId).toBe('folder-1');
+
+        // null is meaningful: move to the project root — must NOT be dropped
+        const toRoot = cleanWorkflowForUpdate({ ...base, parentFolderId: null });
+        expect(toRoot).toHaveProperty('parentFolderId', null);
+
+        // Absent means "leave the folder unchanged" — must NOT be sent at all
+        expect(cleanWorkflowForUpdate(base)).not.toHaveProperty('parentFolderId');
+      });
+
       it('should exclude versionCounter for n8n 1.118.1+ compatibility', () => {
         const workflow = {
           name: 'Test Workflow',
@@ -581,7 +680,7 @@ describe('n8n-validation', () => {
         expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
       });
 
-      it('should filter settings to safe properties to prevent API errors (Issue #248 - final fix)', () => {
+      it('should forward settings n8n added after this list was written (Issue #248 - final fix)', () => {
         const workflow = {
           name: 'Test Workflow',
           nodes: [],
@@ -589,22 +688,64 @@ describe('n8n-validation', () => {
           settings: {
             executionOrder: 'v1' as const,
             saveDataSuccessExecution: 'none' as const,
-            callerPolicy: 'workflowsFromSameOwner' as const, // Whitelisted (n8n 1.119+)
-            timeSavedPerExecution: 5, // Whitelisted (n8n 1.119+, PR #21297)
-            unknownProperty: 'should be filtered', // Unknown properties ARE filtered
+            callerPolicy: 'workflowsFromSameOwner' as const,
+            timeSavedPerExecution: 5,
+            // Whatever n8n ships next: forwarded, so the instance decides, not a stale list
+            settingFromANewerN8n: 'forwarded',
           },
         } as any;
 
         const cleaned = cleanWorkflowForUpdate(workflow);
 
-        // All 4 properties from n8n 1.119+ are whitelisted, unknown properties filtered
         expect(cleaned.settings).toEqual({
           executionOrder: 'v1',
           saveDataSuccessExecution: 'none',
           callerPolicy: 'workflowsFromSameOwner',
           timeSavedPerExecution: 5,
+          settingFromANewerN8n: 'forwarded',
         });
-        expect(cleaned.settings).not.toHaveProperty('unknownProperty');
+      });
+
+      it('should drop the settings n8n derives and ignores on write', () => {
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: {
+            executionOrder: 'v1' as const,
+            // Echoed by GET on n8n 2.33+, ignored on write, rejected outright by older n8n
+            binaryMode: 'combined',
+            credentialResolverId: 'resolver-1',
+            // Echoed by GET on n8n 2.36+ but rejected by the write schema on every version -
+            // echoing it back fails the whole update (Issue #1043)
+            engineType: 'v2',
+          },
+        } as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
+      });
+
+      it('should keep redactionPolicy on a write (data redaction must not be dropped silently)', () => {
+        const workflow = {
+          name: 'Test Workflow',
+          nodes: [],
+          connections: {},
+          settings: {
+            executionOrder: 'v1' as const,
+            redactionPolicy: 'all' as const,
+            customTelemetryTags: [{ key: 'team', value: 'platform' }],
+          },
+        } as any;
+
+        const cleaned = cleanWorkflowForUpdate(workflow);
+
+        expect(cleaned.settings).toEqual({
+          executionOrder: 'v1',
+          redactionPolicy: 'all',
+          customTelemetryTags: [{ key: 'team', value: 'platform' }],
+        });
       });
 
       it('should preserve callerPolicy and availableInMCP (n8n 1.121+ settings)', () => {
@@ -679,45 +820,40 @@ describe('n8n-validation', () => {
         expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
       });
 
-      it('should return minimal defaults when only non-whitelisted properties exist (Issue #431)', () => {
+      it('should return minimal defaults when only derived properties exist (Issue #431)', () => {
         const workflow = {
           name: 'Test Workflow',
           nodes: [],
           connections: {},
           settings: {
-            timeSavedPerExecution: 5, // Whitelisted (n8n 1.119+)
-            someOtherProperty: 'value', // Filtered out (unknown)
+            binaryMode: 'combined', // Derived - dropped, leaving nothing behind
           },
         } as any;
 
         const cleaned = cleanWorkflowForUpdate(workflow);
-        // timeSavedPerExecution is now whitelisted, someOtherProperty is filtered out
-        // n8n API now accepts empty or partial settings {} - server preserves existing values
-        expect(cleaned.settings).toEqual({ timeSavedPerExecution: 5 });
-        expect(cleaned.settings).not.toHaveProperty('someOtherProperty');
+        // n8n rejects an empty settings object, so a minimal valid default takes its place
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
       });
 
-      it('should preserve whitelisted settings when mixed with non-whitelisted (Issue #431)', () => {
+      it('should preserve settings alongside dropped derived properties (Issue #431)', () => {
         const workflow = {
           name: 'Test Workflow',
           nodes: [],
           connections: {},
           settings: {
-            executionOrder: 'v1' as const, // Whitelisted
-            callerPolicy: 'workflowsFromSameOwner' as const, // Now whitelisted (n8n 1.121+)
-            timezone: 'America/New_York', // Whitelisted
-            someOtherProperty: 'value', // Filtered out
+            executionOrder: 'v1' as const,
+            callerPolicy: 'workflowsFromSameOwner' as const,
+            timezone: 'America/New_York',
+            credentialResolverId: 'resolver-1', // Derived - dropped
           },
         } as any;
 
         const cleaned = cleanWorkflowForUpdate(workflow);
-        // Should keep only whitelisted properties (callerPolicy now whitelisted)
         expect(cleaned.settings).toEqual({
           executionOrder: 'v1',
           callerPolicy: 'workflowsFromSameOwner',
           timezone: 'America/New_York'
         });
-        expect(cleaned.settings).not.toHaveProperty('someOtherProperty');
       });
 
       it('should inject webhookId on webhook nodes missing it', () => {
@@ -757,10 +893,727 @@ describe('n8n-validation', () => {
         const cleaned = cleanWorkflowForUpdate(workflow);
         expect(cleaned.nodes![0].webhookId).toBeUndefined();
       });
+
+      it('should strip unknown node properties echoed by n8n GET (#983)', () => {
+        const workflow = workflowWithNodes([
+          {
+            id: 'n1',
+            name: 'Set',
+            type: 'n8n-nodes-base.set',
+            typeVersion: 3,
+            position: [100, 200],
+            parameters: {},
+            onError: 'continueRegularOutput',
+            // Server-managed fields echoed by GET but rejected on PUT/PATCH:
+            issues: { parameters: { missing: true } },
+            runIndex: 0,
+          } as any,
+          {
+            id: 'n2',
+            name: 'Webhook',
+            type: 'n8n-nodes-base.webhook',
+            typeVersion: 1,
+            position: [300, 200],
+            parameters: {},
+            webhookId: 'existing-wh-id',
+            // Extra echo field
+            data: { some: 'thing' },
+          } as any,
+        ]);
+
+        const cleaned = cleanWorkflowForUpdate(workflow as any);
+        const setNode = cleaned.nodes![0];
+        const webhookNode2 = cleaned.nodes![1];
+
+        // Allowed fields survive
+        expect(setNode.id).toBe('n1');
+        expect(setNode.name).toBe('Set');
+        expect(setNode.type).toBe('n8n-nodes-base.set');
+        expect(setNode.typeVersion).toBe(3);
+        expect(setNode.position).toEqual([100, 200]);
+        expect(setNode.onError).toBe('continueRegularOutput');
+
+        // Unknown echo fields are stripped
+        expect(setNode).not.toHaveProperty('issues');
+        expect(setNode).not.toHaveProperty('runIndex');
+        expect(webhookNode2).not.toHaveProperty('data');
+
+        // webhookId survives (it's in the allowlist)
+        expect(webhookNode2.webhookId).toBe('existing-wh-id');
+      });
+    });
+
+    describe('cleanNodeForApi', () => {
+      it('should keep all known node properties', () => {
+        const node: WorkflowNode = {
+          id: 'n1',
+          name: 'Test',
+          type: 'n8n-nodes-base.set',
+          typeVersion: 3,
+          position: [0, 0],
+          parameters: { key: 'val' },
+          credentials: { api: 'cred' },
+          disabled: false,
+          notes: 'note',
+          notesInFlow: true,
+          continueOnFail: true,
+          onError: 'stopWorkflow',
+          retryOnFail: true,
+          maxTries: 3,
+          waitBetweenTries: 1000,
+          alwaysOutputData: true,
+          executeOnce: false,
+          webhookId: 'wh-id',
+        };
+        const cleaned = cleanNodeForApi(node);
+        expect(cleaned).toEqual(node);
+      });
+
+      it('should strip unknown properties', () => {
+        const node = {
+          id: 'n1',
+          name: 'Test',
+          type: 'n8n-nodes-base.set',
+          typeVersion: 3,
+          position: [0, 0],
+          parameters: {},
+          issues: { error: true },
+          runIndex: 0,
+          data: { extra: true },
+        } as unknown as WorkflowNode;
+        const cleaned = cleanNodeForApi(node);
+        expect(cleaned).not.toHaveProperty('issues');
+        expect(cleaned).not.toHaveProperty('runIndex');
+        expect(cleaned).not.toHaveProperty('data');
+        expect(cleaned.id).toBe('n1');
+      });
+
+    });
+
+    describe('GET→UPDATE round-trips (Issue #433)', () => {
+      // ====================================================================
+      // Issue #433 — GET→spread→UPDATE patterns (unit-level, always run in CI)
+      //
+      // n8n API quirks these tests lock in:
+      // - GET returns read-only fields (id, createdAt, versionId, description, …)
+      // - PUT/PATCH reject those fields (additionalProperties: false on some versions)
+      // - description is returned by GET but rejected on update (Issue #431)
+      // - empty settings {} is rejected; missing settings get { executionOrder: 'v1' }
+      // Users commonly do: updateWorkflow(id, { ...await getWorkflow(id), name: 'x' })
+      // ====================================================================
+
+      it('should clean a full GET-shaped response for safe PUT (Issue #433)', () => {
+        // Simulate the object shape returned by GET, then spread + rename
+        const getResponse = {
+          id: 'wf-abc',
+          name: 'Original Name',
+          description: 'Returned by GET but not writable on PUT',
+          nodes: [
+            {
+              id: 'webhook-1',
+              name: 'Webhook',
+              type: 'n8n-nodes-base.webhook',
+              typeVersion: 2,
+              position: [250, 300],
+              parameters: { path: 'test' },
+              webhookId: 'existing-wh',
+            },
+          ],
+          connections: {},
+          settings: { executionOrder: 'v1', timezone: 'UTC' },
+          active: false,
+          isArchived: false,
+          createdAt: '2024-01-01T00:00:00.000Z',
+          updatedAt: '2024-06-01T00:00:00.000Z',
+          versionId: 'ver-123',
+          versionCounter: 9,
+          meta: { templateCredsSetupCompleted: true },
+          staticData: { 'node:Webhook': { data: 1 } },
+          pinData: {},
+          tags: [{ id: 't1', name: 'prod' }],
+          triggerCount: 1,
+          shared: [],
+          activeVersionId: 'av-1',
+          nodeGroups: [],
+          availableInMCP: false,
+        } as any;
+
+        const cleaned = cleanWorkflowForUpdate({
+          ...getResponse,
+          name: 'Renamed via spread',
+        });
+
+        expect(cleaned.name).toBe('Renamed via spread');
+        expect(cleaned.nodes).toHaveLength(1);
+        expect(cleaned.connections).toEqual({});
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1', timezone: 'UTC' });
+        // nodeGroups is allowlisted for n8n 2.28+: empty array means ungroup everything
+        // and is intentionally forwarded (omitting the key would backfill stored groups).
+        expect(cleaned.nodeGroups).toEqual([]);
+
+        // Read-only / computed fields must never reach PUT
+        for (const key of [
+          'id',
+          'description',
+          'active',
+          'isArchived',
+          'createdAt',
+          'updatedAt',
+          'versionId',
+          'versionCounter',
+          'meta',
+          'staticData',
+          'pinData',
+          'tags',
+          'triggerCount',
+          'shared',
+          'activeVersionId',
+          'availableInMCP',
+        ]) {
+          expect(cleaned).not.toHaveProperty(key);
+        }
+
+        expect(Object.keys(cleaned).sort()).toEqual([
+          'connections',
+          'name',
+          'nodeGroups',
+          'nodes',
+          'settings',
+        ]);
+      });
+
+      it('should allow minimal payload (name/nodes/connections only) with settings defaults (Issue #433)', () => {
+        const cleaned = cleanWorkflowForUpdate({
+          name: 'Minimal',
+          nodes: [],
+          connections: {},
+        } as any);
+
+        expect(cleaned).toEqual({
+          name: 'Minimal',
+          nodes: [],
+          connections: {},
+          settings: { executionOrder: 'v1' },
+        });
+      });
+
+      it('should replace empty settings objects with minimal defaults (Issue #433 / #431)', () => {
+        const cleaned = cleanWorkflowForUpdate({
+          name: 'Empty Settings',
+          nodes: [],
+          connections: {},
+          settings: {},
+        } as any);
+
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1' });
+      });
+
+      it('should forward settings properties it does not know, so a newer n8n can accept them', () => {
+        // The settings table trails n8n's releases; filtering here dropped redactionPolicy for two
+        // months. Unknown keys reach the instance, and N8nApiClient retries without them only
+        // when the instance rejects them.
+        const cleaned = cleanWorkflowForUpdate({
+          name: 'Forwarded Settings',
+          nodes: [],
+          connections: {},
+          settings: {
+            executionOrder: 'v1',
+            settingAddedNextWeek: true,
+          },
+        } as any);
+
+        expect(cleaned.settings).toEqual({ executionOrder: 'v1', settingAddedNextWeek: true });
+      });
     });
   });
 
   describe('validateWorkflowStructure', () => {
+    describe.each([false, true])('malformed nodes with connections: %s', (connected) => {
+      const validNode = webhookNode('2', 'Invalid Node', 'n8n-nodes-base.set');
+
+      it.each([
+        { label: 'a string', node: 'strayString', field: undefined },
+        { label: 'null', node: null, field: undefined },
+        { label: 'an array', node: [], field: undefined },
+        { label: 'a number', node: 123, field: undefined },
+        { label: 'a missing type', node: { ...validNode, type: undefined }, field: 'type' },
+        { label: 'a numeric type', node: { ...validNode, type: 123 }, field: 'type' },
+        { label: 'an object type', node: { ...validNode, type: {} }, field: 'type' },
+        { label: 'a missing name', node: { ...validNode, name: undefined }, field: 'name' },
+      ])('returns an indexed validation error for $label', ({ node, field }) => {
+        const workflow = {
+          name: 'Malformed node',
+          nodes: [webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'), node],
+          connections: connected ? {
+            Start: { main: [[{ node: 'Invalid Node', type: 'main', index: 0 }]] },
+          } : {},
+        };
+
+        const errors = validateWorkflowStructure(workflow as unknown as Partial<Workflow>);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatch(/^Invalid node at index 1:/);
+        if (field) {
+          expect(errors[0]).toContain(`"${field}"`);
+        }
+      });
+    });
+
+    it('collects all malformed node errors before traversing the workflow', () => {
+      const workflow = {
+        name: 'Multiple malformed nodes',
+        nodes: [null, webhookNode('1', 'Webhook', 'n8n-nodes-base.webhook'), 'strayString'],
+        connections: {},
+      };
+
+      const errors = validateWorkflowStructure(workflow as unknown as Partial<Workflow>);
+
+      expect(errors).toHaveLength(2);
+      expect(errors[0]).toMatch(/^Invalid node at index 0:/);
+      expect(errors[1]).toMatch(/^Invalid node at index 2:/);
+    });
+
+    describe('malformed connections', () => {
+      const twoNodes = () => [
+        webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+        webhookNode('2', 'B', 'n8n-nodes-base.set'),
+      ];
+
+      it.each([
+        { label: 'a null source entry', connections: { Start: null }, path: '"Start"' },
+        { label: 'a string source entry', connections: { Start: 'main' }, path: '"Start"' },
+        { label: 'an array source entry', connections: { Start: [] }, path: '"Start"' },
+        { label: 'a null output map', connections: { Start: { main: null } }, path: '"Start.main"' },
+        { label: 'a string output', connections: { Start: { main: ['main'] } }, path: '"Start.main.0"' },
+        { label: 'an object output', connections: { Start: { main: [{}] } }, path: '"Start.main.0"' },
+        { label: 'a null connection entry', connections: { Start: { main: [[null]] } }, path: '"Start.main.0.0"' },
+        { label: 'a non-string target', connections: { Start: { main: [[{ node: 5, type: 'main', index: 0 }]] } }, path: '"Start.main.0.0.node"' },
+      ])('returns a path-anchored validation error for $label', ({ connections, path }) => {
+        const errors = validateWorkflowStructure({
+          name: 'Malformed connections',
+          nodes: twoNodes(),
+          connections,
+        } as unknown as Partial<Workflow>);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatch(/^Invalid connections: /);
+        expect(errors[0]).toContain(path);
+      });
+
+      // A null branch is n8n's own "nothing wired to this output" and its API stores one
+      // verbatim (live-verified), so it is data to walk past, not a shape to reject (#1096).
+      it('accepts a null output branch instead of failing the create', () => {
+        const errors = validateWorkflowStructure({
+          name: 'Null branch',
+          nodes: twoNodes(),
+          connections: { Start: { main: [[{ node: 'B', type: 'main', index: 0 }], null] } },
+        } as unknown as Partial<Workflow>);
+
+        expect(errors).toEqual([]);
+      });
+
+      // n8n routes matched items into nothing for an output no one wired up, and 13 bundled
+      // templates rely on that for a rule they don't act on, so an empty/null branch is no
+      // longer reported (#1100).
+      it('accepts a null trailing Switch branch instead of flagging it as unconnected', () => {
+        const switchNode: any = {
+          id: '1', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2,
+          position: [250, 300] as [number, number],
+          parameters: {
+            rules: {
+              rules: [
+                { conditions: { conditions: [] }, outputKey: 'a' },
+                { conditions: { conditions: [] }, outputKey: 'b' },
+              ],
+            },
+          },
+        };
+
+        const errors = validateWorkflowStructure({
+          name: 'Switch with a null branch',
+          nodes: [switchNode, webhookNode('2', 'B', 'n8n-nodes-base.set')],
+          connections: { Switch: { main: [[{ node: 'B', type: 'main', index: 0 }], null] } },
+        } as unknown as Partial<Workflow>);
+
+        expect(errors).toEqual([]);
+      });
+
+      it('reports a connection parse failure as one line rather than a serialized Zod issue array', () => {
+        const errors = validateWorkflowStructure({
+          name: 'Malformed connections',
+          nodes: twoNodes(),
+          connections: { Start: { main: [[null]] } },
+        } as unknown as Partial<Workflow>);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).not.toContain('{');
+      });
+
+      it('does not report graph findings computed over a malformed connection', () => {
+        // "B" looks disconnected only because the connection naming it is the broken one.
+        const errors = validateWorkflowStructure({
+          name: 'Malformed connections',
+          nodes: twoNodes(),
+          connections: { Start: { main: [[{ node: 'B', type: 'main', index: '0' }]] } },
+        } as unknown as Partial<Workflow>);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatch(/^Invalid connections: /);
+        expect(errors.some(error => error.includes('Disconnected nodes'))).toBe(false);
+      });
+
+      // `rules` is caller-supplied. A string has the `.length` the branch-count check reads and
+      // no `.map`, and an object label cannot always be coerced into the message (#1094).
+      it.each([
+        { label: 'a string rules collection', rules: 'abc' },
+        { label: 'an object with a length', rules: { length: 2 } },
+        { label: 'a rule whose outputKey cannot be coerced', rules: [{ outputKey: { toString: null, valueOf: null }, conditions: { conditions: [] } }] },
+      ])('does not throw on $label', ({ rules }) => {
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2), parameters: { rules: { rules } } },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }]] },
+        };
+
+        expect(() => validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>))
+          .not.toThrow();
+      });
+
+      // n8n omits trailing branches that have no connection, so a Switch with fewer output
+      // branches than rules is how it exports a Switch whose last rules route nowhere - that
+      // is accepted. More branches than the node has outputs can only come from a caller, and
+      // that is still reported (#1100).
+      it('reports an error when a Switch has more output branches than rules', () => {
+        const rule = (outputKey: string) => ({ outputKey, conditions: { conditions: [] } });
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2), parameters: { rules: { rules: [rule('a'), rule('b')] } } },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }], [], []] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e =>
+          e.includes('has 2 rules ["a" (index 0), "b" (index 1)]') &&
+          e.includes('but 3 output branches in connections') &&
+          e.includes('Outputs are indexed 0 to 1')
+        )).toBe(true);
+      });
+
+      it('does not report an error when a Switch has fewer output branches than rules', () => {
+        const rule = (outputKey: string) => ({ outputKey, conditions: { conditions: [] } });
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2), parameters: { rules: { values: [rule('a'), rule('b'), rule('c')] } } },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }], []] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e => e.includes('rules') && e.includes('output branches'))).toBe(false);
+      });
+
+      // n8n stores the rules under `rules.values` from typeVersion 3.2 on (#1100).
+      it('reads rules from rules.values (typeVersion 3.2+) for the branch-count check', () => {
+        const rule = (outputKey: string) => ({ outputKey, conditions: { conditions: [] } });
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2), parameters: { rules: { values: [rule('a'), rule('b'), rule('c')] } } },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }], [], [], []] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e => e.includes('has 3 rules') && e.includes('4 output branches'))).toBe(true);
+      });
+
+      // `options.fallbackOutput: 'extra'` adds one output after the rule outputs; that extra
+      // output can carry a connection of its own without tripping the branch-count check (#1100).
+      it('does not report an error when options.fallbackOutput adds the extra branch', () => {
+        const rule = (outputKey: string) => ({ outputKey, conditions: { conditions: [] } });
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          {
+            ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2),
+            parameters: { rules: { values: [rule('a'), rule('b'), rule('c')] }, options: { fallbackOutput: 'extra' } },
+          },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }], [], [], []] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e => e.includes('rules') && e.includes('output branches'))).toBe(false);
+      });
+
+      it('mentions the fallback output when there are still too many branches with fallbackOutput extra', () => {
+        const rule = (outputKey: string) => ({ outputKey, conditions: { conditions: [] } });
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          {
+            ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2),
+            parameters: { rules: { values: [rule('a'), rule('b'), rule('c')] }, options: { fallbackOutput: 'extra' } },
+          },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }], [], [], [], []] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e =>
+          e.includes('has 3 rules') &&
+          e.includes('plus a fallback output') &&
+          e.includes('5 output branches')
+        )).toBe(true);
+      });
+
+      it('still counts the legacy rules.rules collection at typeVersion 3.2', () => {
+        const rule = (outputKey: string) => ({ outputKey, conditions: { conditions: [] } });
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2), parameters: { rules: { rules: [rule('a'), rule('b')] } } },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }], [], []] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e => e.includes('has 2 rules') && e.includes('3 output branches'))).toBe(true);
+      });
+
+      // An expression- or json-mode Switch can retain a stale hidden rule collection that n8n
+      // ignores at runtime, so the branch-count check must not read it.
+      it('does not check branch count for an expression-mode Switch', () => {
+        const rule = (outputKey: string) => ({ outputKey, conditions: { conditions: [] } });
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          {
+            ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2),
+            parameters: { mode: 'expression', rules: { values: [rule('a'), rule('b')] } },
+          },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }], [], [], [], []] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e => e.includes('rules') && e.includes('output branches'))).toBe(false);
+      });
+
+      // `onError: 'continueErrorOutput'` appends an error output after the natural ones, so a
+      // 2-rule Switch has room for 3 branches (2 rules + 1 error output) without tripping the
+      // branch-count check.
+      it('does not report an error when onError adds room for the extra branch', () => {
+        const rule = (outputKey: string) => ({ outputKey, conditions: { conditions: [] } });
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          {
+            ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2),
+            onError: 'continueErrorOutput',
+            parameters: { rules: { values: [rule('a'), rule('b')] } },
+          },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }], [], []] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e => e.includes('rules') && e.includes('output branches'))).toBe(false);
+      });
+
+      it('mentions the error output when there are still too many branches with onError set', () => {
+        const rule = (outputKey: string) => ({ outputKey, conditions: { conditions: [] } });
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          {
+            ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2),
+            onError: 'continueErrorOutput',
+            parameters: { rules: { values: [rule('a'), rule('b')] } },
+          },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }], [], [], []] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e =>
+          e.includes('has 2 rules') &&
+          e.includes('plus an error output') &&
+          e.includes('4 output branches')
+        )).toBe(true);
+      });
+
+      // Switch v1 has four fixed outputs whatever its rules say, so the branch-count check
+      // must not run against v1's legacy rules.rules collection at all.
+      it('does not check branch count for a typeVersion 1 Switch with legacy rules', () => {
+        const rule = (outputKey: string) => ({ outputKey, conditions: { conditions: [] } });
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 1), parameters: { rules: { rules: [rule('a'), rule('b')] } } },
+          webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+          Switch: { main: [[{ node: 'End', type: 'main', index: 0 }], [], [], []] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e => e.includes('rules') && e.includes('output branches'))).toBe(false);
+      });
+
+      it('still validates a well-formed workflow', () => {
+        const errors = validateWorkflowStructure({
+          name: 'Valid',
+          nodes: twoNodes(),
+          connections: { Start: { main: [[{ node: 'B', type: 'main', index: 0 }]] } },
+        } as unknown as Partial<Workflow>);
+
+        expect(errors).toEqual([]);
+      });
+
+      // A source key with no targets (`main: [null]`, `main: [[]]`) is how n8n stores a node
+      // whose last edge was removed. Vouching for the node that holds it let two isolated
+      // nodes pass as connected to each other (#1101).
+      it.each([
+        { label: 'a null branch', main: [null] },
+        { label: 'an empty branch', main: [[]] },
+      ])('reports both nodes as disconnected when each source key has $label and no target', ({ main }) => {
+        const errors = validateWorkflowStructure({
+          name: 'Two isolated nodes',
+          nodes: twoNodes(),
+          connections: { Start: { main }, B: { main } },
+        } as unknown as Partial<Workflow>);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('Disconnected nodes detected');
+        expect(errors[0]).toContain('"Start"');
+        expect(errors[0]).toContain('"B"');
+
+        // With nothing connected, the suggested source falls back to some other node in the
+        // workflow, not the disconnected node itself - a self-loop is not a useful fix (#1101).
+        const suggestion = errors[0].match(/source: '([^']+)', target: '([^']+)'/);
+        expect(suggestion).toBeTruthy();
+        const [, source, target] = suggestion!;
+        expect(source).not.toBe(target);
+      });
+
+      it('does not flag a node with a real target, or an mcpTrigger reached only via inbound ai_tool', () => {
+        const nodes = [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          webhookNode('2', 'B', 'n8n-nodes-base.set'),
+          webhookNode('3', 'Tool', '@n8n/n8n-nodes-langchain.toolWorkflow', 1.3),
+          webhookNode('4', 'MCP Server', '@n8n/n8n-nodes-langchain.mcpTrigger', 1),
+        ];
+        const connections = {
+          Start: { main: [[{ node: 'B', type: 'main', index: 0 }]] },
+          Tool: { ai_tool: [[{ node: 'MCP Server', type: 'ai_tool', index: 0 }]] },
+        };
+
+        const errors = validateWorkflowStructure({ name: 'Mixed', nodes, connections } as unknown as Partial<Workflow>);
+
+        expect(errors.some(e => e.includes('Disconnected'))).toBe(false);
+      });
+    });
+
+    it('rejects a non-array nodes collection before traversing the workflow', () => {
+      const workflow = { name: 'Invalid collection', nodes: {}, connections: {} };
+
+      expect(validateWorkflowStructure(workflow as unknown as Partial<Workflow>))
+        .toEqual(['Workflow nodes must be an array']);
+    });
+
+    it('reports a parse failure as one line rather than a serialized Zod issue array', () => {
+      const workflow = {
+        name: 'Malformed node',
+        nodes: [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Invalid Node', 'n8n-nodes-base.set'), type: 123 },
+        ],
+        connections: {},
+      };
+
+      const errors = validateWorkflowStructure(workflow as unknown as Partial<Workflow>);
+
+      // The field name is ours; the reason after it is Zod's wording and may change with the
+      // major the MCP SDK resolves, so only the shape of the line is pinned.
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/^Invalid node at index 1: "type": .+/);
+      expect(errors[0]).not.toContain('{');
+    });
+
+    it('names every offending field when a node fails on more than one', () => {
+      const workflow = {
+        name: 'Malformed node',
+        nodes: [
+          webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+          { ...webhookNode('2', 'Invalid Node', 'n8n-nodes-base.set'), type: 123, typeVersion: 'two' },
+        ],
+        connections: {},
+      };
+
+      const errors = validateWorkflowStructure(workflow as unknown as Partial<Workflow>);
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('"type"');
+      expect(errors[0]).toContain('"typeVersion"');
+      expect(errors[0]).not.toContain('\n');
+    });
+
+    it('uses normalized node fields without mutating the submitted workflow', () => {
+      const workflow = {
+        name: 'Serialized node',
+        nodes: [JSON.stringify({
+          ...webhookNode('1', 'Webhook', 'n8n-nodes-base.webhook'),
+          typeVersion: '2',
+          position: { '0': '250', '1': '300' },
+          parameters: '{}',
+          // Not declared by the node schema - n8n's GET echoes fields like this, and Zod
+          // strips them. The caller's copy must keep them.
+          issues: { typeUnknown: true },
+        })],
+        connections: {},
+      };
+      const original = JSON.stringify(workflow);
+
+      expect(validateWorkflowStructure(workflow as unknown as Partial<Workflow>)).toEqual([]);
+      expect(JSON.stringify(workflow)).toBe(original);
+    });
+
     it('should return no errors for valid workflow', () => {
       const workflow = new WorkflowBuilder('Valid Workflow')
         .addWebhookNode({ id: 'webhook-1', name: 'Webhook' })
@@ -2479,4 +3332,69 @@ describe('n8n-validation', () => {
       });
     });
   });
+  describe('disconnected-node suggestion (#1101)', () => {
+    it('never proposes a sticky note or a self-loop as the source', () => {
+      const errors = validateWorkflowStructure({
+        name: 'Orphans with a note',
+        nodes: [
+          { id: '1', name: 'A', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [0, 0], parameters: {} },
+          { id: '2', name: 'B', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [0, 0], parameters: {} },
+          { id: '3', name: 'Note', type: 'n8n-nodes-base.stickyNote', typeVersion: 1, position: [0, 0], parameters: {} },
+        ],
+        connections: { A: { main: [[]] }, B: { main: [null] } },
+      } as unknown as Partial<Workflow>);
+      const suggestion = errors.find(e => e.includes('Disconnected nodes'));
+      expect(suggestion).toContain("source: 'B', target: 'A'");
+    });
+
+    it('omits the hint when the only other node is a sticky note', () => {
+      const errors = validateWorkflowStructure({
+        name: 'Lone node with a note',
+        nodes: [
+          { id: '1', name: 'A', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [0, 0], parameters: {} },
+          { id: '3', name: 'Note', type: 'n8n-nodes-base.stickyNote', typeVersion: 1, position: [0, 0], parameters: {} },
+        ],
+        connections: { A: { main: [[]] } },
+      } as unknown as Partial<Workflow>);
+      const message = errors.find(e => e.includes('Disconnected nodes'));
+      expect(message).toBeDefined();
+      expect(message).not.toContain('addConnection');
+    });
+  });
+
+  describe('Switch with an empty rule collection (#1100)', () => {
+    it('still counts branches against the fallback output alone', () => {
+      const nodes = [
+        webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+        { ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2), parameters: { rules: { values: [] }, options: { fallbackOutput: 'extra' } } },
+        webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+      ];
+      const ok = validateWorkflowStructure({ name: 'Switch', nodes, connections: {
+        Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+        Switch: { main: [[{ node: 'End', type: 'main', index: 0 }]] },
+      } } as unknown as Partial<Workflow>);
+      expect(ok.some(e => e.includes('output branches in connections'))).toBe(false);
+      const tooMany = validateWorkflowStructure({ name: 'Switch', nodes, connections: {
+        Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+        Switch: { main: [[{ node: 'End', type: 'main', index: 0 }], [{ node: 'End', type: 'main', index: 0 }]] },
+      } } as unknown as Partial<Workflow>);
+      expect(tooMany.some(e => e.includes('0 rules') && e.includes('plus a fallback output'))).toBe(true);
+    });
+
+    it('describes a Switch with no outputs instead of a negative index range', () => {
+      const nodes = [
+        webhookNode('1', 'Start', 'n8n-nodes-base.manualTrigger'),
+        { ...webhookNode('2', 'Switch', 'n8n-nodes-base.switch', 3.2), parameters: { rules: { values: [] } } },
+        webhookNode('3', 'End', 'n8n-nodes-base.noOp', 1),
+      ];
+      const errors = validateWorkflowStructure({ name: 'Switch', nodes, connections: {
+        Start: { main: [[{ node: 'Switch', type: 'main', index: 0 }]] },
+        Switch: { main: [[{ node: 'End', type: 'main', index: 0 }]] },
+      } } as unknown as Partial<Workflow>);
+      const message = errors.find(e => e.includes('output branches in connections'));
+      expect(message).toContain('has no outputs');
+      expect(message).not.toContain('0 to -1');
+    });
+  });
+
 });

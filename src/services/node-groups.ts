@@ -412,7 +412,9 @@ export function classifyGroupError(error: unknown): GroupErrorClassification {
   // pathless one, this returns `schema-field` as a CANDIDATE: the caller retries without the field
   // and only records the instance as lacking it if that retry actually succeeds. That keeps an
   // unrelated unknown property from disabling groups for an instance that supports them.
-  if (/must NOT have additional propert/i.test(haystack)) {
+  // n8n 2.37+ validates create with zod, whose wording is `Unrecognized key(s) in object: 'x'`;
+  // the path prefix is the same, so both wordings classify alike.
+  if (/must NOT have additional propert|Unrecognized key\(s\) in object/i.test(haystack)) {
     const nested = /request\/body\/([A-Za-z0-9_]+)/.exec(haystack);
     if (nested) {
       // A path INTO nodeGroups means a group object carries a key this n8n has no schema for —

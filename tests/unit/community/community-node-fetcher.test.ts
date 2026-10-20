@@ -8,6 +8,7 @@ import {
   StrapiCommunityNodeAttributes,
   NpmSearchResponse,
 } from '@/community/community-node-fetcher';
+import { tarEntry, tgz } from '../../utils/builders/tarball.builder';
 
 // Mock axios
 vi.mock('axios');
@@ -487,6 +488,104 @@ describe('CommunityNodeFetcher', () => {
       const result = await fetcher.getPackageTarballUrl('n8n-nodes-test', '1.0.0');
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe('fetchReadmesBatch', () => {
+    const tarballUrl = 'https://registry.npmjs.org/n8n-nodes-test/-/n8n-nodes-test-2.0.0.tgz';
+    const packument = (readme: string | undefined, tarball = tarballUrl) => ({
+      name: 'n8n-nodes-test',
+      readme,
+      'dist-tags': { latest: '2.0.0' },
+      versions: {
+        '1.0.0': { dist: { tarball: 'https://registry.npmjs.org/n8n-nodes-test/-/n8n-nodes-test-1.0.0.tgz' } },
+        '2.0.0': { dist: { tarball } },
+      },
+    });
+
+    it('uses the registry README without downloading the tarball', async () => {
+      mockedAxios.get.mockResolvedValueOnce({ data: packument('# From the registry') });
+
+      const result = await fetcher.fetchReadmesBatch(['n8n-nodes-test']);
+
+      expect(result.get('n8n-nodes-test')).toBe('# From the registry');
+      expect(mockedAxios.get).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['the npm placeholder', 'ERROR: No README data found!'],
+      ['an empty string', ''],
+    ])('reads the README from the latest tarball when the registry returns %s', async (_label, readme) => {
+      mockedAxios.get
+        .mockResolvedValueOnce({ data: packument(readme) })
+        .mockResolvedValueOnce({ data: tgz(tarEntry('package/README.md', '# From the tarball')) });
+
+      const result = await fetcher.fetchReadmesBatch(['n8n-nodes-test']);
+
+      expect(result.get('n8n-nodes-test')).toBe('# From the tarball');
+      expect(mockedAxios.get).toHaveBeenLastCalledWith(
+        tarballUrl,
+        expect.objectContaining({ responseType: 'arraybuffer', maxRedirects: 0, maxContentLength: expect.any(Number) })
+      );
+    });
+
+    it('returns null when the tarball download fails', async () => {
+      vi.spyOn(fetcher as any, 'sleep').mockResolvedValue(undefined);
+      mockedAxios.get
+        .mockResolvedValueOnce({ data: packument('') })
+        .mockRejectedValueOnce(new Error('socket hang up'))
+        .mockRejectedValueOnce(new Error('socket hang up'));
+
+      const result = await fetcher.fetchReadmesBatch(['n8n-nodes-test']);
+
+      expect(result.get('n8n-nodes-test')).toBeNull();
+      expect(mockedAxios.get).toHaveBeenCalledWith(tarballUrl, expect.anything());
+    });
+
+    it('returns null without a tarball request when the package cannot be fetched', async () => {
+      vi.spyOn(fetcher as any, 'sleep').mockResolvedValue(undefined);
+      mockedAxios.get
+        .mockRejectedValueOnce(new Error('Not found'))
+        .mockRejectedValueOnce(new Error('Not found'))
+        .mockRejectedValueOnce(new Error('Not found'));
+
+      const result = await fetcher.fetchReadmesBatch(['n8n-nodes-test']);
+
+      expect(result.get('n8n-nodes-test')).toBeNull();
+      expect(mockedAxios.get).not.toHaveBeenCalledWith(tarballUrl, expect.anything());
+    });
+
+    it("returns null when the tarball README is only npm's placeholder", async () => {
+      mockedAxios.get
+        .mockResolvedValueOnce({ data: packument('') })
+        .mockResolvedValueOnce({ data: tgz(tarEntry('package/README.md', 'ERROR: No README data found!\n')) });
+
+      const result = await fetcher.fetchReadmesBatch(['n8n-nodes-test']);
+
+      expect(result.get('n8n-nodes-test')).toBeNull();
+    });
+
+    it('returns null when neither the registry nor the tarball has a README', async () => {
+      mockedAxios.get
+        .mockResolvedValueOnce({ data: packument('ERROR: No README data found!') })
+        .mockResolvedValueOnce({ data: tgz(tarEntry('package/package.json', '{}')) });
+
+      const result = await fetcher.fetchReadmesBatch(['n8n-nodes-test']);
+
+      expect(result.get('n8n-nodes-test')).toBeNull();
+    });
+
+    it.each([
+      ['another host', 'https://example.com/n8n-nodes-test-2.0.0.tgz'],
+      ['plain http', 'http://registry.npmjs.org/n8n-nodes-test/-/n8n-nodes-test-2.0.0.tgz'],
+      ['a registry host suffix', 'https://registry.npmjs.org.example.com/n8n-nodes-test-2.0.0.tgz'],
+    ])('does not download a tarball URL on %s', async (_label, tarball) => {
+      mockedAxios.get.mockResolvedValueOnce({ data: packument('', tarball) });
+
+      const result = await fetcher.fetchReadmesBatch(['n8n-nodes-test']);
+
+      expect(result.get('n8n-nodes-test')).toBeNull();
+      expect(mockedAxios.get).toHaveBeenCalledTimes(1);
     });
   });
 

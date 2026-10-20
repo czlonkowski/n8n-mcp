@@ -14,7 +14,7 @@ Contributions are welcome! Here's how to get started.
 ## Local Development Setup
 
 **Prerequisites:**
-- [Node.js](https://nodejs.org/) (any version - automatic fallback if needed)
+- [Node.js](https://nodejs.org/) 22.12+ recommended. The UI build requires `^20.19.0 || >=22.12.0`; the published server runtime requires `>=20.0.0`.
 - npm or yarn
 - Git
 
@@ -39,6 +39,8 @@ npm run start:http # HTTP mode for remote access
 ```
 
 ## Development Commands
+
+For UI development, `build:all`, or npm package preparation, install the UI dependencies with `npm --prefix ui-apps ci` and use the UI build prerequisite above. See [MCP UI development and testing](docs/mcp-ui-development.md) for the local lab and host verification steps.
 
 ```bash
 # Build & Test

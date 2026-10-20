@@ -267,8 +267,8 @@ const highPriority = $jmespath(allItems, '[?priority == \`1\`]');
 // Combine multiple conditions
 const urgentExpensive = $jmespath(allItems, '[?price >= \`100\` && priority == \`1\`]');
 
-// String comparisons don't need backticks
-const activeItems = $jmespath(allItems, '[?status == "active"]');
+// Raw strings use single quotes; double quotes name a field
+const activeItems = $jmespath(allItems, "[?status == 'active']");
 
 // Return filtered results
 return expensiveItems.map(item => ({json: item}));`
@@ -277,35 +277,34 @@ return expensiveItems.map(item => ({json: item}));`
     
     'nodes-base.code.pythonExample': {
       minimal: {
-        language: 'python',
-        pythonCode: `# Python data processing - use underscore prefix for built-in variables
-import json
-from datetime import datetime
-import re
-
+        language: 'pythonNative',
+        pythonCode: `# Native Python (pythonNative): _items is the list of input item dicts.
+# Imports are blocked unless this instance allowlists the module, so this
+# checks the address with builtins only.
 results = []
 
-# Use _input.all() to get items in Python
-for item in _input.all():
-    # Convert JsProxy to Python dict to avoid issues with null values
-    item_data = item.json.to_py()
-    
-    # Clean email addresses
-    email = item_data.get('email', '')
-    if email and re.match(r'^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$', email):
-        cleaned_data = {
-            'email': email.lower(),
-            'name': item_data.get('name', '').title(),
-            'validated': True,
-            'timestamp': datetime.now().isoformat()
-        }
-    else:
-        # Spread operator doesn't work with JsProxy, use dict()
-        cleaned_data = dict(item_data)
-        cleaned_data['validated'] = False
-        cleaned_data['error'] = 'Invalid email format'
-    
-    results.append({'json': cleaned_data})
+for item in _items:
+    data = item["json"]
+    email = (data.get("email") or "").strip().lower()
+    local, sep, domain = email.partition("@")
+    labels = domain.split(".")
+    valid = (
+        sep == "@"
+        and bool(local)
+        and "@" not in domain
+        and len(labels) > 1
+        and all(labels)
+        and not any(ch.isspace() for ch in email)
+    )
+
+    cleaned = dict(data)
+    cleaned["email"] = email
+    cleaned["name"] = (data.get("name") or "").title()
+    cleaned["validated"] = valid
+    if not valid:
+        cleaned["error"] = "Invalid email format"
+
+    results.append({"json": cleaned})
 
 return results`
       }

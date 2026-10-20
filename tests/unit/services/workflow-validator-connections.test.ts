@@ -811,6 +811,28 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       expect(orphanWarning).toBeDefined();
       expect(orphanWarning!.message).toContain('not connected to any other nodes');
     });
+
+    // A source key with no targets (`main: [[]]`) is how n8n stores a node whose last edge
+    // was removed; it must not vouch for that node's own connectedness (#1101).
+    it('flags a node whose only connection entry has no targets as orphaned', async () => {
+      const workflow = {
+        nodes: [
+          { id: '1', name: 'Set1', type: 'n8n-nodes-base.set', position: [0, 0], parameters: {} },
+          { id: '2', name: 'Set2', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} },
+          { id: '3', name: 'Orphan', type: 'n8n-nodes-base.code', position: [500, 500], parameters: {} },
+        ],
+        connections: {
+          'Set1': { main: [[{ node: 'Set2', type: 'main', index: 0 }]] },
+          'Orphan': { main: [[]] },
+        }
+      };
+
+      const result = await validator.validateWorkflow(workflow as any);
+
+      const orphanWarning = result.warnings.find(w => w.nodeName === 'Orphan');
+      expect(orphanWarning).toBeDefined();
+      expect(orphanWarning!.message).toContain('not connected to any other nodes');
+    });
   });
 
   describe('Conditional branch fan-out detection (CONDITIONAL_BRANCH_FANOUT)', () => {
@@ -891,7 +913,7 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       const workflow = {
         nodes: [
           { id: '1', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
-          { id: '2', name: 'MySwitch', type: 'n8n-nodes-base.switch', position: [200, 0], parameters: { rules: { values: [{ value: 'a' }, { value: 'b' }] } } },
+          { id: '2', name: 'MySwitch', type: 'n8n-nodes-base.switch', typeVersion: 3.2, position: [200, 0], parameters: { rules: { values: [{ value: 'a' }, { value: 'b' }] } } },
           { id: '3', name: 'TargetA', type: 'n8n-nodes-base.set', position: [400, 0], parameters: {} },
           { id: '4', name: 'TargetB', type: 'n8n-nodes-base.set', position: [400, 200], parameters: {} },
           { id: '5', name: 'TargetC', type: 'n8n-nodes-base.set', position: [400, 400], parameters: {} },
@@ -916,7 +938,7 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       const workflow = {
         nodes: [
           { id: '1', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
-          { id: '2', name: 'MySwitch', type: 'n8n-nodes-base.switch', position: [200, 0], parameters: {} },
+          { id: '2', name: 'MySwitch', type: 'n8n-nodes-base.switch', typeVersion: 3.2, position: [200, 0], parameters: {} },
           { id: '3', name: 'TargetA', type: 'n8n-nodes-base.set', position: [400, 0], parameters: {} },
           { id: '4', name: 'TargetB', type: 'n8n-nodes-base.set', position: [400, 200], parameters: {} },
         ],
@@ -974,35 +996,63 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       expect(warning).toBeUndefined();
     });
 
-    it('should warn for Filter node with both branches in main[0]', async () => {
+    // Filter has ONE main output (its "Discarded" branch is only a name in the node metadata,
+    // not a real output - main[1] is the error output, not an "unmatched" branch), so
+    // getConditionalOutputInfo returns expectedOutputs: 1 and the fan-out check never runs.
+    it('does not warn for Filter node with everything wired to main[0]', async () => {
       const workflow = {
         nodes: [
           { id: '1', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
           { id: '2', name: 'MyFilter', type: 'n8n-nodes-base.filter', position: [200, 0], parameters: {} },
           { id: '3', name: 'Matched', type: 'n8n-nodes-base.set', position: [400, 0], parameters: {} },
-          { id: '4', name: 'Unmatched', type: 'n8n-nodes-base.set', position: [400, 200], parameters: {} },
+          { id: '4', name: 'AlsoMatched', type: 'n8n-nodes-base.set', position: [400, 200], parameters: {} },
         ],
         connections: {
           'Trigger': { main: [[{ node: 'MyFilter', type: 'main', index: 0 }]] },
           'MyFilter': {
-            main: [[{ node: 'Matched', type: 'main', index: 0 }, { node: 'Unmatched', type: 'main', index: 0 }]]
+            main: [[{ node: 'Matched', type: 'main', index: 0 }, { node: 'AlsoMatched', type: 'main', index: 0 }]]
           }
         }
       };
 
       const result = await validator.validateWorkflow(workflow as any);
       const warning = result.warnings.find(w => w.code === 'CONDITIONAL_BRANCH_FANOUT');
-      expect(warning).toBeDefined();
-      expect(warning!.nodeName).toBe('MyFilter');
-      expect(warning!.message).toContain('"matched" branch');
-      expect(warning!.message).toContain('"unmatched" branch has no effect');
+      expect(warning).toBeUndefined();
+    });
+
+    // A Filter with onError: 'continueErrorOutput' and its error output wired at main[1] is a
+    // normal, fully-wired configuration - not an unwired error output, so no warning fires.
+    it('does not warn about the error output for a Filter with onError and main[1] wired', async () => {
+      const workflow = {
+        nodes: [
+          { id: '1', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
+          { id: '2', name: 'MyFilter', type: 'n8n-nodes-base.filter', position: [200, 0], parameters: {}, onError: 'continueErrorOutput' },
+          { id: '3', name: 'Matched', type: 'n8n-nodes-base.set', position: [400, 0], parameters: {} },
+          { id: '4', name: 'ErrorHandler', type: 'n8n-nodes-base.set', position: [400, 200], parameters: {} },
+        ],
+        connections: {
+          'Trigger': { main: [[{ node: 'MyFilter', type: 'main', index: 0 }]] },
+          'MyFilter': {
+            main: [
+              [{ node: 'Matched', type: 'main', index: 0 }],
+              [{ node: 'ErrorHandler', type: 'main', index: 0 }],
+            ]
+          }
+        }
+      };
+
+      const result = await validator.validateWorkflow(workflow as any);
+      expect(result.warnings.some(w => w.message.includes('not connected'))).toBe(false);
     });
   });
 
   // ─── Error Output Validation (absorbed from workflow-validator-error-outputs) ──
 
   describe('Error Output Configuration', () => {
-    it('should detect incorrect configuration - multiple nodes in same array', async () => {
+    // The hard "Incorrect error output configuration" error is gone (#1111): a fan-out in
+    // main[0] to a node named like an error handler is only a warning, and only when the
+    // source also routes failures to an error output nothing is connected to.
+    it('does not error on multiple nodes in the same main[0] array without onError set', async () => {
       const workflow = {
         nodes: [
           { id: '1', name: 'Validate Input', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [-400, 64], parameters: {} },
@@ -1020,15 +1070,35 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       };
 
       const result = await validator.validateWorkflow(workflow as any);
-      expect(result.valid).toBe(false);
-      expect(result.errors.some(e =>
-        e.message.includes('Incorrect error output configuration') &&
-        e.message.includes('Error Response1') &&
-        e.message.includes('appear to be error handlers but are in main[0]'),
+      expect(result.errors.some(e => e.message.includes('Incorrect error output configuration'))).toBe(false);
+      // No onError set, so the fan-out-to-a-handler-like-name warning does not fire either.
+      expect(result.warnings.some(w => w.message.includes('named like an error handler'))).toBe(false);
+    });
+
+    it('warns on the same fan-out once onError routes to an unwired error output', async () => {
+      const workflow = {
+        nodes: [
+          { id: '1', name: 'Validate Input', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [-400, 64], parameters: {}, onError: 'continueErrorOutput' },
+          { id: '2', name: 'Filter URLs', type: 'n8n-nodes-base.filter', typeVersion: 2.2, position: [-176, 64], parameters: {} },
+          { id: '3', name: 'Error Response1', type: 'n8n-nodes-base.set', typeVersion: 1, position: [-160, 240], parameters: {} },
+        ],
+        connections: {
+          // Single main[0] array, no separate main[1] - the error output is unwired.
+          'Validate Input': {
+            main: [[
+              { node: 'Filter URLs', type: 'main', index: 0 },
+              { node: 'Error Response1', type: 'main', index: 0 },
+            ]],
+          },
+        },
+      };
+
+      const result = await validator.validateWorkflow(workflow as any);
+      expect(result.warnings.some(w =>
+        w.message.includes("onError: 'continueErrorOutput' but the error output (main[1]) is not connected") &&
+        w.message.includes('Error Response1') &&
+        w.message.includes('named like an error handler'),
       )).toBe(true);
-      const errorMsg = result.errors.find(e => e.message.includes('Incorrect error output configuration'));
-      expect(errorMsg?.message).toContain('INCORRECT (current)');
-      expect(errorMsg?.message).toContain('CORRECT (should be)');
     });
 
     it('should validate correct configuration - separate arrays', async () => {
@@ -1102,10 +1172,10 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
   });
 
   describe('Error Handler Detection', () => {
-    it('should detect error handler nodes by name', async () => {
+    it('warns about an error-named node in the fan-out once onError leaves the error output unwired', async () => {
       const workflow = {
         nodes: [
-          { id: '1', name: 'API Call', type: 'n8n-nodes-base.httpRequest', position: [100, 100], parameters: {} },
+          { id: '1', name: 'API Call', type: 'n8n-nodes-base.httpRequest', position: [100, 100], parameters: {}, onError: 'continueErrorOutput' },
           { id: '2', name: 'Process Success', type: 'n8n-nodes-base.set', position: [300, 100], parameters: {} },
           { id: '3', name: 'Handle Error', type: 'n8n-nodes-base.set', position: [300, 300], parameters: {} },
         ],
@@ -1115,13 +1185,16 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       };
 
       const result = await validator.validateWorkflow(workflow as any);
-      expect(result.errors.some(e => e.message.includes('Handle Error') && e.message.includes('appear to be error handlers'))).toBe(true);
+      expect(result.warnings.some(w => w.message.includes('Handle Error') && w.message.includes('named like an error handler'))).toBe(true);
+      expect(result.errors.some(e => e.message.includes('Incorrect error output configuration'))).toBe(false);
     });
 
-    it('should detect error handler nodes by type', async () => {
+    // Node TYPE is never a signal any more (#1111) - a respondToWebhook target named
+    // "Respond" does not look like an error handler and is not flagged, even with onError set.
+    it('does not flag a node by type alone', async () => {
       const workflow = {
         nodes: [
-          { id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [100, 100], parameters: {} },
+          { id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [100, 100], parameters: {}, onError: 'continueErrorOutput' },
           { id: '2', name: 'Process', type: 'n8n-nodes-base.set', position: [300, 100], parameters: {} },
           { id: '3', name: 'Respond', type: 'n8n-nodes-base.respondToWebhook', position: [300, 300], parameters: {} },
         ],
@@ -1131,7 +1204,8 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       };
 
       const result = await validator.validateWorkflow(workflow as any);
-      expect(result.errors.some(e => e.message.includes('Respond') && e.message.includes('appear to be error handlers'))).toBe(true);
+      expect(result.warnings.some(w => w.message.includes('named like an error handler'))).toBe(false);
+      expect(result.errors.some(e => e.message.includes('Incorrect error output configuration'))).toBe(false);
     });
 
     it('should not flag non-error nodes in main[0]', async () => {
@@ -1174,10 +1248,10 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       expect(result.errors.some(e => e.message.includes('Incorrect error output configuration'))).toBe(false);
     });
 
-    it('should detect mixed success and error handlers in main[0]', async () => {
+    it('warns about mixed success and error handlers in main[0] once onError leaves the error output unwired', async () => {
       const workflow = {
         nodes: [
-          { id: '1', name: 'API Request', type: 'n8n-nodes-base.httpRequest', position: [100, 100], parameters: {} },
+          { id: '1', name: 'API Request', type: 'n8n-nodes-base.httpRequest', position: [100, 100], parameters: {}, onError: 'continueErrorOutput' },
           { id: '2', name: 'Transform Data', type: 'n8n-nodes-base.set', position: [300, 100], parameters: {} },
           { id: '3', name: 'Store Data', type: 'n8n-nodes-base.set', position: [500, 100], parameters: {} },
           { id: '4', name: 'Error Notification', type: 'n8n-nodes-base.emailSend', position: [300, 300], parameters: {} },
@@ -1194,8 +1268,9 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       };
 
       const result = await validator.validateWorkflow(workflow as any);
-      expect(result.errors.some(e =>
-        e.message.includes('Error Notification') && e.message.includes('appear to be error handlers but are in main[0]'),
+      expect(result.errors.some(e => e.message.includes('Incorrect error output configuration'))).toBe(false);
+      expect(result.warnings.some(w =>
+        w.message.includes('Error Notification') && w.message.includes('named like an error handler'),
       )).toBe(true);
     });
 
@@ -1250,10 +1325,10 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       expect(result.errors.some(e => e.message.includes('Incorrect error output configuration'))).toBe(false);
     });
 
-    it('should detect all variations of error-related node names', async () => {
+    it('warns about all variations of error-related node names once onError leaves the error output unwired', async () => {
       const workflow = {
         nodes: [
-          { id: '1', name: 'Source', type: 'n8n-nodes-base.httpRequest', position: [100, 100], parameters: {} },
+          { id: '1', name: 'Source', type: 'n8n-nodes-base.httpRequest', position: [100, 100], parameters: {}, onError: 'continueErrorOutput' },
           { id: '2', name: 'Handle Failure', type: 'n8n-nodes-base.set', position: [300, 100], parameters: {} },
           { id: '3', name: 'Catch Exception', type: 'n8n-nodes-base.set', position: [300, 200], parameters: {} },
           { id: '4', name: 'Success Path', type: 'n8n-nodes-base.set', position: [500, 100], parameters: {} },
@@ -1264,8 +1339,8 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       };
 
       const result = await validator.validateWorkflow(workflow as any);
-      expect(result.errors.some(e =>
-        e.message.includes('Handle Failure') && e.message.includes('Catch Exception') && e.message.includes('appear to be error handlers but are in main[0]'),
+      expect(result.warnings.some(w =>
+        w.message.includes('Handle Failure') && w.message.includes('Catch Exception') && w.message.includes('named like an error handler'),
       )).toBe(true);
     });
   });

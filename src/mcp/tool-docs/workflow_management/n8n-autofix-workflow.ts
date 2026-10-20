@@ -148,7 +148,8 @@ Requires N8N_API_URL and N8N_API_KEY environment variables to be configured.`,
       'NEW: Auto-migrated properties use sensible defaults which may not match your use case',
       'NEW: Execute Workflow v1.1+ requires explicit inputFieldMapping - automatic mapping uses empty array',
       'NEW: Some breaking changes cannot be auto-migrated and require manual intervention',
-      'NEW: Version history is based on registry - unknown nodes cannot be upgraded'
+      'NEW: Version history is based on registry - unknown nodes cannot be upgraded',
+      '**code: "PUBLISH_FORBIDDEN"** (n8n 2.39+): applying fixes uses n8n_update_partial_workflow internally, so a caller who may edit but not publish gets this code back here too - check code, not just the error text'
     ],
     relatedTools: [
       'n8n_validate_workflow',

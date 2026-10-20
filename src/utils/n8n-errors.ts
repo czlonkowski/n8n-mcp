@@ -1,4 +1,5 @@
 import { logger } from './logger';
+import { WORKFLOW_SETTINGS_PROPERTIES } from '../constants/workflow-settings';
 
 // Custom error classes for n8n API operations
 
@@ -75,6 +76,24 @@ export function handleN8nApiError(error: unknown): N8nApiError {
           return new N8nNotFoundError(message || 'Resource');
         case 400:
           return new N8nValidationError(message, data);
+        case 403:
+          // n8n 2.39+: PUT /workflows/{id} on a published workflow answers 403
+          // with { message, reason, versionId } when the caller may edit but
+          // not publish. n8n has already saved the change as a draft; the
+          // published version is untouched. Surface this with its own code so
+          // callers can give an accurate, non-misleading explanation instead
+          // of the generic 403 message.
+          if (
+            (data?.reason === 'insufficient_api_key_scope' ||
+              data?.reason === 'insufficient_permissions') &&
+            typeof data?.versionId === 'string'
+          ) {
+            // n8n's WorkflowPublishForbiddenError always carries versionId (the draft
+            // it just saved); requiring it here avoids misclassifying an unrelated 403
+            // that merely happens to reuse one of these reason strings.
+            return new N8nApiError(message, 403, 'PUBLISH_FORBIDDEN', data);
+          }
+          return new N8nApiError(message, status, 'API_ERROR', data);
         case 429:
           const retryAfter = axiosError.response.headers['retry-after'];
           return new N8nRateLimitError(retryAfter ? parseInt(retryAfter) : undefined);
@@ -85,8 +104,13 @@ export function handleN8nApiError(error: unknown): N8nApiError {
           return new N8nApiError(message, status, 'API_ERROR', data);
       }
     } else if (axiosError.request) {
-      // Request was made but no response received
-      return new N8nApiError('No response from n8n server', undefined, 'NO_RESPONSE');
+      // Request was made but no response received. Name which address(es)
+      // failed so "no response" is diagnosable instead of opaque (#978/#989/#990).
+      const detail = describeConnectionFailure(axiosError);
+      const message = detail
+        ? `No response from n8n server (${detail})`
+        : 'No response from n8n server';
+      return new N8nApiError(message, undefined, 'NO_RESPONSE');
     } else {
       // Something happened in setting up the request
       return new N8nApiError(axiosError.message, undefined, 'REQUEST_ERROR');
@@ -116,6 +140,189 @@ export function formatNoExecutionError(): string {
   return "Workflow failed to execute. Use n8n_list_executions to find recent executions, then n8n_get_execution with mode='preview' to investigate.";
 }
 
+/**
+ * A 400 that names `parentFolderId` on a workflow write means the instance's OpenAPI
+ * schema predates workflow folder placement (n8n 2.32): the write schema declares
+ * `additionalProperties: false`, so older instances reject the whole request. The
+ * validator names the offending property in its message/details, which is what makes
+ * this check safe — a 400 for any other reason never mentions the field.
+ */
+function folderPlacementHint(error: N8nApiError): string {
+  if (error.statusCode !== 400) return '';
+  const haystack = `${error.message} ${safeStringify(error.details)}`;
+  if (!haystack.includes('parentFolderId')) return '';
+  // Only the schema-level rejection shape ("must NOT have additional properties" /
+  // params.additionalProperty) identifies a pre-2.32 instance. A semantic 400 that
+  // merely mentions the field (e.g. a deleted folder ID on n8n >= 2.32) must not
+  // earn upgrade advice.
+  if (!/additional ?propert/i.test(haystack)) return '';
+  return ' Note: workflow folder placement (parentFolderId) requires n8n 2.32 or later - retry without parentFolderId, or upgrade the instance.';
+}
+
+/**
+ * n8n rejects an unknown settings key in one of two wordings, depending on the endpoint and
+ * version: AJV's `request/body/settings must NOT have additional properties` (update, and
+ * create before n8n 2.37) which never names the key, and zod's
+ * `request/body/settings Unrecognized key(s) in object: 'a', 'b'` (create on n8n 2.37+),
+ * which does.
+ */
+const SETTINGS_ADDITIONAL_PROPERTY = /body\/settings (?:must NOT have additional propert|Unrecognized key\(s\) in object)/i;
+// Captures only the quoted list, at the given path; the same message is usually echoed inside
+// the details JSON, and a nodes-level rejection can sit in the same text as a settings-level one.
+const unrecognizedKeysAt = (path: string) =>
+  new RegExp(`${path} Unrecognized key\\(s\\) in object: ((?:'[^']*'(?:,\\s*)?)+)`, 'i');
+const parseUnrecognizedKeys = (haystack: string, path: string): string[] => {
+  const named = unrecognizedKeysAt(path).exec(haystack);
+  if (!named) return [];
+  return [...new Set(Array.from(named[1].matchAll(/'([^']+)'/g), match => match[1]))];
+};
+
+/**
+ * The settings keys an unknown-key rejection names, when the wording names them (zod).
+ * Empty for the AJV wording, which leaves the caller to find the key by retrying.
+ */
+export function unknownSettingsKeysNamedBy(error: unknown): string[] {
+  if (!isUnknownSettingsPropertyError(error)) return [];
+  const apiError = error as { message?: string; details?: unknown };
+  const haystack = `${apiError.message ?? ''} ${safeStringify(apiError.details)}`;
+  return parseUnrecognizedKeys(haystack, 'body/settings');
+}
+
+/**
+ * Whether n8n refused a workflow write because `settings` carried a property its Public API
+ * schema does not know, in either wording. Matches only the settings-level path; a top-level or
+ * nested rejection (`body`, `body/nodes/0`, `body/nodeGroups/0`) is a different problem.
+ */
+export function isUnknownSettingsPropertyError(error: unknown): boolean {
+  const apiError = error as { statusCode?: number; message?: string; details?: unknown } | null;
+  if (!apiError || apiError.statusCode !== 400) return false;
+  return SETTINGS_ADDITIONAL_PROPERTY.test(`${apiError.message ?? ''} ${safeStringify(apiError.details)}`);
+}
+
+/**
+ * When n8n rejects a workflow write with "must NOT have additional properties", the AJV
+ * message names the failing path (`request/body` or `request/body/settings`) but never the
+ * offending key (#1047). By the time the error reaches an MCP handler the request payload is
+ * out of scope, so the API client enriches the error here, where the sent body is still
+ * available. Key names only, never values — settings can carry errorWorkflow ids and
+ * telemetry tags.
+ *
+ * The two shapes are matched exactly (`body must NOT` / `body/settings must NOT`) so deeper
+ * paths like `body/nodes/0` — which do name their offending segment — stay untouched.
+ */
+export function enrichUnknownPropertyError(
+  error: N8nApiError,
+  sentBody: Record<string, unknown>
+): N8nApiError {
+  if (error.statusCode !== 400) return error;
+  const detailsStr = safeStringify(error.details);
+  const haystack = `${error.message} ${detailsStr}`;
+
+  const settingsLevel = SETTINGS_ADDITIONAL_PROPERTY.test(haystack);
+  const bodyLevel =
+    !settingsLevel && /body (?:must NOT have additional propert|Unrecognized key\(s\) in object)/i.test(haystack);
+  if (!settingsLevel && !bodyLevel) return error;
+
+  // Some n8n versions do name the property in the AJV error params — surface it when it is
+  // unambiguous. With several AJV entries the first match could belong to a different path
+  // (e.g. a nodes[] rejection alongside the settings one), so conflicting names are ignored.
+  const namedMatches = Array.from(
+    detailsStr.matchAll(/"additionalProperty"\s*:\s*"([^"]+)"/g),
+    match => match[1]
+  );
+  // The zod wording (n8n 2.37+ on create) names the keys in the message itself.
+  const zodNamed = parseUnrecognizedKeys(haystack, settingsLevel ? 'body/settings' : 'body');
+  const named =
+    namedMatches.length > 0 && namedMatches.every(name => name === namedMatches[0])
+      ? namedMatches[0]
+      : zodNamed.length > 0
+        ? zodNamed.join(', ')
+        : undefined;
+
+  const parts: string[] = [];
+  if (named) {
+    // Nothing to inventory or report: n8n said which key it refused.
+    parts.push(`n8n identified the rejected property: ${named}.`);
+  } else if (settingsLevel) {
+    const settings = sentBody.settings;
+    const sentKeys =
+      settings && typeof settings === 'object' && !Array.isArray(settings)
+        ? Object.keys(settings)
+        : [];
+    parts.push(`Settings keys sent: ${sentKeys.join(', ') || '(none)'}.`);
+    const unknown = sentKeys.filter(
+      key => !Object.prototype.hasOwnProperty.call(WORKFLOW_SETTINGS_PROPERTIES, key)
+    );
+    if (unknown.length > 0) {
+      parts.push(`Not in n8n-mcp's known settings table: ${unknown.join(', ')}.`);
+    }
+    parts.push(
+      'This usually means the instance stores a setting its Public API write schema rejects ' +
+        '(entity-vs-schema drift). Please report the offending key at ' +
+        'https://github.com/czlonkowski/n8n-mcp/issues.'
+    );
+  } else {
+    parts.push(`Top-level keys sent: ${Object.keys(sentBody).join(', ') || '(none)'}.`);
+    parts.push(
+      "One of these keys is not accepted by this instance's Public API write schema. " +
+        'Please report the offending key at https://github.com/czlonkowski/n8n-mcp/issues.'
+    );
+  }
+
+  return new N8nValidationError(`${error.message} ${parts.join(' ')}`, error.details);
+}
+
+/**
+ * Build a short "CODE address:port" detail string from a connection-level
+ * axios error, for the NO_RESPONSE message (#978/#989/#990). When the
+ * underlying failure is an AggregateError (`autoSelectFamily` trying
+ * multiple pinned addresses), lists each member deduped so a multi-address
+ * failure reads as e.g. "ECONNREFUSED 127.0.0.1:5678, ECONNREFUSED
+ * [::1]:5678" instead of the generic top-level message alone. Returns ''
+ * when no code-bearing detail is available.
+ */
+function describeConnectionFailure(axiosError: any): string {
+  const parts: string[] = [];
+  const seen = new Set<string>();
+
+  const addPart = (source: any) => {
+    if (!source || !source.code) return;
+    let part = String(source.code);
+    if (source.address) {
+      const host = String(source.address).includes(':') ? `[${source.address}]` : source.address;
+      part += source.port !== undefined ? ` ${host}:${source.port}` : ` ${host}`;
+    }
+    if (!seen.has(part)) {
+      seen.add(part);
+      parts.push(part);
+    }
+  };
+
+  const aggregateMembers = axiosError?.errors ?? axiosError?.cause?.errors;
+  if (Array.isArray(aggregateMembers) && aggregateMembers.length > 0) {
+    aggregateMembers.forEach(addPart);
+  }
+  // Fall back to the wrapper, then its cause: axios copies `code` onto the
+  // AxiosError but the syscall address/port may live only on the underlying
+  // error, and aggregate members without codes contribute nothing above.
+  if (parts.length === 0) {
+    addPart(axiosError);
+  }
+  if (parts.length === 0) {
+    addPart(axiosError?.cause);
+  }
+
+  return parts.join(', ');
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return '';
+  }
+}
+
 // Utility to extract user-friendly error messages
 export function getUserFriendlyErrorMessage(error: N8nApiError): string {
   switch (error.code) {
@@ -124,11 +331,30 @@ export function getUserFriendlyErrorMessage(error: N8nApiError): string {
     case 'NOT_FOUND':
       return error.message;
     case 'VALIDATION_ERROR':
-      return `Invalid request: ${error.message}`;
+      return `Invalid request: ${error.message}${folderPlacementHint(error)}`;
     case 'RATE_LIMIT_ERROR':
       return 'Too many requests. Please wait a moment and try again.';
-    case 'NO_RESPONSE':
-      return 'Unable to connect to n8n. Please check the server URL and ensure n8n is running.';
+    case 'PUBLISH_FORBIDDEN':
+      // Keep n8n's own message intact — it already states the reason
+      // (missing scope or permission). Callers building a tool response
+      // add the draft/rollback context themselves.
+      return error.message;
+    case 'NO_RESPONSE': {
+      // #978/#989/#990: append the connection detail from the enriched
+      // message (e.g. "(ECONNREFUSED 127.0.0.1:5678)") when present, so the
+      // generic sentence doesn't hide which address actually failed.
+      const generic = 'Unable to connect to n8n. Please check the server URL and ensure n8n is running.';
+      // Plain string scan instead of a trailing-group regex (CodeQL
+      // js/polynomial-redos): take a non-empty parenthesized suffix that
+      // contains no nested parens, which is the only shape
+      // describeConnectionFailure produces.
+      const message = error.message.trimEnd();
+      const open = message.lastIndexOf('(');
+      const detail = message.endsWith(')') && open !== -1
+        ? message.slice(open + 1, -1)
+        : '';
+      return detail && !detail.includes(')') ? `${generic} (${detail})` : generic;
+    }
     case 'SERVER_ERROR':
       // For server errors, we should not show generic message
       // Callers should check for execution context and use formatExecutionError instead

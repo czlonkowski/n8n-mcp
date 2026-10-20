@@ -292,6 +292,11 @@ export class ConfigValidator {
       const candidates = properties.filter(p => p && p.name === key);
       if (candidates.length === 0) continue;
 
+      // A null/undefined value is the required check's business. Reporting it
+      // here as well ("must be a string, got object") describes the same defect
+      // a second time.
+      if (value === null || value === undefined) continue;
+
       // Several definitions can share a name (one per resource/operation);
       // validate against the one visible for the current config rather than
       // whichever happens to come first in the schema array.
@@ -600,9 +605,13 @@ export class ConfigValidator {
     errors: ValidationError[],
     warnings: ValidationWarning[]
   ): void {
-    const codeField = config.language === 'python' ? 'pythonCode' : 'jsCode';
+    // n8n 2.x names the Python option 'pythonNative'; the legacy 'python' value
+    // still executes. Both store their code in pythonCode.
+    const rawLanguage = config.language || 'javascript';
+    const language = rawLanguage === 'pythonNative' ? 'python' : rawLanguage;
+    const codeField = language === 'python' ? 'pythonCode' : 'jsCode';
     const code = config[codeField];
-    
+
     if (!code || code.trim() === '') {
       errors.push({
         type: 'missing_required',
@@ -612,25 +621,27 @@ export class ConfigValidator {
       });
       return;
     }
-    
-    // Security checks
-    if (code?.includes('eval(') || code?.includes('exec(')) {
+
+    // Security checks. Python eval/exec are denied builtins in the native
+    // runtime and are reported as errors by NodeSpecificValidators, so this
+    // softer warning stays JavaScript-only to avoid a duplicate message.
+    if (language !== 'python' && (code?.includes('eval(') || code?.includes('exec('))) {
       warnings.push({
         type: 'security',
         message: 'Code contains eval/exec which can be a security risk',
         suggestion: 'Avoid using eval/exec with untrusted input'
       });
     }
-    
+
     // Basic syntax validation
-    if (config.language === 'python') {
+    if (language === 'python') {
       this.validatePythonSyntax(code, errors, warnings);
     } else {
       this.validateJavaScriptSyntax(code, errors, warnings);
     }
-    
+
     // n8n-specific patterns
-    this.validateN8nCodePatterns(code, config.language || 'javascript', errors, warnings);
+    this.validateN8nCodePatterns(code, language, errors, warnings);
   }
   
   /**
@@ -933,57 +944,11 @@ export class ConfigValidator {
       }
     }
     
-    // Check return format for Python
-    if (language === 'python' && hasReturn) {
-      // DEBUG: Log to see if we're entering this block
-      if (code.includes('result = {"data": "value"}')) {
-        console.log('DEBUG: Processing Python code with result variable');
-        console.log('DEBUG: Language:', language);
-        console.log('DEBUG: Has return:', hasReturn);
-      }
-      // Check for common incorrect patterns
-      if (/return\s+items\s*$/.test(code) && !code.includes('json') && !code.includes('dict')) {
-        warnings.push({
-          type: 'best_practice',
-          message: 'Returning items directly - ensure each item is a dict with "json" key',
-          suggestion: 'Use: return [{"json": item.json} for item in items]'
-        });
-      }
-      
-      // Check for dict return without list
-      if (/return\s+{['"]/.test(code) && !code.includes('[') && !code.includes(']')) {
-        warnings.push({
-          type: 'invalid_value',
-          message: 'Return value must be a list',
-          suggestion: 'Wrap your return dict in a list: return [{"json": {"your": "data"}}]'
-        });
-      }
-      
-      // Check for returning objects without json key
-      if (/return\s+(?!.*\[).*{(?!.*["']json["'])/.test(code)) {
-        warnings.push({
-          type: 'invalid_value',
-          message: 'Must return array of objects with json key',
-          suggestion: 'Use format: return [{"json": {"data": "value"}}]'
-        });
-      }
-      
-      // Check for returning variable that might contain invalid format
-      const returnMatch = code.match(/return\s+(\w+)\s*(?:#|$)/m);
-      if (returnMatch) {
-        const varName = returnMatch[1];
-        // Check if this variable is assigned a dict without being in a list
-        const assignmentRegex = new RegExp(`${varName}\\s*=\\s*{[^}]+}`, 'm');
-        if (assignmentRegex.test(code) && !new RegExp(`${varName}\\s*=\\s*\\[`).test(code)) {
-          warnings.push({
-            type: 'invalid_value',
-            message: 'Must return array of objects with json key',
-            suggestion: `Wrap ${varName} in a list with json key: return [{"json": ${varName}}]`
-          });
-        }
-      }
-    }
-    
+    // Python return shapes are validated by NodeSpecificValidators, which knows
+    // the node's mode. Native Python auto-wraps a single dict and a list of plain
+    // dicts, so the old "must be a list of dicts with a json key" warnings here
+    // reported valid code.
+
     // Check for common n8n variables and patterns
     if (language === 'javascript') {
       // Check if accessing items/input
@@ -1063,30 +1028,16 @@ export class ConfigValidator {
         });
       }
     } else if (language === 'python') {
-      // Python-specific checks
-      if (!code.includes('items') && !code.includes('_input')) {
-        warnings.push({
-          type: 'missing_common',
-          message: 'Code doesn\'t reference input items',
-          suggestion: 'Access input data with: items variable'
-        });
-      }
-      
+      // Input references and imports are checked by NodeSpecificValidators,
+      // which knows the node's mode and reports every blocked import, not just
+      // a hardcoded few.
+
       // Check for print statements
       if (code.includes('print(')) {
         warnings.push({
           type: 'best_practice',
           message: 'print() output appears in n8n execution logs',
           suggestion: 'Remove print statements in production or use them sparingly'
-        });
-      }
-      
-      // Check for common Python mistakes
-      if (code.includes('import requests') || code.includes('import pandas')) {
-        warnings.push({
-          type: 'invalid_value',
-          message: 'External libraries not available in Code node',
-          suggestion: 'Only Python standard library is available. For HTTP requests, use JavaScript with $helpers.httpRequest'
         });
       }
     }

@@ -187,8 +187,11 @@ describe('tools-documentation', () => {
       it('should return Python Code node guide for python_code_node_guide', () => {
         const doc = getToolDocumentation('python_code_node_guide', 'essentials');
         expect(doc).toContain('# Python Code Node Guide');
-        expect(doc).toContain('_input.all()');
-        expect(doc).toContain('_json');
+        expect(doc).toContain('pythonNative');
+        expect(doc).toContain('_items');
+        expect(doc).toContain('_item');
+        // The removed Pyodide globals are named only as things that raise NameError
+        expect(doc).not.toContain('_input.all()');
       });
 
       it('should return full JavaScript guide when requested', () => {
@@ -202,9 +205,24 @@ describe('tools-documentation', () => {
       it('should return full Python guide when requested', () => {
         const doc = getToolDocumentation('python_code_node_guide', 'full');
         expect(doc).toContain('# Python Code Node Complete Guide');
-        expect(doc).toContain('## Available Built-in Modules');
-        expect(doc).toContain('## Limitations & Workarounds');
-        expect(doc).toContain('import json');
+        expect(doc).toContain('## The only inputs: _items and _item');
+        expect(doc).toContain('## Imports: blocked by default');
+        expect(doc).toContain('## Sandbox limits');
+        expect(doc).toContain('## Return shapes');
+        expect(doc).toContain('## Migration from Pyodide');
+        expect(doc).toContain('n8nio/runners');
+        expect(doc).toContain('nonlocal');
+        // requests/pandas/numpy need a custom runner image, they are not
+        // categorically unavailable
+        expect(doc).not.toContain('are never available');
+        expect(doc).toContain('custom runner image');
+        // `global` only fails inside a function
+        expect(doc).toContain('global counter` inside a function');
+        // The deny table lists the complete set
+        ['object', 'memoryview', 'breakpoint'].forEach(builtin => {
+          expect(doc).toContain(`\`${builtin}\``);
+        });
+        expect(doc).not.toContain('_input.all()\n');
       });
     });
   });

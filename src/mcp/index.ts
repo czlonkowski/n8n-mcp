@@ -7,6 +7,7 @@ import { EarlyErrorLogger } from '../telemetry/early-error-logger';
 import { STARTUP_CHECKPOINTS, findFailedCheckpoint, StartupCheckpoint } from '../telemetry/startup-checkpoints';
 import { existsSync } from 'fs';
 import { tearDownStdin } from '../utils/stdin-teardown';
+import { installStdioGuard } from '../utils/stdio-guard';
 
 // Add error details to stderr for Claude Desktop debugging
 process.on('uncaughtException', (error) => {
@@ -62,6 +63,32 @@ function isContainerEnvironment(): boolean {
 }
 
 async function main() {
+  // Handle telemetry CLI commands (exits on match). Must run before the stdio
+  // guard below, since these subcommands print status/help to stdout — the same
+  // ordering stdio-wrapper.ts uses. Running it before EarlyErrorLogger also keeps
+  // a plain CLI invocation from spinning up telemetry error reporting.
+  handleTelemetryCliIfPresent(process.argv.slice(2));
+
+  const mode = process.env.MCP_MODE || 'stdio';
+
+  // In stdio mode stdout is the JSON-RPC channel, so shield it before any module
+  // can write there — notably TelemetryConfigManager's first-run notice, reached
+  // transitively via EarlyErrorLogger below.
+  //
+  // The condition must be `!== 'http'`, matching the transport selection below
+  // exactly. Selection treats anything that is not literally 'http' as stdio, so
+  // gating the guard on `=== 'stdio'` left every noncanonical value ('STDIO', a
+  // stray trailing space, a typo) running the stdio transport unguarded — the
+  // case that matters most, since a misspelled mode is also one nobody notices.
+  //
+  // This is weaker than stdio-wrapper.ts by construction. That file is a dedicated
+  // preamble that installs the guard before ./server is required; this entrypoint
+  // imports ./server at module load, so import-time writes are not covered here.
+  // The published bin remains the hardened path.
+  if (mode !== 'http') {
+    installStdioGuard();
+  }
+
   // Initialize early error logger for pre-handshake error capture (v2.18.3)
   // Now using singleton pattern with defensive initialization
   const startTime = Date.now();
@@ -72,11 +99,6 @@ async function main() {
     // Checkpoint: Process started (fire-and-forget, no await)
     earlyLogger.logCheckpoint(STARTUP_CHECKPOINTS.PROCESS_STARTED);
     checkpoints.push(STARTUP_CHECKPOINTS.PROCESS_STARTED);
-
-    // Handle telemetry CLI commands (exits on match)
-    handleTelemetryCliIfPresent(process.argv.slice(2));
-
-    const mode = process.env.MCP_MODE || 'stdio';
 
     // Checkpoint: Telemetry initializing (fire-and-forget, no await)
     earlyLogger.logCheckpoint(STARTUP_CHECKPOINTS.TELEMETRY_INITIALIZING);

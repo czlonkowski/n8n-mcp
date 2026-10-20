@@ -67,14 +67,14 @@ CRITICAL: Execute tools without commentary. Only respond AFTER all tools complet
 ### 2. Parallel Execution
 When operations are independent, execute them in parallel for maximum performance.
 
-✅ GOOD: Call search_nodes, list_nodes, and search_templates simultaneously
+✅ GOOD: Call search_nodes and search_templates simultaneously, then get_node for the node types you found (get_node needs a concrete nodeType)
 ❌ BAD: Sequential tool calls (await each one before the next)
 
 ### 3. Templates First
 ALWAYS check templates before building from scratch (2,709 available).
 
 ### 4. Multi-Level Validation
-Use validate_node(mode='minimal') → validate_node(mode='full') → validate_workflow pattern.
+Use validate_node({..., mode: 'minimal'}) → validate_node({..., mode: 'full'}) → validate_workflow({workflow}) pattern.
 
 ### 5. Never Trust Defaults
 ⚠️ CRITICAL: Default parameter values are the #1 source of runtime failures.
@@ -111,12 +111,12 @@ ALWAYS explicitly configure ALL parameters that control node behavior.
    - Show workflow architecture to user for approval before proceeding
 
 5. **Validation Phase** (parallel for multiple nodes)
-   - `validate_node({nodeType, config, mode: 'minimal'})` - Quick required fields check
-   - `validate_node({nodeType, config, mode: 'full', profile: 'runtime'})` - Full validation with fixes
+   - `validate_node({nodeType, config, mode: 'minimal'})` - Quick required fields check only
+   - `validate_node({nodeType, config, mode: 'full', profile: 'runtime'})` - Full validation (default mode) with errors/warnings/suggestions
    - Fix ALL errors before proceeding
 
 6. **Building Phase**
-   - If using template: `get_template(templateId, {mode: "full"})`
+   - If using template: `get_template({templateId, mode: 'full'})`
    - **MANDATORY ATTRIBUTION**: "Based on template by **[author.name]** (@[username]). View at: [url]"
    - Build from validated configurations
    - ⚠️ EXPLICITLY set ALL parameters - never rely on defaults
@@ -126,16 +126,14 @@ ALWAYS explicitly configure ALL parameters that control node behavior.
    - Build in artifact (unless deploying to n8n instance)
 
 7. **Workflow Validation** (before deployment)
-   - `validate_workflow(workflow)` - Complete validation
-   - `validate_workflow_connections(workflow)` - Structure check
-   - `validate_workflow_expressions(workflow)` - Expression validation
+   - `validate_workflow({workflow})` - Complete validation: structure, connections, expressions, AI tools
    - Fix ALL issues before deployment
 
 8. **Deployment** (if n8n API configured)
-   - `n8n_create_workflow(workflow)` - Deploy
+   - `n8n_create_workflow({name, nodes, connections})` - Deploy
    - `n8n_validate_workflow({id})` - Post-deployment check
    - `n8n_update_partial_workflow({id, operations: [...]})` - Batch updates
-   - `n8n_trigger_webhook_workflow()` - Test webhooks
+   - `n8n_test_workflow({workflowId})` - Test/trigger the workflow (webhook, form, chat)
 
 ## Critical Warnings
 
@@ -160,10 +158,10 @@ Default values cause runtime failures. Example:
 `validate_node({nodeType, config, mode: 'minimal'})` - Required fields only (<100ms)
 
 ### Level 2 - Comprehensive (before building)
-`validate_node({nodeType, config, mode: 'full', profile: 'runtime'})` - Full validation with fixes
+`validate_node({nodeType, config, mode: 'full', profile: 'runtime'})` - Full validation (default mode); returns errors, warnings and suggestions — it does not change the config
 
 ### Level 3 - Complete (after building)
-`validate_workflow(workflow)` - Connections, expressions, AI tools
+`validate_workflow({workflow})` - Connections, expressions, AI tools
 
 ### Level 4 - Post-Deployment
 1. `n8n_validate_workflow({id})` - Validate deployed workflow
@@ -203,8 +201,8 @@ Use `n8n_update_partial_workflow` with multiple operations in a single call:
 n8n_update_partial_workflow({
   id: "wf-123",
   operations: [
-    {type: "updateNode", nodeId: "slack-1", changes: {...}},
-    {type: "updateNode", nodeId: "http-1", changes: {...}},
+    {type: "updateNode", nodeId: "slack-1", updates: {...}},
+    {type: "updateNode", nodeId: "http-1", updates: {...}},
     {type: "cleanStaleConnections"}
   ]
 })
@@ -218,7 +216,7 @@ n8n_update_partial_workflow({id: "wf-123", operations: [{...}]})
 
 ###   CRITICAL: addConnection Syntax
 
-The `addConnection` operation requires **four separate string parameters**. Common mistakes cause misleading errors.
+The `addConnection` operation takes `source` and `target` as **separate string parameters** (node names or node ids). `sourceOutput` is optional (default `"main"`); `targetInput` is optional and defaults to the value of `sourceOutput`, so AI connection types such as `ai_tool` match on both ends. Common mistakes cause misleading errors.
 
 ❌ WRONG - Object format (fails with "Expected string, received object"):
 ```json
@@ -246,8 +244,8 @@ The `addConnection` operation requires **four separate string parameters**. Comm
   "type": "addConnection",
   "source": "node-id-string",
   "target": "target-node-id-string",
-  "sourcePort": "main",
-  "targetPort": "main"
+  "sourceOutput": "main",
+  "targetInput": "main"
 }
 ```
 
@@ -263,8 +261,8 @@ IF nodes have **two outputs** (TRUE and FALSE). Use the **`branch` parameter** t
   "type": "addConnection",
   "source": "if-node-id",
   "target": "success-handler-id",
-  "sourcePort": "main",
-  "targetPort": "main",
+  "sourceOutput": "main",
+  "targetInput": "main",
   "branch": "true"
 }
 ```
@@ -275,8 +273,8 @@ IF nodes have **two outputs** (TRUE and FALSE). Use the **`branch` parameter** t
   "type": "addConnection",
   "source": "if-node-id",
   "target": "failure-handler-id",
-  "sourcePort": "main",
-  "targetPort": "main",
+  "sourceOutput": "main",
+  "targetInput": "main",
   "branch": "false"
 }
 ```
@@ -286,8 +284,8 @@ IF nodes have **two outputs** (TRUE and FALSE). Use the **`branch` parameter** t
 n8n_update_partial_workflow({
   id: "workflow-id",
   operations: [
-    {type: "addConnection", source: "If Node", target: "True Handler", sourcePort: "main", targetPort: "main", branch: "true"},
-    {type: "addConnection", source: "If Node", target: "False Handler", sourcePort: "main", targetPort: "main", branch: "false"}
+    {type: "addConnection", source: "If Node", target: "True Handler", sourceOutput: "main", targetInput: "main", branch: "true"},
+    {type: "addConnection", source: "If Node", target: "False Handler", sourceOutput: "main", targetInput: "main", branch: "false"}
   ]
 })
 ```
@@ -296,14 +294,12 @@ n8n_update_partial_workflow({
 
 ### removeConnection Syntax
 
-Use the same four-parameter format:
+`removeConnection` takes `source` and `target`; `sourceOutput` is optional (default `"main"`) and selects which output's connections to the target are removed; `targetInput` is not used by this operation:
 ```json
 {
   "type": "removeConnection",
   "source": "source-node-id",
-  "target": "target-node-id",
-  "sourcePort": "main",
-  "targetPort": "main"
+  "target": "target-node-id"
 }
 ```
 
@@ -323,8 +319,8 @@ search_templates({
 search_templates({searchMode: 'by_task', task: 'slack_integration'})
 
 // STEP 2: Use template
-get_template(templateId, {mode: 'full'})
-validate_workflow(workflow)
+get_template({templateId, mode: 'full'})
+validate_workflow({workflow})
 
 // Response after all tools complete:
 "Found template by **David Ashby** (@cfomodz).
@@ -357,7 +353,7 @@ validate_node({nodeType: 'n8n-nodes-base.slack', config: fullConfig, mode: 'full
 
 // STEP 5: Validate
 [Silent execution]
-validate_workflow(workflowJson)
+validate_workflow({workflow: workflowJson})
 
 // Response after all tools complete:
 "Created workflow: Webhook → Slack
@@ -371,8 +367,8 @@ Validation: ✅ Passed"
 n8n_update_partial_workflow({
   id: "wf-123",
   operations: [
-    {type: "updateNode", nodeId: "slack-1", changes: {position: [100, 200]}},
-    {type: "updateNode", nodeId: "http-1", changes: {position: [300, 200]}},
+    {type: "updateNode", nodeId: "slack-1", updates: {position: [100, 200]}},
+    {type: "updateNode", nodeId: "http-1", updates: {position: [300, 200]}},
     {type: "cleanStaleConnections"}
   ]
 })

@@ -1,5 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import { logger } from '../utils/logger';
+import { extractReadmeFromTarball, normalizeRegistryReadme } from './npm-readme';
 
 /**
  * Configuration constants for community node fetching
@@ -19,6 +20,12 @@ const FETCH_CONFIG = {
   RATE_LIMIT_DELAY: 300,
   /** Default delay after hitting 429 (ms) */
   RATE_LIMIT_429_DELAY: 60000,
+  /** Timeout for downloading a package tarball to read its README (ms) */
+  NPM_TARBALL_TIMEOUT: 30000,
+  /** Largest compressed tarball downloaded to read its README (bytes) */
+  NPM_TARBALL_MAX_BYTES: 20 * 1024 * 1024,
+  /** Attempts at downloading a README tarball; the README is optional, so fewer than for API calls */
+  NPM_TARBALL_MAX_RETRIES: 2,
 } as const;
 
 /**
@@ -124,6 +131,7 @@ export interface NpmPackageWithReadme {
   'dist-tags'?: {
     latest?: string;
   };
+  versions?: Record<string, { dist?: { tarball?: string } }>;
 }
 
 /**
@@ -134,6 +142,7 @@ export class CommunityNodeFetcher {
   private readonly strapiBaseUrl: string;
   private readonly npmSearchUrl = 'https://registry.npmjs.org/-/v1/search';
   private readonly npmRegistryUrl = 'https://registry.npmjs.org';
+  private readonly npmRegistryHost = new URL(this.npmRegistryUrl).host;
   private readonly maxRetries = FETCH_CONFIG.MAX_RETRIES;
   private readonly retryDelay = FETCH_CONFIG.RETRY_DELAY;
   private readonly strapiPageSize = 25;
@@ -450,6 +459,57 @@ export class CommunityNodeFetcher {
   }
 
   /**
+   * Read the README from the latest version's tarball. The registry leaves the
+   * packument `readme` empty, or sets npm's placeholder text, for some packages
+   * whose tarball ships a README. Only https tarball URLs on the registry host
+   * are downloaded, without following redirects and within a size limit.
+   */
+  private async fetchReadmeFromTarball(
+    packageName: string,
+    data: NpmPackageWithReadme
+  ): Promise<string | null> {
+    const latest = data['dist-tags']?.latest;
+    const tarballUrl = latest ? data.versions?.[latest]?.dist?.tarball : undefined;
+    if (!tarballUrl) return null;
+
+    if (!this.isRegistryUrl(tarballUrl)) {
+      logger.warn(`Skipping README tarball for ${packageName}: not an https URL on the npm registry host`);
+      return null;
+    }
+
+    const tarball = await this.retryWithBackoff(
+      async () => {
+        const response = await axios.get<ArrayBuffer>(tarballUrl, {
+          responseType: 'arraybuffer',
+          timeout: FETCH_CONFIG.NPM_TARBALL_TIMEOUT,
+          maxContentLength: FETCH_CONFIG.NPM_TARBALL_MAX_BYTES,
+          maxRedirects: 0,
+        });
+        return Buffer.from(response.data);
+      },
+      `Fetching README tarball for ${packageName}@${latest}`,
+      FETCH_CONFIG.NPM_TARBALL_MAX_RETRIES
+    );
+    if (!tarball) return null;
+
+    // Normalized like a registry README, so a tarball README that is only the placeholder is not stored.
+    const readme = normalizeRegistryReadme(extractReadmeFromTarball(tarball));
+    if (readme) {
+      logger.info(`README for ${packageName}@${latest} read from its tarball (the registry has none)`);
+    }
+    return readme;
+  }
+
+  private isRegistryUrl(url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'https:' && parsed.host === this.npmRegistryHost;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Fetch READMEs for multiple packages in batch with rate limiting.
    * Returns a Map of packageName -> readme content.
    *
@@ -475,7 +535,10 @@ export class CommunityNodeFetcher {
       // Process batch concurrently
       const batchPromises = batch.map(async (packageName) => {
         const data = await this.fetchPackageWithReadme(packageName);
-        return { packageName, readme: data?.readme || null };
+        if (!data) return { packageName, readme: null };
+        const readme =
+          normalizeRegistryReadme(data.readme) ?? (await this.fetchReadmeFromTarball(packageName, data));
+        return { packageName, readme };
       });
 
       const batchResults = await Promise.all(batchPromises);

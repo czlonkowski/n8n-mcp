@@ -94,7 +94,7 @@ Use Conventional Commit prefixes such as `feat:`, `fix:`, `docs:`, `chore:`, and
 
 PRs should explain intent and verification, link relevant issues, include screenshots for UI changes, and enable “Allow edits by maintainers.” Add the following attribution to every commit message and PR description:
 
-`Conceived by Romuald Członkowski - www.aiadvisors.pl/en`
+`Conceived by Romuald Członkowski - https://aiadvisors.pl/en`
 
 The attribution belongs only in commit messages and PR descriptions. Never add it to source, test, documentation, or other product file contents.
 

@@ -261,6 +261,23 @@ describe('ExpressionValidator', () => {
 
       expect(result.warnings.some(w => w.includes('missing $ prefix'))).toBe(true);
     });
+
+    it('does not warn about a missing $ prefix for words inside string literals (#1115)', () => {
+      const result = ExpressionValidator.validateNodeExpressions(
+        { value: `={{ $jmespath($('Split Customers').all(), "[?json.country=='PL'].json.name") }}` },
+        { availableNodes: ['Split Customers'], hasInputData: true, isInLoop: false }
+      );
+      expect(result.warnings.filter(w => w.includes('missing $ prefix'))).toEqual([]);
+      expect(result.errors).toEqual([]);
+    });
+
+    it('still warns when the bare word sits outside the string literal', () => {
+      const result = ExpressionValidator.validateNodeExpressions(
+        { value: `={{ json.name + "json" }}` },
+        { availableNodes: [], hasInputData: true, isInLoop: false }
+      );
+      expect(result.warnings.some(w => w.includes('missing $ prefix'))).toBe(true);
+    });
   });
 
   describe('bracket balance on literal and JSON-body fields (audit A6)', () => {
@@ -310,4 +327,46 @@ describe('ExpressionValidator', () => {
       expect(result).toBeDefined();
     });
   });
+  describe('$jmespath inside expressions (#1114)', () => {
+    const context = { availableNodes: [], hasInputData: true, isInLoop: false };
+    const validate = (value: string) => ExpressionValidator.validateNodeExpressions({ value }, context);
+
+    it('accepts a well-formed query', () => {
+      const result = validate("={{ $jmespath($json, \"customers[?revenue > `100000` && country == 'PL'].name\") }}");
+      expect(result.errors).toEqual([]);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('errors on a bare literal, and/or, and a single = because n8n resolves those to null', () => {
+      expect(validate('={{ $jmespath($json, "customers[?revenue > 100000].name") }}').errors).toEqual([
+        'value: JMESPath literal 100000 must be wrapped in backticks; n8n resolves the expression to null instead of reporting the parse error. Write > `100000`',
+      ]);
+      expect(validate('={{ $jmespath($json, "a[?x == `1` and y == `2`]") }}').errors[0]).toContain('no "and" operator');
+      expect(validate('={{ $jmespath($json, "a[?x = `1`]") }}').errors[0]).toContain('single =');
+    });
+
+    it('warns on a double-quoted right-hand side', () => {
+      const result = validate(`={{ $jmespath($json, 'customers[?country=="PL"].name') }}`);
+      expect(result.errors).toEqual([]);
+      expect(result.warnings).toEqual([
+        `value: JMESPath treats "PL" as an identifier, so this compares against the field named PL rather than the string; that usually matches nothing. Use a string literal: == 'PL'`,
+      ]);
+    });
+
+    it('errors on reversed arguments', () => {
+      expect(validate('={{ $jmespath("a.b", $json) }}').errors).toEqual([
+        'value: $jmespath arguments are reversed: use $jmespath(data, "query"); n8n resolves the expression to null',
+      ]);
+    });
+
+    it('reports the same mistake once per expression', () => {
+      const result = validate('={{ $jmespath($json, "a[?b > 1]") + $jmespath($json, "c[?d > 1]") }}');
+      expect(result.errors).toHaveLength(1);
+    });
+
+    it('says nothing about a dynamic query', () => {
+      expect(validate('={{ $jmespath($json, $json.query) }}').errors).toEqual([]);
+    });
+  });
+
 });

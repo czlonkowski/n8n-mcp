@@ -40,14 +40,18 @@ export class MutationTracker {
         return null;
       }
 
-      // Sanitize workflows to remove credentials and sensitive data
+      // Sanitize workflows to remove credentials and sensitive data. The before
+      // snapshot never leaves this method — it drives deduplication and the
+      // before-hashes, which are computed over the sanitized form so they stay
+      // comparable with other mutations recorded by the same sanitizer.
       const workflowBefore = WorkflowSanitizer.sanitizeWorkflowRaw(data.workflowBefore);
       const workflowAfter = WorkflowSanitizer.sanitizeWorkflowRaw(data.workflowAfter);
 
       // SECURITY (GHSA-8g7g-hmwm-6rv2): redact caller-supplied operations,
       // validation results, and error messages before storing in the telemetry record.
-      const sanitizedOperations = WorkflowSanitizer.sanitizeTelemetryObject<DiffOperation[]>(
-        data.operations
+      const sanitizedOperations = WorkflowSanitizer.sanitizeOperations<DiffOperation[]>(
+        data.operations,
+        [data.workflowBefore, data.workflowAfter]
       );
       const sanitizedValidationBefore = WorkflowSanitizer.sanitizeTelemetryObject(
         data.validationBefore
@@ -103,7 +107,6 @@ export class MutationTracker {
       const record: WorkflowMutationRecord = {
         userId,
         sessionId: data.sessionId,
-        workflowBefore,
         workflowAfter,
         workflowHashBefore: hashBefore,
         workflowHashAfter: hashAfter,

@@ -22,7 +22,7 @@ import {
   getWebhookUrl
 } from '../services/n8n-validation';
 import { nodeGroupsField, parseNodeGroupsInput } from '../services/node-groups';
-import { versionAtLeast } from '../services/n8n-version';
+import { versionAtLeast, N8N_VERSION_UNAVAILABLE_NOTE } from '../services/n8n-version';
 import {
   N8nApiError,
   N8nNotFoundError,
@@ -39,7 +39,7 @@ import { InstanceContext, validateInstanceContext, getInstanceScopeId } from '..
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
 import { WorkflowAutoFixer, AutoFixConfig } from '../services/workflow-auto-fixer';
 import { ExpressionFormatValidator, ExpressionFormatIssue } from '../services/expression-format-validator';
-import { WorkflowVersioningService } from '../services/workflow-versioning-service';
+import { WorkflowVersioningService, VERSION_OWNERSHIP_ERROR_PREFIX } from '../services/workflow-versioning-service';
 import { handleUpdatePartialWorkflow } from './handlers-workflow-diff';
 import { telemetry } from '../telemetry';
 import { TemplateService } from '../templates/template-service';
@@ -58,6 +58,16 @@ import {
   normalizeMcpWorkflowConnections,
   normalizeMcpWorkflowNodes,
 } from '../utils/mcp-input-normalizer';
+import { buildOfficialMcpHealth, OfficialMcpHealth } from './official-mcp-access';
+import { callOfficialTool, resolveProjectChoices } from './handlers-official-tools';
+import { withMcpExposure, publicApiMatchesContext, PUBLIC_API_CONTEXT_HINT } from '../services/mcp-exposure';
+import { isOperationDisabled } from './tool-policy';
+import {
+  DEFAULT_TIMEOUT_MS,
+  MIN_TIMEOUT_MS,
+  MAX_TIMEOUT_MS,
+  PINNED_TIMEOUT_MS,
+} from './agents-action-map';
 
 // ========================================================================
 // TypeScript Interfaces for Type Safety
@@ -70,6 +80,8 @@ interface HealthCheckResponseData {
   status: string;
   instanceId?: string;
   n8nVersion?: string;
+  /** Present only when the instance did not report a version - see N8N_VERSION_UNAVAILABLE_NOTE. */
+  n8nVersionNote?: string;
   features?: Record<string, unknown>;
   apiUrl?: string;
   mcpVersion: string;
@@ -86,6 +98,7 @@ interface HealthCheckResponseData {
     cacheHitRate: string;
     cachedInstances: number;
   };
+  officialMcp?: OfficialMcpHealth;
   nextSteps?: string[];
   updateWarning?: string;
 }
@@ -209,6 +222,7 @@ interface DiagnosticResponseData {
     cacheHitRate: string;
     cachedInstances: number;
   };
+  officialMcp?: OfficialMcpHealth;
   modeSpecificDebug: Record<string, unknown>;
   dockerDebug?: Record<string, unknown>;
   cloudPlatformDebug?: CloudPlatformGuide;
@@ -441,6 +455,9 @@ const createWorkflowSchema = z.object({
   // Two-arg z.record(keySchema, valueSchema) — see services/n8n-validation.ts for the
   // Zod 3/4 compatibility rationale (#744).
   connections: z.preprocess(normalizeMcpWorkflowConnections, z.record(z.string(), z.any())),
+  // The typed keys are validated; every other key is forwarded, as on the update path.
+  // A closed object here silently dropped `availableInMCP`, `callerPolicy` and the other
+  // settings added since n8n 1.119 before they reached the cleaner (issue #1026).
   settings: z.preprocess(normalizeMcpJsonValue, z.object({
     executionOrder: z.enum(['v0', 'v1']).optional(),
     timezone: z.string().optional(),
@@ -450,10 +467,14 @@ const createWorkflowSchema = z.object({
     saveExecutionProgress: z.boolean().optional(),
     executionTimeout: z.number().optional(),
     errorWorkflow: z.string().optional(),
-  })).optional(),
+  }).passthrough()).optional(),
   // Validated by parseNodeGroupsInput() — see services/node-groups.ts
   nodeGroups: z.any().optional(),
   projectId: z.string().optional(),
+  // Folder placement (n8n 2.32+). Omit for the project root; blank strings from
+  // lossy MCP clients are treated as omitted (issue #774 pattern). Trimmed to match
+  // the folder handlers and the moveToFolder diff operation.
+  parentFolderId: optionalEmptyAware(z.string().trim().min(1)),
 });
 
 const updateWorkflowSchema = z.object({
@@ -464,6 +485,11 @@ const updateWorkflowSchema = z.object({
   settings: z.preprocess(normalizeMcpJsonValue, z.any()).optional(),
   // Validated by parseNodeGroupsInput() — see services/node-groups.ts
   nodeGroups: z.any().optional(),
+  // Folder move (n8n 2.32+): a folder ID moves the workflow there, null moves it to the
+  // project root, omitting the field leaves the current folder unchanged. Write-only in
+  // n8n's schema, so the merged GET response can never re-send a stale value. Trimmed to
+  // match the folder handlers and the moveToFolder diff operation.
+  parentFolderId: optionalEmptyAware(z.string().trim().min(1).nullable()),
   createBackup: z.boolean().optional(),
   intent: z.string().optional(),
 });
@@ -512,6 +538,7 @@ const autofixWorkflowSchema = z.object({
 // Schema for n8n_test_workflow tool
 const testWorkflowSchema = z.object({
   workflowId: z.string(),
+  method: optionalEmptyAware(z.enum(['auto', 'trigger', 'prepare', 'pinned', 'direct'])),
   triggerType: optionalEmptyAware(z.enum(['webhook', 'form', 'chat'])),
   httpMethod: optionalEmptyAware(z.enum(['GET', 'POST', 'PUT', 'DELETE'])),
   webhookPath: optionalEmptyAware(z.string()),
@@ -521,6 +548,12 @@ const testWorkflowSchema = z.object({
   headers: z.record(z.string()).optional(),
   timeout: z.number().optional(),
   waitForResponse: z.boolean().optional(),
+  // Official-MCP methods only.
+  exposeToMcp: z.boolean().optional(),
+  timeoutMs: z.number().int().min(MIN_TIMEOUT_MS).max(MAX_TIMEOUT_MS).optional(),
+  pinData: z.record(z.array(z.unknown())).optional(),
+  triggerNodeName: optionalEmptyAware(z.string()),
+  executionMode: optionalEmptyAware(z.enum(['manual', 'production'])),
 });
 
 const listExecutionsSchema = z.object({
@@ -565,14 +598,28 @@ const cancelTestRunSchema = z.object({
   runId: testRunPathId,
 });
 
+/**
+ * A version id from either store. Local snapshots are numbered integers; n8n's
+ * own history uses opaque string ids. The MCP inputSchema deliberately leaves
+ * these two properties untyped so the server's argument coercion
+ * (`coerceStringifiedJsonParams`, which only touches properties declaring a
+ * scalar `type`) lets both shapes through to this union.
+ */
+const versionIdValue = z.union([z.number().int(), z.string().min(1)]);
+
 const workflowVersionsSchema = z.object({
-  mode: z.enum(['list', 'get', 'rollback', 'delete', 'prune']),
+  mode: z.preprocess(emptyToUndefined, z.enum(['list', 'get', 'rollback', 'delete', 'prune', 'diff']).default('list')),
+  source: z.enum(['local', 'native']).optional(),
   workflowId: z.string().optional(),
-  versionId: z.number().optional(),
+  versionId: versionIdValue.optional(),
+  toVersionId: versionIdValue.optional(),
   limit: z.number().default(10).optional(),
+  offset: z.number().int().min(0).optional(),
   validateBefore: z.boolean().default(true).optional(),
   deleteAll: z.boolean().default(false).optional(),
   maxVersions: z.number().default(10).optional(),
+  exposeToMcp: z.boolean().optional(),
+  timeoutMs: z.number().int().min(5000).max(600000).optional(),
 });
 
 // Workflow Management Handlers
@@ -585,7 +632,8 @@ export async function handleCreateWorkflow(args: unknown, context?: InstanceCont
     // Proactively detect SHORT form node types (common mistake)
     const shortFormErrors: string[] = [];
     input.nodes?.forEach((node: any, index: number) => {
-      if (node.type?.startsWith('nodes-base.') || node.type?.startsWith('nodes-langchain.')) {
+      if (typeof node?.type !== 'string') return;
+      if (node.type.startsWith('nodes-base.') || node.type.startsWith('nodes-langchain.')) {
         const fullForm = node.type.startsWith('nodes-base.')
           ? node.type.replace('nodes-base.', 'n8n-nodes-base.')
           : node.type.replace('nodes-langchain.', '@n8n/n8n-nodes-langchain.');
@@ -1055,12 +1103,21 @@ export async function handleUpdateWorkflow(
   const sessionId = `mutation_${Date.now()}_${randomUUID()}`;
   let workflowBefore: any = null;
   let userIntent = 'Full workflow update';
+  // Tracked outside the try: a failed PUT that carried parentFolderId may still have
+  // persisted the folder move (write-only in n8n, so it can be neither read back nor
+  // rolled back), and the error path below must say so.
+  let sentParentFolderId = false;
+  // The merged payload sent to the failed PUT. On PUBLISH_FORBIDDEN, n8n saves this as a
+  // draft — the failure telemetry should reflect that content, not silently claim
+  // "no change" by reusing workflowBefore.
+  let attemptedWorkflow: any = null;
 
   try {
     const client = ensureApiConfigured(context);
     const input = updateWorkflowSchema.parse(args);
     const { id, createBackup, intent, ...updateData } = input;
     userIntent = intent || 'Full workflow update';
+    sentParentFolderId = updateData.parentFolderId !== undefined;
 
     // n8n's Public API PUT /workflows is a FULL replace: the write schema requires name,
     // nodes, connections AND settings to all be present. This tool exposes them as optional,
@@ -1082,6 +1139,9 @@ export async function handleUpdateWorkflow(
         currentByName.set(node.name, node);
       }
       for (const node of updateData.nodes as any[]) {
+        // Reporting a malformed entry is validateWorkflowStructure's job, below; this loop
+        // only has to survive reaching it.
+        if (!node || typeof node !== 'object') continue;
         const hasCredentials = node.credentials && typeof node.credentials === 'object' && Object.keys(node.credentials).length > 0;
         if (!hasCredentials) {
           const match = (node.id && currentById.get(node.id)) || currentByName.get(node.name);
@@ -1125,6 +1185,7 @@ export async function handleUpdateWorkflow(
     if (nodeGroupsUpdate !== undefined) {
       fullWorkflow.nodeGroups = nodeGroupsUpdate;
     }
+    attemptedWorkflow = fullWorkflow;
 
     // Backup + structure validation when the graph or its grouping changed.
     if (updateData.nodes || updateData.connections || nodeGroupsUpdate !== undefined) {
@@ -1201,13 +1262,20 @@ export async function handleUpdateWorkflow(
   } catch (error) {
     // Track failed mutation
     if (workflowBefore) {
+      // PUBLISH_FORBIDDEN means n8n persisted the attempted payload as a draft even
+      // though the PUT threw — workflowBefore would misreport "no change". Use the
+      // attempted payload when we have one; otherwise omit workflowAfter rather than
+      // claim an unchanged state we cannot confirm.
+      const isPublishForbidden = error instanceof N8nApiError && error.code === 'PUBLISH_FORBIDDEN';
       void trackWorkflowMutationForFullUpdate({
         sessionId,
         toolName: 'n8n_update_full_workflow',
         userIntent,
         operations: [],
         workflowBefore,
-        workflowAfter: workflowBefore, // No change since it failed
+        ...(isPublishForbidden
+          ? (attemptedWorkflow ? { workflowAfter: attemptedWorkflow } : {})
+          : { workflowAfter: workflowBefore }), // No change since it failed
         mutationSuccess: false,
         mutationError: error instanceof Error ? error.message : 'Unknown error',
         durationMs: Date.now() - startTime,
@@ -1224,12 +1292,35 @@ export async function handleUpdateWorkflow(
       };
     }
 
-    if (error instanceof N8nApiError) {
+    if (error instanceof N8nApiError && error.code === 'PUBLISH_FORBIDDEN') {
+      const body = error.details as { reason?: string; versionId?: string } | undefined;
       return {
         success: false,
-        error: getUserFriendlyErrorMessage(error),
+        error: 'n8n did not publish this change. The published version is unchanged; ' +
+          `the change was saved as a draft${body?.versionId ? ` (id: ${body.versionId})` : ''}. ` +
+          'Retrying with the same credentials will save another draft without publishing it. ' +
+          'The API key needs the workflow:activate scope, and the user needs workflow:publish permission on this workflow.',
         code: error.code,
-        details: error.details as Record<string, unknown> | undefined
+        details: {
+          reason: body?.reason,
+          draftVersionId: body?.versionId,
+          publishedVersionUnchanged: true,
+          ...(sentParentFolderId ? { folderMoveMayHavePersisted: true } : {})
+        }
+      };
+    }
+
+    if (error instanceof N8nApiError) {
+      const baseDetails = error.details as Record<string, unknown> | undefined;
+      return {
+        success: false,
+        error: getUserFriendlyErrorMessage(error) + (sentParentFolderId
+          ? ' A folder move in the failed update may still have persisted - n8n cannot report or restore folder placement.'
+          : ''),
+        code: error.code,
+        details: sentParentFolderId
+          ? { ...(baseDetails ?? {}), folderMoveMayHavePersisted: true }
+          : baseDetails
       };
     }
 
@@ -1572,9 +1663,17 @@ export async function handleAutofixWorkflow(
         return {
           success: false,
           error: 'Failed to apply fixes',
+          // Pass the partial-update failure's code through (e.g. PUBLISH_FORBIDDEN) so
+          // callers can tell a publish refusal apart from a generic update failure
+          // instead of having to parse updateError.
+          ...(updateResult.code ? { code: updateResult.code } : {}),
           details: {
             fixes: fixResult.fixes,
-            updateError: updateResult.error
+            updateError: updateResult.error,
+            // The partial-update failure's own details (e.g. PUBLISH_FORBIDDEN's
+            // draftVersionId/rollbackPerformed) — dropped before, leaving callers
+            // nothing to act on beyond the flattened error text.
+            ...(updateResult.details ? { updateDetails: updateResult.details } : {})
           }
         };
       }
@@ -1628,34 +1727,250 @@ export async function handleAutofixWorkflow(
 
 // Execution Management Handlers
 
+/** The action label every official call from n8n_test_workflow reports. */
+const OFFICIAL_TEST_ACTION = 'test_workflow';
+
+/**
+ * Statuses `test_workflow` reports for a run that STARTED but did not end
+ * well. The call itself succeeded, so `callOfficialTool` returns a success and
+ * this handler is the one that turns the run's outcome into a failure.
+ */
+const FAILED_RUN_STATUSES = new Set(['error', 'crashed', 'canceled']);
+
+/**
+ * `timeout` only ever governs the HTTP trigger path (method auto/trigger);
+ * the official methods use `timeoutMs`. A caller who passes both on a
+ * prepare/pinned/direct call gets this note rather than a silently ignored
+ * `timeout`.
+ */
+const LEGACY_TIMEOUT_SCOPE_WARNING =
+  'timeout applies to the HTTP trigger path only; use timeoutMs for method prepare/pinned/direct';
+
+/** The `n8n_test_workflow` methods routed through n8n's own MCP server. */
+const OFFICIAL_TEST_METHODS = new Set(['prepare', 'pinned', 'direct']);
+
 /**
  * Handler for n8n_test_workflow tool
- * Triggers workflow execution via auto-detected or specified trigger type
+ *
+ * `method` picks the backend:
+ * - `trigger` (and `auto` when the workflow has a webhook/form/chat trigger)
+ *   runs the existing Public-API HTTP path.
+ * - `prepare` / `pinned` / `direct` go through n8n's instance-level MCP server,
+ *   behind the "Available in MCP" consent flow.
+ *
+ * `auto` never executes anything through the official server: without a
+ * detected trigger it returns the same error it always has, naming the two
+ * official methods in its hint so the caller chooses one deliberately.
  */
 export async function handleTestWorkflow(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
   try {
-    const client = ensureApiConfigured(context);
     const input = testWorkflowSchema.parse(args);
+    const method = input.method ?? 'auto';
+
+    // Nullable on purpose: `prepare` needs no Public API call, so it must not
+    // require N8N_API_KEY. Every other method resolves the same client through
+    // ensureApiConfigured below, which turns a null into the NOT_CONFIGURED error.
+    const apiClient = getN8nApiClient(context);
+
+    // Reads default to 30 s; a run gets the longer deadline.
+    const officialTimeoutMs = input.timeoutMs ?? (method === 'prepare' ? DEFAULT_TIMEOUT_MS : PINNED_TIMEOUT_MS);
+    const routeOfficial = async (
+      aliases: string[],
+      officialArgs: Record<string, unknown>,
+      idempotent: boolean,
+      resolvedMethod: 'prepare' | 'pinned' | 'direct'
+    ): Promise<McpToolResponse> => {
+      // withMcpExposure returns the envelope undecorated (and may already carry
+      // warnings from the consent write) — spread first, then label it.
+      const response = await withMcpExposure(
+        {
+          apiClient,
+          workflowId: input.workflowId,
+          exposeToMcp: input.exposeToMcp,
+          action: OFFICIAL_TEST_ACTION,
+          toolName: 'n8n_test_workflow',
+          context,
+        },
+        () => callOfficialTool(context, aliases, officialArgs, officialTimeoutMs, OFFICIAL_TEST_ACTION, idempotent)
+      );
+      const decorated = { ...response, method: resolvedMethod, backend: 'official-mcp' };
+      if (input.timeout !== undefined && decorated.success) {
+        decorated.warnings = [...(decorated.warnings ?? []), LEGACY_TIMEOUT_SCOPE_WARNING];
+      }
+      return decorated;
+    };
+
+    // An EMPTY pinData is refused like a missing one: n8n would run the
+    // workflow with nothing pinned, so every credentialed and HTTP node in it
+    // would do real work — the opposite of what "pinned" asks for.
+    if (method === 'pinned' && Object.keys(input.pinData ?? {}).length === 0) {
+      return {
+        success: false,
+        code: 'INVALID_ARGS',
+        method: 'pinned',
+        error: 'pinData is required for method: pinned (keys are node names, values are arrays of items wrapped as { "json": { ... } }). Run method: prepare first to see which nodes need pinned data.',
+      };
+    }
+
+    // The effective operation of `auto` is `trigger`: it is the only thing auto
+    // ever executes. Disabling `trigger` therefore stops `auto` as well.
+    if ((method === 'auto' || method === 'trigger') && isOperationDisabled('n8n_test_workflow', 'trigger')) {
+      return {
+        success: false,
+        code: 'OPERATION_DISABLED',
+        method: 'trigger',
+        backend: 'public-api',
+        error: "Operation 'trigger' on tool 'n8n_test_workflow' is disabled by server policy.",
+        details: { requestedMethod: method },
+      };
+    }
+
+    // Every path of this tool except a plain `prepare` depends on the Public
+    // API client: `auto`/`trigger` run through it, `pinned`/`direct` read the
+    // workflow through it for trigger detection, and any `exposeToMcp` consent
+    // write goes through it. On a url+token context that client silently falls
+    // back to the operator's own instance while the official-MCP client is
+    // context-authoritative, so refuse before any read, trigger or write.
+    // A plain `prepare` touches none of it and stays open.
+    const isPlainPrepare = method === 'prepare' && input.exposeToMcp !== true;
+    if (!isPlainPrepare && !publicApiMatchesContext(context)) {
+      return {
+        success: false,
+        code: 'NOT_CONFIGURED',
+        method,
+        backend: OFFICIAL_TEST_METHODS.has(method) ? 'official-mcp' : 'public-api',
+        error: PUBLIC_API_CONTEXT_HINT,
+      };
+    }
+
+    // prepare only needs the workflow id — no trigger analysis, no workflow
+    // GET, and no Public API key: it runs before ensureApiConfigured.
+    if (method === 'prepare') {
+      return routeOfficial(['prepare_workflow_pin_data'], { workflowId: input.workflowId }, true, 'prepare');
+    }
+
+    const client = ensureApiConfigured(context);
 
     // Import trigger system (lazy to avoid circular deps)
     const {
       detectTriggerFromWorkflow,
+      classifyTriggerNode,
       ensureRegistryInitialized,
       TriggerRegistry,
     } = await import('../triggers');
 
-    // Ensure registry is initialized
-    await ensureRegistryInitialized();
-
     // Fetch the workflow to analyze its trigger
     const workflow = await client.getWorkflow(input.workflowId);
+
+    // Auto-detect from workflow
+    const detection = detectTriggerFromWorkflow(workflow);
+    const detectedNodeName = detection.trigger?.node.name;
+
+    if (method === 'pinned') {
+      const pinnedTriggerNode = input.triggerNodeName ?? detectedNodeName;
+      const response = await routeOfficial(
+        ['test_workflow'],
+        {
+          workflowId: input.workflowId,
+          pinData: input.pinData,
+          ...(pinnedTriggerNode ? { triggerNodeName: pinnedTriggerNode } : {}),
+          // Keep n8n's own deadline inside ours, so a slow run is reported by
+          // n8n rather than cut short by the client's timeout.
+          timeout: Math.max(1, Math.floor(officialTimeoutMs / 1000) - 5),
+        },
+        false,
+        'pinned'
+      );
+      if (!response.success) return response;
+
+      const run = (response.data ?? {}) as { executionId?: unknown; status?: unknown; error?: unknown };
+      const executionId = typeof run.executionId === 'string' ? run.executionId : undefined;
+      const status = typeof run.status === 'string' ? run.status : undefined;
+      if (status && FAILED_RUN_STATUSES.has(status)) {
+        return {
+          ...response,
+          success: false,
+          code: 'EXECUTION_FAILED',
+          error: typeof run.error === 'string' ? run.error : `Run finished with status ${status}`,
+          ...(executionId ? { executionId } : {}),
+        };
+      }
+      return { ...response, ...(executionId ? { executionId } : {}) };
+    }
+
+    if (method === 'direct') {
+      // An explicitly named trigger node decides the payload shape; only
+      // without one does the workflow's first detected trigger decide it.
+      const namedNode = input.triggerNodeName
+        ? (workflow.nodes ?? []).find(node => node.name === input.triggerNodeName)
+        : undefined;
+      if (input.triggerNodeName && !namedNode) {
+        return {
+          success: false,
+          code: 'INVALID_ARGS',
+          method: 'direct',
+          backend: 'official-mcp',
+          error: `triggerNodeName "${input.triggerNodeName}" is not a node of workflow ${input.workflowId}`,
+        };
+      }
+      const triggerKind: TriggerType | null = input.triggerNodeName
+        ? (namedNode ? classifyTriggerNode(namedNode) : null)
+        : (detection.trigger?.type ?? null);
+
+      let inputs: Record<string, unknown> | undefined;
+      if (input.message !== undefined) {
+        inputs = { chatInput: input.message };
+      } else if (input.data && triggerKind === 'form') {
+        inputs = { formData: input.data };
+      } else if (input.data || input.headers || input.httpMethod) {
+        inputs = {
+          webhookData: {
+            method: input.httpMethod ?? 'POST',
+            ...(input.data ? { body: input.data } : {}),
+            ...(input.headers ? { headers: input.headers } : {}),
+          },
+        };
+      }
+
+      // n8n requires triggerNodeName whenever inputs are given.
+      const directTriggerNode = input.triggerNodeName ?? (inputs ? detectedNodeName : undefined);
+      if (inputs && !directTriggerNode) {
+        return {
+          success: false,
+          code: 'INVALID_ARGS',
+          method: 'direct',
+          error: 'triggerNodeName is required when inputs are given and no trigger node could be detected',
+          details: { workflowId: input.workflowId, reason: detection.reason },
+        };
+      }
+
+      const response = await routeOfficial(
+        ['execute_workflow'],
+        {
+          workflowId: input.workflowId,
+          executionMode: input.executionMode ?? 'manual',
+          ...(directTriggerNode ? { triggerNodeName: directTriggerNode } : {}),
+          ...(inputs ? { inputs } : {}),
+        },
+        false,
+        'direct'
+      );
+      if (!response.success) return response;
+
+      const executionId = (response.data as { executionId?: unknown } | undefined)?.executionId;
+      return {
+        ...response,
+        ...(typeof executionId === 'string' ? { executionId } : {}),
+        hint: 'execute_workflow returns as soon as the run starts; poll n8n_executions with the executionId for the result.',
+      };
+    }
+
+    // Ensure registry is initialized
+    await ensureRegistryInitialized();
 
     // Determine trigger type
     let triggerType: TriggerType | undefined = input.triggerType as TriggerType | undefined;
     let triggerInfo;
-
-    // Auto-detect from workflow
-    const detection = detectTriggerFromWorkflow(workflow);
 
     if (!triggerType) {
       if (detection.detected && detection.trigger) {
@@ -1666,10 +1981,13 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
         return {
           success: false,
           error: 'Workflow cannot be triggered externally',
+          method,
+          backend: 'public-api',
           details: {
             workflowId: input.workflowId,
             reason: detection.reason,
-            hint: 'Only workflows with webhook, form, or chat triggers can be executed via the API. Add one of these trigger nodes to your workflow.',
+            hint: 'Only workflows with webhook, form, or chat triggers can be executed via the API. Add one of these trigger nodes to your workflow.'
+              + ' To run it anyway through n8n\'s MCP server, call again with method: direct (executionMode manual) or method: pinned with pinData from method: prepare — both need N8N_MCP_ACCESS_TOKEN.',
           },
         };
       }
@@ -1681,6 +1999,8 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
         return {
           success: false,
           error: `Workflow does not have a ${triggerType} trigger`,
+          method: 'trigger',
+          backend: 'public-api',
           details: {
             workflowId: input.workflowId,
             requestedTrigger: triggerType,
@@ -1699,6 +2019,8 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       return {
         success: false,
         error: `No handler registered for trigger type: ${triggerType}`,
+        method: 'trigger',
+        backend: 'public-api',
         details: {
           supportedTypes: TriggerRegistry.getRegisteredTypes(),
         },
@@ -1710,6 +2032,8 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       return {
         success: false,
         error: 'Workflow must be active to trigger via this method',
+        method: 'trigger',
+        backend: 'public-api',
         details: {
           workflowId: input.workflowId,
           triggerType,
@@ -1723,6 +2047,8 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       return {
         success: false,
         error: 'Chat trigger requires a message parameter',
+        method: 'trigger',
+        backend: 'public-api',
         details: {
           hint: 'Provide message="your message" for chat triggers',
         },
@@ -1755,6 +2081,8 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
         : response.error,
       executionId: response.executionId,
       workflowId: input.workflowId,
+      method: 'trigger',
+      backend: 'public-api',
       details: {
         triggerType,
         metadata: response.metadata,
@@ -1762,9 +2090,21 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
       },
     };
   } catch (error) {
+    // A schema failure happens before `input` exists, so the labels come from
+    // the raw arguments here. A blank `method` is the default one, matching
+    // what the schema would have resolved it to.
+    const raw = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const rawMethod =
+      typeof raw.method === 'string' && raw.method.trim() !== '' ? raw.method : 'auto';
+    const label = {
+      method: rawMethod,
+      backend: OFFICIAL_TEST_METHODS.has(rawMethod) ? 'official-mcp' : 'public-api',
+    };
+
     if (error instanceof z.ZodError) {
       return {
         success: false,
+        ...label,
         error: 'Invalid input',
         details: { errors: error.errors },
       };
@@ -1773,6 +2113,7 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
     if (error instanceof N8nApiError) {
       return {
         success: false,
+        ...label,
         error: getUserFriendlyErrorMessage(error),
         code: error.code,
         details: error.details as Record<string, unknown> | undefined,
@@ -1781,6 +2122,7 @@ export async function handleTestWorkflow(args: unknown, context?: InstanceContex
 
     return {
       success: false,
+      ...label,
       error: error instanceof Error ? error.message : 'Unknown error occurred',
     };
   }
@@ -2298,6 +2640,7 @@ export async function handleHealthCheck(context?: InstanceContext): Promise<McpT
       status: health.status,
       instanceId: health.instanceId,
       n8nVersion: health.n8nVersion,
+      ...(health.n8nVersion ? {} : { n8nVersionNote: N8N_VERSION_UNAVAILABLE_NOTE }),
       features: health.features,
       apiUrl: resolveN8nApiConfigForResponse(context)?.baseUrl,
       mcpVersion,
@@ -2317,6 +2660,10 @@ export async function handleHealthCheck(context?: InstanceContext): Promise<McpT
         cachedInstances: cacheMetricsData.size
       }
     };
+
+    // Official n8n MCP (n8n_manage_agents) reachability — status mode reports
+    // whatever the cached client already knows, without a live network probe.
+    responseData.officialMcp = await buildOfficialMcpHealth(context, false);
 
     // Add next steps guidance based on telemetry insights
     responseData.nextSteps = [
@@ -2596,7 +2943,7 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
     try {
       const health = await apiClient.healthCheck();
       apiStatus.connected = true;
-      apiStatus.version = health.n8nVersion || 'unknown';
+      apiStatus.version = health.n8nVersion || N8N_VERSION_UNAVAILABLE_NOTE;
     } catch (error) {
       apiStatus.error = error instanceof Error ? error.message : 'Unknown error';
     }
@@ -2658,6 +3005,10 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
     },
     modeSpecificDebug: getModeSpecificDebug(mcpMode)
   };
+
+  // Official n8n MCP (n8n_manage_agents) reachability — diagnostic mode
+  // always forces a live probe, unlike the status-mode health check.
+  diagnostic.officialMcp = await buildOfficialMcpHealth(context, true);
 
   // Enhanced guidance based on telemetry insights
   if (apiConfigured && apiStatus.connected) {
@@ -2818,6 +3169,382 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
   };
 }
 
+const VERSIONS_ACTION = 'workflow_versions';
+const VERSIONS_TIMEOUT_MS = 30000;
+/** n8n's `get_workflow_history` refuses anything above 50. */
+const NATIVE_VERSIONS_LIMIT_CAP = 50;
+/**
+ * Why native rollback never pre-validates: the official `get_workflow_version`
+ * payload lists only `name`/`type`/`credentials` per node, without `position`,
+ * `typeVersion` or `parameters`, so the workflow validator has nothing to check.
+ */
+const NATIVE_VALIDATION_NOTE = 'not available for native versions';
+
+type WorkflowVersionsInput = z.infer<typeof workflowVersionsSchema>;
+
+/**
+ * Tags a `data` payload with the diff dialect it is written in. `format` is set
+ * last so an official payload that happens to carry the key cannot shadow it.
+ */
+function withDiffFormat(data: unknown, format: 'n8n' | 'n8n-mcp'): Record<string, unknown> {
+  return data && typeof data === 'object' && !Array.isArray(data)
+    ? { ...(data as Record<string, unknown>), format }
+    : { diff: data, format };
+}
+
+/**
+ * Coerce a version id for the local store, which numbers its snapshots.
+ * A decimal-integer string is accepted; anything else is refused by name
+ * rather than silently becoming NaN — or, worse, a different snapshot:
+ * `Number()` also reads `0x10` as 16 and `1e3` as 1000, so a malformed or
+ * n8n-shaped id has to fail the shape check before any conversion.
+ */
+const LOCAL_VERSION_ID_PATTERN = /^-?\d+$/;
+
+function parseLocalVersionId(
+  value: number | string | undefined,
+  field: string
+): { ok: true; value?: number } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (typeof value === 'string' && value.trim() === '') {
+    return { ok: false, error: `${field} must be an integer version id for source: local` };
+  }
+  if (typeof value === 'string' && !LOCAL_VERSION_ID_PATTERN.test(value.trim())) {
+    return {
+      ok: false,
+      error: `${field} must be an integer version id for source: local (got ${JSON.stringify(value)}). n8n's own string version ids need source: native.`,
+    };
+  }
+  const parsed = typeof value === 'number' ? value : Number(value.trim());
+  if (!Number.isInteger(parsed)) {
+    return {
+      ok: false,
+      error: `${field} must be an integer version id for source: local (got ${JSON.stringify(value)}). n8n's own string version ids need source: native.`,
+    };
+  }
+  return { ok: true, value: parsed };
+}
+
+/**
+ * `source: native` — n8n's own workflow history, the same list the n8n UI
+ * shows, read through the instance's MCP server. It covers edits made in the
+ * UI, unlike the local store, and n8n owns its retention: `delete` and `prune`
+ * have no counterpart there.
+ */
+async function handleNativeWorkflowVersions(
+  input: WorkflowVersionsInput,
+  context?: InstanceContext
+): Promise<McpToolResponse> {
+  const mode = input.mode;
+  const label = (response: McpToolResponse): McpToolResponse => ({
+    ...response,
+    mode,
+    source: 'native',
+    backend: 'official-mcp',
+  });
+  const invalid = (error: string): McpToolResponse =>
+    label({ success: false, action: VERSIONS_ACTION, code: 'INVALID_ARGS', error });
+
+  if (mode === 'delete' || mode === 'prune') {
+    return label({
+      success: false,
+      action: VERSIONS_ACTION,
+      code: 'MODE_NOT_SUPPORTED_FOR_SOURCE',
+      error: `n8n's own version history cannot be ${mode === 'delete' ? 'deleted' : 'pruned'} through MCP; use source: local for n8n-mcp snapshots`,
+    });
+  }
+
+  const workflowId = input.workflowId;
+  if (!workflowId) {
+    return invalid(`workflowId is required for source: native (mode: ${mode})`);
+  }
+  if (mode !== 'list' && input.versionId === undefined) {
+    return invalid(`versionId is required for mode: ${mode}`);
+  }
+  if (mode === 'diff' && input.toVersionId === undefined) {
+    return invalid('toVersionId is required for mode: diff');
+  }
+
+  // n8n's version ids are strings; a caller who passed a number gets it
+  // stringified rather than an argument-validation error from n8n.
+  const versionId = input.versionId === undefined ? undefined : String(input.versionId);
+  const toVersionId = input.toVersionId === undefined ? undefined : String(input.toVersionId);
+
+  let aliases: string[];
+  let officialArgs: Record<string, unknown>;
+  let idempotent = true;
+
+  switch (mode) {
+    case 'list':
+      aliases = ['get_workflow_history'];
+      officialArgs = {
+        workflowId,
+        // n8n rejects a non-integer or out-of-range page, so the bounds are
+        // applied here rather than forwarded and refused. The schema already
+        // constrains `offset`; the floor keeps both fields normalised the same way.
+        limit: Math.max(1, Math.min(NATIVE_VERSIONS_LIMIT_CAP, Math.floor(input.limit ?? 10))),
+        offset: Math.max(0, Math.floor(input.offset ?? 0)),
+      };
+      break;
+    case 'get':
+      aliases = ['get_workflow_version'];
+      officialArgs = { workflowId, versionId };
+      break;
+    case 'diff':
+      aliases = ['get_workflow_versions_diff'];
+      officialArgs = { workflowId, fromVersionId: versionId, toVersionId };
+      break;
+    case 'rollback':
+      aliases = ['restore_workflow_version'];
+      officialArgs = { workflowId, versionId };
+      // A restore writes the workflow, so a retry after a connection failure
+      // could land twice.
+      idempotent = false;
+      break;
+    default:
+      return invalid(`Unknown mode: ${mode}`);
+  }
+
+  // withMcpExposure returns the envelope undecorated (and may already carry
+  // warnings from the consent write) — spread first, then label it.
+  const response = await withMcpExposure(
+    {
+      apiClient: getN8nApiClient(context),
+      workflowId,
+      exposeToMcp: input.exposeToMcp,
+      action: VERSIONS_ACTION,
+      toolName: 'n8n_workflow_versions',
+      context,
+    },
+    () =>
+      callOfficialTool(
+        context,
+        aliases,
+        officialArgs,
+        input.timeoutMs ?? VERSIONS_TIMEOUT_MS,
+        VERSIONS_ACTION,
+        idempotent
+      )
+  );
+
+  const labelled = label(response);
+  if (mode === 'diff' && labelled.success) {
+    labelled.data = withDiffFormat(labelled.data, 'n8n');
+  }
+  if (mode === 'rollback' && labelled.success) {
+    labelled.validation = NATIVE_VALIDATION_NOTE;
+  }
+  return labelled;
+}
+
+/**
+ * `source: local` — the snapshots n8n-mcp takes before it changes a workflow.
+ * Numbered per workflow, scoped to the instance, and independent of the n8n
+ * version in use.
+ */
+async function handleLocalWorkflowVersions(
+  input: WorkflowVersionsInput,
+  versionId: number | undefined,
+  toVersionId: number | undefined,
+  repository: NodeRepository,
+  context?: InstanceContext
+): Promise<McpToolResponse> {
+  // Resolve the client the same way every other tool does. Gating on `context` skipped
+  // getN8nApiClient's environment-variable fallback, so on a plain N8N_API_URL setup — no
+  // instance context — `rollback` always answered "n8n API not configured" while `list`/`get`
+  // worked, because they read the local version store instead. Multi-tenant isolation is
+  // enforced inside getN8nApiClient and by the scope check above, not by this ternary.
+  const client = getN8nApiClient(context);
+  const versioningService = new WorkflowVersioningService(repository, client || undefined, getInstanceScopeId(context));
+
+  switch (input.mode) {
+    case 'list': {
+      if (!input.workflowId) {
+        return {
+          success: false,
+          error: 'workflowId is required for list mode'
+        };
+      }
+
+      const versions = await versioningService.getVersionHistory(input.workflowId, input.limit);
+
+      return {
+        success: true,
+        data: {
+          workflowId: input.workflowId,
+          versions,
+          count: versions.length,
+          message: `Found ${versions.length} version(s) for workflow ${input.workflowId}`
+        }
+      };
+    }
+
+    case 'get': {
+      if (!versionId) {
+        return {
+          success: false,
+          error: 'versionId is required for get mode'
+        };
+      }
+
+      const version = await versioningService.getVersion(versionId);
+
+      if (!version) {
+        return {
+          success: false,
+          error: `Version ${versionId} not found`
+        };
+      }
+
+      return {
+        success: true,
+        data: version
+      };
+    }
+
+    case 'rollback': {
+      if (!input.workflowId) {
+        return {
+          success: false,
+          error: 'workflowId is required for rollback mode'
+        };
+      }
+
+      if (!client) {
+        return {
+          success: false,
+          error: 'n8n API not configured. Cannot perform rollback without API access.'
+        };
+      }
+
+      const result = await versioningService.restoreVersion(
+        input.workflowId,
+        versionId,
+        input.validateBefore
+      );
+
+      return {
+        success: result.success,
+        data: result.success ? result : undefined,
+        error: result.success ? undefined : result.message,
+        // Pass the machine-readable code through (e.g. PUBLISH_FORBIDDEN) so callers
+        // can branch on it instead of parsing `message`, and name the draft the
+        // restored content actually landed on when it wasn't published.
+        code: result.success ? undefined : result.code,
+        details: result.success ? undefined : {
+          validationErrors: result.validationErrors,
+          ...(result.draftVersionId ? { draftVersionId: result.draftVersionId } : {})
+        }
+      };
+    }
+
+    case 'delete': {
+      if (input.deleteAll) {
+        if (!input.workflowId) {
+          return {
+            success: false,
+            error: 'workflowId is required for deleteAll mode'
+          };
+        }
+
+        const result = await versioningService.deleteAllVersions(input.workflowId);
+
+        return {
+          success: true,
+          data: {
+            workflowId: input.workflowId,
+            deleted: result.deleted,
+            message: result.message
+          }
+        };
+      } else {
+        if (!versionId) {
+          return {
+            success: false,
+            error: 'versionId is required for single version delete'
+          };
+        }
+
+        const result = await versioningService.deleteVersion(versionId);
+
+        return {
+          success: result.success,
+          data: result.success ? { message: result.message } : undefined,
+          error: result.success ? undefined : result.message
+        };
+      }
+    }
+
+    case 'prune': {
+      if (!input.workflowId) {
+        return {
+          success: false,
+          error: 'workflowId is required for prune mode'
+        };
+      }
+
+      const result = await versioningService.pruneVersions(
+        input.workflowId,
+        input.maxVersions || 10
+      );
+
+      return {
+        success: true,
+        data: {
+          workflowId: input.workflowId,
+          pruned: result.pruned,
+          remaining: result.remaining,
+          message: `Pruned ${result.pruned} old version(s), ${result.remaining} version(s) remaining`
+        }
+      };
+    }
+
+    case 'diff': {
+      if (!input.workflowId) {
+        return {
+          success: false,
+          error: 'workflowId is required for diff mode'
+        };
+      }
+
+      if (versionId === undefined || toVersionId === undefined) {
+        return {
+          success: false,
+          code: 'INVALID_ARGS',
+          error: 'versionId and toVersionId are both required for diff mode'
+        };
+      }
+
+      try {
+        const diff = await versioningService.compareVersions(versionId, toVersionId, input.workflowId);
+
+        return {
+          success: true,
+          data: withDiffFormat(diff, 'n8n-mcp')
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // The service refuses a snapshot belonging to another workflow; that is
+        // a caller mistake, not a failure of the comparison.
+        if (message.includes(VERSION_OWNERSHIP_ERROR_PREFIX)) {
+          return {
+            success: false,
+            code: 'INVALID_ARGS',
+            error: message
+          };
+        }
+        throw error;
+      }
+    }
+
+    default:
+      return {
+        success: false,
+        error: `Unknown mode: ${input.mode}`
+      };
+  }
+}
+
 export async function handleWorkflowVersions(
   args: unknown,
   repository: NodeRepository,
@@ -2829,167 +3556,56 @@ export async function handleWorkflowVersions(
     // SECURITY (GHSA-2cf7-hpwf-47h9): multi-tenant requests must resolve a
     // complete tenant scope; fail closed otherwise.
     if (process.env.ENABLE_MULTI_TENANT === 'true' && getInstanceScopeId(context) === '') {
+      const source = input.source ?? 'local';
       return {
         success: false,
-        error: 'Workflow version storage is not available for this tenant context'
+        mode: input.mode,
+        source,
+        backend: source === 'native' ? 'official-mcp' : 'n8n-mcp',
+        error: source === 'native'
+          ? "Reading n8n's own version history needs an instance-scoped context for this tenant"
+          : 'Workflow version storage is not available for this tenant context'
       };
     }
 
-    // Resolve the client the same way every other tool does. Gating on `context` skipped
-    // getN8nApiClient's environment-variable fallback, so on a plain N8N_API_URL setup — no
-    // instance context — `rollback` always answered "n8n API not configured" while `list`/`get`
-    // worked, because they read the local version store instead. Multi-tenant isolation is
-    // enforced inside getN8nApiClient and by the scope check above, not by this ternary.
-    const client = getN8nApiClient(context);
-    const versioningService = new WorkflowVersioningService(repository, client || undefined, getInstanceScopeId(context));
-
-    switch (input.mode) {
-      case 'list': {
-        if (!input.workflowId) {
-          return {
-            success: false,
-            error: 'workflowId is required for list mode'
-          };
-        }
-
-        const versions = await versioningService.getVersionHistory(input.workflowId, input.limit);
-
-        return {
-          success: true,
-          data: {
-            workflowId: input.workflowId,
-            versions,
-            count: versions.length,
-            message: `Found ${versions.length} version(s) for workflow ${input.workflowId}`
-          }
-        };
-      }
-
-      case 'get': {
-        if (!input.versionId) {
-          return {
-            success: false,
-            error: 'versionId is required for get mode'
-          };
-        }
-
-        const version = await versioningService.getVersion(input.versionId);
-
-        if (!version) {
-          return {
-            success: false,
-            error: `Version ${input.versionId} not found`
-          };
-        }
-
-        return {
-          success: true,
-          data: version
-        };
-      }
-
-      case 'rollback': {
-        if (!input.workflowId) {
-          return {
-            success: false,
-            error: 'workflowId is required for rollback mode'
-          };
-        }
-
-        if (!client) {
-          return {
-            success: false,
-            error: 'n8n API not configured. Cannot perform rollback without API access.'
-          };
-        }
-
-        const result = await versioningService.restoreVersion(
-          input.workflowId,
-          input.versionId,
-          input.validateBefore
-        );
-
-        return {
-          success: result.success,
-          data: result.success ? result : undefined,
-          error: result.success ? undefined : result.message,
-          details: result.success ? undefined : {
-            validationErrors: result.validationErrors
-          }
-        };
-      }
-
-      case 'delete': {
-        if (input.deleteAll) {
-          if (!input.workflowId) {
-            return {
-              success: false,
-              error: 'workflowId is required for deleteAll mode'
-            };
-          }
-
-          const result = await versioningService.deleteAllVersions(input.workflowId);
-
-          return {
-            success: true,
-            data: {
-              workflowId: input.workflowId,
-              deleted: result.deleted,
-              message: result.message
-            }
-          };
-        } else {
-          if (!input.versionId) {
-            return {
-              success: false,
-              error: 'versionId is required for single version delete'
-            };
-          }
-
-          const result = await versioningService.deleteVersion(input.versionId);
-
-          return {
-            success: result.success,
-            data: result.success ? { message: result.message } : undefined,
-            error: result.success ? undefined : result.message
-          };
-        }
-      }
-
-      case 'prune': {
-        if (!input.workflowId) {
-          return {
-            success: false,
-            error: 'workflowId is required for prune mode'
-          };
-        }
-
-        const result = await versioningService.pruneVersions(
-          input.workflowId,
-          input.maxVersions || 10
-        );
-
-        return {
-          success: true,
-          data: {
-            workflowId: input.workflowId,
-            pruned: result.pruned,
-            remaining: result.remaining,
-            message: `Pruned ${result.pruned} old version(s), ${result.remaining} version(s) remaining`
-          }
-        };
-      }
-
-      default:
-        return {
-          success: false,
-          error: `Unknown mode: ${input.mode}`
-        };
+    if ((input.source ?? 'local') === 'native') {
+      return handleNativeWorkflowVersions(input, context);
     }
+
+    // Local snapshots are numbered; coerce both ids up front so every mode
+    // below works with numbers.
+    const invalidLocalVersionId = (error: string): McpToolResponse => ({
+      success: false,
+      mode: input.mode,
+      source: 'local',
+      backend: 'n8n-mcp',
+      code: 'INVALID_ARGS',
+      error,
+    });
+    const parsedVersionId = parseLocalVersionId(input.versionId, 'versionId');
+    if (!parsedVersionId.ok) return invalidLocalVersionId(parsedVersionId.error);
+    const parsedToVersionId = parseLocalVersionId(input.toVersionId, 'toVersionId');
+    if (!parsedToVersionId.ok) return invalidLocalVersionId(parsedToVersionId.error);
+    const versionId = parsedVersionId.value;
+    const toVersionId = parsedToVersionId.value;
+
+    const localResult = await handleLocalWorkflowVersions(input, versionId, toVersionId, repository, context);
+    return { ...localResult, mode: input.mode, source: 'local', backend: 'n8n-mcp' };
   } catch (error) {
+    // A schema failure happens before `input` exists, so the labels come from
+    // the raw arguments here.
+    const raw = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+    const source = raw.source === 'native' ? 'native' : 'local';
+    const label = {
+      ...(typeof raw.mode === 'string' ? { mode: raw.mode } : {}),
+      source,
+      backend: source === 'native' ? 'official-mcp' : 'n8n-mcp',
+    };
+
     if (error instanceof z.ZodError) {
       return {
         success: false,
+        ...label,
         error: 'Invalid input',
         details: { errors: error.errors }
       };
@@ -2997,6 +3613,7 @@ export async function handleWorkflowVersions(
 
     return {
       success: false,
+      ...label,
       error: error instanceof Error ? error.message : 'Unknown error occurred'
     };
   }
@@ -3182,6 +3799,13 @@ export async function handleDeployTemplate(
             fixesApplied = fixData.fixes || [];
             fixSummary = ` Auto-fixed ${fixData.fixesApplied} issue(s).`;
           }
+        } else {
+          autoFixStatus = 'failed';
+          fixSummary = ' Auto-fix failed (workflow deployed successfully).';
+          logger.warn('Auto-fix failed after template deployment', {
+            workflowId: createdWorkflow.id,
+            error: autofixResult.error || 'No autofix result returned'
+          });
         }
       } catch (fixError) {
         // Log but don't fail - autofix is best-effort
@@ -3585,6 +4209,190 @@ export async function handleDeleteRows(args: unknown, context?: InstanceContext)
 }
 
 // ========================================================================
+// Data Table Column Actions (routed to n8n's own MCP server)
+// ========================================================================
+
+/**
+ * n8n's Public API can create and drop whole data tables but cannot change a
+ * table's columns; the instance-level MCP server can. These three actions are
+ * therefore the only part of `n8n_manage_datatable` that needs
+ * `N8N_MCP_ACCESS_TOKEN`. Renaming a TABLE stays on the Public API path
+ * (`updateTable`).
+ */
+const DATATABLE_ACTION = 'manage_datatable';
+const DATATABLE_TIMEOUT_MS = DEFAULT_TIMEOUT_MS;
+
+type ColumnAction = 'addColumn' | 'deleteColumn' | 'renameColumn';
+
+const COLUMN_TOOLS: Record<ColumnAction, string[]> = {
+  addColumn: ['add_data_table_column'],
+  deleteColumn: ['delete_data_table_column'],
+  renameColumn: ['rename_data_table_column'],
+};
+
+/** n8n's own rule for a data table column name: identifier-shaped, at most 63 characters. */
+const columnNameSchema = z
+  .string()
+  .min(1, 'Column name cannot be empty')
+  .max(63, 'Column name must be at most 63 characters')
+  .regex(
+    /^[a-zA-Z][a-zA-Z0-9_]*$/,
+    'Column name must start with a letter and contain only letters, digits and underscores'
+  );
+
+const columnTargetSchema = tableIdSchema.extend({
+  projectId: optionalEmptyAware(z.string()),
+  timeoutMs: z.number().int().min(MIN_TIMEOUT_MS).max(MAX_TIMEOUT_MS).optional(),
+});
+
+const addColumnSchema = columnTargetSchema.extend({
+  column: z.preprocess(
+    tryParseJson,
+    z.object({
+      name: columnNameSchema,
+      type: z.enum(['string', 'number', 'boolean', 'date']),
+    })
+  ),
+});
+
+const deleteColumnSchema = columnTargetSchema.extend({
+  columnId: z.string().min(1, 'columnId is required'),
+});
+
+const renameColumnSchema = deleteColumnSchema.extend({
+  name: columnNameSchema,
+});
+
+function columnInvalidArgs(action: ColumnAction, error: z.ZodError): McpToolResponse {
+  return {
+    success: false,
+    action,
+    code: 'INVALID_ARGS',
+    error: error.issues.map(i => `${i.path.join('.') || 'input'}: ${i.message}`).join('; '),
+  };
+}
+
+/**
+ * The official column tools require a `projectId` the Public-API data table
+ * actions never asked for. An explicit one always wins; otherwise the shared
+ * project resolution is used, and only an unambiguous single project is taken
+ * automatically — picking one of several would silently target the wrong
+ * project.
+ */
+async function resolveDataTableProjectId(
+  input: { projectId?: string },
+  action: ColumnAction,
+  context?: InstanceContext
+): Promise<{ projectId: string } | { failure: McpToolResponse }> {
+  if (input.projectId) return { projectId: input.projectId };
+
+  const resolved = await resolveProjectChoices(context);
+  if ('failure' in resolved) return { failure: { ...resolved.failure, action } };
+
+  const items = resolved.choices.items;
+  if (items.length === 1) return { projectId: items[0].id };
+
+  // Project resolution is I/O, so the envelope says which backend answered it
+  // — the routed-response contract holds for these failures too.
+  const backend = resolved.choices.backend;
+  if (items.length === 0) {
+    return {
+      failure: {
+        success: false,
+        action,
+        backend,
+        code: 'PROJECT_REQUIRED',
+        error: 'No project could be resolved for this instance; pass projectId',
+      },
+    };
+  }
+  return {
+    failure: {
+      success: false,
+      action,
+      backend,
+      code: 'PROJECT_REQUIRED',
+      error: 'Several projects are accessible; pass projectId',
+      details: { candidates: items },
+    },
+  };
+}
+
+async function callColumnTool(
+  action: ColumnAction,
+  officialArgs: Record<string, unknown>,
+  timeoutMs: number | undefined,
+  context?: InstanceContext
+): Promise<McpToolResponse> {
+  // Column writes are not idempotent: a retry after a connection-level failure
+  // could add or rename twice.
+  const response = await callOfficialTool(
+    context,
+    COLUMN_TOOLS[action],
+    officialArgs,
+    timeoutMs ?? DATATABLE_TIMEOUT_MS,
+    DATATABLE_ACTION,
+    false
+  );
+  return { ...response, action, backend: 'official-mcp' };
+}
+
+export async function handleAddColumn(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  const parsed = addColumnSchema.safeParse(args);
+  if (!parsed.success) return columnInvalidArgs('addColumn', parsed.error);
+
+  const resolved = await resolveDataTableProjectId(parsed.data, 'addColumn', context);
+  if ('failure' in resolved) return resolved.failure;
+
+  return callColumnTool(
+    'addColumn',
+    {
+      dataTableId: parsed.data.tableId,
+      projectId: resolved.projectId,
+      name: parsed.data.column.name,
+      type: parsed.data.column.type,
+    },
+    parsed.data.timeoutMs,
+    context
+  );
+}
+
+export async function handleDeleteColumn(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  const parsed = deleteColumnSchema.safeParse(args);
+  if (!parsed.success) return columnInvalidArgs('deleteColumn', parsed.error);
+
+  const resolved = await resolveDataTableProjectId(parsed.data, 'deleteColumn', context);
+  if ('failure' in resolved) return resolved.failure;
+
+  return callColumnTool(
+    'deleteColumn',
+    { dataTableId: parsed.data.tableId, projectId: resolved.projectId, columnId: parsed.data.columnId },
+    parsed.data.timeoutMs,
+    context
+  );
+}
+
+export async function handleRenameColumn(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  const parsed = renameColumnSchema.safeParse(args);
+  if (!parsed.success) return columnInvalidArgs('renameColumn', parsed.error);
+
+  const resolved = await resolveDataTableProjectId(parsed.data, 'renameColumn', context);
+  if ('failure' in resolved) return resolved.failure;
+
+  return callColumnTool(
+    'renameColumn',
+    {
+      dataTableId: parsed.data.tableId,
+      projectId: resolved.projectId,
+      columnId: parsed.data.columnId,
+      name: parsed.data.name,
+    },
+    parsed.data.timeoutMs,
+    context
+  );
+}
+
+// ========================================================================
 // Credential Management Handlers
 // ========================================================================
 
@@ -3947,6 +4755,214 @@ export async function handleGetCredentialSchema(args: unknown, context?: Instanc
     };
   } catch (error) {
     return handleCrudError(error);
+  }
+}
+
+// ── Manage Folders ─────────────────────────────────────────────────────────
+//
+// Workflow folders (n8n public API 2.19+, licensed via feat:folders — available from
+// the registered free Community tier up). Only the folder-create route accepts the
+// `personal` project alias, so every other action resolves it through
+// N8nApiClient.resolvePersonalProjectId(). Moves use n8n's PROJECT_ROOT sentinel '0'
+// for "the project root" (folder.service.ts special-cases it; the id is reserved).
+
+/** n8n's sentinel for "the project root" in folder parent/transfer targets. */
+const FOLDER_PROJECT_ROOT = '0';
+
+const folderProjectSchema = z.object({
+  // The alias is the documented default: most folder users are on registered
+  // Community instances, which have exactly one (personal) project. The default is
+  // applied via transform, NOT .default(): ZodDefault fires only on a raw undefined,
+  // while lossy MCP clients send '' for omitted fields (issue #774) — the preprocess
+  // turns that into undefined only after the default check has already passed.
+  projectId: optionalEmptyAware(z.string().trim().min(1)).transform((v) => v ?? 'personal'),
+});
+
+const folderIdSchema = folderProjectSchema.extend({
+  folderId: z.string().trim().min(1),
+});
+
+// The published tool schema declares parentFolderId as string|null tool-wide (null is
+// how `move` addresses the project root). For create/list, null simply means "no
+// parent" — the same as omitting the field — so accept it instead of failing a
+// spec-compliant client on a Zod error.
+const nullOrEmptyToUndefined = (v: unknown) => (v === null ? undefined : emptyToUndefined(v));
+const optionalParentFolderId = z.preprocess(nullOrEmptyToUndefined, z.string().trim().min(1).optional());
+
+const createFolderSchema = folderProjectSchema.extend({
+  name: z.string().trim().min(1),
+  parentFolderId: optionalParentFolderId,
+});
+
+const listFoldersSchema = folderProjectSchema.extend({
+  nameFilter: optionalEmptyAware(z.string().trim().min(1)),
+  parentFolderId: optionalParentFolderId,
+  sortBy: z.enum(['name:asc', 'name:desc', 'createdAt:asc', 'createdAt:desc', 'updatedAt:asc', 'updatedAt:desc']).optional(),
+  skip: z.number().int().min(0).optional(),
+  take: z.number().int().min(1).max(100).optional(),
+});
+
+const renameFolderSchema = folderIdSchema.extend({
+  name: z.string().trim().min(1),
+});
+
+const moveFolderSchema = folderIdSchema.extend({
+  // null = move to the project root; mapped to the PROJECT_ROOT sentinel below.
+  parentFolderId: z.preprocess(emptyToUndefined, z.string().trim().min(1).nullable()),
+});
+
+const deleteFolderSchema = folderIdSchema.extend({
+  transferToFolderId: optionalEmptyAware(z.string().trim().min(1)),
+});
+
+/**
+ * Folder-specific error shaping on top of the generic CRUD mapping. n8n's answers here
+ * are terse: a 403 covers both a key without folder:* scopes and an instance whose
+ * license lacks feat:folders (folders unlock at the registered free Community tier);
+ * a 404 covers a missing project/folder and an instance too old to have the folders
+ * API at all (added in n8n 2.19).
+ */
+function handleFolderError(error: unknown): McpToolResponse {
+  const response = handleCrudError(error);
+  if (error instanceof N8nApiError) {
+    // n8n's own messages often end without punctuation - normalize before appending.
+    const appendHint = (hint: string) => {
+      const base = (response.error ?? '').trimEnd();
+      response.error = `${base}${/[.!?]$/.test(base) ? '' : '.'} ${hint}`;
+    };
+    if (error.statusCode === 403) {
+      appendHint('Folders need an API key with folder:* scopes AND a licensed instance: folders unlock on the registered free Community tier (Settings -> Usage and plan -> register) and up.');
+    } else if (error.statusCode === 404) {
+      appendHint('Check the projectId and folderId; on n8n older than 2.19 the folders API does not exist at all.');
+    }
+  }
+  return response;
+}
+
+/** Resolve the `personal` alias for the folder routes that require a real project ID. */
+async function resolveFolderProjectId(client: N8nApiClient, projectId: string): Promise<string> {
+  return projectId === 'personal' ? await client.resolvePersonalProjectId() : projectId;
+}
+
+/**
+ * Fields requested from the folder list endpoint. Fixed rather than caller-selectable:
+ * counts and the path breadcrumb are what make a listing useful to an agent, and the
+ * n8n default (id/name/timestamps only) would hide them.
+ */
+const FOLDER_LIST_SELECT = ['id', 'name', 'createdAt', 'updatedAt', 'parentFolder', 'workflowCount', 'subFolderCount', 'path'];
+
+export async function handleCreateFolder(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = createFolderSchema.parse(args);
+    // The create route resolves `personal` server-side - pass it through untouched.
+    const folder = await client.createFolder(input.projectId, {
+      name: input.name,
+      ...(input.parentFolderId ? { parentFolderId: input.parentFolderId } : {}),
+    });
+    if (!folder || !folder.id) {
+      return { success: false, error: 'Folder creation failed: n8n API returned an empty or invalid response' };
+    }
+    return {
+      success: true,
+      data: { id: folder.id, name: folder.name, parentFolderId: folder.parentFolderId ?? null },
+      message: `Folder "${folder.name}" created with ID: ${folder.id}. Place workflows in it via n8n_create_workflow's parentFolderId or the moveToFolder operation of n8n_update_partial_workflow.`,
+    };
+  } catch (error) {
+    return handleFolderError(error);
+  }
+}
+
+export async function handleListFolders(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = listFoldersSchema.parse(args || {});
+    const projectId = await resolveFolderProjectId(client, input.projectId);
+    const filter: Record<string, string> = {};
+    if (input.nameFilter) filter.name = input.nameFilter;
+    if (input.parentFolderId) filter.parentFolderId = input.parentFolderId;
+    const result = await client.listFolders(projectId, {
+      ...(Object.keys(filter).length > 0 ? { filter } : {}),
+      select: FOLDER_LIST_SELECT,
+      sortBy: input.sortBy ?? 'updatedAt:desc',
+      skip: input.skip ?? 0,
+      take: input.take ?? 50,
+    });
+    return {
+      success: true,
+      data: {
+        folders: result.data,
+        count: result.count, // Total matching the query, not the page size
+        projectId,
+      },
+    };
+  } catch (error) {
+    return handleFolderError(error);
+  }
+}
+
+export async function handleGetFolder(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = folderIdSchema.parse(args);
+    const projectId = await resolveFolderProjectId(client, input.projectId);
+    const folder = await client.getFolder(projectId, input.folderId);
+    return { success: true, data: { ...folder, projectId } };
+  } catch (error) {
+    return handleFolderError(error);
+  }
+}
+
+export async function handleRenameFolder(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = renameFolderSchema.parse(args);
+    const projectId = await resolveFolderProjectId(client, input.projectId);
+    const folder = await client.updateFolder(projectId, input.folderId, { name: input.name });
+    return {
+      success: true,
+      data: { id: folder.id, name: folder.name },
+      message: `Folder renamed to "${folder.name}"`,
+    };
+  } catch (error) {
+    return handleFolderError(error);
+  }
+}
+
+export async function handleMoveFolder(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = moveFolderSchema.parse(args);
+    const projectId = await resolveFolderProjectId(client, input.projectId);
+    const target = input.parentFolderId ?? FOLDER_PROJECT_ROOT;
+    const folder = await client.updateFolder(projectId, input.folderId, { parentFolderId: target });
+    return {
+      success: true,
+      data: { id: folder.id, name: folder.name, parentFolderId: folder.parentFolderId ?? null },
+      message: target === FOLDER_PROJECT_ROOT
+        ? `Folder "${folder.name}" moved to the project root`
+        : `Folder "${folder.name}" moved under folder ${target}`,
+    };
+  } catch (error) {
+    return handleFolderError(error);
+  }
+}
+
+export async function handleDeleteFolder(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = deleteFolderSchema.parse(args);
+    const projectId = await resolveFolderProjectId(client, input.projectId);
+    await client.deleteFolder(projectId, input.folderId, input.transferToFolderId);
+    return {
+      success: true,
+      data: { id: input.folderId, deleted: true },
+      message: input.transferToFolderId
+        ? `Folder ${input.folderId} deleted; contents transferred to ${input.transferToFolderId === FOLDER_PROJECT_ROOT ? 'the project root' : `folder ${input.transferToFolderId}`}`
+        : `Folder ${input.folderId} deleted; its workflows were moved to the project root and ARCHIVED, sub-folders were deleted`,
+    };
+  } catch (error) {
+    return handleFolderError(error);
   }
 }
 

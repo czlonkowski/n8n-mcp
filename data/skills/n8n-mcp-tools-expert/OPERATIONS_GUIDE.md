@@ -69,17 +69,18 @@ n8n_deploy_template({
 ## Data Table Management
 
 > **Two surfaces, don't confuse them:**
-> - **`n8n_manage_datatable` (below)** — MCP tool for managing tables and rows from *outside* a workflow (e.g. creating tables during workflow scaffolding, seeding data, or inspecting state from Claude). Covered here.
+> - **`n8n_manage_datatable` (below)** — MCP tool for managing tables, rows and columns from *outside* a workflow (e.g. creating tables during workflow scaffolding, seeding data, or inspecting state from Claude). Covered here.
 > - **`nodes-base.dataTable` node** — the in-workflow node you drop into a workflow to read/write rows *during execution*. For its parameter shapes, operation values, filter syntax, and gotchas (e.g. the `deleteRows` reserved-word workaround, the `id isNotEmpty` trick for "all rows"), see [n8n-node-configuration → OPERATION_PATTERNS.md → Storage Nodes → Data Table](../n8n-node-configuration/OPERATION_PATTERNS.md#data-table-nodes-basedatatable).
 >
 > Rule of thumb: use the MCP tool to set up a table once and the workflow node to read/write rows on every execution.
 
 ### n8n_manage_datatable
 
-Unified tool for managing n8n data tables and rows. Supports CRUD operations on tables and rows with filtering, pagination, and dry-run support.
+Unified tool for managing n8n data tables, their rows and their columns. Supports CRUD operations on tables and rows with filtering, pagination, and dry-run support, plus column changes through n8n's MCP server.
 
 **Table Actions**: `createTable`, `listTables`, `getTable`, `updateTable`, `deleteTable`
 **Row Actions**: `getRows`, `insertRows`, `updateRows`, `upsertRows`, `deleteRows`
+**Column Actions** (n8n's MCP server, `N8N_MCP_ACCESS_TOKEN`, n8n 2.34+): `addColumn`, `deleteColumn`, `renameColumn`
 
 ```javascript
 // Create a data table
@@ -128,6 +129,36 @@ n8n_manage_datatable({
   returnData: true
 })
 ```
+
+```javascript
+// Column actions: the Public API cannot change columns after a table exists,
+// so these run through n8n's MCP server. projectId is the project owning the
+// table; when omitted it is resolved from the instance's projects (PROJECT_REQUIRED
+// asks for it when more than one project could own the table).
+n8n_manage_datatable({
+  action: "addColumn",
+  tableId: "dt-123",
+  column: {name: "status", type: "string"}   // letters/digits/underscores, starts with a letter, max 63 chars
+})
+
+n8n_manage_datatable({
+  action: "renameColumn",
+  tableId: "dt-123",
+  columnId: "col-456",   // from getTable
+  name: "state"
+})
+
+// deleteColumn drops the column's VALUES with it, and there is no undo.
+// A column's type cannot be changed after creation, so "make this column a number"
+// means drop-and-re-add — read the values out with getRows first if they matter.
+n8n_manage_datatable({
+  action: "deleteColumn",
+  tableId: "dt-123",
+  columnId: "col-456"
+})
+```
+
+Column types are `string`, `number`, `boolean` and `date`. The column actions also accept `timeoutMs` (5000-600000, default 30000).
 
 **Filter conditions**: `eq`, `neq`, `like`, `ilike`, `gt`, `gte`, `lt`, `lte`
 

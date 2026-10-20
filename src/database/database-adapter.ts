@@ -116,7 +116,8 @@ async function createBetterSQLiteAdapter(dbPath: string): Promise<DatabaseAdapte
 /**
  * Create sql.js adapter with persistence
  */
-async function createSQLJSAdapter(dbPath: string): Promise<DatabaseAdapter> {
+/** Exported for tests that must exercise the sql.js path on a machine where better-sqlite3 loads. */
+export async function createSQLJSAdapter(dbPath: string): Promise<DatabaseAdapter> {
   let initSqlJs;
   try {
     initSqlJs = require('sql.js');

@@ -3,27 +3,42 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --config vite.lab.config.ts --host 127.0.0.1",
     "build": "APP_NAME=operation-result vite build && APP_NAME=validation-summary vite build && APP_NAME=workflow-list vite build && APP_NAME=execution-history vite build && APP_NAME=health-dashboard vite build",
     "build:operation-result": "APP_NAME=operation-result vite build",
     "build:validation-summary": "APP_NAME=validation-summary vite build",
     "build:workflow-list": "APP_NAME=workflow-list vite build",
     "build:execution-history": "APP_NAME=execution-history vite build",
     "build:health-dashboard": "APP_NAME=health-dashboard vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "test:coverage": "vitest run --config vitest.config.ts --coverage",
+    "test:browser": "playwright test",
+    "check": "npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^1.0.1",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^6.0.3",
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.64.0",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "@vitest/coverage-v8": "4.1.11",
+    "jsdom": "26.1.0",
     "typescript": "^6.0.3",
-    "vite": "^8.1.3",
-    "vite-plugin-singlefile": "^2.0.0"
+    "vite": "^8.3.4",
+    "vite-plugin-singlefile": "^2.0.0",
+    "vitest": "4.1.11"
   }
 }

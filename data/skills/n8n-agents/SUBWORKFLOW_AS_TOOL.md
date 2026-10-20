@@ -174,9 +174,12 @@ Name them with a standard prefix (`Subworkflow:` or domain-specific). The Tool W
 
 A sub-workflow tool can be tested without the agent:
 
-1. Pin representative input on the Execute Workflow Trigger.
-2. `n8n_test_workflow` runs it with that pinned data.
-3. Verify the output shape matches what the agent will receive.
+1. `n8n_test_workflow({workflowId, method: "prepare"})` — which nodes need pinned data.
+2. Build one sample item per node, keyed by node **name**, each wrapped as `{json: {...}}`.
+3. `n8n_test_workflow({workflowId, method: "pinned", pinData})` runs it with that data and waits.
+4. Verify the output shape matches what the agent will receive.
+
+The routed methods need `N8N_MCP_ACCESS_TOKEN` and the workflow's "Available in MCP" setting; the default `method: "auto"` cannot run a sub-workflow, which has no HTTP trigger.
 
 ---
 

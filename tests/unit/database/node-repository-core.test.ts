@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NodeRepository } from '../../../src/database/node-repository';
 import { DatabaseAdapter, PreparedStatement, RunResult } from '../../../src/database/database-adapter';
 import { ParsedNode } from '../../../src/parsers/node-parser';
+import { compressColumnJson, decompressColumnJson, isCompressedColumn } from '../../../src/database/compressed-column';
 
 // Create a complete mock for DatabaseAdapter
 class MockDatabaseAdapter implements DatabaseAdapter {
@@ -116,9 +117,9 @@ describe('NodeRepository - Core Functionality', () => {
         0, // hasToolVariant
         '1.0',
         'HTTP Request documentation',
-        JSON.stringify([{ name: 'url', type: 'string' }], null, 2),
-        JSON.stringify([{ name: 'execute', displayName: 'Execute' }], null, 2),
-        JSON.stringify([{ name: 'httpBasicAuth' }], null, 2),
+        JSON.stringify([{ name: 'url', type: 'string' }]), // compact; gzip+base64 once large (#1067)
+        JSON.stringify([{ name: 'execute', displayName: 'Execute' }]),
+        JSON.stringify([{ name: 'httpBasicAuth' }]),
         null, // outputs
         null, // outputNames
         0, // isCommunity
@@ -404,7 +405,10 @@ describe('NodeRepository - Core Functionality', () => {
       const runCall = stmt?.run.mock.lastCall;
       const savedProperties = runCall?.[15]; // was 12, now 15 after 3 new columns
 
-      expect(savedProperties).toBe(JSON.stringify(largeProperties, null, 2));
+      // Large schemas are stored gzip+base64 (#1067); the stored form must inflate to the input
+      expect(savedProperties).toBe(compressColumnJson(largeProperties));
+      expect(isCompressedColumn(savedProperties)).toBe(true);
+      expect(decompressColumnJson(savedProperties, [])).toEqual(largeProperties);
     });
     
     it('should handle boolean conversion for integer fields', () => {

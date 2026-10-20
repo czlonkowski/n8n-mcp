@@ -4,7 +4,7 @@ import { TelemetryEvent, WorkflowTelemetry, WorkflowMutationRecord, TELEMETRY_CO
 import { TelemetryError, TelemetryErrorType } from '../../../src/telemetry/telemetry-error';
 import { IntentClassification, MutationToolName } from '../../../src/telemetry/mutation-types';
 import { AddNodeOperation } from '../../../src/types/workflow-diff';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { IngestClient } from '../../../src/telemetry/ingest-client';
 
 // Mock logger to avoid console output in tests
 vi.mock('../../../src/utils/logger', () => ({
@@ -19,7 +19,7 @@ vi.mock('../../../src/utils/logger', () => ({
 describe('TelemetryBatchProcessor', () => {
   const TEST_OPERATION_TIMEOUT = 100;
   let batchProcessor: TelemetryBatchProcessor;
-  let mockSupabase: SupabaseClient;
+  let mockSupabase: IngestClient;
   let mockIsEnabled: ReturnType<typeof vi.fn>;
   let mockProcessExit: MockInstance;
 
@@ -46,7 +46,6 @@ describe('TelemetryBatchProcessor', () => {
   const createMutationRecord = (index: number): WorkflowMutationRecord => ({
     userId: `mutation-user-${index}`,
     sessionId: `mutation-session-${index}`,
-    workflowBefore: { nodes: [], connections: {} },
     workflowAfter: { nodes: [], connections: {} },
     workflowHashBefore: `before-${index}`,
     workflowHashAfter: `after-${index}`,
@@ -371,16 +370,352 @@ describe('TelemetryBatchProcessor', () => {
       );
     });
 
-    it('should retain every unattempted mutation batch after a failure', async () => {
+    it('should drop a failed mutation batch, send the rest, and never retry it', async () => {
       const mutations = Array.from({ length: 60 }, (_, index) =>
         createMutationRecord(index)
       );
+      const insert = vi.fn()
+        .mockResolvedValueOnce(createMockSupabaseResponse(new Error('First batch timed out')))
+        .mockResolvedValue(createMockSupabaseResponse());
+      vi.mocked(mockSupabase.from).mockImplementation((requestedTable) => ({
+        insert: requestedTable === 'workflow_mutations'
+          ? insert
+          : vi.fn().mockResolvedValue(createMockSupabaseResponse()),
+        url: { href: '' },
+        headers: {},
+        select: vi.fn(),
+        upsert: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn()
+      } as any));
 
-      await expectAllUnsentBatchesRetried(
-        'workflow_mutations',
-        mutations.length,
-        () => batchProcessor.flush(undefined, undefined, mutations)
-      );
+      await batchProcessor.flush(undefined, undefined, mutations);
+
+      // Both batches were attempted once: the second batch is independent of the first.
+      expect(insert).toHaveBeenCalledTimes(2);
+      expect(insert.mock.calls[1][0]).toHaveLength(10);
+      expect(batchProcessor.getMetrics()).toMatchObject({
+        eventsTracked: 10,
+        eventsFailed: 50,
+        eventsDropped: 50,
+        batchesSent: 1,
+        batchesFailed: 1,
+        deadLetterQueueSize: 0,
+      });
+
+      // A later healthy flush must not replay the failed batch.
+      await batchProcessor.flush([]);
+      expect(insert).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // Round 2 fix: MAX_BATCH_SIZE bounds row *count* (50), but a sanitized
+  // workflow or a workflow-mutation payload can be huge, so a 50-row batch
+  // can still blow past the server's per-stream byte cap. Batches must also
+  // split on serialized byte size.
+  describe('byte-aware batching (round 2)', () => {
+    it('splits an events batch so no single insert exceeds the stream byte limit, even under MAX_BATCH_SIZE', async () => {
+      // 5 events well under the 50-row cap, but their combined JSON size
+      // comfortably exceeds the 256 KiB events limit.
+      const blob = 'x'.repeat(90 * 1024);
+      const events: TelemetryEvent[] = Array.from({ length: 5 }, (_, i) => ({
+        user_id: `user${i}`,
+        event: 'big_event',
+        properties: { blob, index: i }
+      }));
+      expect(Buffer.byteLength(JSON.stringify(events))).toBeGreaterThan(TELEMETRY_CONFIG.MAX_BATCH_BYTES_EVENTS);
+
+      await batchProcessor.flush(events);
+
+      const insert = vi.mocked(mockSupabase.from('telemetry_events').insert);
+      expect(insert.mock.calls.length).toBeGreaterThan(1);
+
+      let totalSent = 0;
+      for (const [batch] of insert.mock.calls) {
+        expect(Buffer.byteLength(JSON.stringify(batch))).toBeLessThanOrEqual(TELEMETRY_CONFIG.MAX_BATCH_BYTES_EVENTS);
+        totalSent += (batch as unknown[]).length;
+      }
+      expect(totalSent).toBe(5);
+
+      const metrics = batchProcessor.getMetrics();
+      expect(metrics.eventsTracked).toBe(5);
+      expect(metrics.batchesFailed).toBe(0);
+    });
+
+    it('sends a single row larger than the stream limit alone, without splitting it', async () => {
+      const hugeBlob = 'x'.repeat(300 * 1024); // > 256 KiB alone
+      const events: TelemetryEvent[] = [
+        { user_id: 'huge', event: 'oversized_event', properties: { blob: hugeBlob } },
+        { user_id: 'small', event: 'small_event', properties: {} }
+      ];
+
+      await batchProcessor.flush(events);
+
+      const insert = vi.mocked(mockSupabase.from('telemetry_events').insert);
+      expect(insert.mock.calls.length).toBe(2);
+
+      const firstBatch = insert.mock.calls[0][0] as any[];
+      const secondBatch = insert.mock.calls[1][0] as any[];
+      expect(firstBatch).toHaveLength(1);
+      expect(firstBatch[0].user_id).toBe('huge');
+      expect(Buffer.byteLength(JSON.stringify(firstBatch))).toBeGreaterThan(TELEMETRY_CONFIG.MAX_BATCH_BYTES_EVENTS);
+
+      expect(secondBatch).toHaveLength(1);
+      expect(secondBatch[0].user_id).toBe('small');
+    });
+
+    it('applies the workflows byte limit too', async () => {
+      // 1 MiB limit; two ~600 KiB blobs together don't fit in one batch.
+      const blob = 'x'.repeat(600 * 1024);
+      const workflows: WorkflowTelemetry[] = [
+        { ...createWorkflowTelemetry(0), sanitized_workflow: { blob } },
+        { ...createWorkflowTelemetry(1), sanitized_workflow: { blob } }
+      ];
+
+      await batchProcessor.flush(undefined, workflows);
+
+      const insert = vi.mocked(mockSupabase.from('telemetry_workflows').insert);
+      expect(insert.mock.calls.length).toBe(2);
+      for (const [batch] of insert.mock.calls) {
+        expect(Buffer.byteLength(JSON.stringify(batch))).toBeLessThanOrEqual(TELEMETRY_CONFIG.MAX_BATCH_BYTES_WORKFLOWS);
+      }
+    });
+
+    it('applies the mutations byte limit after snake_case conversion', async () => {
+      // 2 MiB limit; two ~1.2 MiB blobs together don't fit in one batch.
+      const blob = 'x'.repeat(1200 * 1024);
+      const mutations: WorkflowMutationRecord[] = [0, 1].map(index => ({
+        ...createMutationRecord(index),
+        workflowAfter: { blob }
+      }));
+
+      await batchProcessor.flush(undefined, undefined, mutations);
+
+      const insert = vi.mocked(mockSupabase.from('workflow_mutations').insert);
+      expect(insert.mock.calls.length).toBe(2);
+      for (const [batch] of insert.mock.calls) {
+        expect(Buffer.byteLength(JSON.stringify(batch))).toBeLessThanOrEqual(TELEMETRY_CONFIG.MAX_BATCH_BYTES_MUTATIONS);
+      }
+    });
+  });
+
+  // Round 3 made an unserializable payload (BigInt, circular reference) a
+  // non-crashing failure. Round 4 corrects how it fails: a payload that
+  // cannot be serialized is a LOCAL data problem, not a server/network one.
+  // Only the poison item is dropped (counted in eventsDropped); every other
+  // item in the same flush is sent normally. Nothing is parked in the dead
+  // letter queue (a replay would hit the same item again forever) and the
+  // circuit breaker never records a failure for it (with a healthy server it
+  // used to trip with zero network errors and never close again).
+  describe('unserializable items are dropped locally (round 4)', () => {
+    const goodEvent = (i: number): TelemetryEvent => ({
+      user_id: `good-user-${i}`,
+      event: 'good_event',
+      properties: { index: i }
+    });
+
+    const tableMocks = () => {
+      const inserts: Record<string, ReturnType<typeof vi.fn>> = {
+        telemetry_events: vi.fn().mockResolvedValue(createMockSupabaseResponse()),
+        telemetry_workflows: vi.fn().mockResolvedValue(createMockSupabaseResponse()),
+        workflow_mutations: vi.fn().mockResolvedValue(createMockSupabaseResponse()),
+      };
+      vi.mocked(mockSupabase.from).mockImplementation((table) => ({
+        insert: inserts[table as string],
+        url: { href: '' },
+        headers: {},
+        select: vi.fn(),
+        upsert: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn()
+      } as any));
+      return inserts;
+    };
+
+    const expectHealthy = () => {
+      const metrics = batchProcessor.getMetrics();
+      expect(metrics.deadLetterQueueSize).toBe(0);
+      expect(metrics.circuitBreakerState.state).toBe('closed');
+      expect(metrics.circuitBreakerState.failureCount).toBe(0);
+    };
+
+    // 10 idle ticks (nothing queued) and 10 real ticks (one good event each)
+    // against a healthy server: the breaker must stay closed throughout and
+    // every real tick must reach the network.
+    const runSubsequentTicks = async (insertEvents: ReturnType<typeof vi.fn>) => {
+      const before = insertEvents.mock.calls.length;
+      for (let i = 0; i < 10; i++) {
+        await batchProcessor.flush([]);
+        expectHealthy();
+      }
+      for (let i = 0; i < 10; i++) {
+        await batchProcessor.flush([goodEvent(100 + i)]);
+        expectHealthy();
+      }
+      expect(insertEvents.mock.calls.length - before).toBe(10);
+    };
+
+    it('(a) a BigInt event is dropped, the good event in the same flush is sent, DLQ empty, breaker closed', async () => {
+      const inserts = tableMocks();
+      const events: TelemetryEvent[] = [
+        { user_id: 'user1', event: 'bad_event', properties: { huge: BigInt(1) } as any },
+        goodEvent(0)
+      ];
+
+      await expect(batchProcessor.flush(events)).resolves.toBeUndefined();
+
+      expect(inserts.telemetry_events).toHaveBeenCalledTimes(1);
+      expect(inserts.telemetry_events).toHaveBeenCalledWith([goodEvent(0)]);
+      const metrics = batchProcessor.getMetrics();
+      expect(metrics.eventsDropped).toBe(1);
+      expect(metrics.eventsTracked).toBe(1);
+      expect(metrics.eventsFailed).toBe(0);
+      expect(metrics.batchesFailed).toBe(0);
+      expectHealthy();
+
+      await runSubsequentTicks(inserts.telemetry_events);
+    });
+
+    it('(b) a circular workflow is dropped, the good workflow in the same flush is sent, DLQ empty, breaker closed', async () => {
+      const inserts = tableMocks();
+      const circular: any = { nodes: [] };
+      circular.self = circular;
+      const workflows: WorkflowTelemetry[] = [
+        { ...createWorkflowTelemetry(0), sanitized_workflow: circular },
+        createWorkflowTelemetry(1)
+      ];
+
+      await expect(batchProcessor.flush(undefined, workflows)).resolves.toBeUndefined();
+
+      expect(inserts.telemetry_workflows).toHaveBeenCalledTimes(1);
+      expect(inserts.telemetry_workflows).toHaveBeenCalledWith([createWorkflowTelemetry(1)]);
+      const metrics = batchProcessor.getMetrics();
+      expect(metrics.eventsDropped).toBe(1);
+      expect(metrics.eventsTracked).toBe(1);
+      expect(metrics.eventsFailed).toBe(0);
+      expectHealthy();
+
+      await runSubsequentTicks(inserts.telemetry_events);
+    });
+
+    it('(c) an undefined item is dropped, the good event in the same flush is sent, DLQ empty, breaker closed', async () => {
+      const inserts = tableMocks();
+      const events = [undefined, goodEvent(0)] as unknown as TelemetryEvent[];
+
+      await expect(batchProcessor.flush(events)).resolves.toBeUndefined();
+
+      expect(inserts.telemetry_events).toHaveBeenCalledTimes(1);
+      expect(inserts.telemetry_events).toHaveBeenCalledWith([goodEvent(0)]);
+      expect(batchProcessor.getMetrics().eventsDropped).toBe(1);
+      expectHealthy();
+
+      await runSubsequentTicks(inserts.telemetry_events);
+    });
+
+    it('an item whose toJSON returns undefined is dropped like an undefined item', async () => {
+      const inserts = tableMocks();
+      const events = [
+        { user_id: 'user1', event: 'bad_event', properties: {}, toJSON: () => undefined },
+        goodEvent(0)
+      ] as unknown as TelemetryEvent[];
+
+      await expect(batchProcessor.flush(events)).resolves.toBeUndefined();
+
+      expect(inserts.telemetry_events).toHaveBeenCalledWith([goodEvent(0)]);
+      expect(batchProcessor.getMetrics().eventsDropped).toBe(1);
+      expectHealthy();
+    });
+
+    it('(d) a null element in the mutations array is dropped, other mutations are sent, no throw', async () => {
+      const inserts = tableMocks();
+      const mutations = [createMutationRecord(0), null, createMutationRecord(1)] as unknown as WorkflowMutationRecord[];
+
+      await expect(batchProcessor.flush(undefined, undefined, mutations)).resolves.toBeUndefined();
+
+      expect(inserts.workflow_mutations).toHaveBeenCalledTimes(1);
+      const sent = inserts.workflow_mutations.mock.calls[0][0] as Record<string, any>[];
+      expect(sent.map(row => row.user_id)).toEqual(['mutation-user-0', 'mutation-user-1']);
+      const metrics = batchProcessor.getMetrics();
+      expect(metrics.eventsDropped).toBe(1);
+      expect(metrics.eventsTracked).toBe(2);
+      expectHealthy();
+
+      await runSubsequentTicks(inserts.telemetry_events);
+    });
+
+    it('a BigInt mutation payload is dropped, sibling mutations are sent, breaker closed', async () => {
+      const inserts = tableMocks();
+      const mutations: WorkflowMutationRecord[] = [
+        { ...createMutationRecord(0), workflowAfter: { huge: BigInt(1) } as any },
+        createMutationRecord(1)
+      ];
+
+      await expect(batchProcessor.flush(undefined, undefined, mutations)).resolves.toBeUndefined();
+
+      expect(inserts.workflow_mutations).toHaveBeenCalledTimes(1);
+      const sent = inserts.workflow_mutations.mock.calls[0][0] as Record<string, any>[];
+      expect(sent.map(row => row.user_id)).toEqual(['mutation-user-1']);
+      expect(batchProcessor.getMetrics().eventsDropped).toBe(1);
+      expectHealthy();
+    });
+
+    it('a null element in the workflows array is dropped before deduplication, no throw', async () => {
+      const inserts = tableMocks();
+      const workflows = [null, createWorkflowTelemetry(0)] as unknown as WorkflowTelemetry[];
+
+      await expect(batchProcessor.flush(undefined, workflows)).resolves.toBeUndefined();
+
+      expect(inserts.telemetry_workflows).toHaveBeenCalledWith([createWorkflowTelemetry(0)]);
+      expect(batchProcessor.getMetrics().eventsDropped).toBe(1);
+      expectHealthy();
+    });
+
+    it('a poison item does not stop sibling streams in the same flush', async () => {
+      const inserts = tableMocks();
+      const events: TelemetryEvent[] = [
+        { user_id: 'user1', event: 'bad_event', properties: { huge: BigInt(1) } as any }
+      ];
+
+      await expect(batchProcessor.flush(events, [createWorkflowTelemetry(0)], [createMutationRecord(0)]))
+        .resolves.toBeUndefined();
+
+      expect(inserts.telemetry_events).not.toHaveBeenCalled();
+      expect(inserts.telemetry_workflows).toHaveBeenCalledTimes(1);
+      expect(inserts.workflow_mutations).toHaveBeenCalledTimes(1);
+      expect(batchProcessor.getMetrics().eventsDropped).toBe(1);
+      expectHealthy();
+    });
+
+    // A flush made only of poison items has nothing to send once they are
+    // dropped, so it must not touch the breaker at all — in particular it
+    // must not spend a half-open probe slot (or perform the open->half-open
+    // transition) without a real request to record the outcome of.
+    it('a poison-only flush never consumes the breaker, so recovery after an outage still works', async () => {
+      const errorResponse = createMockSupabaseResponse(new Error('Persistent error'));
+      vi.mocked(mockSupabase.from('workflow_mutations').insert).mockResolvedValue(errorResponse);
+      for (let i = 0; i < 5; i++) {
+        await batchProcessor.flush(undefined, undefined, [createMutationRecord(i)]);
+      }
+      expect(batchProcessor.getMetrics().circuitBreakerState.state).toBe('open');
+
+      vi.advanceTimersByTime(60_001);
+
+      const poison: TelemetryEvent[] = [
+        { user_id: 'user1', event: 'bad_event', properties: { huge: BigInt(1) } as any }
+      ];
+      for (let i = 0; i < 5; i++) {
+        await expect(batchProcessor.flush(poison)).resolves.toBeUndefined();
+      }
+      expect(batchProcessor.getMetrics().circuitBreakerState.state).toBe('open');
+      expect(batchProcessor.getMetrics().circuitBreakerState.failureCount).toBe(5);
+      expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(0);
+
+      vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue(createMockSupabaseResponse());
+      for (let i = 0; i < 4; i++) {
+        await batchProcessor.flush([goodEvent(i)]);
+      }
+      expect(batchProcessor.getMetrics().circuitBreakerState.state).toBe('closed');
+      expect(batchProcessor.getMetrics().eventsTracked).toBe(4);
     });
   });
 
@@ -421,7 +756,7 @@ describe('TelemetryBatchProcessor', () => {
 
       await batchProcessor.flush(undefined, workflows);
 
-      const insertCall = vi.mocked(mockSupabase.from('telemetry_workflows').insert).mock.calls[0][0];
+      const insertCall = vi.mocked(mockSupabase.from('telemetry_workflows').insert).mock.calls[0][0] as WorkflowTelemetry[];
       expect(insertCall).toHaveLength(2); // Should deduplicate to 2 workflows
 
       const hashes = insertCall.map((w: WorkflowTelemetry) => w.workflow_hash);
@@ -528,6 +863,114 @@ describe('TelemetryBatchProcessor', () => {
       expect(metrics.deadLetterQueueSize).toBe(2);
     });
 
+    // Task 9: the ingest client's status contract distinguishes a server-side
+    // drop (400/413 — never retryable, not an error) from an error (429/5xx/
+    // network — retryable, goes through the existing dead-letter path).
+    describe('ingest client dropped vs. error contract', () => {
+      it('a dropped result (400/413) does not go to the dead letter queue', async () => {
+        vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue({
+          data: null,
+          error: null,
+          dropped: true,
+          status: 400,
+          statusText: 'Bad Request',
+          count: null,
+          success: true,
+        } as any);
+
+        const events: TelemetryEvent[] = [
+          { user_id: 'user1', event: 'event1', properties: {} }
+        ];
+
+        await batchProcessor.flush(events);
+
+        const metrics = batchProcessor.getMetrics();
+        expect(metrics.deadLetterQueueSize).toBe(0);
+        expect(metrics.eventsDropped).toBe(1);
+        expect(metrics.eventsFailed).toBe(0);
+        expect(metrics.batchesSent).toBe(1);
+        expect(metrics.batchesFailed).toBe(0);
+      });
+
+      it('an error result (429/5xx) does go to the dead letter queue', async () => {
+        vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue({
+          data: null,
+          error: { message: 'telemetry ingest HTTP 503', status: 503 },
+          status: 503,
+          statusText: 'Service Unavailable',
+          count: null,
+          success: false,
+        } as any);
+
+        const events: TelemetryEvent[] = [
+          { user_id: 'user1', event: 'event1', properties: {} }
+        ];
+
+        await batchProcessor.flush(events);
+
+        const metrics = batchProcessor.getMetrics();
+        expect(metrics.deadLetterQueueSize).toBe(1);
+        expect(metrics.eventsFailed).toBe(1);
+        expect(metrics.batchesFailed).toBe(1);
+      });
+    });
+
+    // Round 2 fix: a dead-letter replay is a real network attempt like any
+    // other, so its own outcome must feed the circuit breaker too. Before this
+    // fix, a scheduled flush with nothing new to send (events=[]) always
+    // recorded a breaker *success* regardless of whether the DLQ replay
+    // buried inside it succeeded or failed — so a permanently-down server
+    // (or a persistent 429) never opened the circuit and the DLQ was replayed,
+    // unthrottled, on every single flush interval forever.
+    describe('dead-letter replay feeds the circuit breaker (round 2)', () => {
+      it('a persistently failing replay eventually opens the circuit, instead of replaying forever unthrottled', async () => {
+        const errorResponse = createMockSupabaseResponse(new Error('Persistent 503'));
+        vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue(errorResponse);
+
+        const events: TelemetryEvent[] = [
+          { user_id: 'user1', event: 'event1', properties: {} }
+        ];
+
+        // First flush fails outright: breaker failure #1, event parked in the DLQ.
+        await batchProcessor.flush(events);
+        expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(1);
+        expect(batchProcessor.getMetrics().circuitBreakerState.failureCount).toBe(1);
+
+        // Every later flush carries no new data, but the DLQ replay inside it
+        // keeps hitting the same failing endpoint — each one must still count.
+        await batchProcessor.flush([]);
+        await batchProcessor.flush([]);
+        await batchProcessor.flush([]);
+        await batchProcessor.flush([]);
+
+        const metrics = batchProcessor.getMetrics();
+        expect(metrics.circuitBreakerState.failureCount).toBe(5);
+        expect(metrics.circuitBreakerState.state).toBe('open');
+      });
+
+      it('a successful replay records a circuit-breaker success and clears the dead letter queue', async () => {
+        const errorResponse = createMockSupabaseResponse(new Error('Temporary error'));
+        const insert = vi.mocked(mockSupabase.from('telemetry_events').insert);
+        insert.mockResolvedValueOnce(errorResponse);
+
+        const events: TelemetryEvent[] = [
+          { user_id: 'user1', event: 'event1', properties: {} }
+        ];
+
+        await batchProcessor.flush(events);
+        expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(1);
+        expect(batchProcessor.getMetrics().circuitBreakerState.failureCount).toBe(1);
+
+        insert.mockResolvedValue(createMockSupabaseResponse());
+        await batchProcessor.flush([]);
+
+        const metrics = batchProcessor.getMetrics();
+        expect(metrics.deadLetterQueueSize).toBe(0);
+        expect(metrics.circuitBreakerState.failureCount).toBe(0);
+        expect(metrics.circuitBreakerState.state).toBe('closed');
+      });
+    });
+
     it('should process dead letter queue when circuit is healthy', async () => {
       const error = new Error('Temporary error');
       const errorResponse = createMockSupabaseResponse(error);
@@ -570,7 +1013,7 @@ describe('TelemetryBatchProcessor', () => {
       expect(metrics.eventsDropped).toBe(50);
     });
 
-    it('should retry failed workflow mutations through the mutation table', async () => {
+    it('should not park a failed workflow mutation in the dead letter queue', async () => {
       const errorResponse = createMockSupabaseResponse(new Error('Temporary mutation error'));
       const mutationInsert = vi.fn()
         .mockResolvedValueOnce(errorResponse)
@@ -590,7 +1033,6 @@ describe('TelemetryBatchProcessor', () => {
       const mutation: WorkflowMutationRecord = {
         userId: 'user1',
         sessionId: 'session1',
-        workflowBefore: { nodes: [], connections: {} },
         workflowAfter: { nodes: [], connections: {} },
         workflowHashBefore: 'hash1',
         workflowHashAfter: 'hash2',
@@ -614,14 +1056,19 @@ describe('TelemetryBatchProcessor', () => {
       };
 
       await batchProcessor.flush(undefined, undefined, [mutation]);
-      expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(1);
+      expect(batchProcessor.getMetrics()).toMatchObject({
+        eventsFailed: 1,
+        eventsDropped: 1,
+        batchesFailed: 1,
+        deadLetterQueueSize: 0,
+      });
 
+      // The insert may have committed despite the reported failure, so a
+      // replay would duplicate the row. Nothing is sent again.
       await batchProcessor.flush([]);
 
-      expect(mutationInsert).toHaveBeenCalledTimes(2);
+      expect(mutationInsert).toHaveBeenCalledTimes(1);
       expect(eventInsert).not.toHaveBeenCalled();
-      expect(mockSupabase.from).toHaveBeenNthCalledWith(1, 'workflow_mutations');
-      expect(mockSupabase.from).toHaveBeenNthCalledWith(2, 'workflow_mutations');
       expect(mutationInsert).toHaveBeenLastCalledWith([
         expect.objectContaining({
           user_id: 'user1',
@@ -629,7 +1076,6 @@ describe('TelemetryBatchProcessor', () => {
           workflow_hash_after: 'hash2'
         })
       ]);
-      expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(0);
     });
 
     it('should handle mixed events and workflows in dead letter queue', async () => {
@@ -708,6 +1154,76 @@ describe('TelemetryBatchProcessor', () => {
 
       const metrics = batchProcessor.getMetrics();
       expect(metrics.circuitBreakerState.failureCount).toBeGreaterThan(0);
+    });
+
+    // Round 3, CRITICAL: shouldAllow() has side effects (it performs the
+    // open->half-open transition and consumes one of a limited number of
+    // half-open probe slots on every call that returns true). Before this
+    // fix, flushQueuedBatch called shouldAllow() on every tick regardless of
+    // whether there was anything to send, and getState()/getMetrics() called
+    // it too just to read canRetry. Once a real server outage opened the
+    // circuit, the very next idle scheduled flush (every 60s, with empty
+    // queues) or even just a status read would silently burn through the
+    // half-open slots with nothing to show for them, permanently wedging the
+    // breaker half-open — real events queued after that point were dropped
+    // forever, with no way to recover short of a process restart.
+    it('idle flush ticks and getMetrics() reads never consume half-open probe slots, so recovery still succeeds after the circuit opens', async () => {
+      // Open the circuit with mutation failures specifically: mutations are
+      // never parked in the dead letter queue (see flushMutations), so this
+      // opens the breaker while leaving the DLQ genuinely empty. That
+      // isolates the "truly nothing to do" no-op path (this fix) from the
+      // "DLQ has a backlog to replay" path (round 2's separate fix, tested
+      // elsewhere) — a non-empty DLQ is real work and legitimately still
+      // calls shouldAllow() on every tick.
+      const errorResponse = createMockSupabaseResponse(new Error('Persistent error'));
+      vi.mocked(mockSupabase.from('workflow_mutations').insert).mockResolvedValue(errorResponse);
+
+      for (let i = 0; i < 5; i++) {
+        await batchProcessor.flush(undefined, undefined, [createMutationRecord(i)]);
+      }
+      expect(batchProcessor.getMetrics().circuitBreakerState.state).toBe('open');
+      expect(batchProcessor.getMetrics().circuitBreakerState.failureCount).toBe(5);
+      expect(batchProcessor.getMetrics().deadLetterQueueSize).toBe(0);
+
+      // Advance past the reset timeout (default 60s).
+      vi.advanceTimersByTime(60_001);
+
+      // Idle ticks: nothing queued, nothing in the dead letter queue. These
+      // must be a complete no-op for the breaker — reading state, including
+      // via a scheduled flush with empty arrays, must never spend a
+      // half-open probe that a real request would have needed.
+      for (let i = 0; i < 5; i++) {
+        await batchProcessor.flush([]);
+      }
+      for (let i = 0; i < 5; i++) {
+        batchProcessor.getMetrics();
+      }
+      // Still 'open' — nothing above should have touched the breaker at all
+      // (no premature open->half-open transition from a mere read or a
+      // no-op tick).
+      expect(batchProcessor.getMetrics().circuitBreakerState.state).toBe('open');
+
+      // Real data now arrives. Recovery must still work: the first attempt
+      // performs the open->half-open transition itself (free, no probe
+      // consumed), then the default halfOpenRequests (3) successful probes
+      // close the circuit — 4 real sends in total.
+      vi.mocked(mockSupabase.from('telemetry_events').insert).mockResolvedValue(createMockSupabaseResponse());
+      const events: TelemetryEvent[] = [
+        { user_id: 'user1', event: 'test_event', properties: {} }
+      ];
+      await batchProcessor.flush(events);
+      await batchProcessor.flush(events);
+      await batchProcessor.flush(events);
+      await batchProcessor.flush(events);
+
+      const metrics = batchProcessor.getMetrics();
+      expect(metrics.circuitBreakerState.state).toBe('closed');
+      expect(metrics.circuitBreakerState.failureCount).toBe(0);
+      // All 4 real event sends actually went through and succeeded (the
+      // shared mock's own call count also includes the 5 earlier mutation
+      // attempts, so eventsTracked — this processor's own bookkeeping — is
+      // the meaningful count here).
+      expect(metrics.eventsTracked).toBe(4);
     });
   });
 
@@ -870,7 +1386,6 @@ describe('TelemetryBatchProcessor', () => {
       const mutation = {
         userId: 'mutation-user',
         sessionId: 'concurrent-session',
-        workflowBefore: { nodes: [], connections: {} },
         workflowAfter: { nodes: [], connections: {} },
         workflowHashBefore: 'before',
         workflowHashAfter: 'after',
@@ -1051,10 +1566,6 @@ describe('TelemetryBatchProcessor', () => {
       const mutation: WorkflowMutationRecord = {
         userId: 'user1',
         sessionId: 'session1',
-        workflowBefore: {
-          nodes: [],
-          connections: {}
-        },
         workflowAfter: {
           nodes: [
             { id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0], parameters: {} }
@@ -1126,7 +1637,6 @@ describe('TelemetryBatchProcessor', () => {
       const mutation: WorkflowMutationRecord = {
         userId: 'user1',
         sessionId: 'session1',
-        workflowBefore: { nodes: [], connections: {} },
         workflowAfter: {
           nodes: [
             {
@@ -1214,7 +1724,6 @@ describe('TelemetryBatchProcessor', () => {
       const mutation: WorkflowMutationRecord = {
         userId: 'user1',
         sessionId: 'session1',
-        workflowBefore: { nodes: [], connections: {} },
         workflowAfter: { nodes: [], connections: {} },
         workflowHashBefore: 'hash1',
         workflowHashAfter: 'hash2',
@@ -1267,7 +1776,7 @@ describe('TelemetryBatchProcessor', () => {
       // Top-level fields should be converted to snake_case
       expect(saved).toHaveProperty('user_id', 'user1');
       expect(saved).toHaveProperty('session_id', 'session1');
-      expect(saved).toHaveProperty('workflow_before');
+      expect(saved).not.toHaveProperty('workflow_before');
       expect(saved).toHaveProperty('workflow_after');
       expect(saved).toHaveProperty('workflow_hash_before', 'hash1');
       expect(saved).toHaveProperty('workflow_hash_after', 'hash2');

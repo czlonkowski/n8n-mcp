@@ -38,8 +38,8 @@ export const getNodeDoc: ToolDocumentation = {
       includeExamples: { type: 'boolean', required: false, description: 'Include real-world configuration examples from templates. Adds ~200-400 tokens per example' },
       propertyQuery: { type: 'string', required: false, description: 'For mode=search_properties: search term to find properties (e.g., "auth", "header", "body")' },
       maxPropertyResults: { type: 'number', required: false, description: 'For mode=search_properties: max results (default 20)' },
-      fromVersion: { type: 'string', required: false, description: 'For compare/breaking/migrations modes: source version (e.g., "1.0")' },
-      toVersion: { type: 'string', required: false, description: 'For compare mode: target version (e.g., "2.0"). Defaults to latest' }
+      fromVersion: { type: 'string', required: false, description: 'For compare/breaking/migrations modes: source typeVersion as workflows store it (e.g., "1", "4.1")' },
+      toVersion: { type: 'string', required: false, description: 'For compare/breaking/migrations modes: target typeVersion (e.g., "2"). Defaults to the current version' }
     },
     returns: `Depends on mode:
 - info: Node schema with properties based on detail level
@@ -54,7 +54,7 @@ export const getNodeDoc: ToolDocumentation = {
       '// Get readable documentation\nget_node({nodeType: "nodes-base.webhook", mode: "docs"})',
       '// Search for authentication properties\nget_node({nodeType: "nodes-base.httpRequest", mode: "search_properties", propertyQuery: "auth"})',
       '// Check version history\nget_node({nodeType: "nodes-base.executeWorkflow", mode: "versions"})',
-      '// Compare specific versions\nget_node({nodeType: "nodes-base.httpRequest", mode: "compare", fromVersion: "3.0", toVersion: "4.1"})'
+      '// Compare specific versions\nget_node({nodeType: "nodes-base.httpRequest", mode: "compare", fromVersion: "3", toVersion: "4.1"})'
     ],
     useCases: [
       'Configure nodes for workflow building (use detail=standard)',

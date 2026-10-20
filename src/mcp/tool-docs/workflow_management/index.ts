@@ -13,3 +13,6 @@ export { n8nWorkflowVersionsDoc } from './n8n-workflow-versions';
 export { n8nDeployTemplateDoc } from './n8n-deploy-template';
 export { n8nManageDatatableDoc } from './n8n-manage-datatable';
 export { n8nManageCredentialsDoc } from './n8n-manage-credentials';
+export { n8nManageFoldersDoc } from './n8n-manage-folders';
+export { n8nManageAgentsDoc } from './n8n-manage-agents';
+export { n8nListCatalogDoc } from './n8n-list-catalog';

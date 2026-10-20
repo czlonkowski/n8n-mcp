@@ -121,7 +121,10 @@ When working with Code nodes, always start by calling the relevant guide:
    - validate_node({nodeType: "nodes-base.slack", config: {...}}) - Full validation with errors/warnings/suggestions
    - validate_workflow({workflow: {...}}) - Validate entire workflow
 
-## Tool Categories (21 Tools Total)
+## Tool Categories (28 Tools Total)
+
+**Meta Tools** (1 tool)
+- tools_documentation - Get documentation for any MCP tool (this tool)
 
 **Discovery Tools** (1 tool)
 - search_nodes - Full-text search across all nodes (supports OR, AND, FUZZY modes)
@@ -146,7 +149,7 @@ When working with Code nodes, always start by calling the relevant guide:
   - searchMode='by_metadata': Filter by complexity/services
   - searchMode='patterns': Workflow pattern summaries from 2,700+ templates
 
-**n8n API Tools** (15 tools, requires N8N_API_URL configuration)
+**n8n API Tools** (21 tools, requires N8N_API_URL configuration)
 - n8n_create_workflow - Create new workflows
 - n8n_get_workflow - Get workflow with mode='full' (draft) / 'details' / 'active' (published graph) / 'structure' / 'minimal'
 - n8n_update_full_workflow - Full workflow replacement
@@ -155,13 +158,19 @@ When working with Code nodes, always start by calling the relevant guide:
 - n8n_list_workflows - List workflows with filters
 - n8n_validate_workflow - Validate workflow by ID
 - n8n_autofix_workflow - Auto-fix common issues
-- n8n_test_workflow - Test/trigger workflows (webhook, form, chat, execute)
+- n8n_test_workflow - Run a workflow: method='auto'/'trigger' over its webhook/form/chat trigger, or method='prepare'/'pinned'/'direct' through n8n's MCP server (needs N8N_MCP_ACCESS_TOKEN)
 - n8n_executions - Unified execution management (action='get'/'list'/'delete')
 - n8n_evaluations - Run and read evaluation test runs (action='list_runs'/'get_run'/'list_cases' on n8n 2.30+, 'run'/'cancel' on 2.32+)
 - n8n_health_check - Check n8n API connectivity
-- n8n_workflow_versions - Version history and rollback
+- n8n_workflow_versions - Version history, diff and rollback over n8n-mcp snapshots (source='local') or n8n's own history (source='native', needs N8N_MCP_ACCESS_TOKEN)
 - n8n_deploy_template - Deploy templates directly to n8n instance
-- n8n_manage_datatable - Manage data tables and rows
+- n8n_manage_datatable - Manage data tables, rows and columns (addColumn/deleteColumn/renameColumn need N8N_MCP_ACCESS_TOKEN)
+- n8n_manage_credentials - Manage credentials (action='list'/'get'/'create'/'update'/'delete'/'getSchema')
+- n8n_manage_folders - Manage workflow folders (action='create'/'list'/'get'/'rename'/'move'/'delete', n8n 2.19+; workflow placement via parentFolderId/moveToFolder needs 2.32+)
+- n8n_audit_instance - Security audit of the n8n instance
+- n8n_manage_agents - Manage n8n Agents through n8n's instance-level MCP server (requires N8N_MCP_ACCESS_TOKEN, n8n 2.34+)
+- n8n_explore_node_resources - Resolve dynamic dropdown/resource-locator options (Slack channels, Google Sheets tabs, etc.) using a real credential (requires N8N_MCP_ACCESS_TOKEN)
+- n8n_list_catalog - List instance-level projects or tags, with an official-MCP fallback when team projects need it
 
 ## Performance Characteristics
 - Instant (<10ms): search_nodes, get_node (minimal/standard)
@@ -330,7 +339,7 @@ const plus5Days = now.plus({ days: 5 });
 ### JSON Querying
 \`\`\`javascript
 // JMESPath queries
-const result = $jmespath($json, "users[?age > 30].name");
+const result = $jmespath($json, "users[?age > \`30\`].name"); // numbers are backtick literals
 \`\`\`
 
 ## Return Format Requirements
@@ -454,35 +463,36 @@ function getPythonCodeNodeGuide(depth: 'essentials' | 'full' = 'essentials'): st
   if (depth === 'essentials') {
     return `# Python Code Node Guide
 
-Essential patterns for Python in n8n Code nodes.
+n8n 2.x runs Python natively in a task runner: \`language: "pythonNative"\`.
+JavaScript is recommended for most cases - every n8n helper is JS-only.
 
-**Key Concepts**:
-- Access all items: \`_input.all()\` (not items[0])
-- Current item data: \`_json\`
-- Return format: \`[{"json": {...}}]\` (list of dicts)
+**Two variables, one per mode**:
+- \`runOnceForAllItems\` (default): \`_items\`, a list of \`{"json": {...}}\` dicts
+- \`runOnceForEachItem\`: \`_item\`, one such dict
+- Dict access only. \`it.json.field\` raises AttributeError.
+- \`_input\`, \`_json\`, \`_node\`, \`_now\`, \`_today\`, \`_jmespath\` are gone (NameError).
 
-**Limitations**:
-- No external libraries (no requests, pandas, numpy)
-- Use built-in functions only
-- No pip install available
+**Blocked**: every \`import\` unless this instance allowlists it (Cloud: none);
+\`class\`; \`type\`/\`getattr\`/\`hasattr\`/\`setattr\`/\`vars\`/\`dir\`/\`globals\`/\`locals\`/
+\`open\`/\`input\`/\`eval\`/\`exec\`; dunders; \`global\` inside a function (use \`nonlocal\`).
 
-**Common Patterns**:
+**Returns**: all items - list of \`{"json": ...}\`, list of plain dicts, or one
+dict. Each item - a dict; \`None\` drops the item; a list errors.
+
 \`\`\`python
-# Process all items
-all_items = _input.all()
-return [{
-    "json": {
-        "processed": True,
-        "count": len(all_items),
-        "first_item": all_items[0]["json"] if all_items else None
-    }
-}]
+# runOnceForAllItems
+return [{"json": {"name": it["json"]["name"]}} for it in _items if it["json"].get("active")]
 \`\`\`
 
-**Tips**:
-- Webhook data is under ["body"] key
-- Use json module for parsing
-- datetime for date handling
+\`\`\`python
+# runOnceForEachItem
+row = _item["json"]
+return {"json": {**row, "upper": (row.get("name") or "").upper()}}
+\`\`\`
+
+**Tips**: webhook payloads are under ["body"]; use \`.get(key, default)\`;
+self-hosted Docker needs the \`n8nio/runners\` sidecar or every Python node
+fails with "Python runner unavailable".
 
 For full guide: tools_documentation({topic: "python_code_node_guide", depth: "full"})`;
   }
@@ -490,228 +500,124 @@ For full guide: tools_documentation({topic: "python_code_node_guide", depth: "fu
   // Full documentation
   return `# Python Code Node Complete Guide
 
-Comprehensive guide for using Python in n8n Code nodes.
+Since n8n 2.0 the Code node runs native Python in a task runner
+(\`language: "pythonNative"\`, typeVersion 2). The Pyodide "Python (Beta)"
+runtime is gone, and with it every n8n helper. JavaScript is recommended for
+most cases: \`$()\`, \`$jmespath\`, Luxon and \`$helpers\` exist only there.
 
-## Data Access Patterns
+## The only inputs: _items and _item
 
-### Accessing Input Data
+| Mode | Variable | Shape |
+|---|---|---|
+| runOnceForAllItems (default) | \`_items\` | list of \`{"json": {...}, "pairedItem": {...}}\` dicts |
+| runOnceForEachItem | \`_item\` | one such dict |
+
+- Each exists **only in its own mode**; the other raises \`NameError\`.
+- **Dict access only.** \`it["json"].get("name")\`, never \`it.json.name\`
+  (\`AttributeError: 'dict' object has no attribute 'json'\`).
+- **No other nodes**: no \`_node\` / \`$('Node')\`. Merge upstream, or use JavaScript.
+- **Webhook payloads** are under \`["body"]\`: \`_items[0]["json"].get("body", {})\`.
+- **pairedItem**: returning \`_items\` / \`_item\` keeps it; when building new dicts
+  add \`"pairedItem": {"item": i}\` if a downstream node uses \`$('Node').item\`.
+- Binary data: handle it in a JavaScript Code node.
+
+## Migration from Pyodide
+
+| Legacy (removed) | Native |
+|---|---|
+| \`_input.all()\` | \`_items\` |
+| \`_input.first()["json"]\` | \`_items[0]["json"]\` (guard \`if _items\`) |
+| \`_input.item\` / \`_json\` | \`_item\` / \`_item["json"]\` |
+| \`_node["X"]\` | not available: merge upstream, or use JavaScript |
+| \`_now\`, \`_today\` | not available: pass \`{{ $now.toISO() }}\` in via Edit Fields |
+| \`_jmespath(data, q)\` | not available: \`$jmespath\` in an expression, or a comprehension |
+| \`item.json.field\` | \`item["json"]["field"]\` |
+
+## Imports: blocked by default
+
+Every \`import\` - standard library included - is checked against an allowlist
+before the code runs. The default allowlist is empty, so even \`import json\`
+rejects the node with \`Security violations detected / Import of standard
+library module 'json' is disallowed. Allowed stdlib modules: none\`.
+
+- **n8n Cloud**: no imports at all. **Self-hosted**: an admin can allowlist
+  modules in the task-runner config; most instances don't.
+- Default to import-free code; confirm with a one-line test node before relying
+  on an import. \`requests\`, \`pandas\` and \`numpy\` need a custom runner image
+  that ships and allowlists them, so assume they are unavailable.
+- Instead: parse JSON upstream (\`{{ JSON.parse($json.payload) }}\`), do date math
+  in expressions, hash with the Crypto node. ISO-8601 strings sort as strings.
+
+## Sandbox limits (these fail even without imports)
+
+| You write | What happens | Use instead |
+|---|---|---|
+| \`type\`, \`getattr\`, \`setattr\`, \`hasattr\`, \`vars\`, \`dir\`, \`globals\`, \`locals\`, \`open\`, \`input\`, \`eval\`, \`exec\`, \`compile\`, \`object\`, \`memoryview\`, \`breakpoint\` | \`NameError\` at runtime, whether called or merely named | \`isinstance(x, dict)\`; \`key in d\` / \`d.get(key)\` |
+| \`class Foo: ...\` | \`__build_class__ not found\` | dicts + functions |
+| \`x.__class__\`, \`__import__("json")\` | \`Security violations detected\` (before running) | - |
+| \`global counter\` inside a function | \`NameError\` - your code already runs inside a wrapper function, so a nested \`global\` never binds (at top level it is a harmless no-op) | \`nonlocal counter\` |
+
+Plain Python otherwise works: comprehensions, generators, lambdas, closures,
+\`try\`/\`except\`, f-strings, \`sorted\`/\`sum\`/\`min\`/\`max\`/\`any\`/\`all\`/\`zip\`,
+sets, \`isinstance\`, \`print()\` (output goes to the browser console).
+
+## Return shapes
+
+**runOnceForAllItems**: \`[{"json": {...}}, ...]\` is canonical; a list of plain
+dicts and a single dict are auto-wrapped; \`_items\` mutated in place passes
+through; \`None\` or no \`return\` errors with
+\`Cannot read properties of null (reading 'json')\`.
+
+**runOnceForEachItem**: a dict (or \`_item\`) gives one item; \`None\` **drops** the
+item; a **list** errors with \`A 'json' property isn't a dictionary [item 0]\`.
+
+On output a \`tuple\` becomes a list, a \`set\` becomes the *string* \`"{1, 2}"\` and
+a \`datetime\` becomes \`str(dt)\`, not ISO - convert explicitly.
+
+## Common patterns (import-free)
+
 \`\`\`python
-# Get all items from previous node
-all_items = _input.all()
-
-# Get specific node's output (use _node)
-webhook_data = _node["Webhook"]["json"]
-
-# Current item in loop
-current_item = _json
-
-# First item only
-first_item = _input.first()["json"]
+# Aggregate to one item (runOnceForAllItems)
+total = sum(it["json"].get("amount", 0) for it in _items)
+return {"json": {"total": total, "count": len(_items),
+                 "average": total / len(_items) if _items else 0}}
 \`\`\`
 
-### Webhook Data Structure
-**CRITICAL**: Webhook data is nested under ["body"]:
 \`\`\`python
-# WRONG - Won't work
-data = _json["name"]
-
-# CORRECT - Webhook data is under body
-data = _json["body"]["name"]
+# Drop an item (runOnceForEachItem) - returning None filters it out
+row = _item["json"]
+if not row.get("email"):
+    return None
+return {"json": {**row, "email": row["email"].lower()}}
 \`\`\`
 
-## Available Built-in Modules
+## Self-hosted: the Python task runner
 
-### Standard Library Only
-\`\`\`python
-import json
-import datetime
-import base64
-import hashlib
-import urllib.parse
-import re
-import math
-import random
-\`\`\`
+Self-hosted Docker needs the \`n8nio/runners\` sidecar. Without it every Python
+Code node fails with \`Python runner unavailable: Python 3 is missing from this
+system\` - an infrastructure problem, not a code problem.
 
-### Date/Time Handling
-\`\`\`python
-from datetime import datetime, timedelta
+## Errors and onError
 
-# Current time
-now = datetime.now()
-iso_format = now.isoformat()
-
-# Date arithmetic
-future = now + timedelta(days=5)
-formatted = now.strftime("%Y-%m-%d")
-\`\`\`
-
-### JSON Operations
-\`\`\`python
-# Parse JSON string
-data = json.loads(json_string)
-
-# Convert to JSON
-json_output = json.dumps({"key": "value"})
-\`\`\`
-
-## Return Format Requirements
-
-### Correct Format
-\`\`\`python
-# MUST return list of dictionaries with "json" key
-return [{
-    "json": {
-        "result": "success",
-        "data": processed_data
-    }
-}]
-
-# Multiple items
-return [
-    {"json": {"id": item["json"]["id"], "processed": True}}
-    for item in all_items
-]
-\`\`\`
-
-### Binary Data
-\`\`\`python
-# Return with binary data
-import base64
-
-return [{
-    "json": {"filename": "report.pdf"},
-    "binary": {
-        "data": base64.b64encode(pdf_content).decode()
-    }
-}]
-\`\`\`
-
-## Common Patterns
-
-### Processing Webhook Data
-\`\`\`python
-# Extract webhook payload
-webhook_body = _json["body"]
-username = webhook_body.get("username")
-email = webhook_body.get("email")
-items = webhook_body.get("items", [])
-
-# Process and return
-return [{
-    "json": {
-        "username": username,
-        "email": email,
-        "item_count": len(items),
-        "processed_at": datetime.now().isoformat()
-    }
-}]
-\`\`\`
-
-### Aggregating Data
-\`\`\`python
-# Sum values across all items
-all_items = _input.all()
-total = sum(item["json"].get("amount", 0) for item in all_items)
-
-return [{
-    "json": {
-        "total": total,
-        "item_count": len(all_items),
-        "average": total / len(all_items) if all_items else 0
-    }
-}]
-\`\`\`
-
-### Error Handling
-\`\`\`python
-try:
-    # Process data
-    webhook_data = _json["body"]
-    result = process_data(webhook_data)
-    
-    return [{
-        "json": {
-            "success": True,
-            "data": result
-        }
-    }]
-except Exception as e:
-    return [{
-        "json": {
-            "success": False,
-            "error": str(e)
-        }
-    }]
-\`\`\`
-
-### Data Transformation
-\`\`\`python
-# Transform all items
-all_items = _input.all()
-transformed = []
-
-for item in all_items:
-    data = item["json"]
-    transformed.append({
-        "json": {
-            "id": data.get("id"),
-            "name": data.get("name", "").upper(),
-            "timestamp": datetime.now().isoformat(),
-            "valid": bool(data.get("email"))
-        }
-    })
-
-return transformed
-\`\`\`
-
-## Limitations & Workarounds
-
-### No External Libraries
-\`\`\`python
-# CANNOT USE:
-# import requests  # Not available
-# import pandas   # Not available
-# import numpy    # Not available
-
-# WORKAROUND: Use JavaScript Code node for HTTP requests
-# Or use HTTP Request node before Code node
-\`\`\`
-
-### HTTP Requests Alternative
-Since Python requests library is not available, use:
-1. JavaScript Code node with $helpers.httpRequest()
-2. HTTP Request node before your Python Code node
-3. Webhook node to receive data
+\`raise ValueError("bad row")\` fails the node with that message, and routes to the
+error output when the node sets \`onError: "continueErrorOutput"\`. But a **static
+rejection** (blocked import, dunder access) and a
+**bad return shape** mark the node failed while sending the **unchanged input
+items to the success output**, so no error branch catches them. Prevent both and
+confirm with a real test execution.
 
 ## Common Pitfalls
-1. Trying to import external libraries (requests, pandas)
-2. Using items[0] instead of _input.all()
-3. Forgetting webhook data is under ["body"]
-4. Returning dictionaries instead of [{"json": {...}}]
-5. Not handling missing keys with .get()
+1. Copying Pyodide code that uses \`_input\`, \`_json\`, \`_node\`, \`_now\` or \`_jmespath\`
+2. Dot access (\`item.json.field\`) instead of \`item["json"]["field"]\`
+3. Assuming \`import json\` or \`import datetime\` works
+4. Using the wrong mode variable, or returning a list in runOnceForEachItem mode
+5. Forgetting webhook data is under ["body"]
 
 ## Best Practices
-1. Always use .get() for dictionary access
-2. Validate data before processing
-3. Handle empty input arrays
-4. Use list comprehensions for transformations
-5. Return meaningful error messages
-
-## Type Conversions
-\`\`\`python
-# String to number
-value = float(_json.get("amount", "0"))
-
-# Boolean conversion
-is_active = str(_json.get("active", "")).lower() == "true"
-
-# Safe JSON parsing
-try:
-    data = json.loads(_json.get("json_string", "{}"))
-except json.JSONDecodeError:
-    data = {}
-\`\`\`
+1. Confirm the mode before writing the first line
+2. Use \`.get()\` for every dictionary access and handle an empty \`_items\`
+3. Return the explicit \`{"json": ...}\` shape
+4. Run a real test execution - validation alone won't catch the passthrough traps
 
 ## Related Tools
 - get_node({nodeType: "nodes-base.code"}) - Get Code node configuration details

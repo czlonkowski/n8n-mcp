@@ -17,7 +17,10 @@ export interface AddNodeOperation extends DiffOperation {
   node: Partial<WorkflowNode> & {
     name: string; // Name is required
     type: string; // Type is required
-    position: [number, number]; // Position is required
+    // Position is NOT required: a batch may add a node and place it with a later moveNode,
+    // which applies cleanly today. A node that never gets one is caught by the post-apply
+    // structure validation, not by the operation validator.
+    position?: [number, number];
   };
 }
 
@@ -163,6 +166,17 @@ export interface TransferWorkflowOperation extends DiffOperation {
   destinationProjectId: string;
 }
 
+/**
+ * Move the workflow into a folder, or to the project root (n8n 2.32+).
+ * n8n's PUT schema treats the field as write-only: null means project root,
+ * a string means the target folder ID. Instances older than 2.32 reject the
+ * field outright, which surfaces as a 400 naming parentFolderId.
+ */
+export interface MoveToFolderOperation extends DiffOperation {
+  type: 'moveToFolder';
+  parentFolderId: string | null;
+}
+
 // Connection Cleanup Operations
 export interface CleanStaleConnectionsOperation extends DiffOperation {
   type: 'cleanStaleConnections';
@@ -173,11 +187,14 @@ export interface ReplaceConnectionsOperation extends DiffOperation {
   type: 'replaceConnections';
   connections: {
     [nodeName: string]: {
+      // A null branch is n8n's own "nothing wired to this output" (#1096). The runtime accepts
+      // one here so a caller can send back a shape it read from n8n; without it on the type, a
+      // TypeScript caller could only express that payload through a cast.
       [outputName: string]: Array<Array<{
         node: string;
         type: string;
         index: number;
-      }>>;
+      }> | null>;
     };
   };
 }
@@ -203,7 +220,8 @@ export type WorkflowDiffOperation =
   | DeactivateWorkflowOperation
   | CleanStaleConnectionsOperation
   | ReplaceConnectionsOperation
-  | TransferWorkflowOperation;
+  | TransferWorkflowOperation
+  | MoveToFolderOperation;
 
 // Main diff request structure
 export interface WorkflowDiffRequest {
