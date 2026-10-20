@@ -137,17 +137,16 @@ export const LLM_PROVIDER_PRESETS: Record<string, LLMProviderPreset> = {
   minimax: {
     baseUrls: {
       global: 'https://api.minimax.io/v1',
-      cn: 'https://api.minimaxi.com/v1',
+      cn: 'https://api.minimax.cn/v1',
     },
     defaultRegion: 'global',
-    defaultModel: 'MiniMax-M3',
+    defaultModel: 'MiniMax-M3.1-Flash',
     models: {
+      'MiniMax-M3.1-Flash': { thinking: ['adaptive'] },
       'MiniMax-M3': { thinking: ['adaptive', 'disabled'] },
-      'MiniMax-M2.7': { thinking: ['always_on'] },
     },
-    // MiniMax is a cloud OpenAI-compatible API and rejects unknown body params,
-    // so the vLLM-only chat_template_kwargs field is never sent. Reasoning
-    // output (always on for MiniMax-M2.7) is removed by <think> stripping.
+    // Omit local-server thinking controls and use the API's adaptive default.
+    // Flash returns reasoning separately; legacy <think> output is also handled.
     sendThinkingKwargs: false,
     apiKeyEnvVars: ['MINIMAX_API_KEY'],
   },
@@ -572,7 +571,9 @@ export function createDocumentationGenerator(): DocumentationGenerator {
     const isCloud =
       host === 'openai.com' || host.endsWith('.openai.com') ||
       host.endsWith('.openai.azure.com') || host.endsWith('.azure.com') ||
-      host === 'anthropic.com' || host.endsWith('.anthropic.com');
+      host === 'anthropic.com' || host.endsWith('.anthropic.com') ||
+      host === 'api.minimax.io' || host === 'api.minimax.cn' ||
+      host === 'api.minimaxi.com';
     isLocalServer = !isCloud;
   } catch {
     // Malformed URL — fall through with the default (treat as local).
