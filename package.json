@@ -146,7 +146,7 @@
   ],
   "devDependencies": {
     "@faker-js/faker": "^9.9.0",
-    "@secretlint/secretlint-rule-preset-recommend": "9.3.4",
+    "@secretlint/secretlint-rule-preset-recommend": "13.0.7",
     "@testing-library/jest-dom": "^6.6.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.3",
