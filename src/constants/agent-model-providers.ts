@@ -6,8 +6,11 @@
  * (LLM_PROVIDER_DEFAULTS), which on n8n 2.43.5 has no entry for azureOpenAiApi,
  * azureEntraCognitiveServicesOAuth2Api or aws — those credentials are rejected
  * as incompatible even though the api-types table lists them. n8n 2.44 adds the
- * google-vertex provider (googleVertexAiApi), also absent from an otherwise
- * unchanged LLM_PROVIDER_DEFAULTS. Re-check both files on each n8n update.
+ * google-vertex provider (googleVertexAiApi). Its agent validation
+ * (agent-validation.service.ts, credentialSupportsModel) checks credentials
+ * against the api-types table, so Vertex counts as supported; LLM_PROVIDER_DEFAULTS
+ * only picks a default model, and has no Vertex entry. Re-check both files on
+ * each n8n update.
  *
  * Provider keys are the identifiers n8n itself uses (the `provider` enum of
  * `discover_agent_assets` and the provider prefix of an agent config's
@@ -40,7 +43,6 @@ export const AGENT_UNSUPPORTED_CREDENTIAL_TYPES: Record<string, string> = {
   azureOpenAiApi: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.43.5)',
   azureEntraCognitiveServicesOAuth2Api: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.43.5)',
   aws: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.43.5)',
-  googleVertexAiApi: 'not mapped in LLM_PROVIDER_DEFAULTS (n8n 2.44.5, not verified live)',
 };
 
 export const AGENT_SUPPORTED_CREDENTIAL_TYPES = Object.values(AGENT_MODEL_PROVIDER_CREDENTIAL_TYPES)
