@@ -247,6 +247,33 @@ describe('server tool responses for deprecated nodes', () => {
     }));
   });
 
+  it('validate_node checks the requested @version of a versioned node, under every profile', async () => {
+    const server = await makeServer();
+    const versionedNode = { ...codeNode, nodeType: 'nodes-base.partly', deprecatedVersions: ['1'] };
+    server.repository = { getNode: (type: string) => (type === 'nodes-base.partly' ? versionedNode : null) };
+    const isDeprecatedError = (e: any) => /is deprecated/.test(e.message);
+
+    for (const profile of ['minimal', 'runtime', 'ai-friendly', 'strict']) {
+      const deprecated = await server.validateNodeConfig('n8n-nodes-base.partly', { '@version': 1 }, 'operation', profile);
+      const current = await server.validateNodeConfig('n8n-nodes-base.partly', { '@version': 2 }, 'operation', profile);
+      const defaulted = await server.validateNodeConfig('n8n-nodes-base.partly', {}, 'operation', profile);
+
+      expect(deprecated.valid, profile).toBe(false);
+      expect(deprecated.errors.some(isDeprecatedError), profile).toBe(true);
+      expect(current.errors.some(isDeprecatedError), profile).toBe(false);
+      expect(defaulted.errors.some(isDeprecatedError), profile).toBe(false);
+    }
+  });
+
+  it('validate_node keeps the error for a deprecated node under the minimal profile', async () => {
+    const server = await makeServer();
+
+    const result = await server.validateNodeConfig('n8n-nodes-base.function', {}, 'operation', 'minimal');
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e: any) => /n8n-nodes-base\.code/.test(e.fix ?? ''))).toBe(true);
+  });
+
   it('validate_node does not flag the Code node', async () => {
     const server = await makeServer();
 
