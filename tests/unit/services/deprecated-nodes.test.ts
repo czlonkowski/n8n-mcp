@@ -187,6 +187,13 @@ describe('deprecated node detection', () => {
       expect(result.warnings.some(w => w.code === 'DEPRECATED_NODE')).toBe(true);
     });
 
+    it('reads each node from the repository once', async () => {
+      const repository = { getNode: vi.fn((type: string) => nodeTypes[type] ?? null), getAllNodes: vi.fn(() => Object.values(nodeTypes)) } as any;
+      await new WorkflowValidator(repository, EnhancedConfigValidator).validateWorkflow(workflowWith('n8n-nodes-base.function', 1) as any);
+
+      expect(repository.getNode.mock.calls.filter(([type]: [string]) => type === 'nodes-base.function')).toHaveLength(1);
+    });
+
     it('does not warn about the Code node', async () => {
       const result = await validator.validateWorkflow(workflowWith('n8n-nodes-base.code', 2) as any);
 
