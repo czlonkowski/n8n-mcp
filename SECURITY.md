@@ -4,6 +4,8 @@
 
 If you discover a security vulnerability in n8n-mcp, please report it through [GitHub's private vulnerability reporting](https://github.com/czlonkowski/n8n-mcp/security/advisories/new). Do not create public issues for security vulnerabilities.
 
+You can also email [security@n8n-mcp.com](mailto:security@n8n-mcp.com). This address is the project's security contact and receives automated scanner reports.
+
 ## Supported Versions
 
 Only the latest release receives security patches. We recommend always running the latest version.
