@@ -4285,7 +4285,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
       return false;
     }
     return isDeprecatedNodeVersion(
-      { nodeType: row.node_type, version: row.version, isVersioned: Number(row.is_versioned) === 1, deprecatedVersions },
+      { nodeType: row.node_type, version: row.version, deprecatedVersions },
       undefined
     );
   }
@@ -4756,11 +4756,13 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         errors: result.errors.map(e => ({
           node: e.nodeName || 'workflow',
           message: e.message,
+          ...(e.code ? { code: e.code } : {}),
           details: e.details
         })),
         warnings: result.warnings.map(w => ({
           node: w.nodeName || 'workflow',
           message: w.message,
+          ...(w.code ? { code: w.code } : {}),
           details: w.details
         }))
       };

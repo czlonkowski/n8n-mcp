@@ -1742,6 +1742,21 @@ describe('handlers-n8n-manager', () => {
   });
 
   describe('handleValidateWorkflow', () => {
+    it('keeps the issue code so callers can recognise DEPRECATED_NODE', async () => {
+      mockApiClient.getWorkflow.mockResolvedValue(createTestWorkflow());
+      mockValidator.validateWorkflow.mockResolvedValue({
+        valid: true,
+        errors: [],
+        warnings: [{ type: 'warning', nodeName: 'node1', code: 'DEPRECATED_NODE', message: 'deprecated' }],
+        suggestions: [],
+        statistics: { totalNodes: 1, enabledNodes: 1, triggerNodes: 1, validConnections: 0, invalidConnections: 0, expressionsValidated: 0 },
+      });
+
+      const result = await handlers.handleValidateWorkflow({ id: 'test-workflow-id' }, {} as any);
+
+      expect((result.data as any).warnings[0].code).toBe('DEPRECATED_NODE');
+    });
+
     it('should validate workflow from n8n instance', async () => {
       const testWorkflow = createTestWorkflow();
       const mockNodeRepository = {} as any; // Mock repository

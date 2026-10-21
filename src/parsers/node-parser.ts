@@ -34,8 +34,8 @@ export interface ParsedNode {
   isToolVariant?: boolean;      // True for *Tool variants (e.g., supabaseTool)
   toolVariantOf?: string;       // For Tool variants: base node type (e.g., nodes-base.supabase)
   hasToolVariant?: boolean;     // For base nodes: true if Tool variant exists
-  // typeVersions whose description sets `deprecated: true`. n8n 2.44+ refuses to save a
-  // workflow that adds or edits a node on one of these versions.
+  // typeVersions whose description sets `deprecated: true`, or ['*'] for every typeVersion.
+  // n8n 2.44+ refuses to save a workflow that adds or edits a node on one of these versions.
   deprecatedVersions?: string[];
 }
 
@@ -67,6 +67,9 @@ export function normalizeNodeVersion(version: unknown): string {
   const numeric = Number(version);
   return Number.isFinite(numeric) ? String(numeric) : String(version);
 }
+
+/** deprecatedVersions entry meaning every typeVersion of the node. */
+export const ALL_VERSIONS = '*';
 
 export class NodeParser {
   private propertyExtractor = new PropertyExtractor();
@@ -102,8 +105,8 @@ export class NodeParser {
   /**
    * List the typeVersions n8n treats as deprecated. n8n resolves a node by name and
    * version and checks `description.deprecated` on the result, so a VersionedNodeType
-   * is checked per version, and a plain node's single description covers every
-   * version it declares.
+   * is checked per version. A plain node returns its single description for any
+   * typeVersion, declared or not, which is recorded as ['*'].
    */
   private extractDeprecatedVersions(
     nodeClass: NodeClass,
@@ -119,10 +122,7 @@ export class NodeParser {
         .sort((a, b) => Number(a) - Number(b));
     }
 
-    if ((base as any).deprecated !== true) return [];
-    const declared = (base as any).version;
-    const versions = Array.isArray(declared) ? declared : [declared ?? 1];
-    return versions.map(normalizeNodeVersion);
+    return (base as any).deprecated === true ? [ALL_VERSIONS] : [];
   }
   
   /**

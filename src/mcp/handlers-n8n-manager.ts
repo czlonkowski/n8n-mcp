@@ -1497,6 +1497,7 @@ export async function handleValidateWorkflow(
         node: e.nodeName || 'workflow',
         nodeName: e.nodeName, // Also set nodeName for compatibility
         message: e.message,
+        ...(e.code ? { code: e.code } : {}),
         details: e.details
       }));
     }
@@ -1506,6 +1507,7 @@ export async function handleValidateWorkflow(
         node: w.nodeName || 'workflow',
         nodeName: w.nodeName, // Also set nodeName for compatibility
         message: w.message,
+        ...(w.code ? { code: w.code } : {}),
         details: w.details
       }));
     }

@@ -1,4 +1,4 @@
-import { normalizeNodeVersion } from '../parsers/node-parser';
+import { ALL_VERSIONS, normalizeNodeVersion } from '../parsers/node-parser';
 
 /**
  * n8n marks some node types `deprecated: true` in their description. Since n8n 2.44
@@ -11,7 +11,6 @@ import { normalizeNodeVersion } from '../parsers/node-parser';
 interface NodeDeprecationInfo {
   nodeType: string;
   version?: string | null;
-  isVersioned?: boolean;
   deprecatedVersions?: string[];
 }
 
@@ -26,13 +25,12 @@ const DEFAULT_HINT = 'Replace it with a supported node or remove it from the wor
 
 /**
  * True when the node's typeVersion (or its default version when omitted) is deprecated.
- * A plain node has one description for every typeVersion, so n8n treats any version of
- * it as deprecated.
+ * ['*'] marks a plain node, whose one description n8n returns for any typeVersion.
  */
 export function isDeprecatedNodeVersion(nodeInfo: NodeDeprecationInfo, typeVersion?: unknown): boolean {
   const deprecated = nodeInfo.deprecatedVersions;
   if (!deprecated || deprecated.length === 0) return false;
-  if (!nodeInfo.isVersioned) return true;
+  if (deprecated.includes(ALL_VERSIONS)) return true;
 
   const version = typeVersion ?? nodeInfo.version;
   if (version === undefined || version === null) return true;

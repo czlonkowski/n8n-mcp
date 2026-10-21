@@ -75,20 +75,17 @@ export class NodeRepository {
     }
   }
   
-  private deprecatedVersionsColumnChecked = false;
-
   /**
    * Databases built before deprecated_versions existed keep their nodes table across
    * rebuilds (community rows survive), and schema.sql only creates missing tables,
-   * so add the column before the first write.
+   * so add the column before writing. Checked on every save rather than cached: saves
+   * run inside transactions, and a rollback also removes a column added inside it.
    */
   private ensureDeprecatedVersionsColumn(): void {
-    if (this.deprecatedVersionsColumnChecked) return;
     const columns = (this.db.prepare('PRAGMA table_info(nodes)').all() ?? []) as Array<{ name: string }>;
     if (columns.length > 0 && !columns.some((column) => column.name === 'deprecated_versions')) {
       this.db.exec('ALTER TABLE nodes ADD COLUMN deprecated_versions TEXT');
     }
-    this.deprecatedVersionsColumnChecked = true;
   }
 
   /**

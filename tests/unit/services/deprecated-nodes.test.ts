@@ -29,7 +29,7 @@ describe('deprecated node detection', () => {
       const parsed = parser.parse(loadNodeClass(modulePath, exportName), packageName);
 
       expect(parsed.nodeType).toBe(nodeType);
-      expect(parsed.deprecatedVersions).toEqual(['1']);
+      expect(parsed.deprecatedVersions).toEqual(['*']);
     });
 
     it('does not flag the Code node that replaces Function', () => {
@@ -56,12 +56,16 @@ describe('deprecated node detection', () => {
       expect(parsed.deprecatedVersions).toEqual(['1', '1.1']);
     });
 
-    it('applies a plain node description to every version it declares', () => {
+    it('marks every typeVersion of a plain node, declared or not', () => {
       class Plain {
         description = { displayName: 'Plain', name: 'plain', version: [1, 2], deprecated: true, properties: [] };
       }
 
-      expect(parser.parse(Plain as any, 'n8n-nodes-base').deprecatedVersions).toEqual(['1', '2']);
+      const parsed = parser.parse(Plain as any, 'n8n-nodes-base');
+
+      expect(parsed.deprecatedVersions).toEqual(['*']);
+      // n8n returns the same description for a typeVersion outside the declared array
+      expect(isDeprecatedNodeVersion({ nodeType: parsed.nodeType, version: parsed.version, deprecatedVersions: parsed.deprecatedVersions }, 1.5)).toBe(true);
     });
   });
 
@@ -87,17 +91,23 @@ describe('deprecated node detection', () => {
         isWebhook: false, isVersioned: false, version: '1',
       };
 
-      repository.saveNode({ ...base, nodeType: 'nodes-base.function', displayName: 'Function', deprecatedVersions: ['1'] });
+      // A failed batch rolls back the column added by its first save; later saves must re-add it
+      expect(() => db.transaction(() => {
+        repository.saveNode({ ...base, nodeType: 'nodes-base.discarded', displayName: 'Discarded', deprecatedVersions: [] });
+        throw new Error('batch failed');
+      })).toThrow('batch failed');
+
+      repository.saveNode({ ...base, nodeType: 'nodes-base.function', displayName: 'Function', deprecatedVersions: ['*'] });
       repository.saveNode({ ...base, nodeType: 'nodes-base.code', displayName: 'Code', deprecatedVersions: [] });
 
-      expect(repository.getNode('nodes-base.function').deprecatedVersions).toEqual(['1']);
+      expect(repository.getNode('nodes-base.function').deprecatedVersions).toEqual(['*']);
       expect(repository.getNode('nodes-base.code').deprecatedVersions).toEqual([]);
       db.close();
     });
   });
 
   describe('isDeprecatedNodeVersion', () => {
-    const versioned = { nodeType: 'nodes-base.x', version: '2', isVersioned: true, deprecatedVersions: ['1', '1.1'] };
+    const versioned = { nodeType: 'nodes-base.x', version: '2', deprecatedVersions: ['1', '1.1'] };
 
     it('matches the workflow typeVersion', () => {
       expect(isDeprecatedNodeVersion(versioned, 1)).toBe(true);
@@ -111,7 +121,7 @@ describe('deprecated node detection', () => {
     });
 
     it('treats every typeVersion of a plain node as deprecated, as n8n resolves them to one description', () => {
-      const plain = { nodeType: 'nodes-base.function', version: '1', isVersioned: false, deprecatedVersions: ['1'] };
+      const plain = { nodeType: 'nodes-base.function', version: '1', deprecatedVersions: ['*'] };
       expect(isDeprecatedNodeVersion(plain, 1)).toBe(true);
       expect(isDeprecatedNodeVersion(plain, 2)).toBe(true);
     });
@@ -126,7 +136,7 @@ describe('deprecated node detection', () => {
     let validator: WorkflowValidator;
     const nodeTypes: Record<string, any> = {
       'nodes-base.webhook': { nodeType: 'nodes-base.webhook', displayName: 'Webhook', package: 'n8n-nodes-base', isTrigger: true, isWebhook: true, version: '2', isVersioned: true, properties: [], deprecatedVersions: [] },
-      'nodes-base.function': { nodeType: 'nodes-base.function', displayName: 'Function', package: 'n8n-nodes-base', version: '1', isVersioned: false, properties: [], deprecatedVersions: ['1'] },
+      'nodes-base.function': { nodeType: 'nodes-base.function', displayName: 'Function', package: 'n8n-nodes-base', version: '1', isVersioned: false, properties: [], deprecatedVersions: ['*'] },
       'nodes-base.code': { nodeType: 'nodes-base.code', displayName: 'Code', package: 'n8n-nodes-base', version: '2', isVersioned: true, properties: [], deprecatedVersions: [] },
     };
 
@@ -182,5 +192,26 @@ describe('deprecated node detection', () => {
 
       expect(result.warnings.some(w => w.code === 'DEPRECATED_NODE')).toBe(false);
     });
+  });
+});
+
+describe('validate_workflow response', () => {
+  it('keeps the issue code so callers can recognise DEPRECATED_NODE', async () => {
+    const { N8NDocumentationMCPServer } = await import('@/mcp/server');
+    const spy = vi.spyOn(WorkflowValidator.prototype, 'validateWorkflow').mockResolvedValue({
+      valid: true,
+      errors: [],
+      warnings: [{ type: 'warning', nodeName: 'Transform', code: 'DEPRECATED_NODE', message: 'deprecated' }],
+      suggestions: [],
+      statistics: { totalNodes: 1, enabledNodes: 1, triggerNodes: 0, validConnections: 0, invalidConnections: 0, expressionsValidated: 0 },
+    } as any);
+    const server = Object.create(N8NDocumentationMCPServer.prototype) as any;
+    server.ensureInitialized = async () => {};
+    server.repository = {};
+
+    const response = await server.validateWorkflow({ nodes: [], connections: {} });
+
+    expect(response.warnings[0]).toMatchObject({ node: 'Transform', code: 'DEPRECATED_NODE' });
+    spy.mockRestore();
   });
 });
