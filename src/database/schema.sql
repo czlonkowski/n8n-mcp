@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   is_tool_variant INTEGER DEFAULT 0, -- 1 if this is a *Tool variant for AI Agents
   tool_variant_of TEXT,              -- For Tool variants: base node type (e.g., nodes-base.supabase)
   has_tool_variant INTEGER DEFAULT 0, -- For base nodes: 1 if Tool variant exists
+  deprecated_versions TEXT,           -- JSON array of typeVersions marked deprecated; NULL when none
   version TEXT,
   documentation TEXT,
   properties_schema TEXT,

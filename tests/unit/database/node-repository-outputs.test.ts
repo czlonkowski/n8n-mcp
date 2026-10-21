@@ -103,7 +103,8 @@ describe('NodeRepository - Outputs Handling', () => {
         null, // community_fetched_at
         null, // npm_readme (preserved from existing)
         null, // ai_documentation_summary (preserved from existing)
-        null  // ai_summary_generated_at (preserved from existing)
+        null, // ai_summary_generated_at (preserved from existing)
+        null  // deprecated_versions
       );
     });
 
@@ -282,6 +283,7 @@ describe('NodeRepository - Outputs Handling', () => {
         isToolVariant: false,
         toolVariantOf: null,
         hasToolVariant: false,
+        deprecatedVersions: [],
         version: '3',
         properties: [],
         operations: [],

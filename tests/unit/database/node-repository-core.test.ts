@@ -132,7 +132,8 @@ describe('NodeRepository - Core Functionality', () => {
         null, // communityFetchedAt
         null, // npm_readme (preserved from existing)
         null, // ai_documentation_summary (preserved from existing)
-        null  // ai_summary_generated_at (preserved from existing)
+        null, // ai_summary_generated_at (preserved from existing)
+        null  // deprecated_versions
       );
     });
     
@@ -220,6 +221,7 @@ describe('NodeRepository - Core Functionality', () => {
         isToolVariant: false,
         toolVariantOf: null,
         hasToolVariant: false,
+        deprecatedVersions: [],
         version: '1.0',
         properties: [{ name: 'url', type: 'string' }],
         operations: [{ name: 'execute' }],

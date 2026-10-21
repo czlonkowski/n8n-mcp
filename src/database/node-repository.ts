@@ -75,11 +75,29 @@ export class NodeRepository {
     }
   }
   
+  private deprecatedVersionsColumnChecked = false;
+
+  /**
+   * Databases built before deprecated_versions existed keep their nodes table across
+   * rebuilds (community rows survive), and schema.sql only creates missing tables,
+   * so add the column before the first write.
+   */
+  private ensureDeprecatedVersionsColumn(): void {
+    if (this.deprecatedVersionsColumnChecked) return;
+    const columns = (this.db.prepare('PRAGMA table_info(nodes)').all() ?? []) as Array<{ name: string }>;
+    if (columns.length > 0 && !columns.some((column) => column.name === 'deprecated_versions')) {
+      this.db.exec('ALTER TABLE nodes ADD COLUMN deprecated_versions TEXT');
+    }
+    this.deprecatedVersionsColumnChecked = true;
+  }
+
   /**
    * Save node with proper JSON serialization
    * Supports both core and community nodes via optional community fields
    */
   saveNode(node: ParsedNode & Partial<CommunityNodeFields>): void {
+    this.ensureDeprecatedVersionsColumn();
+
     // Preserve existing npm_readme and ai_documentation_summary on upsert
     const existing = this.db.prepare(
       'SELECT npm_readme, ai_documentation_summary, ai_summary_generated_at FROM nodes WHERE node_type = ?'
@@ -95,8 +113,9 @@ export class NodeRepository {
         outputs, output_names,
         is_community, is_verified, author_name, author_github_url,
         npm_package_name, npm_version, npm_downloads, community_fetched_at,
-        npm_readme, ai_documentation_summary, ai_summary_generated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        npm_readme, ai_documentation_summary, ai_summary_generated_at,
+        deprecated_versions
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -134,7 +153,8 @@ export class NodeRepository {
       // Preserve existing docs data on upsert
       existing?.npm_readme || null,
       existing?.ai_documentation_summary || null,
-      existing?.ai_summary_generated_at || null
+      existing?.ai_summary_generated_at || null,
+      node.deprecatedVersions?.length ? JSON.stringify(node.deprecatedVersions) : null
     );
   }
   
@@ -405,6 +425,7 @@ export class NodeRepository {
       isToolVariant: Number(row.is_tool_variant) === 1,
       toolVariantOf: row.tool_variant_of || null,
       hasToolVariant: Number(row.has_tool_variant) === 1,
+      deprecatedVersions: row.deprecated_versions ? this.safeJsonParse(row.deprecated_versions, []) : [],
       version: row.version,
       properties: decompressColumnJson(row.properties_schema, []),
       operations: this.safeJsonParse(row.operations, []),

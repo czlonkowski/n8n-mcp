@@ -52,6 +52,7 @@ import { getToolDocumentation, getToolsOverview } from './tools-documentation';
 import { PROJECT_VERSION } from '../utils/version';
 import { getNodeTypeAlternatives, getWorkflowNodeType } from '../utils/node-utils';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
+import { isDeprecatedNodeVersion, deprecatedNodeMessage, deprecatedNodeReplacementHint } from '../services/deprecated-nodes';
 import { parseTypeVersion } from '../utils/typeversion';
 import { ToolValidation, Validator, ValidationError } from '../utils/validation-schemas';
 import {
@@ -154,6 +155,13 @@ interface NodeMinimalInfo {
   isTrigger: boolean;
   isWebhook: boolean;
   toolVariantInfo?: ToolVariantGuidance;
+  deprecation?: NodeDeprecationInfo;
+}
+
+interface NodeDeprecationInfo {
+  deprecatedVersions: string[];
+  message: string;
+  replacement: string;
 }
 
 interface NodeStandardInfo {
@@ -168,6 +176,7 @@ interface NodeStandardInfo {
   examples?: any[];
   versionInfo: VersionSummary;
   toolVariantInfo?: ToolVariantGuidance;
+  deprecation?: NodeDeprecationInfo;
 }
 
 interface NodeFullInfo {
@@ -181,6 +190,7 @@ interface NodeFullInfo {
   documentation?: string;
   versionInfo: VersionSummary;
   toolVariantInfo?: ToolVariantGuidance;
+  deprecation?: NodeDeprecationInfo;
 }
 
 interface VersionHistoryInfo {
@@ -2160,8 +2170,9 @@ export class N8NDocumentationMCPServer {
       });
     }
 
+    const { deprecatedVersions: _deprecatedVersions, ...nodeFields } = node;
     const result: any = {
-      ...node,
+      ...nodeFields,
       workflowNodeType: getWorkflowNodeType(node.package ?? 'n8n-nodes-base', node.nodeType),
       aiToolCapabilities,
       outputs
@@ -2171,6 +2182,10 @@ export class N8NDocumentationMCPServer {
     const toolVariantInfo = this.buildToolVariantGuidance(node);
     if (toolVariantInfo) {
       result.toolVariantInfo = toolVariantInfo;
+    }
+    const deprecation = this.buildDeprecationInfo(node);
+    if (deprecation) {
+      result.deprecation = deprecation;
     }
 
     return result;
@@ -2368,6 +2383,11 @@ export class N8NDocumentationMCPServer {
             }
           }
 
+          // n8n refuses to save a workflow that adds or edits a deprecated node
+          if (this.isDeprecatedSearchRow(node)) {
+            nodeResult.deprecated = true;
+          }
+
           // Add operations tree if requested
           if (options?.includeOperations) {
             const opsTree = this.buildOperationsTree(node.operations);
@@ -2499,6 +2519,11 @@ export class N8NDocumentationMCPServer {
           category: node.category,
           package: node.package_name
         };
+
+        // n8n refuses to save a workflow that adds or edits a deprecated node
+        if (this.isDeprecatedSearchRow(node)) {
+          nodeResult.deprecated = true;
+        }
 
         // Add operations tree if requested
         if (options?.includeOperations) {
@@ -2674,6 +2699,11 @@ export class N8NDocumentationMCPServer {
             }
           }
 
+          // n8n refuses to save a workflow that adds or edits a deprecated node
+          if (this.isDeprecatedSearchRow(node)) {
+            nodeResult.deprecated = true;
+          }
+
           // Add operations tree if requested
           if (options?.includeOperations) {
             const opsTree = this.buildOperationsTree(node.operations);
@@ -2766,6 +2796,11 @@ export class N8NDocumentationMCPServer {
           if ((node as any).npm_downloads) {
             nodeResult.npmDownloads = (node as any).npm_downloads;
           }
+        }
+
+        // n8n refuses to save a workflow that adds or edits a deprecated node
+        if (this.isDeprecatedSearchRow(node)) {
+          nodeResult.deprecated = true;
         }
 
         // Add operations tree if requested
@@ -3296,6 +3331,10 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     if (toolVariantInfo) {
       result.toolVariantInfo = toolVariantInfo;
     }
+    const deprecation = this.buildDeprecationInfo(node);
+    if (deprecation) {
+      result.deprecation = deprecation;
+    }
 
     // Add examples from templates if requested
     if (includeExamples) {
@@ -3466,6 +3505,10 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
         const toolVariantInfo = this.buildToolVariantGuidance(node);
         if (toolVariantInfo) {
           result.toolVariantInfo = toolVariantInfo;
+        }
+        const deprecation = this.buildDeprecationInfo(node);
+        if (deprecation) {
+          result.deprecation = deprecation;
         }
 
         return result;
@@ -4043,7 +4086,20 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
       mode,
       profile
     );
-    
+
+    // validate_node checks a configuration the caller is about to add or change, which
+    // n8n refuses for a deprecated node, so this is an error here (a warning in
+    // validate_workflow, where the node may be an untouched existing one).
+    if (isDeprecatedNodeVersion(node, configWithVersion['@version'])) {
+      validationResult.errors.push({
+        type: 'incompatible',
+        property: 'nodeType',
+        message: deprecatedNodeMessage(getWorkflowNodeType(node.package, node.nodeType)),
+        fix: deprecatedNodeReplacementHint(node.toolVariantOf ?? node.nodeType)
+      });
+      validationResult.valid = false;
+    }
+
     // Add node context to result
     return {
       nodeType: node.nodeType,
@@ -4219,6 +4275,31 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
    * Build tool variant guidance for node responses.
    * Provides cross-reference information between base nodes and their Tool variants.
    */
+  /** A search row is flagged when the node's default version is deprecated. */
+  private isDeprecatedSearchRow(row: any): boolean {
+    if (!row.deprecated_versions) return false;
+    let deprecatedVersions: string[];
+    try {
+      deprecatedVersions = JSON.parse(row.deprecated_versions);
+    } catch {
+      return false;
+    }
+    return isDeprecatedNodeVersion(
+      { nodeType: row.node_type, version: row.version, isVersioned: Number(row.is_versioned) === 1, deprecatedVersions },
+      undefined
+    );
+  }
+
+  private buildDeprecationInfo(node: any): NodeDeprecationInfo | undefined {
+    const deprecatedVersions: string[] = node.deprecatedVersions ?? [];
+    if (deprecatedVersions.length === 0) return undefined;
+    return {
+      deprecatedVersions,
+      message: deprecatedNodeMessage(getWorkflowNodeType(node.package ?? 'n8n-nodes-base', node.nodeType)),
+      replacement: deprecatedNodeReplacementHint(node.toolVariantOf ?? node.nodeType)
+    };
+  }
+
   private buildToolVariantGuidance(node: any): ToolVariantGuidance | undefined {
     const isToolVariant = !!node.isToolVariant;
     const hasToolVariant = !!node.hasToolVariant;

@@ -453,8 +453,10 @@ describe('WorkflowValidator', () => {
 
   describe('validateAllNodes', () => {
     it('should skip disabled nodes', async () => {
-      await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [100, 100], parameters: {}, disabled: true }], connections: {} } as any);
-      expect(mockNodeRepository.getNode).not.toHaveBeenCalled();
+      const result = await validator.validateWorkflow({ nodes: [{ id: '1', name: 'Webhook', type: 'n8n-nodes-base.webhook', position: [100, 100], parameters: {}, disabled: true }], connections: {} } as any);
+      // The only lookup is the deprecated-node check, which n8n applies to disabled nodes too
+      expect(mockNodeRepository.getNode).toHaveBeenCalledTimes(1);
+      expect(result.errors.filter(e => e.nodeName === 'Webhook')).toEqual([]);
     });
 
     it('should accept both nodes-base and n8n-nodes-base prefixes', async () => {

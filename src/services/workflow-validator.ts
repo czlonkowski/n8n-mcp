@@ -20,6 +20,7 @@ import { isNonExecutableNode } from '../utils/node-classification';
 import { validateConditionNodeStructure } from './n8n-validation';
 import { checkNodeGroups } from './node-groups';
 import { ToolVariantGenerator } from './tool-variant-generator';
+import { isDeprecatedNodeVersion, deprecatedNodeMessage, deprecatedNodeReplacementHint } from './deprecated-nodes';
 const logger = new Logger({ prefix: '[WorkflowValidator]' });
 
 /**
@@ -619,6 +620,24 @@ export class WorkflowValidator {
   }
 
   /**
+   * Warn about a node on a deprecated typeVersion. A warning, not an error: the validator
+   * cannot tell a node the caller is adding or editing (which n8n rejects) from an untouched
+   * one in a saved workflow (which n8n accepts).
+   */
+  private checkDeprecatedNode(node: WorkflowNode, result: WorkflowValidationResult): void {
+    const nodeInfo = this.nodeRepository.getNode(NodeTypeNormalizer.normalizeToFullForm(node.type));
+    if (!nodeInfo || !isDeprecatedNodeVersion(nodeInfo, node.typeVersion)) return;
+
+    result.warnings.push({
+      type: 'warning',
+      nodeId: node.id,
+      nodeName: node.name,
+      code: 'DEPRECATED_NODE',
+      message: `${deprecatedNodeMessage(node.type)} ${deprecatedNodeReplacementHint(nodeInfo.toolVariantOf ?? nodeInfo.nodeType)}`
+    });
+  }
+
+  /**
    * Validate all nodes in the workflow
    */
   private async validateAllNodes(
@@ -627,6 +646,9 @@ export class WorkflowValidator {
     profile: string
   ): Promise<void> {
     for (const node of workflow.nodes) {
+      // Before the disabled skip: n8n checks disabled nodes too, and toggling one is an edit
+      this.checkDeprecatedNode(node, result);
+
       if (node.disabled || isNonExecutableNode(node.type)) continue;
 
       try {
