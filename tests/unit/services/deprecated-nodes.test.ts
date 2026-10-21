@@ -215,3 +215,61 @@ describe('validate_workflow response', () => {
     spy.mockRestore();
   });
 });
+
+describe('server tool responses for deprecated nodes', () => {
+  const functionNode = {
+    nodeType: 'nodes-base.function', displayName: 'Function', package: 'n8n-nodes-base',
+    version: '1', isVersioned: false, properties: [], deprecatedVersions: ['*'],
+  };
+  const codeNode = {
+    nodeType: 'nodes-base.code', displayName: 'Code', package: 'n8n-nodes-base',
+    version: '2', isVersioned: true, properties: [], deprecatedVersions: [],
+  };
+
+  const makeServer = async () => {
+    const { N8NDocumentationMCPServer } = await import('@/mcp/server');
+    const server = Object.create(N8NDocumentationMCPServer.prototype) as any;
+    server.ensureInitialized = async () => {};
+    server.repository = { getNode: (type: string) => ({ 'nodes-base.function': functionNode, 'nodes-base.code': codeNode } as any)[type] ?? null };
+    return server;
+  };
+
+  it('validate_node reports a deprecated node as an error with the replacement', async () => {
+    const server = await makeServer();
+
+    const result = await server.validateNodeConfig('n8n-nodes-base.function', { functionCode: 'return items;' });
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.objectContaining({
+      type: 'incompatible',
+      message: expect.stringContaining('"n8n-nodes-base.function" is deprecated'),
+      fix: expect.stringContaining('n8n-nodes-base.code'),
+    }));
+  });
+
+  it('validate_node does not flag the Code node', async () => {
+    const server = await makeServer();
+
+    const result = await server.validateNodeConfig('n8n-nodes-base.code', {});
+
+    expect(result.errors.some((e: any) => /deprecated/.test(e.message))).toBe(false);
+  });
+
+  it('get_node describes the deprecation only for deprecated nodes', async () => {
+    const server = await makeServer();
+
+    expect(server.buildDeprecationInfo(functionNode)).toMatchObject({
+      deprecatedVersions: ['*'],
+      replacement: expect.stringContaining('Run Once for All Items'),
+    });
+    expect(server.buildDeprecationInfo(codeNode)).toBeUndefined();
+  });
+
+  it('search_nodes flags a row whose default version is deprecated', async () => {
+    const server = await makeServer();
+
+    expect(server.isDeprecatedSearchRow({ node_type: 'nodes-base.function', version: '1', deprecated_versions: '["*"]' })).toBe(true);
+    expect(server.isDeprecatedSearchRow({ node_type: 'nodes-base.x', version: '2', deprecated_versions: '["1"]' })).toBe(false);
+    expect(server.isDeprecatedSearchRow({ node_type: 'nodes-base.code', version: '2', deprecated_versions: null })).toBe(false);
+  });
+});
