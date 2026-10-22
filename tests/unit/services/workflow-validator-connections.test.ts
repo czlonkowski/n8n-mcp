@@ -74,7 +74,9 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
         type: 'nodes-base.filter',
         displayName: 'Filter',
         package: 'n8n-nodes-base',
-        outputs: ['main', 'main'],
+        // Native Filter declares one output but execute() returns Kept and Discarded.
+        outputs: ['main'],
+        outputNames: ['Kept', 'Discarded'],
         properties: [],
       },
       'nodes-base.switch': {
@@ -996,9 +998,7 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
       expect(warning).toBeUndefined();
     });
 
-    // Filter has ONE main output (its "Discarded" branch is only a name in the node metadata,
-    // not a real output - main[1] is the error output, not an "unmatched" branch), so
-    // getConditionalOutputInfo returns expectedOutputs: 1 and the fan-out check never runs.
+    // Discarded items may be left unwired while kept items fan out.
     it('does not warn for Filter node with everything wired to main[0]', async () => {
       const workflow = {
         nodes: [
@@ -1043,6 +1043,42 @@ describe('WorkflowValidator - Connection Validation (#620)', () => {
 
       const result = await validator.validateWorkflow(workflow as any);
       expect(result.warnings.some(w => w.message.includes('not connected'))).toBe(false);
+    });
+  });
+
+  describe('Filter runtime output regression', () => {
+    const versions = [1, 2, 2.1, 2.2, 2.3, 2.4];
+    const cases = versions.flatMap(version =>
+      [undefined, 'continueErrorOutput'].flatMap(onError =>
+        [0, 1, 2, 3].map(outputIndex => ({ version, onError, outputIndex }))
+      )
+    );
+
+    it.each(cases)('v$version onError=$onError output=$outputIndex', async ({ version, onError, outputIndex }) => {
+      const branch = [{ node: 'Sink', type: 'main', index: 0 }];
+      const outputs = Array.from({ length: outputIndex + 1 }, (_, index) => index === outputIndex ? branch : []);
+      const workflow = {
+        nodes: [
+          { id: '1', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
+          { id: '2', name: 'Filter', type: 'n8n-nodes-base.filter', typeVersion: version, position: [200, 0], parameters: {}, onError },
+          { id: '3', name: 'Sink', type: 'n8n-nodes-base.set', position: [400, 0], parameters: {} },
+        ],
+        connections: {
+          Trigger: { main: [[{ node: 'Filter', type: 'main', index: 0 }]] },
+          Filter: { main: outputs },
+        },
+      };
+
+      const result = await validator.validateWorkflow(workflow as any, { validateNodes: false, validateExpressions: false });
+      expect(result.errors.some(error => error.message.startsWith('Workflow validation failed'))).toBe(false);
+      expect(result.valid).toBe(outputIndex < 2);
+      const errors = result.errors.filter(error => error.code === 'OUTPUT_INDEX_OUT_OF_BOUNDS');
+      expect(errors).toHaveLength(outputIndex < 2 ? 0 : 1);
+      expect(result.warnings.some(warning => warning.message.includes('missing onError'))).toBe(false);
+      const missingErrorRoute = result.warnings.some(warning => warning.nodeName === 'Filter' && warning.message.includes('not connected'));
+      expect(missingErrorRoute).toBe(onError === 'continueErrorOutput' && outputIndex !== 1);
+      expect(result.suggestions.some(suggestion => suggestion.startsWith('Add error handling using')))
+        .toBe(!(onError === 'continueErrorOutput' && outputIndex === 1));
     });
   });
 

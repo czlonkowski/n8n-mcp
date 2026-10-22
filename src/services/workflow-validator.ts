@@ -1178,10 +1178,9 @@ export class WorkflowValidator {
     // Check if node has onError: 'continueErrorOutput'
     const hasErrorOutputSetting = sourceNode.onError === 'continueErrorOutput';
 
-    // The error output is the extra, LAST output after the node's natural main
-    // outputs (index = natural count) — main[1] is a normal branch on IF/Switch/
-    // SplitInBatches. Skip the mismatch checks when the count is unknown.
-    const errorOutputIndex = this.getMainOutputCount(sourceNode);
+    // Error routing follows declared outputs; Filter's discarded slot overlaps it.
+    // Skip mismatch checks when the count is unknown.
+    const errorOutputIndex = this.getErrorOutputIndex(sourceNode);
     const hasErrorConnections =
       errorOutputIndex !== null &&
       outputs.length > errorOutputIndex &&
@@ -1201,7 +1200,8 @@ export class WorkflowValidator {
         });
       }
 
-      if (!hasErrorOutputSetting && hasErrorConnections) {
+      if (!hasErrorOutputSetting && hasErrorConnections &&
+          errorOutputIndex >= (this.getMainOutputCount(sourceNode) ?? errorOutputIndex)) {
         result.warnings.push({
           type: 'warning',
           nodeId: sourceNode.id,
@@ -1474,13 +1474,9 @@ export class WorkflowValidator {
   }
 
   /**
-   * Natural (non-error) main output count for a node, from its DB description
-   * with dynamic overrides for conditional nodes (IF/Filter/Switch).
-   *
-   * The error output added by onError: 'continueErrorOutput' is the extra,
-   * LAST output, so its index equals this count. Returns null when the count
-   * cannot be determined (unknown node, dynamic outputs expression, Switch
-   * without determinable rules, no main outputs).
+   * Main outputs returned during normal execution. These can exceed the declared
+   * outputs: Filter returns both Kept and Discarded despite declaring one output.
+   * Returns null when the count cannot be determined.
    */
   private getMainOutputCount(sourceNode: WorkflowNode): number | null {
     const normalizedType = NodeTypeNormalizer.normalizeToFullForm(sourceNode.type);
@@ -1508,18 +1504,29 @@ export class WorkflowValidator {
   }
 
   /**
+   * n8n appends errors after the declared outputs, not the arrays returned by
+   * execute(). Filter declares one output, so its error branch occupies index 1
+   * at the normal Discarded slot. Enabling errors does not add an index 2.
+   */
+  private getErrorOutputIndex(sourceNode: WorkflowNode): number | null {
+    const mainOutputCount = this.getMainOutputCount(sourceNode);
+    if (mainOutputCount === null) return null;
+    return this.getShortNodeType(sourceNode) === 'filter' ? 1 : mainOutputCount;
+  }
+
+  /**
    * Get the expected main output count for a conditional node (IF, Filter, Switch).
    * Returns null for non-conditional nodes or when the count cannot be determined.
    */
   private getConditionalOutputInfo(sourceNode: WorkflowNode): { shortType: string; expectedOutputs: number } | null {
     const shortType = this.getShortNodeType(sourceNode);
 
-    // IF has true/false; Filter has one output (Discarded is only a name in the metadata).
+    // IF returns true/false; Filter returns Kept/Discarded in both v1 and v2.
     if (shortType === 'if') {
       return { shortType, expectedOutputs: 2 };
     }
     if (shortType === 'filter') {
-      return { shortType, expectedOutputs: 1 };
+      return { shortType, expectedOutputs: 2 };
     }
     if (shortType === 'switch') {
       // Switch v1 has four fixed outputs whatever its rules say.
@@ -1557,9 +1564,10 @@ export class WorkflowValidator {
 
     let mainOutputCount = naturalOutputCount;
 
-    // Account for continueErrorOutput adding an extra output
+    // Error routing follows declared outputs, which may overlap a returned branch.
     if (sourceNode.onError === 'continueErrorOutput') {
-      mainOutputCount += 1;
+      const errorOutputIndex = this.getErrorOutputIndex(sourceNode);
+      if (errorOutputIndex !== null) mainOutputCount = Math.max(mainOutputCount, errorOutputIndex + 1);
     }
 
     // Check if any output index exceeds bounds
@@ -1598,6 +1606,8 @@ export class WorkflowValidator {
   ): void {
     const conditionalInfo = this.getConditionalOutputInfo(sourceNode);
     if (!conditionalInfo || conditionalInfo.expectedOutputs < 2) return;
+    // Filter commonly fans out kept items and leaves discarded items unused.
+    if (conditionalInfo.shortType === 'filter') return;
 
     const { shortType, expectedOutputs } = conditionalInfo;
 
@@ -2159,7 +2169,7 @@ export class WorkflowValidator {
   /**
    * Whether the workflow has any error handling: a node-level error strategy
    * (onError/continueOnFail/retryOnFail), an Error Trigger, or a wired error
-   * output. n8n stores wired error outputs at main[naturalOutputCount] and
+   * output. n8n stores wired error outputs after the declared main outputs and
    * never under a top-level `error` connection key.
    */
   private workflowHasErrorHandling(workflow: WorkflowJson): boolean {
@@ -2176,7 +2186,7 @@ export class WorkflowValidator {
       // output is actually wired
       const mainOutputs = workflow.connections[node.name]?.main;
       if (!Array.isArray(mainOutputs)) return false;
-      const errorOutputIndex = this.getMainOutputCount(node);
+      const errorOutputIndex = this.getErrorOutputIndex(node);
       if (errorOutputIndex === null) {
         return mainOutputs.some(conns => Array.isArray(conns) && conns.length > 0);
       }
