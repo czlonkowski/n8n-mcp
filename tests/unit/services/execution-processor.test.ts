@@ -1102,6 +1102,19 @@ describe('ExecutionProcessor - error mode without a recorded error', () => {
     expect(result.errorInfoNote).toContain('has not finished');
   });
 
+  it('does not describe a canceled execution as unfinished', () => {
+    const execution = createMockExecution({
+      status: 'canceled' as ExecutionStatus,
+      nodeData: { 'Trigger': createNodeData(1) },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'error' });
+
+    expect(result.errorInfo).toBeUndefined();
+    expect(result.errorInfoNote).not.toContain('has not finished');
+    expect(result.errorInfoNote).toContain('status "canceled"');
+  });
+
   it('analyses a top-level error', () => {
     const execution = createMockExecution({
       status: ExecutionStatus.ERROR,

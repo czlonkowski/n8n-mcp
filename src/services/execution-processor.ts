@@ -349,7 +349,7 @@ function noRecordedErrorNote(status: string): string {
   if (status === 'success') {
     return 'The execution succeeded, so there is no error to analyse. Nodes that handle errors themselves may still output items with an "error" field; use mode="summary" to inspect its data.';
   }
-  if (status !== 'error' && status !== 'crashed') {
+  if (status === 'waiting' || status === 'running' || status === 'new') {
     return `The execution has not finished (status "${status}"), so there is no error to analyse yet. Use mode="summary" to inspect what ran.`;
   }
   return `n8n recorded no error details for this execution (status "${status}"): no top-level error and no node error, or the execution data was not saved. Use mode="summary" to inspect what ran.`;
