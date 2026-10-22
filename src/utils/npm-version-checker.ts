@@ -16,9 +16,18 @@ interface NpmRegistryResponse {
   [key: string]: unknown;
 }
 
+/**
+ * - ok: the registry answered and latestVersion is known
+ * - failed: the registry request failed, so the update state is unknown
+ * - disabled: N8N_MCP_VERSION_CHECK_DISABLED is set and no request was made
+ */
+export type VersionCheckStatus = 'ok' | 'failed' | 'disabled';
+
 export interface VersionCheckResult {
+  status: VersionCheckStatus;
   currentVersion: string;
   latestVersion: string | null;
+  /** True only when the registry reported a newer version. False when the state is unknown. */
   isOutdated: boolean;
   updateAvailable: boolean;
   error: string | null;
@@ -29,7 +38,32 @@ export interface VersionCheckResult {
 // Cache for version check to avoid excessive npm requests
 let versionCheckCache: VersionCheckResult | null = null;
 let lastCheckTime: number = 0;
-const CACHE_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour cache
+const CACHE_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour cache for successful checks
+const FAILURE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes for failed checks
+
+let warnedInvalidOptOut = false;
+
+/**
+ * True when N8N_MCP_VERSION_CHECK_DISABLED is "true" or "1" (case-insensitive).
+ */
+export function isVersionCheckDisabled(): boolean {
+  const value = process.env.N8N_MCP_VERSION_CHECK_DISABLED;
+  if (value === undefined) return false;
+  const normalized = value.toLowerCase().trim();
+  if (!['true', '1', 'false', '0', ''].includes(normalized) && !warnedInvalidOptOut) {
+    warnedInvalidOptOut = true;
+    logger.warn(`Ignoring N8N_MCP_VERSION_CHECK_DISABLED="${value}": use "true" or "1" to disable the npm version check`);
+  }
+  return normalized === 'true' || normalized === '1';
+}
+
+/**
+ * Whether the running version is current: true or false when the registry
+ * answered, null when the check failed or is disabled.
+ */
+export function getUpToDate(result: VersionCheckResult): boolean | null {
+  return result.status === 'ok' ? !result.isOutdated : null;
+}
 
 /**
  * Check if current version is outdated compared to npm registry
@@ -41,15 +75,31 @@ const CACHE_TTL_MS = 1 * 60 * 60 * 1000; // 1 hour cache
 export async function checkNpmVersion(forceRefresh: boolean = false): Promise<VersionCheckResult> {
   const now = Date.now();
 
-  // Return cached result if available and not expired
-  if (!forceRefresh && versionCheckCache && (now - lastCheckTime) < CACHE_TTL_MS) {
-    logger.debug('Returning cached npm version check result');
-    return versionCheckCache;
-  }
-
   // Get current version from package.json
   const packageJson = require('../../package.json');
   const currentVersion = packageJson.version;
+
+  // Checked on every call so the setting applies without a restart
+  if (isVersionCheckDisabled()) {
+    return {
+      status: 'disabled',
+      currentVersion,
+      latestVersion: null,
+      isOutdated: false,
+      updateAvailable: false,
+      error: null,
+      checkedAt: new Date()
+    };
+  }
+
+  // Return cached result if available and not expired
+  if (!forceRefresh && versionCheckCache) {
+    const ttl = versionCheckCache.status === 'ok' ? CACHE_TTL_MS : FAILURE_CACHE_TTL_MS;
+    if ((now - lastCheckTime) < ttl) {
+      logger.debug('Returning cached npm version check result');
+      return versionCheckCache;
+    }
+  }
 
   try {
     // Fetch latest version from npm registry
@@ -67,6 +117,7 @@ export async function checkNpmVersion(forceRefresh: boolean = false): Promise<Ve
       });
 
       const result: VersionCheckResult = {
+        status: 'failed',
         currentVersion,
         latestVersion: null,
         isOutdated: false,
@@ -105,6 +156,7 @@ export async function checkNpmVersion(forceRefresh: boolean = false): Promise<Ve
     const isOutdated = compareVersions(currentVersion, latestVersion) < 0;
 
     const result: VersionCheckResult = {
+      status: 'ok',
       currentVersion,
       latestVersion,
       isOutdated,
@@ -132,6 +184,7 @@ export async function checkNpmVersion(forceRefresh: boolean = false): Promise<Ve
     });
 
     const result: VersionCheckResult = {
+      status: 'failed',
       currentVersion,
       latestVersion: null,
       isOutdated: false,
@@ -140,7 +193,7 @@ export async function checkNpmVersion(forceRefresh: boolean = false): Promise<Ve
       checkedAt: new Date()
     };
 
-    // Cache error result to avoid rapid retry
+    // Cache the failure briefly to avoid rapid retries
     versionCheckCache = result;
     lastCheckTime = now;
 
@@ -192,6 +245,10 @@ export function clearVersionCheckCache(): void {
  * @returns Formatted message
  */
 export function formatVersionMessage(result: VersionCheckResult): string {
+  if (result.status === 'disabled') {
+    return `Version check disabled (N8N_MCP_VERSION_CHECK_DISABLED). Current version: ${result.currentVersion}`;
+  }
+
   if (result.error) {
     return `Version check failed: ${result.error}. Current version: ${result.currentVersion}`;
   }

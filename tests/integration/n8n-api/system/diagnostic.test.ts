@@ -52,7 +52,12 @@ describe('Integration: handleDiagnostic', () => {
       if (data.versionInfo) {
         expect(data.versionInfo).toHaveProperty('current');
         expect(data.versionInfo).toHaveProperty('upToDate');
-        expect(typeof data.versionInfo.upToDate).toBe('boolean');
+        // upToDate is a boolean only when the npm registry answered
+        if (data.versionInfo.checkStatus === 'ok') {
+          expect(typeof data.versionInfo.upToDate).toBe('boolean');
+        } else {
+          expect(data.versionInfo.upToDate).toBeNull();
+        }
       }
 
       // Verify performance metrics

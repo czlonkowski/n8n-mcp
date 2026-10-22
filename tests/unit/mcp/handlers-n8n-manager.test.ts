@@ -1853,6 +1853,49 @@ describe('handlers-n8n-manager', () => {
       expect((result.data as any).n8nVersionNote).toMatch(/1\.119\.0/);
     });
 
+    it('reports an unknown version state and makes no registry request when the check is disabled', async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      process.env.N8N_MCP_VERSION_CHECK_DISABLED = 'true';
+      try {
+        mockApiClient.healthCheck.mockResolvedValue({ status: 'ok' });
+
+        const result = await handlers.handleHealthCheck();
+        const versionCheck = (result.data as any).versionCheck;
+
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(versionCheck.upToDate).toBeNull();
+        expect(versionCheck.checkStatus).toBe('disabled');
+        expect((result.data as any).updateWarning).toBeUndefined();
+        expect(telemetryMocks.trackEvent).toHaveBeenCalledWith('health_check_completed', expect.objectContaining({
+          upToDate: null,
+          versionCheckStatus: 'disabled',
+        }));
+      } finally {
+        delete process.env.N8N_MCP_VERSION_CHECK_DISABLED;
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('reports an unknown version state, not up to date, when the registry is unreachable', async () => {
+      const { clearVersionCheckCache } = await import('@/utils/npm-version-checker');
+      clearVersionCheckCache();
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')));
+      try {
+        mockApiClient.healthCheck.mockResolvedValue({ status: 'ok' });
+
+        const result = await handlers.handleHealthCheck();
+        const versionCheck = (result.data as any).versionCheck;
+
+        expect(versionCheck.upToDate).toBeNull();
+        expect(versionCheck.checkStatus).toBe('failed');
+        expect(versionCheck.latest).toBeNull();
+      } finally {
+        clearVersionCheckCache();
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('should not annotate a version the instance did report', async () => {
       mockApiClient.healthCheck.mockResolvedValue({ status: 'ok', n8nVersion: '1.100.0' });
 
@@ -1886,6 +1929,30 @@ describe('handlers-n8n-manager', () => {
   });
 
   describe('handleDiagnostic', () => {
+    it('reports an unknown version state in versionInfo when the check is disabled', async () => {
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+      process.env.N8N_MCP_VERSION_CHECK_DISABLED = '1';
+      try {
+        mockApiClient.healthCheck.mockResolvedValue({ status: 'ok' });
+
+        const result = await handlers.handleDiagnostic({ params: { arguments: {} } });
+        const versionInfo = (result.data as any).versionInfo;
+
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(versionInfo.upToDate).toBeNull();
+        expect(versionInfo.checkStatus).toBe('disabled');
+        expect((result.data as any).updateWarning).toBeUndefined();
+        expect(telemetryMocks.trackEvent).toHaveBeenCalledWith('diagnostic_completed', expect.objectContaining({
+          upToDate: null,
+          versionCheckStatus: 'disabled',
+        }));
+      } finally {
+        delete process.env.N8N_MCP_VERSION_CHECK_DISABLED;
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('should provide diagnostic information', async () => {
       const healthData = {
         status: 'ok',

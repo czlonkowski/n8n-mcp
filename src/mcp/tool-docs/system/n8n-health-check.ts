@@ -56,8 +56,9 @@ Health checks are crucial for:
 - supportedN8nVersion: Recommended n8n version for compatibility
 - versionCheck: Version status information
   - current: Current n8n-mcp version
-  - latest: Latest available version from npm
-  - upToDate: Boolean indicating if version is current
+  - latest: Latest available version from npm, or null when unknown
+  - upToDate: true or false when npm answered; null when the check failed or is disabled (unknown, not "up to date")
+  - checkStatus: "ok", "failed" (npm registry unreachable or invalid reply) or "disabled" (N8N_MCP_VERSION_CHECK_DISABLED=true or 1, no request made)
   - message: Formatted version status message
   - updateCommand: Command to update (if outdated)
 - performance: Performance metrics
@@ -68,8 +69,8 @@ Health checks are crucial for:
 - updateWarning: Warning if version is outdated (if applicable)`,
     examples: [
       'n8n_health_check({}) - Complete health check with version and performance data',
-      '// Use in monitoring scripts\nconst health = await n8n_health_check({});\nif (health.status !== "ok") alert("n8n is down!");\nif (!health.versionCheck.upToDate) console.log("Update available:", health.versionCheck.updateCommand);',
-      '// Check before critical operations\nconst health = await n8n_health_check({});\nif (health.performance.responseTimeMs > 1000) console.warn("n8n is slow");\nif (health.versionCheck.isOutdated) console.log(health.updateWarning);'
+      '// Use in monitoring scripts\nconst health = await n8n_health_check({});\nif (health.status !== "ok") alert("n8n is down!");\nif (health.versionCheck.upToDate === false) console.log("Update available:", health.versionCheck.updateCommand);',
+      '// Check before critical operations\nconst health = await n8n_health_check({});\nif (health.performance.responseTimeMs > 1000) console.warn("n8n is slow");\nif (health.updateWarning) console.log(health.updateWarning);'
     ],
     useCases: [
       'Pre-flight checks before workflow deployments',

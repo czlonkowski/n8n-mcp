@@ -72,7 +72,8 @@ export interface DiagnosticResponse {
   versionInfo?: {
     current: string;
     latest: string | null;
-    upToDate: boolean;
+    upToDate: boolean | null;
+    checkStatus: 'ok' | 'failed' | 'disabled';
     message: string;
     updateCommand?: string;
   };

@@ -29,6 +29,10 @@ services:
       # To opt-out, uncomment and set to 'true':
       # N8N_MCP_TELEMETRY_DISABLED: ${N8N_MCP_TELEMETRY_DISABLED:-true}
 
+      # Version check: n8n_health_check asks registry.npmjs.org for the latest
+      # n8n-mcp version. To skip that request, uncomment and set to 'true':
+      # N8N_MCP_VERSION_CHECK_DISABLED: ${N8N_MCP_VERSION_CHECK_DISABLED:-true}
+
       # Optional: n8n API configuration (enables 16 additional management tools)
       # Uncomment and configure to enable n8n workflow management
       # N8N_API_URL: ${N8N_API_URL}

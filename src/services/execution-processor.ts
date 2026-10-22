@@ -24,7 +24,7 @@ import {
   Workflow,
 } from '../types/n8n-api';
 import { logger } from '../utils/logger';
-import { processErrorExecution } from './error-execution-processor';
+import { hasRecordedError, processErrorExecution } from './error-execution-processor';
 import {
   extractConnectionBranches,
   firstRunItem,
@@ -343,6 +343,19 @@ function truncateItems(
 }
 
 /**
+ * Explains an error-mode request on an execution without a recorded error.
+ */
+function noRecordedErrorNote(status: string): string {
+  if (status === 'success') {
+    return 'The execution succeeded, so there is no error to analyse. Nodes that handle errors themselves may still output items with an "error" field; use mode="summary" to inspect its data.';
+  }
+  if (status !== 'error' && status !== 'crashed') {
+    return `The execution has not finished (status "${status}"), so there is no error to analyse yet. Use mode="summary" to inspect what ran.`;
+  }
+  return `n8n recorded no error details for this execution (status "${status}"): no top-level error and no node error, or the execution data was not saved. Use mode="summary" to inspect what ran.`;
+}
+
+/**
  * Filter execution data based on options
  */
 export function filterExecutionData(
@@ -394,17 +407,25 @@ export function filterExecutionData(
 
   // Handle error mode
   if (mode === 'error') {
-    const errorAnalysis = processErrorExecution(execution, {
-      itemsLimit: options.errorItemsLimit ?? 2,
-      includeStackTrace: options.includeStackTrace ?? false,
-      includeExecutionPath: options.includeExecutionPath !== false,
-      workflow
-    });
-
     const runData = execution.data?.resultData?.runData || {};
     const executedNodes = Object.keys(runData).length;
 
-    response.errorInfo = errorAnalysis;
+    if (hasRecordedError(execution)) {
+      response.errorInfo = processErrorExecution(execution, {
+        itemsLimit: options.errorItemsLimit ?? 2,
+        includeStackTrace: options.includeStackTrace ?? false,
+        includeExecutionPath: options.includeExecutionPath !== false,
+        workflow
+      });
+      if (execution.status === 'success') {
+        response.errorInfoNote = 'The execution succeeded. This error was handled by the node\'s error setting (for example continueOnFail) and did not stop the workflow.';
+      }
+    } else {
+      // Without a recorded error the analysis would name the last node with
+      // "Unknown error", so report that there is nothing to diagnose instead.
+      response.errorInfoNote = noRecordedErrorNote(execution.status);
+    }
+
     response.summary = {
       totalNodes: executedNodes,
       executedNodes,

@@ -52,7 +52,7 @@ import {
   getCacheStatistics
 } from '../utils/cache-utils';
 import { processExecution } from '../services/execution-processor';
-import { checkNpmVersion, formatVersionMessage } from '../utils/npm-version-checker';
+import { checkNpmVersion, formatVersionMessage, getUpToDate, VersionCheckStatus } from '../utils/npm-version-checker';
 import {
   normalizeMcpJsonValue,
   normalizeMcpWorkflowConnections,
@@ -89,7 +89,9 @@ interface HealthCheckResponseData {
   versionCheck: {
     current: string;
     latest: string | null;
-    upToDate: boolean;
+    /** null when the check failed or is disabled - see checkStatus */
+    upToDate: boolean | null;
+    checkStatus: VersionCheckStatus;
     message: string;
     updateCommand?: string;
   };
@@ -200,7 +202,9 @@ interface DiagnosticResponseData {
   versionInfo: {
     current: string;
     latest: string | null;
-    upToDate: boolean;
+    /** null when the check failed or is disabled - see checkStatus */
+    upToDate: boolean | null;
+    checkStatus: VersionCheckStatus;
     message: string;
     updateCommand?: string;
   };
@@ -2650,7 +2654,8 @@ export async function handleHealthCheck(context?: InstanceContext): Promise<McpT
       versionCheck: {
         current: versionCheck.currentVersion,
         latest: versionCheck.latestVersion,
-        upToDate: !versionCheck.isOutdated,
+        upToDate: getUpToDate(versionCheck),
+        checkStatus: versionCheck.status,
         message: formatVersionMessage(versionCheck),
         ...(versionCheck.updateCommand ? { updateCommand: versionCheck.updateCommand } : {})
       },
@@ -2684,7 +2689,8 @@ export async function handleHealthCheck(context?: InstanceContext): Promise<McpT
     telemetry.trackEvent('health_check_completed', {
       success: true,
       responseTimeMs: responseTime,
-      upToDate: !versionCheck.isOutdated,
+      upToDate: getUpToDate(versionCheck),
+      versionCheckStatus: versionCheck.status,
       apiConnected: true
     });
 
@@ -2979,7 +2985,8 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
     versionInfo: {
       current: versionCheck.currentVersion,
       latest: versionCheck.latestVersion,
-      upToDate: !versionCheck.isOutdated,
+      upToDate: getUpToDate(versionCheck),
+      checkStatus: versionCheck.status,
       message: formatVersionMessage(versionCheck),
       ...(versionCheck.updateCommand ? { updateCommand: versionCheck.updateCommand } : {})
     },
@@ -3161,7 +3168,8 @@ export async function handleDiagnostic(request: any, context?: InstanceContext):
     apiConnected: apiStatus.connected,
     toolsAvailable: totalTools,
     responseTimeMs: responseTime,
-    upToDate: !versionCheck.isOutdated,
+    upToDate: getUpToDate(versionCheck),
+    versionCheckStatus: versionCheck.status,
     verbose
   });
 

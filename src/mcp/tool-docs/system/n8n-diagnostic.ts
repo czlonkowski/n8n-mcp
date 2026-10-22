@@ -47,7 +47,7 @@ The diagnostic is essential when:
   - platform: OS platform (darwin/win32/linux)
 - apiConfiguration: API configuration and connectivity status
   - configured, status (connected/error/version), config details
-- versionInfo: Version check results (current, latest, upToDate, message, updateCommand)
+- versionInfo: Version check results (current, latest, upToDate, checkStatus, message, updateCommand). upToDate is null when the npm check failed or N8N_MCP_VERSION_CHECK_DISABLED=true
 - toolsAvailability: Tool availability breakdown (doc tools + management tools)
 - performance: Performance metrics (responseTimeMs, cacheHitRate, cachedInstances)
 - modeSpecificDebug: Mode-specific debugging (ALWAYS PRESENT)

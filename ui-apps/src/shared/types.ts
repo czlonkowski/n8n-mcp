@@ -100,7 +100,7 @@ export interface HealthDashboardData {
     versionCheck?: {
       current?: string;
       latest?: string;
-      upToDate?: boolean;
+      upToDate?: boolean | null;
       updateCommand?: string;
     };
     performance?: {

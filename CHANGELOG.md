@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.96.0] - 2026-10-22
+
+### Added
+
+- **`N8N_MCP_VERSION_CHECK_DISABLED` turns off the npm version check.** `n8n_health_check` asks `registry.npmjs.org` for the latest n8n-mcp version in both status and diagnostic mode. With telemetry off, that was the only outbound request n8n-mcp made, and it had no setting to turn it off. Setting the variable to `true` or `1` skips the request. The setting is read on every call, and an unrecognised value is logged as a warning once. (#1146)
+
+### Fixed
+
+- **The health check no longer reports `upToDate: true` when it could not check.** When the npm registry was unreachable or returned an error, `versionCheck.upToDate` (status mode) and `versionInfo.upToDate` (diagnostic mode) were `true`, and the failure was cached for an hour like a successful check. `upToDate` is now `null` when the check failed or is disabled, and a new `checkStatus` field says which case applies (`ok`, `failed` or `disabled`). A failed check is cached for 5 minutes, a successful one still for an hour. Clients that test `!upToDate` should test `upToDate === false`. The `health_check_completed` and `diagnostic_completed` telemetry events send the same `null` and a new `versionCheckStatus` property, so a failed check is no longer counted as up to date. (#1146)
+- **`n8n_executions` error mode no longer reports an error for an execution that has none.** For an execution without a top-level error or a node error, such as a successful one, `mode: "error"` named the last executed node as failing with "Unknown error". It now omits `errorInfo` and returns `errorInfoNote`, which says whether the execution succeeded, has not finished yet, or failed without recorded error details. A successful execution whose node error was handled (for example with `continueOnFail`) still gets the analysis, with a note saying the error did not stop the workflow. When n8n records only node-level errors, the analysis now names the node that holds the error instead of the last executed node. (#1065)
+
 ## [2.95.0] - 2026-10-21
 
 ### Added

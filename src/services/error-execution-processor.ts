@@ -73,6 +73,18 @@ const SENSITIVE_PATTERNS = [
 ];
 
 /**
+ * True when n8n recorded an error for the execution, either at the top level
+ * (resultData.error) or on any node run. Without one there is nothing for
+ * processErrorExecution to analyse.
+ */
+export function hasRecordedError(execution: Execution): boolean {
+  const resultData = execution.data?.resultData;
+  if (resultData?.error) return true;
+  const runData = (resultData?.runData as Record<string, unknown>) || {};
+  return Object.values(runData).some(nodeRuns => getRunError(nodeRuns) !== undefined);
+}
+
+/**
  * Process execution for error debugging
  */
 export function processErrorExecution(
@@ -136,7 +148,13 @@ function extractPrimaryError(
 ): ErrorAnalysis['primaryError'] {
   // Error info from resultData.error
   const errorNode = error?.node as Record<string, unknown> | undefined;
-  const nodeName = (errorNode?.name as string) || lastNode || 'Unknown';
+  // Only search runData when there is no top-level error: a run error on
+  // another node may have been handled (continueOnFail / onError) and is not
+  // what stopped the workflow.
+  const nodeName = (errorNode?.name as string)
+    || (error ? lastNode : findNodeWithError(runData, lastNode))
+    || lastNode
+    || 'Unknown';
 
   // Also check runData for node-level errors
   const nodeRunData = runData[nodeName];
@@ -153,6 +171,18 @@ function extractPrimaryError(
     nodeParameters: extractRelevantParameters(errorNode?.parameters),
     stackTrace: includeFullStackTrace ? stackTrace : truncateStackTrace(stackTrace)
   };
+}
+
+/**
+ * Name of a node whose runs carry an error: the last executed node when it
+ * has one, otherwise the first such node in runData.
+ */
+function findNodeWithError(
+  runData: Record<string, any>,
+  lastNode: string | undefined
+): string | undefined {
+  if (lastNode && getRunError(runData[lastNode]) !== undefined) return lastNode;
+  return Object.keys(runData).find(name => getRunError(runData[name]) !== undefined);
 }
 
 /**

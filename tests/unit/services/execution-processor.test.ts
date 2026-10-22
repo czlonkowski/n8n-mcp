@@ -1007,3 +1007,111 @@ describe('ExecutionProcessor - structure-only mode with no items', () => {
     expect(result.summary?.hasMoreData).toBe(false);
   });
 });
+
+/**
+ * Error mode without a recorded error (#1065)
+ */
+describe('ExecutionProcessor - error mode without a recorded error', () => {
+  it('does not invent an error for a successful execution', () => {
+    const execution = createMockExecution({
+      status: ExecutionStatus.SUCCESS,
+      nodeData: { 'Trigger': createNodeData(1), 'Set': createNodeData(3) },
+    });
+    execution.data!.resultData!.lastNodeExecuted = 'Set';
+
+    const result = filterExecutionData(execution, { mode: 'error' });
+
+    expect(result.errorInfo).toBeUndefined();
+    expect(result.errorInfoNote).toContain('succeeded');
+    expect(result.summary?.executedNodes).toBe(2);
+  });
+
+  it('says no details were recorded when the status is error but nothing carries an error', () => {
+    const execution = createMockExecution({
+      status: ExecutionStatus.ERROR,
+      nodeData: { 'Trigger': createNodeData(1) },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'error' });
+
+    expect(result.errorInfo).toBeUndefined();
+    expect(result.errorInfoNote).toContain('recorded no error details');
+    expect(result.errorInfoNote).toContain('"error"');
+  });
+
+  it('analyses a node-level error when there is no top-level error', () => {
+    const execution = createMockExecution({
+      status: ExecutionStatus.ERROR,
+      nodeData: { 'Trigger': createNodeData(1), 'HTTP Request': createNodeData(0, true) },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'error' });
+
+    expect(result.errorInfoNote).toBeUndefined();
+    expect(result.errorInfo?.primaryError.message).toBe('Node error');
+  });
+
+  it('names the node that holds the error, not the last executed node', () => {
+    const execution = createMockExecution({
+      status: ExecutionStatus.ERROR,
+      nodeData: { 'HTTP Request': createNodeData(0, true), 'Error Handler': createNodeData(1) },
+    });
+    execution.data!.resultData!.lastNodeExecuted = 'Error Handler';
+
+    const result = filterExecutionData(execution, { mode: 'error' });
+
+    expect(result.errorInfo?.primaryError.nodeName).toBe('HTTP Request');
+    expect(result.errorInfo?.primaryError.message).toBe('Node error');
+  });
+
+  it('keeps the last executed node when a top-level error has no node and another node had a handled error', () => {
+    const execution = createMockExecution({
+      status: ExecutionStatus.ERROR,
+      hasError: true,
+      nodeData: { 'Handled': createNodeData(1, true), 'Wait': createNodeData(1) },
+    });
+    execution.data!.resultData!.lastNodeExecuted = 'Wait';
+
+    const result = filterExecutionData(execution, { mode: 'error' });
+
+    expect(result.errorInfo?.primaryError.nodeName).toBe('Wait');
+    expect(result.errorInfo?.primaryError.message).toBe('Test error');
+  });
+
+  it('analyses a handled node error on a successful execution and says the run succeeded', () => {
+    const execution = createMockExecution({
+      status: ExecutionStatus.SUCCESS,
+      nodeData: { 'Trigger': createNodeData(1), 'HTTP Request': createNodeData(1, true) },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'error' });
+
+    expect(result.errorInfo?.primaryError.nodeName).toBe('HTTP Request');
+    expect(result.errorInfoNote).toContain('handled');
+  });
+
+  it('says a waiting execution has not finished rather than that it failed', () => {
+    const execution = createMockExecution({
+      status: ExecutionStatus.WAITING,
+      nodeData: { 'Trigger': createNodeData(1) },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'error' });
+
+    expect(result.errorInfo).toBeUndefined();
+    expect(result.errorInfoNote).toContain('has not finished');
+  });
+
+  it('analyses a top-level error', () => {
+    const execution = createMockExecution({
+      status: ExecutionStatus.ERROR,
+      hasError: true,
+      nodeData: { 'Trigger': createNodeData(1) },
+    });
+
+    const result = filterExecutionData(execution, { mode: 'error' });
+
+    expect(result.errorInfoNote).toBeUndefined();
+    expect(result.errorInfo?.primaryError.message).toBe('Test error');
+  });
+});

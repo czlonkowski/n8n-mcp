@@ -554,6 +554,8 @@ export interface FilteredExecutionResponse {
 
   // Error mode specific (mode='error')
   errorInfo?: ErrorAnalysis;
+  /** mode='error' only: set instead of errorInfo when n8n recorded no error for the execution */
+  errorInfoNote?: string;
 }
 
 export interface FilteredNodeData {

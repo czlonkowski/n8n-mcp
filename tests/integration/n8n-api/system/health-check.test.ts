@@ -56,7 +56,12 @@ describe('Integration: handleHealthCheck', () => {
       expect(data.versionCheck).toBeDefined();
       expect(data.versionCheck).toHaveProperty('current');
       expect(data.versionCheck).toHaveProperty('upToDate');
-      expect(typeof data.versionCheck.upToDate).toBe('boolean');
+      // upToDate is a boolean only when the npm registry answered
+      if (data.versionCheck.checkStatus === 'ok') {
+        expect(typeof data.versionCheck.upToDate).toBe('boolean');
+      } else {
+        expect(data.versionCheck.upToDate).toBeNull();
+      }
 
       // Performance metrics should be present
       expect(data.performance).toBeDefined();
