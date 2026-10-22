@@ -1929,6 +1929,49 @@ describe('handlers-n8n-manager', () => {
   });
 
   describe('handleDiagnostic', () => {
+    describe('HTTP mode auth and port reporting', () => {
+      const keys = ['MCP_MODE', 'AUTH_TOKEN', 'AUTH_TOKEN_FILE', 'MCP_AUTH_TOKEN', 'PORT', 'MCP_PORT'] as const;
+      let saved: Partial<Record<(typeof keys)[number], string | undefined>>;
+
+      beforeEach(() => {
+        saved = Object.fromEntries(keys.map(k => [k, process.env[k]]));
+        keys.forEach(k => delete process.env[k]);
+        process.env.MCP_MODE = 'http';
+        process.env.N8N_MCP_VERSION_CHECK_DISABLED = 'true';
+        mockApiClient.healthCheck.mockResolvedValue({ status: 'ok' });
+      });
+
+      afterEach(() => {
+        keys.forEach(k => {
+          const value = saved[k];
+          if (value === undefined) delete process.env[k];
+          else (process.env as Record<string, string>)[k] = value;
+        });
+        delete process.env.N8N_MCP_VERSION_CHECK_DISABLED;
+      });
+
+      async function diagnoseHttpMode(): Promise<any> {
+        const result = await handlers.handleDiagnostic({ params: { arguments: {} } });
+        return (result.data as any).modeSpecificDebug;
+      }
+
+      it('counts AUTH_TOKEN_FILE as a configured token', async () => {
+        process.env.AUTH_TOKEN_FILE = '/run/secrets/mcp_token';
+        expect((await diagnoseHttpMode()).authTokenConfigured).toBe(true);
+      });
+
+      it('does not count MCP_AUTH_TOKEN, which the server never reads', async () => {
+        process.env.MCP_AUTH_TOKEN = 'client-side-token-only';
+        expect((await diagnoseHttpMode()).authTokenConfigured).toBe(false);
+      });
+
+      it('reports the port from PORT and ignores MCP_PORT', async () => {
+        process.env.PORT = '3456';
+        process.env.MCP_PORT = '9999';
+        expect((await diagnoseHttpMode()).port).toBe('3456');
+      });
+    });
+
     it('reports an unknown version state in versionInfo when the check is disabled', async () => {
       const fetchSpy = vi.fn();
       vi.stubGlobal('fetch', fetchSpy);

@@ -45,7 +45,6 @@ services:
       - PORT=${MCP_PORT:-3000}
       - N8N_API_URL=http://n8n:5678
       - N8N_API_KEY=${N8N_API_KEY}
-      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
       - AUTH_TOKEN=${MCP_AUTH_TOKEN}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:

@@ -61,8 +61,7 @@ export MCP_MODE=http                       # Required for HTTP mode
 export N8N_API_URL=http://localhost:5678  # Your n8n instance URL
 export N8N_API_KEY=your-api-key-here       # Your n8n API key
 export WEBHOOK_SECURITY_MODE=moderate      # Required when N8N_API_URL is localhost or RFC1918
-export MCP_AUTH_TOKEN=test-token-minimum-32-chars-long
-export AUTH_TOKEN=test-token-minimum-32-chars-long  # Same value as MCP_AUTH_TOKEN
+export AUTH_TOKEN=test-token-minimum-32-chars-long
 export PORT=3001
 
 # Start the server
@@ -88,12 +87,13 @@ curl http://localhost:3001/mcp
 | `N8N_API_URL` | Yes* | URL of your n8n instance | `http://localhost:5678` |
 | `N8N_API_KEY` | Yes* | n8n API key for workflow management | `n8n_api_xxx...` |
 | `WEBHOOK_SECURITY_MODE` | No | SSRF gate (`strict` default, `moderate`, `permissive`). Set to `moderate` when `N8N_API_URL` is localhost or an RFC1918 host on the same network. | `moderate` |
-| `MCP_AUTH_TOKEN` | Yes | Authentication token for MCP requests (min 32 chars) | `secure-random-32-char-token` |
-| `AUTH_TOKEN` | Yes | **MUST match MCP_AUTH_TOKEN exactly** | `secure-random-32-char-token` |
+| `AUTH_TOKEN` | Yes | Bearer token that clients such as n8n's MCP Client Tool must send (min 32 chars). `AUTH_TOKEN_FILE` can point to a file holding it instead. | `secure-random-32-char-token` |
 | `PORT` | No | Port for the HTTP server | `3000` (default) |
 | `LOG_LEVEL` | No | Logging verbosity | `info`, `debug`, `error` |
 
 *Required only for workflow management features. Documentation tools work without these.
+
+The repository's `docker-compose.n8n.yml` and `deploy/quick-deploy-n8n.sh` read the token from `MCP_AUTH_TOKEN` and the port from `MCP_PORT` in their `.env` file, and pass them to the container as `AUTH_TOKEN` and `PORT`. Keep those key names when you use that compose file.
 
 ## Docker Build Changes (v2.9.2+)
 
@@ -138,7 +138,6 @@ docker run -d \
   -e N8N_API_URL=http://n8n:5678 \
   -e N8N_API_KEY=your-n8n-api-key \
   -e WEBHOOK_SECURITY_MODE=permissive \
-  -e MCP_AUTH_TOKEN=$AUTH_TOKEN \
   -e AUTH_TOKEN=$AUTH_TOKEN \
   -e LOG_LEVEL=info \
   --restart unless-stopped \
@@ -157,14 +156,17 @@ cd n8n-mcp
 # Build Docker image
 docker build -t n8n-mcp:latest .
 
+# Generate a token and save it for the n8n MCP Client Tool
+AUTH_TOKEN=$(openssl rand -hex 32)
+echo "Your AUTH_TOKEN: $AUTH_TOKEN"
+
 # Run using your local image
 docker run -d \
   --name n8n-mcp \
   -p 3000:3000 \
   -e N8N_MODE=true \
   -e MCP_MODE=http \
-  -e MCP_AUTH_TOKEN=$(openssl rand -hex 32) \
-  -e AUTH_TOKEN=$(openssl rand -hex 32) \
+  -e AUTH_TOKEN=$AUTH_TOKEN \
   # ... other settings
   n8n-mcp:latest
 ```
@@ -187,7 +189,6 @@ Environment="MCP_MODE=http"
 Environment="N8N_API_URL=http://localhost:5678"
 Environment="N8N_API_KEY=your-n8n-api-key"
 Environment="WEBHOOK_SECURITY_MODE=moderate"
-Environment="MCP_AUTH_TOKEN=your-secure-token-32-chars-min"
 Environment="AUTH_TOKEN=your-secure-token-32-chars-min"
 Environment="PORT=3000"
 ExecStart=/usr/bin/node /opt/n8n-mcp/dist/mcp/index.js
@@ -215,7 +216,7 @@ Deploy n8n-MCP on a separate server from your n8n instance:
 # ALWAYS pull the latest image first
 docker pull ghcr.io/czlonkowski/n8n-mcp:latest
 
-# Generate auth tokens
+# Generate an auth token
 AUTH_TOKEN=$(openssl rand -hex 32)
 echo "Save this AUTH_TOKEN: $AUTH_TOKEN"
 
@@ -227,7 +228,6 @@ docker run -d \
   -e MCP_MODE=http \
   -e N8N_API_URL=https://your-n8n-instance.com \
   -e N8N_API_KEY=your-n8n-api-key \
-  -e MCP_AUTH_TOKEN=$AUTH_TOKEN \
   -e AUTH_TOKEN=$AUTH_TOKEN \
   -e LOG_LEVEL=info \
   --restart unless-stopped \
@@ -288,7 +288,6 @@ services:
       - MCP_MODE=http
       - N8N_API_URL=${N8N_API_URL}
       - N8N_API_KEY=${N8N_API_KEY}
-      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
       - AUTH_TOKEN=${AUTH_TOKEN}
       - PORT=3000
       - LOG_LEVEL=info
@@ -337,7 +336,6 @@ docker build -t n8n-mcp:local .
       - MCP_MODE=http
       - N8N_API_URL=${N8N_API_URL}
       - N8N_API_KEY=${N8N_API_KEY}
-      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
       - AUTH_TOKEN=${AUTH_TOKEN}
       - PORT=3000
       - LOG_LEVEL=info
@@ -382,7 +380,6 @@ AUTH_TOKEN=$(openssl rand -hex 32)
 cat > .env << EOF
 N8N_API_URL=https://your-n8n-instance.com
 N8N_API_KEY=your-n8n-api-key-here
-MCP_AUTH_TOKEN=$AUTH_TOKEN
 AUTH_TOKEN=$AUTH_TOKEN
 EOF
 
@@ -422,7 +419,7 @@ docker compose up -d
    - Docker network: http://n8n-mcp:3000/mcp
    - Different server: https://mcp.yourdomain.com/mcp
    
-   Auth Token: [Your MCP_AUTH_TOKEN/AUTH_TOKEN value]
+   Auth Token: [Your AUTH_TOKEN value]
    
    Transport: HTTP Streamable (SSE)
    ```
@@ -454,7 +451,7 @@ You are an n8n workflow expert. Use the MCP tools to:
 ## Security & Best Practices
 
 ### Authentication
-- **MCP_AUTH_TOKEN**: Always use a strong, random token (32+ characters)
+- **AUTH_TOKEN**: Always use a strong, random token (32+ characters)
 - **N8N_API_KEY**: Only required for workflow management features
 - Store tokens in environment variables or secure vaults
 
@@ -491,10 +488,10 @@ You are an n8n workflow expert. Use the MCP tools to:
 - **Solution**: Ensure your Server URL includes `/mcp` (e.g., `http://localhost:3000/mcp`)
 - **Why**: n8n connects to the `/mcp` endpoint specifically, not the root URL
 
-**Mismatched Auth Tokens**
+**Mismatched Auth Token**
 - **Symptom**: "Authentication failed" or "Invalid auth token"
-- **Solution**: Ensure both `MCP_AUTH_TOKEN` and `AUTH_TOKEN` have the same value
-- **Why**: Both variables must match for proper authentication
+- **Solution**: Ensure the token in n8n's MCP Client Tool is exactly the server's `AUTH_TOKEN`
+- **Why**: The server compares the bearer token each request sends with `AUTH_TOKEN`
 
 ### Connection Issues
 
@@ -534,18 +531,15 @@ You are an n8n workflow expert. Use the MCP tools to:
 **"Invalid auth token" or "Authentication failed"**
 1. **Verify token format**:
    ```bash
-   # Check token length (should be 64 chars for hex-32)
-   echo $MCP_AUTH_TOKEN | wc -c
-   
-   # Verify both tokens match
-   echo "MCP_AUTH_TOKEN: $MCP_AUTH_TOKEN"
-   echo "AUTH_TOKEN: $AUTH_TOKEN"
+   # Check token length (should be 64 chars for hex-32).
+   # Replace $AUTH_TOKEN with the value you gave the server if it is not set in this shell.
+   echo -n "$AUTH_TOKEN" | wc -c
    ```
 
 2. **Common token issues**:
    - Token too short (minimum 32 characters)
    - Extra whitespace or newlines in token
-   - Different values for `MCP_AUTH_TOKEN` and `AUTH_TOKEN`
+   - The token in n8n's MCP Client Tool differs from the server's `AUTH_TOKEN`
    - Special characters not properly escaped in environment files
 
 **"Cannot connect to n8n API"**
@@ -581,8 +575,7 @@ You are an n8n workflow expert. Use the MCP tools to:
 # Required for all deployments
 export N8N_MODE=true                                    # Enables n8n integration
 export MCP_MODE=http                                   # Enables HTTP mode for n8n
-export MCP_AUTH_TOKEN=your-secure-32-char-token       # Auth token
-export AUTH_TOKEN=your-secure-32-char-token           # Same value as MCP_AUTH_TOKEN
+export AUTH_TOKEN=your-secure-32-char-token           # Auth token
 
 # Required for workflow management features
 export N8N_API_URL=https://your-n8n-instance.com      # Your n8n URL
@@ -716,7 +709,6 @@ docker run -d \
   -p 3001:3000 \
   -e N8N_MODE=true \
   -e MCP_MODE=http \
-  -e MCP_AUTH_TOKEN=test-token-minimum-32-chars-long \
   -e AUTH_TOKEN=test-token-minimum-32-chars-long \
   -e LOG_LEVEL=debug \
   n8n-mcp:latest

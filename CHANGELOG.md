@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.96.1] - 2026-10-22
+
+### Fixed
+
+- **`MCP_AUTH_TOKEN` is no longer described as a server setting.** The n8n deployment guide (`docs/N8N_DEPLOYMENT.md`) said to set `MCP_AUTH_TOKEN` on the server with the same value as `AUTH_TOKEN`. The server authenticates with `AUTH_TOKEN` (or `AUTH_TOKEN_FILE`) only; `MCP_AUTH_TOKEN` is read by the `scripts/mcp-http-client.js` bridge on the client side. The guide now uses `AUTH_TOKEN` throughout, and `docs/README_CLAUDE_SETUP.md` explains which side reads which variable.
+- **`n8n_health_check` diagnostic mode reports HTTP auth and port correctly.** `modeSpecificDebug.authTokenConfigured` counted `MCP_AUTH_TOKEN` and ignored `AUTH_TOKEN_FILE`; it now checks `AUTH_TOKEN` or `AUTH_TOKEN_FILE`. `modeSpecificDebug.port` preferred `MCP_PORT`, which the server does not read; it now uses `PORT`.
+
+### Removed
+
+- `scripts/deploy-to-vm.sh` and `tests/test-mcp-server-extraction.js`, two scripts from June 2025 that nothing referenced. They relied on the server-side `MCP_AUTH_TOKEN`, `MCP_SERVER_PORT` and `MCP_SERVER_HOST`, which the server does not read. `docker-compose.n8n.yml` no longer passes the unused `MCP_AUTH_TOKEN` into the container; its `.env` key of that name still sets `AUTH_TOKEN`.
+
 ## [2.96.0] - 2026-10-22
 
 ### Added

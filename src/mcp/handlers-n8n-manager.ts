@@ -2756,18 +2756,18 @@ function detectCloudPlatform(): string | null {
  */
 function getModeSpecificDebug(mcpMode: string) {
   if (mcpMode === 'http') {
-    const port = process.env.MCP_PORT || process.env.PORT || 3000;
+    const port = process.env.PORT || 3000;
     return {
       mode: 'HTTP Server',
       port,
-      authTokenConfigured: !!(process.env.MCP_AUTH_TOKEN || process.env.AUTH_TOKEN),
+      authTokenConfigured: !!(process.env.AUTH_TOKEN || process.env.AUTH_TOKEN_FILE),
       corsEnabled: true,
       serverUrl: `http://localhost:${port}`,
       healthCheckUrl: `http://localhost:${port}/health`,
       troubleshooting: [
         `1. Test server health: curl http://localhost:${port}/health`,
         '2. Check browser console for CORS errors',
-        '3. Verify MCP_AUTH_TOKEN or AUTH_TOKEN if authentication enabled',
+        '3. Verify the client sends the server\'s AUTH_TOKEN as its bearer token',
         `4. Ensure port ${port} is not in use: lsof -i :${port} (macOS/Linux) or netstat -ano | findstr :${port} (Windows)`,
         '5. Check firewall settings for port access',
         '6. Review server logs for connection errors'

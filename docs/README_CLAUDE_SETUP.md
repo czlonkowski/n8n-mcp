@@ -92,6 +92,8 @@ For production deployments with multiple users:
    }
    ```
 
+   `MCP_AUTH_TOKEN` is read by `mcp-http-client.js` on your machine and sent as the bearer token. Set it to the server's `AUTH_TOKEN`; the server itself does not read `MCP_AUTH_TOKEN`.
+
 📝 **Note**: Native remote MCP support is available in Claude Pro/Team/Enterprise via Settings > Integrations.
 
 ## 📁 Configuration File Locations

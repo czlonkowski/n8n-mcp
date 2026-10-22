@@ -127,7 +127,6 @@ jobs:
             -e MCP_MODE=http \
             -e N8N_API_URL=http://localhost:5678 \
             -e N8N_API_KEY=test \
-            -e MCP_AUTH_TOKEN=test-token-minimum-32-chars-long \
             -e AUTH_TOKEN=test-token-minimum-32-chars-long \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
             node -e "console.log('N8N_MODE:', process.env.N8N_MODE); process.exit(0);"
@@ -142,7 +141,6 @@ jobs:
             -e MCP_MODE=http \
             -e N8N_API_URL=http://localhost:5678 \
             -e N8N_API_KEY=test \
-            -e MCP_AUTH_TOKEN=test-token-minimum-32-chars-long \
             -e AUTH_TOKEN=test-token-minimum-32-chars-long \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           
