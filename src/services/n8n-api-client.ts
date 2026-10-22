@@ -149,6 +149,12 @@ export interface WorkflowWriteOptions {
   authoredGroups?: Set<string>;
   /** Called for each non-fatal adjustment (a pruned member, a dropped group, an unsupported field). */
   onWarning?: (message: string) => void;
+  /**
+   * false saves without publishing. On n8n 2.x a PUT otherwise re-publishes an active workflow,
+   * which puts any unpublished draft (an editor autosave, an in-progress edit) live and re-registers
+   * its triggers. Leave undefined to keep n8n's publish-on-save.
+   */
+  publishIfActive?: boolean;
 }
 
 export class N8nApiClient {
@@ -837,10 +843,13 @@ export class N8nApiClient {
   /** Save a workflow with PUT, falling back to PATCH on n8n versions that answer PUT with 405. */
   private async putOrPatchWorkflow(
     safeId: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    publishIfActive?: boolean
   ): Promise<Workflow> {
     try {
-      const response = await this.client.put(`/workflows/${safeId}`, body);
+      const response = publishIfActive === false
+        ? await this.client.put(`/workflows/${safeId}`, body, { params: { publishIfActive: 'false' } })
+        : await this.client.put(`/workflows/${safeId}`, body);
       return response.data;
     } catch (putError: any) {
       if (failureStatus(putError) !== 405) throw putError;
@@ -945,7 +954,7 @@ export class N8nApiClient {
       // 400 responses, while the fallback reacts to 405.
       return await this.sendWorkflowWrite(
         payload,
-        body => this.putOrPatchWorkflow(safeId, body),
+        body => this.putOrPatchWorkflow(safeId, body, options.publishIfActive),
         options
       );
     } catch (error) {

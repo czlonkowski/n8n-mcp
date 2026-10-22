@@ -2841,4 +2841,65 @@ describe('handlers-workflow-diff', () => {
       });
     });
   });
+
+  // n8n 2.x publishes on save by default (PUT ?publishIfActive=true). Failure modes this pins:
+  // FM-A  a metadata-only update (rename, folder move, settings, tags) on an active workflow
+  //       publishes an unpublished draft (e.g. an editor autosave) and re-registers its triggers;
+  // FM-B  a graph change stops publishing on save, which callers rely on;
+  // FM-C  the rollback after a failed metadata-only update publishes the draft it restores.
+  describe('publish-on-save for metadata-only updates', () => {
+    const applied = (workflow: any) => ({
+      success: true, workflow, operationsApplied: 1, message: 'ok', errors: [], applied: [0], failed: [],
+    });
+
+    it.each([
+      [[{ type: 'updateName', name: 'Renamed' }]],
+      [[{ type: 'moveToFolder', parentFolderId: 'folder-1' }]],
+      [[{ type: 'moveToFolder', parentFolderId: null }]],
+      [[{ type: 'updateSettings', settings: { timezone: 'UTC' } }]],
+      [[{ type: 'updateName', name: 'Renamed' }, { type: 'moveToFolder', parentFolderId: 'folder-1' }]],
+    ])('FM-A: %j saves without publishing', async (operations) => {
+      const workflow = createTestWorkflow();
+      mockApiClient.getWorkflow.mockResolvedValue(workflow);
+      mockDiffEngine.applyDiff.mockResolvedValue(applied(workflow));
+      mockApiClient.updateWorkflow.mockResolvedValue(workflow);
+
+      const result = await handleUpdatePartialWorkflow({ id: 'test-id', operations }, mockRepository);
+
+      expect(result.success).toBe(true);
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledWith(
+        'test-id', workflow, expect.objectContaining({ publishIfActive: false }));
+    });
+
+    it('FM-B: a graph change still publishes on save, even alongside a rename', async () => {
+      const workflow = createTestWorkflow();
+      mockApiClient.getWorkflow.mockResolvedValue(workflow);
+      mockDiffEngine.applyDiff.mockResolvedValue(applied(workflow));
+      mockApiClient.updateWorkflow.mockResolvedValue(workflow);
+
+      await handleUpdatePartialWorkflow({
+        id: 'test-id',
+        operations: [{ type: 'updateName', name: 'Renamed' }, { type: 'updateNode', nodeId: 'node1', updates: {} }],
+      }, mockRepository);
+
+      expect(mockApiClient.updateWorkflow.mock.calls[0][2].publishIfActive).toBeUndefined();
+    });
+
+    it('FM-C: the rollback of a failed metadata-only update does not publish either', async () => {
+      const before = createTestWorkflow({ versionId: 'v1' });
+      mockApiClient.getWorkflow
+        .mockResolvedValueOnce(before)
+        .mockResolvedValueOnce(createTestWorkflow({ versionId: 'v2' }));
+      mockDiffEngine.applyDiff.mockResolvedValue(applied(before));
+      mockApiClient.updateWorkflow
+        .mockRejectedValueOnce(new N8nValidationError('Invalid workflow structure', { field: 'name', message: 'bad' }))
+        .mockResolvedValueOnce(before);
+
+      await handleUpdatePartialWorkflow({ id: 'test-id', operations: [{ type: 'updateName', name: 'Renamed' }] }, mockRepository);
+
+      expect(mockApiClient.updateWorkflow).toHaveBeenCalledTimes(2);
+      expect(mockApiClient.updateWorkflow).toHaveBeenNthCalledWith(
+        2, 'test-id', before, expect.objectContaining({ publishIfActive: false }));
+    });
+  });
 });
