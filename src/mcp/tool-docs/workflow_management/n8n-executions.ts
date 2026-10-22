@@ -54,7 +54,7 @@ export const n8nExecutionsDoc: ToolDocumentation = {
       includeData: { type: 'boolean', required: false, description: 'For action=list: Include execution data (default: false)' }
     },
     returns: `Depends on action:
-- get (error mode): { errorInfo: { primaryError, upstreamContext, executionPath, suggestions }, summary }; when n8n recorded no error (e.g. a successful execution), errorInfo is omitted and errorInfoNote says why. On a successful execution whose node error was handled (continueOnFail), errorInfo is present and errorInfoNote says the error did not stop the workflow
+- get (error mode): { errorInfo: { primaryError, upstreamContext, executionPath, suggestions }, summary }; when n8n recorded no error (e.g. a successful execution), errorInfo is omitted and errorInfoNote says why. When n8n recorded a node error on an execution that succeeded, errorInfo is present and errorInfoNote says the error did not stop the workflow
 - get (other modes): Execution object with data based on mode
 - list: { data: [...executions], nextCursor?: string }
 - delete: { success: boolean, message: string }`,

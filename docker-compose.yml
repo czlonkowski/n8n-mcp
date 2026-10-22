@@ -23,7 +23,6 @@ services:
       
       # Database
       NODE_DB_PATH: ${NODE_DB_PATH:-/app/data/nodes.db}
-      REBUILD_ON_START: ${REBUILD_ON_START:-false}
 
       # Telemetry: Anonymous usage statistics are ENABLED by default
       # To opt-out, uncomment and set to 'true':
@@ -33,7 +32,7 @@ services:
       # n8n-mcp version. To skip that request, uncomment and set to 'true':
       # N8N_MCP_VERSION_CHECK_DISABLED: ${N8N_MCP_VERSION_CHECK_DISABLED:-true}
 
-      # Optional: n8n API configuration (enables 16 additional management tools)
+      # Optional: n8n API configuration (enables the n8n_* management tools)
       # Uncomment and configure to enable n8n workflow management
       # N8N_API_URL: ${N8N_API_URL}
       # N8N_API_KEY: ${N8N_API_KEY}

@@ -418,7 +418,7 @@ export function filterExecutionData(
         workflow
       });
       if (execution.status === 'success') {
-        response.errorInfoNote = 'The execution succeeded. This error was handled by the node\'s error setting (for example continueOnFail) and did not stop the workflow.';
+        response.errorInfoNote = 'The execution succeeded, so this node error did not stop the workflow.';
       }
     } else {
       // Without a recorded error the analysis would name the last node with

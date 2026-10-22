@@ -160,6 +160,10 @@ Skip HTTP entirely and use stdio mode directly:
 | `PUBLIC_URL` | Alternative to BASE_URL | Auto-detected | v2.7.14 |
 | `CORS_ORIGIN` | CORS allowed origins | `*` | v2.7.8 |
 | `AUTH_TOKEN_FILE` | Path to token file | - | v2.7.10 |
+| `AUTH_RATE_LIMIT_WINDOW` | Window for the authentication rate limit (ms) | `900000` | v2.16.3 |
+| `AUTH_RATE_LIMIT_MAX` | Failed authentication attempts allowed per IP within the window | `20` | v2.16.3 |
+| `N8N_MCP_MAX_SESSIONS` | Maximum concurrent MCP sessions; new sessions are refused while the cap is reached | `100` | v2.28.4 |
+| `SESSION_TIMEOUT_MINUTES` | Idle time after which a session is closed | `30` | v2.33.5 |
 
 ### n8n Management Tools (Optional)
 

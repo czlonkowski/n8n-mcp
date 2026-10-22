@@ -1087,7 +1087,7 @@ describe('ExecutionProcessor - error mode without a recorded error', () => {
     const result = filterExecutionData(execution, { mode: 'error' });
 
     expect(result.errorInfo?.primaryError.nodeName).toBe('HTTP Request');
-    expect(result.errorInfoNote).toContain('handled');
+    expect(result.errorInfoNote).toContain('did not stop the workflow');
   });
 
   it('says a waiting execution has not finished rather than that it failed', () => {

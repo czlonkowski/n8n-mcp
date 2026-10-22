@@ -8,7 +8,6 @@ services:
     environment:
       NODE_ENV: development
       LOG_LEVEL: debug
-      REBUILD_ON_START: "true"
     volumes:
       # Mount source for hot reload
       - ./src:/app/src:ro
