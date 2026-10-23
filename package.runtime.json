@@ -1,6 +1,6 @@
 {
   "name": "n8n-mcp-runtime",
-  "version": "2.96.1",
+  "version": "2.96.2",
   "description": "n8n MCP Server Runtime Dependencies Only",
   "private": true,
   "dependencies": {
@@ -18,7 +18,7 @@
     "axios": "^1.20.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   },
   "optionalDependencies": {
     "better-sqlite3": "^11.10.0"

@@ -277,7 +277,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
+          check-latest: true
           cache: 'npm'
 
       - name: Install dependencies
@@ -317,7 +318,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
+          check-latest: true
           cache: 'npm'
       
       - name: Install dependencies
@@ -360,7 +362,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
+          check-latest: true
           cache: 'npm'
 
       - name: Upgrade npm to >= 11.5.1 (Trusted Publisher support)
@@ -637,7 +640,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
+          check-latest: true
       
       - name: Update version badges in README
         run: |

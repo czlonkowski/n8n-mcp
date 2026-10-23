@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.96.2] - 2026-10-23
+
+### Changed
+
+- **Minimum Node.js version follows the October 2026 Node.js security release.** `engines` in the published package now requires Node `^22.23.4 || ^24.22.1 || >=26.12.1`; Node 20 is end-of-life and no longer in the supported range. npm only warns on a mismatch unless `engine-strict` is set. The MCPB manifest requires Node `>=22.12.0`, since hosts enforce that check.
+- **Docker images use a pinned, patched base.** All Dockerfiles build from `node:22.23.4-alpine` instead of the floating `node:22-alpine` tag, so Dependabot can propose base-image updates, and `latest` is rebuilt weekly to pick up base-image patches between releases. To check an older image: `docker run --rm --entrypoint node <image> --version`.
+- CI and release jobs run on Node 22 instead of Node 20.
+
 ## [2.96.1] - 2026-10-22
 
 ### Fixed

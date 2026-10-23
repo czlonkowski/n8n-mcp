@@ -131,8 +131,10 @@ function buildManifest() {
       platforms: ['darwin', 'win32', 'linux'],
       runtimes: {
         // npx needs a host Node install; declaring it lets hosts fail fast with a
-        // clear message instead of npx erroring at launch.
-        node: '>=20',
+        // clear message instead of npx erroring at launch. Kept looser than
+        // package.json `engines`: hosts enforce this check, and a host's own
+        // Node may trail Node security releases.
+        node: '>=22.12.0',
       },
     },
     tools_generated: false,

@@ -24,7 +24,7 @@ services:
 
   # Extractor service that will read from the mounted volumes
   node-extractor:
-    image: node:22-alpine
+    image: node:22.23.4-alpine
     container_name: n8n-node-extractor
     working_dir: /app
     depends_on:

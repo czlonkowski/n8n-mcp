@@ -138,6 +138,10 @@ updates:
     commit-message:
       prefix: "docker"
       include: "scope"
+    ignore:
+      # Stay on the LTS line used by the images; bump majors by hand.
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
     labels:
       - "docker"
       - "dependencies"

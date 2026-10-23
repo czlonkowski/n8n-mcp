@@ -34,6 +34,10 @@ on:
       - 'ATTRIBUTION.md'
       - 'SECURITY.md'
       - 'CODE_OF_CONDUCT.md'
+  # Weekly rebuild so published images pick up base-image security patches
+  # between code pushes.
+  schedule:
+    - cron: '0 5 * * 1'
   workflow_dispatch:
 
 # Prevent concurrent Docker pushes across all workflows (shared with release.yml)

@@ -14,7 +14,7 @@ Contributions are welcome! Here's how to get started.
 ## Local Development Setup
 
 **Prerequisites:**
-- [Node.js](https://nodejs.org/) 22.12+ recommended. The UI build requires `^20.19.0 || >=22.12.0`; the published server runtime requires `>=20.0.0`.
+- [Node.js](https://nodejs.org/) `^22.23.4 || ^24.22.1 || >=26.12.1` (the `engines` range in package.json, for both the UI build and the published server).
 - npm or yarn
 - Git
 

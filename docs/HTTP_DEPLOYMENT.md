@@ -49,7 +49,7 @@ Claude Desktop → mcp-remote → https://your-server.com
 ## 📋 Prerequisites
 
 **Server Requirements:**
-- Node.js 16+ or Docker
+- Node.js `^22.23.4 || ^24.22.1 || >=26.12.1` (or Docker)
 - 512MB RAM minimum
 - Public IP or domain name
 - (Recommended) SSL certificate for HTTPS

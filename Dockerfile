@@ -5,7 +5,7 @@
 # Both build stages run on the build host's own platform: they produce only
 # HTML and JavaScript, which are the same for every target platform, so there is
 # no reason to run npm under emulation for the non-native target.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS ui-builder
+FROM --platform=$BUILDPLATFORM node:22.23.4-alpine AS ui-builder
 WORKDIR /app/ui-apps
 COPY ui-apps/package.json ui-apps/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
@@ -15,7 +15,7 @@ COPY ui-apps/src/shared ./src/shared
 RUN npm run build
 
 # Server builder (TypeScript compilation only)
-FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
+FROM --platform=$BUILDPLATFORM node:22.23.4-alpine AS builder
 WORKDIR /app
 
 # Copy tsconfig files for TypeScript compilation
@@ -51,7 +51,7 @@ COPY src ./src
 RUN npx tsc -p tsconfig.build.json
 
 # Stage 2: Runtime (minimal dependencies)
-FROM node:22-alpine AS runtime
+FROM node:22.23.4-alpine AS runtime
 WORKDIR /app
 
 # Install only essential runtime tools
