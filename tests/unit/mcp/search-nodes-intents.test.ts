@@ -135,6 +135,15 @@ describe.skipIf(!dbExists)('search_nodes with intents (real database)', () => {
     (await server.executeTool('search_nodes', args)) as { results: any[]; totalCount: number };
   const types = (results: any[]) => results.map(result => result.nodeType);
 
+  it('applies intents on the LIKE path used without FTS5 (sql.js)', async () => {
+    const like = (query: string, options: Record<string, unknown> = {}) =>
+      (server as any).searchNodesLIKE(query, 5, options) as Promise<{ results: any[] }>;
+    expect((await like('group by')).results[0].nodeType).toBe('nodes-base.summarize');
+    expect((await like('how to deduplicate?')).results[0].nodeType).toBe('nodes-base.removeDuplicates');
+    const community = await like('group by', { source: 'community' });
+    expect(community.results.every((result: any) => result.isCommunity)).toBe(true);
+  });
+
   it('ranks Summarize first for "group by"', async () => {
     const { results } = await search({ query: 'group by', limit: 8 });
     expect(results[0].nodeType).toBe('nodes-base.summarize');

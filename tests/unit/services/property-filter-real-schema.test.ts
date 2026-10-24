@@ -97,6 +97,16 @@ describe.skipIf(!dbExists)('PropertyFilter essentials against the real node sche
     expect(line).toMatch(/aggregation \([^)]*\bsum\b/);
   });
 
+  it('OpenAI lists the image sizes of each model separately', () => {
+    const sizes = standard('nodes-base.openAi')
+      .find(p => p.name === 'options')?.options?.filter(o => o.value === 'size')
+      .map(o => o.description);
+    expect(sizes).toEqual(expect.arrayContaining([
+      expect.stringMatching(/256x256.*model=dall-e-2/),
+      expect.stringMatching(/1792x1024.*model=dall-e-3/),
+    ]));
+  });
+
   it('Remove Duplicates shows its options, including the history scope', () => {
     const props = standard('nodes-base.removeDuplicates');
     expect(child(props, 'options', 'scope')).toBeDefined();

@@ -203,6 +203,17 @@ describe('PropertyFilter', () => {
       expect(options.usageHint).toBe('Lists 25 of 30 settings. get_node with mode "search_properties" or detail "full" shows the rest.');
     });
 
+    it('keeps same-named settings that apply under different conditions', () => {
+      const result = PropertyFilter.getEssentials([{ name: 'options', type: 'collection', options: [
+        { name: 'size', type: 'options', displayOptions: { show: { '/model': ['dall-e-2'] } }, options: [{ name: 'S', value: '256x256' }] },
+        { name: 'size', type: 'options', displayOptions: { show: { '/model': ['dall-e-3'] } }, options: [{ name: 'L', value: '1792x1024' }] },
+      ] }], 'nodes-base.unknownNode', 1);
+      expect(result.common[0].options).toEqual([
+        { value: 'size', label: 'size', description: 'Values: 256x256. Only when model=dall-e-2.' },
+        { value: 'size', label: 'size', description: 'Values: 1792x1024. Only when model=dall-e-3.' },
+      ]);
+    });
+
     it('keeps abbreviations inside the first sentence', () => {
       const result = PropertyFilter.getEssentials([{ name: 'options', type: 'collection', options: [
         { name: 'quoted', type: 'boolean', description: 'Whether to treat values as text, e.g. "1" stays a string. Second sentence.' },

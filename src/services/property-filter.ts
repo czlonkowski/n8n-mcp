@@ -293,14 +293,15 @@ export class PropertyFilter {
     const conditions = JSON.stringify(first.displayOptions ?? null);
     const shared = collections.every(c => JSON.stringify(c.displayOptions ?? null) === conditions);
 
-    // child name -> its first definition and the collections that contain it
+    // child variant -> its first definition and the collections that contain it
     const byName = new Map<string, { child: any; parents: Set<any> }>();
     for (const collection of collections) {
       for (const child of collection.options) {
         if (!child?.name) continue;
-        const entry = byName.get(child.name) ?? { child, parents: new Set<any>() };
+        const key = this.variantKey(child);
+        const entry = byName.get(key) ?? { child, parents: new Set<any>() };
         entry.parents.add(collection);
-        byName.set(child.name, entry);
+        byName.set(key, entry);
       }
     }
 
@@ -434,7 +435,7 @@ export class PropertyFilter {
     if ((prop.type === 'collection' || prop.type === 'fixedCollection') && Array.isArray(prop.options)) {
       // Child settings: name plus one line each, no deeper nesting
       simplified.options = this.summarizeChildren(prop);
-      const total = this.uniqueByName(prop.options).length;
+      const total = this.uniqueVariants(prop.options).length;
       if (total > simplified.options.length) {
         truncationNote = `Lists ${simplified.options.length} of ${total} settings. ` +
           'get_node with mode "search_properties" or detail "full" shows the rest.';
@@ -495,7 +496,7 @@ export class PropertyFilter {
    * collection or group, and the allowed values for an options field.
    */
   private static summarizeChildren(prop: any): Array<{ value: string; label: string; description?: string }> {
-    return this.uniqueByName(prop.options)
+    return this.uniqueVariants(prop.options)
       .slice(0, this.MAX_CHILD_SETTINGS)
       .map((child: any) => {
         const line = this.oneLine(child);
@@ -521,8 +522,10 @@ export class PropertyFilter {
     const values = this.choiceValues(setting);
     if (values) parts.push(`Values: ${values}.`);
 
-    const appliesWhen = setting[APPLIES_WHEN];
-    if (appliesWhen) parts.push(`Only when ${appliesWhen}.`);
+    // The setting's own display condition (e.g. one `size` per model), then the
+    // condition of the merged collection it came from
+    const conditions = [this.describeConditions([setting.displayOptions]), setting[APPLIES_WHEN]].filter(Boolean);
+    if (conditions.length > 0) parts.push(`Only when ${conditions.join(' and ')}.`);
 
     return parts.join(' ');
   }
@@ -538,6 +541,23 @@ export class PropertyFilter {
       fields = setting.options.flatMap((group: any) => Array.isArray(group?.values) ? group.values : []);
     }
     return this.uniqueByName(fields.filter(field => field?.type !== 'notice'));
+  }
+
+  /** Identity of a setting: the same name can appear once per display condition. */
+  private static variantKey(item: any): string {
+    return `${item.name}\u0000${JSON.stringify(item.displayOptions ?? null)}`;
+  }
+
+  /** Settings that have a name, keeping the first of each name and display condition. */
+  private static uniqueVariants(items: any[]): any[] {
+    const seen = new Set<string>();
+    return items.filter(item => {
+      if (!item?.name) return false;
+      const key = this.variantKey(item);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
 
   /** Items that have a name, keeping the first item of each name. */

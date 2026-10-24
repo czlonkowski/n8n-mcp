@@ -83,7 +83,7 @@ export const EXPRESSION_HELPERS: ExpressionHelper[] = [
   { type: 'Number', name: 'isEven', call: 'isEven() / isOdd() / isInteger()', summary: 'Number checks', example: { input: 4, output: true } },
   { type: 'Number', name: 'toDateTime', call: 'toDateTime(unit?)', summary: "Epoch number to DateTime; unit 'ms' (default), 's', 'us' or 'excel'" },
 
-  // Dates: DateTime ($now, $today, DateTime.fromISO(...)), Date, or an ISO string
+  // Dates: DateTime ($now, $today, '...'.toDateTime()) or Date
   { type: 'Date', name: 'format', call: 'format(luxonFormat)', summary: 'Format with Luxon tokens', example: { input: '2026-10-24T10:30:00Z', args: ['yyyy-MM-dd'], output: '2026-10-24' } },
   { type: 'Date', name: 'plus', call: 'plus(n, unit) / minus(n, unit)', summary: "Add or subtract time; unit e.g. 'days', 'hours', 'months'" },
   { type: 'Date', name: 'diffTo', call: 'diffTo(other, unit?)', summary: "Difference to another date in a unit ('days' default), or several units as an object", example: { input: '2026-10-24T10:00:00Z', args: ['2026-10-20T08:00:00Z', ['days', 'hours']], output: { days: 4, hours: 2 } } },
@@ -120,7 +120,7 @@ const TYPE_TITLES: Record<HelperType, string> = {
   String: 'Strings',
   Object: 'Objects',
   Number: 'Numbers',
-  Date: 'Dates (Luxon DateTime, Date, or an ISO string)',
+  Date: 'Dates (Luxon DateTime or Date; convert a string first with .toDateTime())',
 };
 
 const TYPES: HelperType[] = ['Array', 'String', 'Object', 'Number', 'Date'];

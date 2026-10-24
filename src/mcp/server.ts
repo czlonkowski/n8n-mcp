@@ -52,7 +52,7 @@ import { PROJECT_VERSION } from '../utils/version';
 import { getNodeTypeAlternatives, getWorkflowNodeType } from '../utils/node-utils';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
 import { isDeprecatedNodeVersion, deprecatedNodeMessage, deprecatedNodeReplacementHint } from '../services/deprecated-nodes';
-import { matchSearchIntent, normalizeIntentQuery } from '../services/search-intents';
+import { matchSearchIntent, normalizeIntentQuery, type SearchIntent } from '../services/search-intents';
 import { parseTypeVersion } from '../utils/typeversion';
 import { SERVER_INSTRUCTIONS } from './native-first';
 import { ToolValidation, Validator, ValidationError } from '../utils/validation-schemas';
@@ -2271,15 +2271,8 @@ export class N8NDocumentationMCPServer {
       return this.searchNodesFuzzy(cleanedQuery, limit, { includeOperations: options?.includeOperations });
     }
 
-    // A generic data-shaping query ("group by", "how to deduplicate?") lists the
-    // core node that performs the operation first. The whole query must match an
-    // intent phrase; it is then searched in its normalized form ("deduplicate").
-    const intent = options?.source === 'community' || options?.source === 'verified'
-      ? undefined
-      : matchSearchIntent(cleanedQuery);
-    if (intent) {
-      cleanedQuery = normalizeIntentQuery(cleanedQuery);
-    }
+    const { intent, query: intentQuery } = this.resolveSearchIntent(cleanedQuery, options?.source);
+    cleanedQuery = intentQuery;
     
     let ftsQuery: string;
     
@@ -2468,7 +2461,7 @@ export class N8NDocumentationMCPServer {
         logger.warn(`FTS5 syntax error for query "${query}" in mode ${mode}`);
         
         // For problematic queries, use LIKE search with mode info
-        const likeResult = await this.searchNodesLIKE(query, limit);
+        const likeResult = await this.searchNodesLIKE(query, limit, options);
 
         // Track search query telemetry for fallback
         telemetry.trackSearchQuery(query, likeResult.results?.length ?? 0, `${mode}_LIKE_FALLBACK`);
@@ -2479,12 +2472,24 @@ export class N8NDocumentationMCPServer {
         };
       }
       
-      return this.searchNodesLIKE(query, limit);
+      return this.searchNodesLIKE(query, limit, options);
     }
   }
 
   /**
-   * Put an intent's core nodes at the top of FTS results, after any row whose
+   * A generic data-shaping query ("group by", "how to deduplicate?") lists the
+   * core node that performs the operation first. The whole query must match an
+   * intent phrase; it is then searched in its normalized form ("deduplicate").
+   * Searches limited to community nodes are left alone.
+   */
+  private resolveSearchIntent(query: string, source?: string): { intent?: SearchIntent; query: string } {
+    if (source === 'community' || source === 'verified') return { query };
+    const intent = matchSearchIntent(query);
+    return intent ? { intent, query: normalizeIntentQuery(query) } : { query };
+  }
+
+  /**
+   * Put an intent's core nodes at the top of search results, after any row whose
    * display name equals the query. A target the FTS query did not return is
    * read from the nodes table. The result is cut to `limit`.
    */
@@ -2798,7 +2803,8 @@ export class N8NDocumentationMCPServer {
     }
     
     // Split into words for normal search
-    const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 0);
+    const { intent, query: searchQuery } = this.resolveSearchIntent(query, sourceValue);
+    const words = searchQuery.toLowerCase().split(/\s+/).filter(w => w.length > 0);
     
     if (words.length === 0) {
       return { query, results: [], totalCount: 0 };
@@ -2821,7 +2827,10 @@ export class N8NDocumentationMCPServer {
     `).all(...params) as NodeRow[];
     
     // Apply relevance ranking
-    const rankedNodes = this.rankSearchResults(nodes, query, limit);
+    const relevant = this.rankSearchResults(nodes, searchQuery, limit);
+    const rankedNodes = intent
+      ? this.applySearchIntent(relevant, intent.nodeTypes, searchQuery, limit)
+      : relevant;
 
     const result: any = {
       query,
