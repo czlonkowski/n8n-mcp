@@ -603,6 +603,29 @@ describe('WorkflowValidator - false-positive audit fixes (Stage 1)', () => {
       expect(result.warnings.filter(w => w.nodeName === 'Orphan' && w.message.includes('not reachable'))).toHaveLength(1);
     });
   });
+
+  // ─── Native-first guidance: no nudge toward Code nodes ─────────────
+
+  describe('expression-heavy nodes', () => {
+    it.each(['minimal', 'runtime', 'ai-friendly', 'strict'] as const)(
+      'do not get a "use a Code node" suggestion (%s profile)',
+      async (profile) => {
+        const assignments = Array.from({ length: 8 }, (_, i) => ({
+          id: String(i), name: `field${i}`, type: 'string', value: `={{ $json.source${i}.trim() }}`
+        }));
+        const workflow = {
+          nodes: [
+            { id: '1', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} },
+            { id: '2', name: 'Map Fields', type: 'n8n-nodes-base.set', position: [200, 0], parameters: { assignments: { assignments } } },
+          ],
+          connections: { 'Trigger': { main: [[{ node: 'Map Fields', type: 'main', index: 0 }]] } },
+        };
+        const result = await validator.validateWorkflow(workflow as any, { profile });
+        const advice = [...result.suggestions, ...result.warnings.map(w => w.message)];
+        expect(advice.filter(text => /code node/i.test(text))).toEqual([]);
+      }
+    );
+  });
 });
 
 /**

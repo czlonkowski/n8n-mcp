@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.97.0] - 2026-10-24
+
+### Added
+
+- **Node-selection guidance at initialize.** The server now sends an MCP `instructions` string: use the service's own node first, then a native node (Edit Fields, Filter, IF, Switch, Merge, Aggregate, Summarize, Remove Duplicates, Sort, Limit, Split Out, Date & Time, Compare Datasets), then a short expression in that node, and a Code node only for loops or recursion, state across runs, parsing no node handles, external libraries, heavy all-items work on queue-mode workers, or one short Code node that replaces four or more glue nodes. An expression with a function body or several statements counts as code. Clients that support `instructions` add the text to the model's context. The same steps now open the `tools_documentation` overview, which still points to the Code node guides. (#1193)
+- **`tools_documentation({topic: "expression_helpers"})`.** A reference for the helper methods n8n adds to values in expressions, such as `pluck()`, `sum()`, `unique()`, `extractEmail()`, `toDateTime()`, `diffTo()` and `$ifEmpty()`, with the jobs across items that belong in a node instead. A unit test checks every listed helper and runs every example against the bundled n8n-workflow, so a change in n8n fails the test. (#1193)
+
+### Changed
+
+- **`get_node` standard detail shows more of each node's settings.** Properties are resolved for the node's current typeVersion first, so settings of older versions no longer appear: Webhook 2.2 listed the v1 `responseCode`, and Set listed fields of v3.0–3.2. The settings inside a collection or fixedCollection are listed with a one-line description that also names their fields one level down and the allowed values of option fields: HTTP Request's `options.pagination` names `paginationMode` and `completeExpression`, and `options.response` names `neverError`. A node that declares one `options` collection per operation or mode gets one merged list, in which each setting says when it applies (`Only when operation=formatDate.`). Nodes without a `resource` selector now list their `options` collection. Curated lists that named fields missing at the current version were corrected: IF (`combineOperation`), Merge (the v1 `propertyName1`/`propertyName2`; it now lists `combineBy`, `fieldsToMatchString` and `numberInputs`), Postgres, MySQL, Google Sheets, OpenAI, FTP, Execute Command, and Send Email, which was listed under `nodes-base.email`, a type that does not exist. Of 85 lesser-known settings that replace common Code patterns, standard detail now shows 78 (46 before). Across the 841 core nodes, standard output grew by a median of 0% and by 30% at the 90th percentile; HTTP Request went from 2.9 to 5.5 KB, Merge from 1.7 to 4.2 KB and Webhook from 2.3 to 4.3 KB. Community nodes are unchanged. (#1193)
+- **`search_nodes` lists the core node first for generic data-shaping queries.** A query that is only a phrase such as "deduplicate", "group by", "flatten array", "rename fields", "compare lists", "join two lists" or "format date" (question words such as "how to" are ignored) lists Remove Duplicates, Summarize, Split Out, Edit Fields, Compare Datasets, Merge, Date & Time, Aggregate, Sort, Filter or Limit first. Before, "group by" and "flatten" did not return Summarize or Split Out at all, and "deduplicate" listed a community node first. A query with any other word, such as a service name in "hubspot deduplicate contacts", is ranked as before, and searches with `source: "community"` or `"verified"` are unaffected. The `search_nodes` description no longer says that Code is prioritised in results; no such ranking existed. (#1193)
+- **`validate_workflow` no longer suggests a Code node for nodes with many expressions.** Any node with more than five `{{` got "Consider using a Code node for complex data transformations instead of multiple expressions" under every profile, `minimal` included. It fired on 570 of the 2,352 bundled templates (24%), on an Edit Fields node in 147 of them. (#1193)
+- Template search for the `data_transformation` task and the `transform` node alias lists native transform nodes first and now also matches Aggregate, Summarize, Filter and Split Out templates; `transform` no longer matches Loop Over Items. `data_transformation` matches 1,729 bundled templates (1,665 before). (#1193)
+
+### Removed
+
+- `src/services/example-generator.ts` and `src/services/task-templates.ts` (deprecated since 2.15.0), with their tests and two scripts that used them. No tool served their examples, most of which were Code nodes. `get_node` and `search_nodes` examples come from the template database and are unchanged. (#1193)
+
 ## [2.96.2] - 2026-10-23
 
 ### Changed

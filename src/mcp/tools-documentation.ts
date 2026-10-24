@@ -1,4 +1,6 @@
 import { toolsDocumentation } from './tool-docs';
+import { getExpressionHelpersGuide } from './tool-docs/guides/expression-helpers';
+import { renderNodeSelectionSection } from './native-first';
 
 export function getToolDocumentation(
   toolName: string,
@@ -11,6 +13,9 @@ export function getToolDocumentation(
   }
   if (toolName === 'python_code_node_guide') {
     return getPythonCodeNodeGuide(depth);
+  }
+  if (toolName === 'expression_helpers') {
+    return getExpressionHelpersGuide(depth);
   }
   
   const tool = toolsDocumentation[toolName];
@@ -92,14 +97,11 @@ export function getToolsOverview(
   if (depth === 'essentials') {
     return `# n8n MCP Tools Reference
 
+${renderNodeSelectionSection()}
+
 ## Important: Compatibility Notice
 ⚠️ This MCP server is tested with n8n version ${supportedN8nVersion}. 
 Inform the user to check their n8n version matches or is compatible with the supported version listed above.
-
-## Code Node Configuration
-When working with Code nodes, always start by calling the relevant guide:
-- tools_documentation({topic: "javascript_code_node_guide"}) for JavaScript Code nodes
-- tools_documentation({topic: "python_code_node_guide"}) for Python Code nodes
 
 ## Standard Workflow Pattern
 
@@ -185,12 +187,14 @@ tools_documentation({topic: "tool_name", depth: "full"})${buildDisabledOpsOvervi
   const categories = getAllCategories();
   return `# n8n MCP Tools - Complete Reference
 
+${renderNodeSelectionSection()}
+
 ## Important: Compatibility Notice
 ⚠️ This MCP server is tested with n8n version ${supportedN8nVersion}. 
 Run n8n_health_check() to verify your n8n instance compatibility and API connectivity.
 
-## Code Node Guides
-For Code node configuration, use these comprehensive guides:
+## Guides
+- tools_documentation({topic: "expression_helpers", depth: "full"}) - Helper methods for expressions (arrays, strings, objects, numbers, dates)
 - tools_documentation({topic: "javascript_code_node_guide", depth: "full"}) - JavaScript patterns, n8n variables, error handling
 - tools_documentation({topic: "python_code_node_guide", depth: "full"}) - Python patterns, data access, debugging
 

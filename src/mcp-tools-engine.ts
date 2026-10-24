@@ -4,6 +4,7 @@
  */
 import { NodeRepository } from './database/node-repository';
 import { PropertyFilter } from './services/property-filter';
+import { parseTypeVersion } from './utils/typeversion';
 import { ConfigValidator } from './services/config-validator';
 import { EnhancedConfigValidator } from './services/enhanced-config-validator';
 import { WorkflowValidator, WorkflowValidationResult } from './services/workflow-validator';
@@ -32,7 +33,7 @@ export class MCPEngine {
     if (!node) return null;
     
     // Filter to essentials using static method
-    const essentials = PropertyFilter.getEssentials(node.properties || [], args.nodeType);
+    const essentials = PropertyFilter.getEssentials(node.properties || [], args.nodeType, parseTypeVersion(node.version) ?? undefined);
     return {
       nodeType: node.nodeType,
       displayName: node.displayName,
@@ -83,7 +84,7 @@ export class MCPEngine {
     }
     
     const missingFields: string[] = [];
-    const requiredFields = PropertyFilter.getEssentials(node.properties || [], args.nodeType).required;
+    const requiredFields = PropertyFilter.getEssentials(node.properties || [], args.nodeType, parseTypeVersion(node.version) ?? undefined).required;
     
     for (const field of requiredFields) {
       if (!args.config[field.name]) {

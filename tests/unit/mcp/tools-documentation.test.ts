@@ -239,7 +239,11 @@ describe('tools-documentation', () => {
         const packageJson = require('../../../package.json');
         const n8nVersion = packageJson.dependencies['n8n-nodes-base'].replace(/[^0-9.]/g, '');
         expect(overview).toContain(`n8n version ${n8nVersion}`);
-        expect(overview).toContain('## Code Node Configuration');
+        // Node-selection guidance comes first, and still points to the Code guides
+        expect(overview.indexOf('## Choosing Nodes (native first)')).toBeGreaterThan(0);
+        expect(overview.indexOf('## Choosing Nodes (native first)')).toBeLessThan(overview.indexOf('## Important: Compatibility Notice'));
+        expect(overview).toContain('tools_documentation({topic: "expression_helpers"})');
+        expect(overview).toContain('tools_documentation({topic: "javascript_code_node_guide"})');
         expect(overview).toContain('## Standard Workflow Pattern');
         expect(overview).toContain('**Discovery Tools**');
         expect(overview).toContain('**Configuration Tools**');

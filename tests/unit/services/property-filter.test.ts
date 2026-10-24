@@ -58,13 +58,13 @@ describe('PropertyFilter', () => {
       expect(result.required[0].name).toBe('url');
       expect(result.required[0].required).toBe(true);
       
-      expect(result.common).toHaveLength(5);
+      // Curated order; names missing from the schema are skipped
       expect(result.common.map(p => p.name)).toEqual([
         'method',
         'authentication',
+        'sendHeaders',
         'sendBody',
-        'contentType',
-        'sendHeaders'
+        'contentType'
       ]);
     });
 
@@ -115,6 +115,80 @@ describe('PropertyFilter', () => {
       expect(result.common).toHaveLength(2);
       expect(result.common[0].name).toBe('field1');
       expect(result.common[1].name).toBe('field2'); // Single condition included
+    });
+  });
+
+  describe('getEssentials at a typeVersion', () => {
+    const versioned = [
+      { name: 'mode', type: 'options', options: [{ name: 'A', value: 'a' }] },
+      { name: 'legacyField', type: 'string', displayOptions: { show: { '@version': [1, 1.1] } } },
+      { name: 'newField', type: 'boolean', displayOptions: { show: { '@version': [{ _cnd: { gte: 2 } }] } } },
+    ];
+
+    it('drops properties hidden at that version and the resolved @version gates', () => {
+      const result = PropertyFilter.getEssentials(versioned, 'nodes-base.unknownNode', 2);
+      const names = [...result.required, ...result.common].map(p => p.name);
+      expect(names).toEqual(['mode', 'newField']);
+      // newField is always shown at v2, so it is listed as unconditional
+      expect(result.common.find(p => p.name === 'newField')?.showWhen).toBeUndefined();
+    });
+
+    it('keeps every version when no version is given', () => {
+      const result = PropertyFilter.getEssentials(versioned, 'nodes-base.unknownNode');
+      expect([...result.required, ...result.common].map(p => p.name)).toContain('legacyField');
+    });
+  });
+
+  describe('options collections', () => {
+    const perOperation = [
+      { name: 'operation', type: 'options', options: [{ name: 'Format', value: 'formatDate' }, { name: 'Now', value: 'getCurrentDate' }] },
+      { name: 'options', type: 'collection', displayOptions: { show: { operation: ['formatDate'] } }, options: [
+        { name: 'includeInputFields', type: 'boolean', description: 'Whether to include all input fields. More text here.' },
+        { name: 'timezone', type: 'string', description: 'The timezone to use' },
+      ] },
+      { name: 'options', type: 'collection', displayOptions: { show: { operation: ['getCurrentDate'] } }, options: [
+        { name: 'includeInputFields', type: 'boolean', description: 'Whether to include all input fields' },
+        { name: 'timezone', type: 'string', description: 'The timezone to use' },
+        { name: 'format', type: 'options', options: [{ name: 'ISO', value: 'iso' }, { name: 'Comma', value: ', ' }] },
+      ] },
+    ];
+
+    it('merges per-operation options collections and notes where a child applies', () => {
+      const result = PropertyFilter.getEssentials(perOperation, 'nodes-base.unknownNode', 1);
+      const options = result.common.filter(p => p.name === 'options');
+      expect(options).toHaveLength(1);
+      const children = Object.fromEntries(options[0].options!.map(o => [o.value, o.description]));
+      expect(Object.keys(children)).toEqual(['includeInputFields', 'timezone', 'format']);
+      // In both collections: no note. First sentence only.
+      expect(children.includeInputFields).toBe('Whether to include all input fields.');
+      // Only in one: says when it applies; option values with spaces are quoted
+      expect(children.format).toBe('Values: iso|", ". Only when operation=getCurrentDate.');
+      expect(options[0].showWhen).toBeUndefined();
+    });
+
+    it('does not append options for service nodes with a resource selector', () => {
+      const result = PropertyFilter.getEssentials(
+        [{ name: 'resource', type: 'options', options: [{ name: 'Contact', value: 'contact' }] }, ...perOperation],
+        'nodes-base.unknownNode',
+        1
+      );
+      expect(result.common.some(p => p.name === 'options')).toBe(false);
+    });
+
+    it('lists fixedCollection groups with their fields and allowed values on one line', () => {
+      const result = PropertyFilter.getEssentials([
+        { name: 'fieldsToSummarize', type: 'fixedCollection', options: [
+          { name: 'values', displayName: 'Values', values: [
+            { name: 'aggregation', type: 'options', options: [{ name: 'Sum', value: 'sum' }, { name: 'Count', value: 'count' }] },
+            { name: 'field', type: 'string' },
+            { name: 'field', type: 'string' },
+            { name: 'hint', type: 'notice' },
+          ] },
+        ] },
+      ], 'nodes-base.unknownNode', 1);
+      const line = result.common[0].options![0];
+      expect(line).toEqual({ value: 'values', label: 'Values', description: 'Fields: aggregation (sum|count), field.' });
+      expect(line.description).not.toContain('\n');
     });
   });
 

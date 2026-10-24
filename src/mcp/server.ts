@@ -52,7 +52,9 @@ import { PROJECT_VERSION } from '../utils/version';
 import { getNodeTypeAlternatives, getWorkflowNodeType } from '../utils/node-utils';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
 import { isDeprecatedNodeVersion, deprecatedNodeMessage, deprecatedNodeReplacementHint } from '../services/deprecated-nodes';
+import { matchSearchIntent, normalizeIntentQuery } from '../services/search-intents';
 import { parseTypeVersion } from '../utils/typeversion';
+import { SERVER_INSTRUCTIONS } from './native-first';
 import { ToolValidation, Validator, ValidationError } from '../utils/validation-schemas';
 import {
   negotiateProtocolVersion,
@@ -346,6 +348,7 @@ export class N8NDocumentationMCPServer {
           tools: {},
           resources: {},
         },
+        instructions: SERVER_INSTRUCTIONS,
       }
     );
 
@@ -797,6 +800,8 @@ export class N8NDocumentationMCPServer {
           name: 'n8n-documentation-mcp',
           version: PROJECT_VERSION,
         },
+        // This handler replaces the SDK's, so the Server option alone is not sent
+        instructions: SERVER_INSTRUCTIONS,
       };
       
       logger.info('MCP Initialize response', { response });
@@ -2256,7 +2261,7 @@ export class N8NDocumentationMCPServer {
     if (!this.db) throw new Error('Database not initialized');
 
     // Clean and prepare the query
-    const cleanedQuery = query.trim();
+    let cleanedQuery = query.trim();
     if (!cleanedQuery) {
       return { query, results: [], totalCount: 0 };
     }
@@ -2264,6 +2269,16 @@ export class N8NDocumentationMCPServer {
     // For FUZZY mode, use LIKE search with typo patterns
     if (mode === 'FUZZY') {
       return this.searchNodesFuzzy(cleanedQuery, limit, { includeOperations: options?.includeOperations });
+    }
+
+    // A generic data-shaping query ("group by", "how to deduplicate?") lists the
+    // core node that performs the operation first. The whole query must match an
+    // intent phrase; it is then searched in its normalized form ("deduplicate").
+    const intent = options?.source === 'community' || options?.source === 'verified'
+      ? undefined
+      : matchSearchIntent(cleanedQuery);
+    if (intent) {
+      cleanedQuery = normalizeIntentQuery(cleanedQuery);
     }
     
     let ftsQuery: string;
@@ -2348,6 +2363,10 @@ export class N8NDocumentationMCPServer {
         // Then by FTS rank
         return a.rank - b.rank;
       });
+
+      const rankedNodes = intent
+        ? this.applySearchIntent(scoredNodes, intent.nodeTypes, cleanedQuery, limit)
+        : scoredNodes;
       
       // If FTS didn't find key primary nodes, augment with LIKE search
       const hasHttpRequest = scoredNodes.some(n => n.node_type === 'nodes-base.httpRequest');
@@ -2359,7 +2378,7 @@ export class N8NDocumentationMCPServer {
       
       const result: any = {
         query,
-        results: scoredNodes.map(node => {
+        results: rankedNodes.map(node => {
           const nodeResult: any = {
             nodeType: node.node_type,
             workflowNodeType: getWorkflowNodeType(node.package_name, node.node_type),
@@ -2367,7 +2386,9 @@ export class N8NDocumentationMCPServer {
             description: node.description,
             category: node.category,
             package: node.package_name,
-            relevance: this.calculateRelevance(node, cleanedQuery)
+            relevance: intent?.nodeTypes.includes(node.node_type)
+              ? 'high'
+              : this.calculateRelevance(node, cleanedQuery)
           };
 
           // Add community metadata if this is a community node
@@ -2397,7 +2418,7 @@ export class N8NDocumentationMCPServer {
 
           return nodeResult;
         }),
-        totalCount: scoredNodes.length
+        totalCount: rankedNodes.length
       };
 
       // Only include mode if it's not the default
@@ -2434,7 +2455,7 @@ export class N8NDocumentationMCPServer {
       }
 
       // Track search query telemetry
-      telemetry.trackSearchQuery(query, scoredNodes.length, mode ?? 'OR');
+      telemetry.trackSearchQuery(query, rankedNodes.length, mode ?? 'OR');
 
       return result;
       
@@ -2460,6 +2481,42 @@ export class N8NDocumentationMCPServer {
       
       return this.searchNodesLIKE(query, limit);
     }
+  }
+
+  /**
+   * Put an intent's core nodes at the top of FTS results, after any row whose
+   * display name equals the query. A target the FTS query did not return is
+   * fetched with the same row shape. The result is cut to `limit`.
+   */
+  private applySearchIntent<T extends NodeRow & { rank: number; relevanceScore: number }>(
+    rows: T[],
+    nodeTypes: readonly string[],
+    query: string,
+    limit: number
+  ): T[] {
+    const lowerQuery = query.toLowerCase();
+    const exactMatches = rows.filter(row => row.display_name.toLowerCase() === lowerQuery);
+    const placed = new Set(exactMatches.map(row => row.node_type));
+    const promoted: T[] = [];
+
+    for (const nodeType of nodeTypes) {
+      if (placed.has(nodeType)) continue;
+      let row = rows.find(r => r.node_type === nodeType);
+      if (!row) {
+        const fetched = this.db!.prepare(`
+          SELECT n.*, 0 AS rank
+          FROM nodes n
+          WHERE n.node_type = ? AND n.is_community = 0
+        `).get(nodeType) as (NodeRow & { rank: number }) | undefined;
+        if (!fetched) continue;
+        row = { ...fetched, relevanceScore: this.calculateRelevanceScore(fetched, query) } as T;
+      }
+      promoted.push(row);
+      placed.add(nodeType);
+    }
+
+    const rest = rows.filter(row => !placed.has(row.node_type));
+    return [...exactMatches, ...promoted, ...rest].slice(0, limit);
   }
   
   private async searchNodesFuzzy(
@@ -3264,12 +3321,6 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     // Get properties (already parsed by repository)
     const allProperties = node.properties || [];
     
-    // Get essential properties
-    const essentials = PropertyFilter.getEssentials(allProperties, node.nodeType);
-    
-    // Get operations (already parsed by repository)
-    const operations = node.operations || [];
-    
     // Resolve typeVersion. The DB stores version as TEXT and may contain stale npm
     // package strings (e.g. "0.2.21") for community nodes seeded before #781 was fixed.
     // Coerce to a finite number so AI clients always receive a value usable as
@@ -3278,6 +3329,12 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     const parsedVersion = parseTypeVersion(node.version);
     const latestVersion: number = parsedVersion ?? 1;
     const versionWasCoerced = parsedVersion === null && node.version != null;
+
+    // Essential properties as shown at the version the agent is told to use
+    const essentials = PropertyFilter.getEssentials(allProperties, node.nodeType, latestVersion);
+    
+    // Get operations (already parsed by repository)
+    const operations = node.operations || [];
     const versionNotice = isCommunityNode
       ? `⚠️ Use typeVersion: ${latestVersion} when creating this node. Community node typeVersion comes from the node descriptor (typically 1) and is independent of the npm package version.`
       : `⚠️ Use typeVersion: ${latestVersion} when creating this node`;

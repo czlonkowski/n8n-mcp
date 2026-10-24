@@ -213,8 +213,11 @@ function addRelatedNodeTypes(variations: Set<string>, nodeName: string): void {
     'binary': ['readBinaryFile', 'writeBinaryFile', 'moveBinaryFile'],
     'csv': ['spreadsheetFile', 'readBinaryFile'],
     'excel': ['microsoftExcel', 'spreadsheetFile'],
-    'json': ['code', 'set'],
-    'transform': ['code', 'set', 'merge', 'splitInBatches'],
+    // Native data-shaping nodes first, Code last. Matching is a plain OR over
+    // nodes_used, so the order only documents the preferred node.
+    // splitInBatches is a loop node, not a transform, so it is not listed.
+    'json': ['set', 'code'],
+    'transform': ['set', 'aggregate', 'summarize', 'splitOut', 'merge', 'code'],
     'ai': ['openAi', 'agent', 'lmChatOpenAi', 'lmChatAnthropic'],
     'llm': ['openAi', 'agent', 'lmChatOpenAi', 'lmChatAnthropic', 'lmChatGoogleGemini'],
     'agent': ['agent', 'toolAgent'],

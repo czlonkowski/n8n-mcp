@@ -26,6 +26,37 @@ export interface StoredTemplate {
   metadata_generated_at?: string; // When metadata was generated
 }
 
+/**
+ * Maps a task/use case to the node types whose templates are relevant to it.
+ * Matching is a plain OR over `nodes_used`; the order of the node types has no
+ * effect on results, which are ordered by views.
+ */
+const TASK_NODE_MAP: Record<string, string[]> = {
+  'ai_automation': ['@n8n/n8n-nodes-langchain.openAi', '@n8n/n8n-nodes-langchain.agent', 'n8n-nodes-base.openAi'],
+  'data_sync': ['n8n-nodes-base.googleSheets', 'n8n-nodes-base.postgres', 'n8n-nodes-base.mysql'],
+  // webhook_processing must match only workflows *triggered* by a webhook.
+  // Including httpRequest here was returning scheduleTrigger/formTrigger
+  // workflows that merely use outbound HTTP — not webhook-triggered (QA #2).
+  'webhook_processing': ['n8n-nodes-base.webhook'],
+  'email_automation': ['n8n-nodes-base.gmail', 'n8n-nodes-base.emailSend', 'n8n-nodes-base.emailReadImap'],
+  'slack_integration': ['n8n-nodes-base.slack', 'n8n-nodes-base.slackTrigger'],
+  // Native transform nodes first; Code stays listed because Code-based
+  // templates are legitimate matches.
+  'data_transformation': [
+    'n8n-nodes-base.set',
+    'n8n-nodes-base.aggregate',
+    'n8n-nodes-base.summarize',
+    'n8n-nodes-base.filter',
+    'n8n-nodes-base.splitOut',
+    'n8n-nodes-base.merge',
+    'n8n-nodes-base.code'
+  ],
+  'file_processing': ['n8n-nodes-base.readBinaryFile', 'n8n-nodes-base.writeBinaryFile', 'n8n-nodes-base.googleDrive'],
+  'scheduling': ['n8n-nodes-base.scheduleTrigger', 'n8n-nodes-base.cron'],
+  'api_integration': ['n8n-nodes-base.httpRequest', 'n8n-nodes-base.graphql'],
+  'database_operations': ['n8n-nodes-base.postgres', 'n8n-nodes-base.mysql', 'n8n-nodes-base.mongodb']
+};
+
 export class TemplateRepository {
   private sanitizer: TemplateSanitizer;
   private hasFTS5Support: boolean = false;
@@ -311,24 +342,7 @@ export class TemplateRepository {
    * Get templates for a specific task/use case
    */
   getTemplatesForTask(task: string, limit: number = 10, offset: number = 0): StoredTemplate[] {
-    // Map tasks to relevant node combinations
-    const taskNodeMap: Record<string, string[]> = {
-      'ai_automation': ['@n8n/n8n-nodes-langchain.openAi', '@n8n/n8n-nodes-langchain.agent', 'n8n-nodes-base.openAi'],
-      'data_sync': ['n8n-nodes-base.googleSheets', 'n8n-nodes-base.postgres', 'n8n-nodes-base.mysql'],
-      // webhook_processing must match only workflows *triggered* by a webhook.
-      // Including httpRequest here was returning scheduleTrigger/formTrigger
-      // workflows that merely use outbound HTTP — not webhook-triggered (QA #2).
-      'webhook_processing': ['n8n-nodes-base.webhook'],
-      'email_automation': ['n8n-nodes-base.gmail', 'n8n-nodes-base.emailSend', 'n8n-nodes-base.emailReadImap'],
-      'slack_integration': ['n8n-nodes-base.slack', 'n8n-nodes-base.slackTrigger'],
-      'data_transformation': ['n8n-nodes-base.code', 'n8n-nodes-base.set', 'n8n-nodes-base.merge'],
-      'file_processing': ['n8n-nodes-base.readBinaryFile', 'n8n-nodes-base.writeBinaryFile', 'n8n-nodes-base.googleDrive'],
-      'scheduling': ['n8n-nodes-base.scheduleTrigger', 'n8n-nodes-base.cron'],
-      'api_integration': ['n8n-nodes-base.httpRequest', 'n8n-nodes-base.graphql'],
-      'database_operations': ['n8n-nodes-base.postgres', 'n8n-nodes-base.mysql', 'n8n-nodes-base.mongodb']
-    };
-    
-    const nodes = taskNodeMap[task];
+    const nodes = TASK_NODE_MAP[task];
     if (!nodes) {
       return [];
     }
@@ -416,23 +430,7 @@ export class TemplateRepository {
    * Get count for task templates
    */
   getTaskTemplatesCount(task: string): number {
-    const taskNodeMap: Record<string, string[]> = {
-      'ai_automation': ['@n8n/n8n-nodes-langchain.openAi', '@n8n/n8n-nodes-langchain.agent', 'n8n-nodes-base.openAi'],
-      'data_sync': ['n8n-nodes-base.googleSheets', 'n8n-nodes-base.postgres', 'n8n-nodes-base.mysql'],
-      // webhook_processing must match only workflows *triggered* by a webhook.
-      // Including httpRequest here was returning scheduleTrigger/formTrigger
-      // workflows that merely use outbound HTTP — not webhook-triggered (QA #2).
-      'webhook_processing': ['n8n-nodes-base.webhook'],
-      'email_automation': ['n8n-nodes-base.gmail', 'n8n-nodes-base.emailSend', 'n8n-nodes-base.emailReadImap'],
-      'slack_integration': ['n8n-nodes-base.slack', 'n8n-nodes-base.slackTrigger'],
-      'data_transformation': ['n8n-nodes-base.code', 'n8n-nodes-base.set', 'n8n-nodes-base.merge'],
-      'file_processing': ['n8n-nodes-base.readBinaryFile', 'n8n-nodes-base.writeBinaryFile', 'n8n-nodes-base.googleDrive'],
-      'scheduling': ['n8n-nodes-base.scheduleTrigger', 'n8n-nodes-base.cron'],
-      'api_integration': ['n8n-nodes-base.httpRequest', 'n8n-nodes-base.graphql'],
-      'database_operations': ['n8n-nodes-base.postgres', 'n8n-nodes-base.mysql', 'n8n-nodes-base.mongodb']
-    };
-    
-    const nodes = taskNodeMap[task];
+    const nodes = TASK_NODE_MAP[task];
     if (!nodes) {
       return 0;
     }

@@ -2306,19 +2306,6 @@ export class WorkflowValidator {
       );
     }
 
-    // Suggest using Code node for complex logic
-    const complexExpressionNodes = workflow.nodes.filter(node => {
-      const jsonString = JSON.stringify(node.parameters);
-      const expressionCount = (jsonString.match(/\{\{/g) || []).length;
-      return expressionCount > 5;
-    });
-
-    if (complexExpressionNodes.length > 0) {
-      result.suggestions.push(
-        'Consider using a Code node for complex data transformations instead of multiple expressions'
-      );
-    }
-
     // Suggest minimum workflow structure
     if (workflow.nodes.length === 1 && Object.keys(workflow.connections).length === 0) {
       result.suggestions.push(

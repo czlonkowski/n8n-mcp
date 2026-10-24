@@ -5,13 +5,22 @@
  * Reduces property count from 200+ to 10-20 for better AI agent usability.
  */
 
+import { filterPropertiesForVersion } from '../parsers/version-display-gate';
+
+/** Set on a child of a merged options collection that applies to some modes only. */
+const APPLIES_WHEN = Symbol('appliesWhen');
+
 export interface SimplifiedProperty {
   name: string;
   displayName: string;
   type: string;
   description: string;
   default?: any;
-  options?: Array<{ value: string; label: string }>;
+  /**
+   * Choices of an options field, or the child settings of a collection /
+   * fixedCollection. Child settings carry a one-line `description`.
+   */
+  options?: Array<{ value: string; label: string; description?: string }>;
   required?: boolean;
   placeholder?: string;
   showWhen?: Record<string, any>;
@@ -45,14 +54,14 @@ export class PropertyFilter {
     // HTTP Request - Most used node
     'nodes-base.httpRequest': {
       required: ['url'],
-      common: ['method', 'authentication', 'sendBody', 'contentType', 'sendHeaders'],
+      common: ['method', 'authentication', 'sendQuery', 'sendHeaders', 'sendBody', 'contentType', 'specifyBody', 'jsonBody', 'options'],
       categoryPriority: ['basic', 'authentication', 'request', 'response', 'advanced']
     },
     
     // Webhook - Entry point for many workflows
     'nodes-base.webhook': {
       required: [],
-      common: ['httpMethod', 'path', 'responseMode', 'responseData', 'responseCode'],
+      common: ['httpMethod', 'path', 'authentication', 'responseMode', 'responseData', 'options'],
       categoryPriority: ['basic', 'response', 'advanced']
     },
     
@@ -66,35 +75,35 @@ export class PropertyFilter {
     // Set - Data manipulation
     'nodes-base.set': {
       required: [],
-      common: ['mode', 'assignments', 'includeOtherFields', 'options'],
+      common: ['mode', 'assignments', 'jsonOutput', 'includeOtherFields', 'include', 'options'],
       categoryPriority: ['basic', 'data', 'advanced']
     },
     
     // If - Conditional logic
     'nodes-base.if': {
       required: [],
-      common: ['conditions', 'combineOperation'],
+      common: ['conditions', 'looseTypeValidation', 'options'],
       categoryPriority: ['basic', 'conditions', 'advanced']
     },
     
     // PostgreSQL - Database operations
     'nodes-base.postgres': {
       required: [],
-      common: ['operation', 'table', 'query', 'additionalFields', 'returnAll'],
+      common: ['operation', 'schema', 'table', 'query', 'columns', 'where', 'returnAll', 'options'],
       categoryPriority: ['basic', 'query', 'options', 'advanced']
     },
     
     // OpenAI - AI operations
     'nodes-base.openAi': {
       required: [],
-      common: ['resource', 'operation', 'modelId', 'prompt', 'messages', 'maxTokens'],
+      common: ['resource', 'operation', 'chatModel', 'model', 'prompt', 'options'],
       categoryPriority: ['basic', 'model', 'input', 'options', 'advanced']
     },
     
     // Google Sheets - Spreadsheet operations
     'nodes-base.googleSheets': {
       required: [],
-      common: ['operation', 'documentId', 'sheetName', 'range', 'dataStartRow'],
+      common: ['operation', 'documentId', 'sheetName', 'columns', 'filtersUI', 'options'],
       categoryPriority: ['basic', 'location', 'data', 'options', 'advanced']
     },
     
@@ -105,17 +114,17 @@ export class PropertyFilter {
       categoryPriority: ['basic', 'message', 'formatting', 'advanced']
     },
     
-    // Email - Email operations
-    'nodes-base.email': {
+    // Send Email - Email operations
+    'nodes-base.emailSend': {
       required: [],
-      common: ['resource', 'operation', 'fromEmail', 'toEmail', 'subject', 'text', 'html'],
+      common: ['operation', 'fromEmail', 'toEmail', 'subject', 'emailFormat', 'text', 'html', 'options'],
       categoryPriority: ['basic', 'recipients', 'content', 'advanced']
     },
     
     // Merge - Combining data streams
     'nodes-base.merge': {
       required: [],
-      common: ['mode', 'joinMode', 'propertyName1', 'propertyName2', 'outputDataFrom'],
+      common: ['mode', 'combineBy', 'fieldsToMatchString', 'joinMode', 'outputDataFrom', 'numberInputs', 'options'],
       categoryPriority: ['basic', 'merge', 'advanced']
     },
     
@@ -150,14 +159,14 @@ export class PropertyFilter {
     // MySQL - Database operations
     'nodes-base.mySql': {
       required: [],
-      common: ['operation', 'table', 'query', 'columns', 'additionalFields'],
+      common: ['operation', 'table', 'query', 'dataMode', 'valuesToSend', 'where', 'options'],
       categoryPriority: ['basic', 'query', 'options', 'advanced']
     },
     
     // FTP - File transfer
     'nodes-base.ftp': {
       required: [],
-      common: ['operation', 'path', 'fileName', 'binaryData'],
+      common: ['protocol', 'operation', 'path', 'binaryData', 'binaryPropertyName', 'options'],
       categoryPriority: ['basic', 'file', 'options', 'advanced']
     },
     
@@ -171,7 +180,7 @@ export class PropertyFilter {
     // Execute Command - Local execution
     'nodes-base.executeCommand': {
       required: [],
-      common: ['command', 'cwd'],
+      common: ['command', 'executeOnce'],
       categoryPriority: ['basic', 'advanced']
     },
     
@@ -211,14 +220,17 @@ export class PropertyFilter {
   /**
    * Get essential properties for a node type
    */
-  static getEssentials(allProperties: any[], nodeType: string): FilteredProperties {
+  static getEssentials(allProperties: any[], nodeType: string, version?: string | number): FilteredProperties {
     // Handle null/undefined properties
     if (!allProperties) {
       return { required: [], common: [] };
     }
     
-    // Deduplicate first
-    const uniqueProperties = this.deduplicateProperties(allProperties);
+    // The stored schema covers every typeVersion; keep only what `version` shows.
+    const versioned = version === undefined || version === null
+      ? allProperties
+      : this.resolveVersionGates(allProperties, version);
+    const uniqueProperties = this.mergeOptionsCollections(this.deduplicateProperties(versioned));
     const config = this.ESSENTIAL_PROPERTIES[nodeType];
     
     if (!config) {
@@ -237,6 +249,111 @@ export class PropertyFilter {
     return { required, common };
   }
   
+  /**
+   * Keep the properties shown at `version` and drop the resolved `@version`
+   * gates from the top-level display conditions, so a property that is always
+   * visible at that version is treated as unconditional.
+   */
+  private static resolveVersionGates(properties: any[], version: string | number): any[] {
+    return filterPropertiesForVersion(properties, version).map(prop => {
+      const display = prop?.displayOptions;
+      if (!display || (display.show?.['@version'] === undefined && display.hide?.['@version'] === undefined)) {
+        return prop;
+      }
+      const strip = (conditions: Record<string, any> | undefined) => {
+        if (!conditions) return undefined;
+        const { '@version': _resolved, ...rest } = conditions;
+        return Object.keys(rest).length > 0 ? rest : undefined;
+      };
+      const show = strip(display.show);
+      const hide = strip(display.hide);
+      const displayOptions = show || hide ? { ...(show && { show }), ...(hide && { hide }) } : undefined;
+      return { ...prop, displayOptions };
+    });
+  }
+
+  /**
+   * Nodes often declare one `options` collection per operation or mode. Merge the
+   * top-level `options` collections into the first one, so the agent sees every
+   * available setting once. Other per-operation collections (additionalFields,
+   * updateFields, ...) stay separate: their union would mix unrelated operations. Display conditions are kept only when all
+   * merged collections share them; otherwise a child that is not in every
+   * collection records the conditions under which it applies.
+   */
+  private static mergeOptionsCollections(properties: any[]): any[] {
+    const groups = new Map<string, any[]>();
+    for (const prop of properties) {
+      if (prop?.type !== 'collection' || prop.name !== 'options' || !Array.isArray(prop.options)) continue;
+      groups.set(prop.name, [...(groups.get(prop.name) ?? []), prop]);
+    }
+
+    const result: any[] = [];
+    const emitted = new Set<string>();
+    for (const prop of properties) {
+      const collections = prop?.type === 'collection' ? groups.get(prop.name) : undefined;
+      if (!collections || collections.length < 2) {
+        result.push(prop);
+        continue;
+      }
+      if (emitted.has(prop.name)) continue;
+      emitted.add(prop.name);
+
+      const conditions = JSON.stringify(prop.displayOptions ?? null);
+      const shared = collections.every(c => JSON.stringify(c.displayOptions ?? null) === conditions);
+
+      // child name -> the collections that contain it
+      const owners = new Map<string, any[]>();
+      const firstSeen = new Map<string, any>();
+      for (const collection of collections) {
+        for (const child of collection.options) {
+          if (!child?.name) continue;
+          if (!firstSeen.has(child.name)) firstSeen.set(child.name, child);
+          const list = owners.get(child.name) ?? [];
+          if (!list.includes(collection)) list.push(collection);
+          owners.set(child.name, list);
+        }
+      }
+
+      const children = [...firstSeen.values()].map(child => {
+        const parents = owners.get(child.name)!;
+        if (shared || parents.length === collections.length) return child;
+        const appliesWhen = this.describeConditions(parents.map(parent => parent.displayOptions));
+        return appliesWhen ? { ...child, [APPLIES_WHEN]: appliesWhen } : child;
+      });
+      result.push({ ...prop, options: children, displayOptions: shared ? prop.displayOptions : undefined });
+    }
+    return result;
+  }
+
+  /**
+   * Render the `show` conditions of several display rules as one short phrase,
+   * e.g. `operation=formatDate|getCurrentDate`. Rules with the same keys are
+   * folded into one clause; otherwise the clauses are joined with "or".
+   * Returns undefined when any rule has no `show` conditions (always shown).
+   */
+  private static describeConditions(rules: any[]): string | undefined {
+    const shows = rules.map(rule => rule?.show);
+    if (shows.some(show => !show || Object.keys(show).length === 0)) return undefined;
+
+    const key = (show: Record<string, any>) => Object.keys(show).sort().join(',');
+    const clause = (show: Record<string, unknown[]>) => Object.keys(show).sort()
+      .map(name => `${name.replace(/^\//, '')}=${[...new Set(show[name].map(String))].join('|')}`)
+      .join(' & ');
+
+    if (shows.every(show => key(show) === key(shows[0]))) {
+      const folded: Record<string, unknown[]> = {};
+      for (const show of shows) {
+        for (const [name, values] of Object.entries(show)) {
+          folded[name] = [...(folded[name] ?? []), ...([] as unknown[]).concat(values)];
+        }
+      }
+      return clause(folded);
+    }
+    return shows
+      .map(show => clause(Object.fromEntries(Object.entries(show).map(([name, values]) => [name, ([] as unknown[]).concat(values)]))))
+      .join(' or ');
+  }
+
   /**
    * Extract and simplify specified properties
    */
@@ -315,8 +432,11 @@ export class PropertyFilter {
       simplified.placeholder = prop.placeholder;
     }
     
-    // Simplify options for select fields
-    if (prop.options && Array.isArray(prop.options)) {
+    if ((prop.type === 'collection' || prop.type === 'fixedCollection') && Array.isArray(prop.options)) {
+      // Child settings: name plus one line each, no deeper nesting
+      simplified.options = this.summarizeChildren(prop);
+    } else if (prop.options && Array.isArray(prop.options)) {
+      // Simplify options for select fields
       // Limit options to first 20 for better usability
       const limitedOptions = prop.options.slice(0, 20);
       simplified.options = limitedOptions.map((opt: any) => {
@@ -357,6 +477,96 @@ export class PropertyFilter {
     simplified.usageHint = this.generateUsageHint(prop);
 
     return simplified;
+  }
+
+  private static readonly MAX_CHILD_SETTINGS = 25;
+  private static readonly MAX_NESTED_NAMES = 12;
+  private static readonly MAX_INLINE_VALUES = 8;
+  private static readonly MAX_LINE_DESCRIPTION = 120;
+
+  /**
+   * List the child settings of a collection (its properties) or a fixedCollection
+   * (its groups) as name, label and one line. The line holds the first sentence of
+   * the description, followed by the names of nested fields for a nested
+   * collection or group, and the allowed values for an options field.
+   */
+  private static summarizeChildren(prop: any): Array<{ value: string; label: string; description?: string }> {
+    const seen = new Set<string>();
+    return prop.options
+      .filter((child: any) => child?.name && !seen.has(child.name) && seen.add(child.name))
+      .slice(0, this.MAX_CHILD_SETTINGS)
+      .map((child: any) => {
+        const line = this.oneLine(child);
+        return {
+          value: String(child.name),
+          label: String(child.displayName || child.name),
+          ...(line && { description: line })
+        };
+      });
+  }
+
+  private static oneLine(setting: any): string {
+    const parts: string[] = [];
+    const text = this.firstSentence(setting.description || setting.hint || '');
+    if (text) parts.push(/[.!?…]$/.test(text) ? text : `${text}.`);
+
+    const nested = this.nestedFields(setting);
+    if (nested.length > 0) {
+      const shown = nested.slice(0, this.MAX_NESTED_NAMES).map(field => this.fieldLabel(field));
+      parts.push(`Fields: ${shown.join(', ')}${nested.length > shown.length ? ', …' : ''}.`);
+    }
+
+    const values = this.choiceValues(setting);
+    if (values) parts.push(`Values: ${values}.`);
+
+    const appliesWhen = setting[APPLIES_WHEN];
+    if (appliesWhen) parts.push(`Only when ${appliesWhen}.`);
+
+    return parts.join(' ');
+  }
+
+  /** Fields one level below a setting: a group's values, a collection's options, or a fixedCollection's group values. */
+  private static nestedFields(setting: any): any[] {
+    let fields: any[] = [];
+    if (Array.isArray(setting.values)) {
+      fields = setting.values;
+    } else if (setting.type === 'collection' && Array.isArray(setting.options)) {
+      fields = setting.options;
+    } else if (setting.type === 'fixedCollection' && Array.isArray(setting.options)) {
+      fields = setting.options.flatMap((group: any) => Array.isArray(group?.values) ? group.values : []);
+    }
+    const seen = new Set<string>();
+    return fields.filter(field => field?.name && field.type !== 'notice' && !seen.has(field.name) && seen.add(field.name));
+  }
+
+  private static fieldLabel(field: any): string {
+    const values = this.choiceValues(field);
+    return values ? `${field.name} (${values})` : String(field.name);
+  }
+
+  private static choiceValues(field: any): string | undefined {
+    if ((field.type !== 'options' && field.type !== 'multiOptions') || !Array.isArray(field.options)) return undefined;
+    const values = field.options
+      .map((option: any) => (typeof option === 'object' && option !== null ? option.value ?? option.name : option))
+      .filter((value: unknown) => value !== undefined && value !== null && value !== '')
+      .map((value: unknown) => {
+        const text = String(value);
+        // Quote values such as ", " or a newline so the line stays readable
+        return /^[\w.@/:-]+$/.test(text) ? text : JSON.stringify(text);
+      });
+    if (values.length === 0) return undefined;
+    const shown = values.slice(0, this.MAX_INLINE_VALUES);
+    return shown.join('|') + (values.length > shown.length ? '|…' : '');
+  }
+
+  private static firstSentence(text: unknown): string {
+    if (typeof text !== 'string') return '';
+    const plain = text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    if (!plain) return '';
+    const sentence = plain.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? plain;
+    return sentence.length > this.MAX_LINE_DESCRIPTION
+      ? `${sentence.slice(0, this.MAX_LINE_DESCRIPTION - 1).trimEnd()}…`
+      : sentence;
   }
 
   /**
@@ -536,13 +746,26 @@ export class PropertyFilter {
           return p.name && // Ensure property has a name
                  !p.required &&
                  p.type !== 'hidden' && // Filter out hidden properties
+                 p.type !== 'notice' &&
+                 !p.name.startsWith('options') &&
                  p.displayOptions &&
                  Object.keys(p.displayOptions.show || {}).length === 1;
         })
         .slice(0, 10 - (required.length + common.length))
         .map(p => this.simplifyProperty(p));
-      
+
       common.push(...additional);
+    }
+
+    // The `options` collection of a transform or utility node holds many of its
+    // lesser-known features (dedupe scope, output format, raw body, ...). List it
+    // last, child names with one line each, whatever its display conditions.
+    // Service nodes with a `resource` selector are skipped: their options differ
+    // per resource and operation, and the merged list would mostly be noise.
+    const optionsCollection = properties.find(p => p.name === 'options' && p.type === 'collection');
+    const isResourceBased = properties.some(p => p.name === 'resource');
+    if (optionsCollection && !isResourceBased) {
+      common.push(this.simplifyProperty(optionsCollection));
     }
     
     // Total should not exceed 30 properties

@@ -615,6 +615,33 @@ describe('TemplateRepository Integration Tests', () => {
       });
     });
 
+    describe('data_transformation task', () => {
+      const saveWithNodeType = (id: number, nodeType: string) => {
+        repository.saveTemplate(
+          createTemplateWorkflow({ id }),
+          createTemplateDetail({
+            id,
+            nodes: [{ id: 'n1', name: 'Node', type: nodeType, typeVersion: 1, position: [0, 0], parameters: {} }]
+          })
+        );
+      };
+
+      it('should match templates built on native transform nodes, not only Code', () => {
+        repository.clearTemplates();
+        saveWithNodeType(9001, 'n8n-nodes-base.aggregate');
+        saveWithNodeType(9002, 'n8n-nodes-base.summarize');
+        saveWithNodeType(9003, 'n8n-nodes-base.splitOut');
+        saveWithNodeType(9004, 'n8n-nodes-base.filter');
+        saveWithNodeType(9005, 'n8n-nodes-base.code');
+        saveWithNodeType(9006, 'n8n-nodes-base.slack');
+
+        const ids = repository.getTemplatesForTask('data_transformation', 20).map(t => t.id).sort();
+
+        expect(ids).toEqual([9001, 9002, 9003, 9004, 9005]);
+        expect(repository.getTaskTemplatesCount('data_transformation')).toBe(5);
+      });
+    });
+
     describe('getTemplateCount', () => {
       it('should return total template count', () => {
         const totalCount = repository.getTemplateCount();

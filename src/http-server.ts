@@ -22,6 +22,7 @@ import { isN8nApiConfigured } from './config/n8n-api';
 import dotenv from 'dotenv';
 import { readFileSync } from 'fs';
 import { getStartupBaseUrl, formatEndpointUrls, detectBaseUrl } from './utils/url-detector';
+import { SERVER_INSTRUCTIONS } from './mcp/native-first';
 import { 
   negotiateProtocolVersion, 
   logProtocolNegotiation,
@@ -405,7 +406,8 @@ export async function startFixedHTTPServer() {
                   serverInfo: {
                     name: 'n8n-documentation-mcp',
                     version: PROJECT_VERSION
-                  }
+                  },
+                  instructions: SERVER_INSTRUCTIONS
                 },
                 id: jsonRpcRequest.id
               };
