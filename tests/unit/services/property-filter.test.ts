@@ -221,6 +221,39 @@ describe('PropertyFilter', () => {
       expect(result.common[0].options![0].description).toBe('See the docs here.');
     });
 
+    it('keeps one entry per definition when merged collections disagree', () => {
+      const result = PropertyFilter.getEssentials([
+        { name: 'options', type: 'collection', displayOptions: { show: { operation: ['now'] } }, options: [
+          { name: 'timezone', type: 'string', description: 'The timezone to use' },
+          { name: 'keep', type: 'boolean', description: 'Same in both' },
+        ] },
+        { name: 'options', type: 'collection', displayOptions: { show: { operation: ['format'] } }, options: [
+          { name: 'timezone', type: 'boolean', description: 'Whether to apply the workflow timezone' },
+          { name: 'keep', type: 'boolean', description: 'Same in both, other wording' },
+        ] },
+      ], 'nodes-base.unknownNode', 1);
+      const lines = result.common.find(p => p.name === 'options')!.options!.map(o => `${o.value}: ${o.description}`);
+      expect(lines).toEqual([
+        'timezone: The timezone to use. Only when operation=now.',
+        'keep: Same in both.',
+        'timezone: Whether to apply the workflow timezone. Only when operation=format.',
+      ]);
+    });
+
+    it('writes out operator and hide conditions', () => {
+      const result = PropertyFilter.getEssentials([{ name: 'options', type: 'collection', options: [
+        { name: 'quoted', type: 'boolean', displayOptions: { show: { '/queryReplacement': [{ _cnd: { exists: true } }] } } },
+        { name: 'clash', type: 'boolean', displayOptions: { hide: { '/joinMode': ['keepMatches', 'keepNonMatches'] } } },
+        { name: 'big', type: 'number', displayOptions: { show: { limit: [{ _cnd: { gte: 10 } }, 5] } } },
+      ] }], 'nodes-base.unknownNode', 1);
+      const lines = result.common[0].options!.map(o => o.description);
+      expect(lines).toEqual([
+        'Only when queryReplacement is set.',
+        'Only when not joinMode=keepMatches|keepNonMatches.',
+        'Only when (limit=5 or limit>=10).',
+      ]);
+    });
+
     it('keeps abbreviations inside the first sentence', () => {
       const result = PropertyFilter.getEssentials([{ name: 'options', type: 'collection', options: [
         { name: 'quoted', type: 'boolean', description: 'Whether to treat values as text, e.g. "1" stays a string. Second sentence.' },

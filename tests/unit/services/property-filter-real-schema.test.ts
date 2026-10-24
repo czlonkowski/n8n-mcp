@@ -107,6 +107,23 @@ describe.skipIf(!dbExists)('PropertyFilter essentials against the real node sche
     ]));
   });
 
+  it('Date & Time keeps the string and boolean timezone settings apart', () => {
+    const timezones = standard('nodes-base.dateTime')
+      .find(p => p.name === 'options')?.options?.filter(o => o.value === 'timezone') ?? [];
+    expect(timezones.length).toBeGreaterThanOrEqual(2);
+    expect(timezones.every(o => o.description?.includes('Only when operation='))).toBe(true);
+  });
+
+  it('renders every display condition of every core node as text', () => {
+    const coreNodes = db.prepare('SELECT node_type FROM nodes WHERE is_community = 0').all() as Array<{ node_type: string }>;
+    const broken = coreNodes
+      .filter(({ node_type }) => JSON.stringify(standard(node_type)).includes('[object Object]'))
+      .map(({ node_type }) => node_type);
+    expect(broken).toEqual([]);
+    const quoted = child(standard('nodes-base.postgres'), 'options', 'treatQueryParametersInSingleQuotesAsText');
+    expect(quoted?.description).toContain('queryReplacement is set');
+  });
+
   it('Remove Duplicates shows its options, including the history scope', () => {
     const props = standard('nodes-base.removeDuplicates');
     expect(child(props, 'options', 'scope')).toBeDefined();

@@ -320,37 +320,83 @@ export class PropertyFilter {
   }
 
   /**
-   * Render the `show` conditions of several display rules as one short phrase,
-   * e.g. `operation=formatDate|getCurrentDate`. Rules with the same keys are
-   * folded into one clause; otherwise the clauses are joined with "or".
-   * Returns undefined when any rule has no `show` conditions (always shown).
-   * `@version` gates are left out: they are resolved when a version is known.
+   * Render several display rules as one short phrase, e.g.
+   * `operation=formatDate|getCurrentDate`. Plain `show` rules with the same keys
+   * are folded into one clause; otherwise each rule is rendered and the rules are
+   * joined with "or". `hide` conditions become "not ..." and `_cnd` operators are
+   * written out ("queryReplacement is set", "limit>=10"). Returns undefined when
+   * any rule has no conditions (always shown). `@version` gates are left out:
+   * they are resolved when a version is known.
    */
   private static describeConditions(rules: any[]): string | undefined {
-    const shows = rules.map(rule => {
-      const { '@version': _gate, ...show } = rule?.show ?? {};
-      return show as Record<string, unknown>;
-    });
-    if (shows.some(show => Object.keys(show).length === 0)) return undefined;
-
-    const key = (show: Record<string, unknown>) => Object.keys(show).sort().join(',');
-    const clause = (show: Record<string, unknown>) => Object.keys(show).sort()
-      .map(name => {
-        const values = new Set(([] as unknown[]).concat(show[name]).map(String));
-        return `${name.replace(/^\//, '')}=${[...values].join('|')}`;
-      })
-      .join(' & ');
-
-    if (!shows.every(show => key(show) === key(shows[0]))) {
-      return shows.map(clause).join(' or ');
+    const parsed = rules.map(rule => ({
+      show: this.withoutVersionGate(rule?.show),
+      hide: this.withoutVersionGate(rule?.hide)
+    }));
+    if (parsed.some(rule => Object.keys(rule.show).length === 0 && Object.keys(rule.hide).length === 0)) {
+      return undefined;
     }
-    const folded: Record<string, unknown[]> = {};
-    for (const show of shows) {
-      for (const [name, values] of Object.entries(show)) {
-        folded[name] = (folded[name] ?? []).concat(values);
+
+    const key = (show: Record<string, unknown[]>) => Object.keys(show).sort().join(',');
+    const foldable = parsed.every(rule =>
+      Object.keys(rule.hide).length === 0 &&
+      key(rule.show) === key(parsed[0].show) &&
+      Object.values(rule.show).flat().every(value => !this.isOperatorCondition(value))
+    );
+    if (foldable) {
+      const folded: Record<string, unknown[]> = {};
+      for (const { show } of parsed) {
+        for (const [name, values] of Object.entries(show)) folded[name] = (folded[name] ?? []).concat(values);
       }
+      return this.describeRule(folded, {});
     }
-    return clause(folded);
+    return parsed.map(rule => this.describeRule(rule.show, rule.hide)).join(' or ');
+  }
+
+  private static withoutVersionGate(conditions: unknown): Record<string, unknown[]> {
+    if (!conditions || typeof conditions !== 'object') return {};
+    const { '@version': _gate, ...rest } = conditions as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(rest).map(([name, values]) => [name, ([] as unknown[]).concat(values)]));
+  }
+
+  private static describeRule(show: Record<string, unknown[]>, hide: Record<string, unknown[]>): string {
+    const shown = Object.keys(show).sort().map(name => this.describeField(name, show[name]));
+    const hidden = Object.keys(hide).sort().map(name => `not ${this.describeField(name, hide[name])}`);
+    return [...shown, ...hidden].join(' & ');
+  }
+
+  /** `name=a|b`, or the written-out operator for `_cnd` conditions. */
+  private static describeField(rawName: string, values: unknown[]): string {
+    const name = rawName.replace(/^\//, '');
+    const plain = [...new Set(values.filter(value => !this.isOperatorCondition(value)).map(String))];
+    const parts = plain.length > 0 ? [`${name}=${plain.join('|')}`] : [];
+    for (const value of values) {
+      if (this.isOperatorCondition(value)) parts.push(this.describeOperator(name, (value as any)._cnd));
+    }
+    return parts.length > 1 ? `(${parts.join(' or ')})` : parts[0] ?? name;
+  }
+
+  private static isOperatorCondition(value: unknown): boolean {
+    return typeof value === 'object' && value !== null && '_cnd' in value;
+  }
+
+  private static describeOperator(name: string, condition: Record<string, any>): string {
+    const [operator, target] = Object.entries(condition ?? {})[0] ?? [];
+    switch (operator) {
+      case 'exists': return `${name} is set`;
+      case 'eq': return `${name}=${target}`;
+      case 'not': return `${name}!=${target}`;
+      case 'gte': return `${name}>=${target}`;
+      case 'lte': return `${name}<=${target}`;
+      case 'gt': return `${name}>${target}`;
+      case 'lt': return `${name}<${target}`;
+      case 'between': return `${name} between ${target?.from} and ${target?.to}`;
+      case 'startsWith': return `${name} starts with ${target}`;
+      case 'endsWith': return `${name} ends with ${target}`;
+      case 'includes': return `${name} contains ${target}`;
+      case 'regex': return `${name} matches ${target}`;
+      default: return `${name} ${operator ?? 'condition'} ${JSON.stringify(target)}`;
+    }
   }
 
   /**
@@ -543,12 +589,23 @@ export class PropertyFilter {
     return this.uniqueByName(fields.filter(field => field?.type !== 'notice'));
   }
 
-  /** Identity of a setting: the same name can appear once per display condition. */
+  /**
+   * Identity of a setting: its definition without the wording. The same name can
+   * appear once per condition or per definition (DateTime's `timezone` is a string
+   * for one operation and a boolean for another).
+   */
   private static variantKey(item: any): string {
-    return `${item.name}\u0000${JSON.stringify(item.displayOptions ?? null)}`;
+    const { description: _description, hint: _hint, placeholder: _placeholder, displayName: _displayName, ...shape } = item;
+    const seen = new WeakSet<object>();
+    return JSON.stringify(shape, (_key, value) => {
+      if (typeof value !== 'object' || value === null) return value;
+      if (seen.has(value)) return '[seen]'; // schemas from tests can be circular
+      seen.add(value);
+      return value;
+    });
   }
 
-  /** Settings that have a name, keeping the first of each name and display condition. */
+  /** Settings that have a name, keeping the first of each definition. */
   private static uniqueVariants(items: any[]): any[] {
     const seen = new Set<string>();
     return items.filter(item => {
