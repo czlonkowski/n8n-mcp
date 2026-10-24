@@ -342,7 +342,7 @@ export class TemplateRepository {
    * Get templates for a specific task/use case
    */
   getTemplatesForTask(task: string, limit: number = 10, offset: number = 0): StoredTemplate[] {
-    const nodes = TASK_NODE_MAP[task];
+    const nodes = Object.prototype.hasOwnProperty.call(TASK_NODE_MAP, task) ? TASK_NODE_MAP[task] : undefined;
     if (!nodes) {
       return [];
     }
@@ -430,7 +430,7 @@ export class TemplateRepository {
    * Get count for task templates
    */
   getTaskTemplatesCount(task: string): number {
-    const nodes = TASK_NODE_MAP[task];
+    const nodes = Object.prototype.hasOwnProperty.call(TASK_NODE_MAP, task) ? TASK_NODE_MAP[task] : undefined;
     if (!nodes) {
       return 0;
     }

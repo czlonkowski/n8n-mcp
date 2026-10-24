@@ -78,10 +78,11 @@ describe.skipIf(!dbExists)('PropertyFilter essentials against the real node sche
   });
 
   it('Merge shows the v3 combine settings', () => {
-    const names = standard('nodes-base.merge').map(p => p.name);
+    const props = standard('nodes-base.merge');
+    const names = props.map(p => p.name);
     expect(names).toEqual(expect.arrayContaining(['mode', 'combineBy', 'fieldsToMatchString', 'joinMode', 'numberInputs']));
     expect(names).not.toContain('propertyName1');
-    const clash = child(standard('nodes-base.merge'), 'options', 'clashHandling');
+    const clash = child(props, 'options', 'clashHandling');
     expect(clash?.description).toContain('Only when');
   });
 

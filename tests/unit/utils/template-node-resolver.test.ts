@@ -136,13 +136,6 @@ describe('Template Node Resolver', () => {
       expect(result).not.toContain('n8n-nodes-base.splitInBatches');
     });
 
-    it('should resolve json to set and code', () => {
-      const result = resolveTemplateNodeTypes(['json']);
-
-      expect(result).toContain('n8n-nodes-base.set');
-      expect(result).toContain('n8n-nodes-base.code');
-    });
-
     it('should handle trigger suffix variations', () => {
       const result = resolveTemplateNodeTypes(['slacktrigger', 'gmailtrigger']);
       

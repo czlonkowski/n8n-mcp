@@ -137,6 +137,26 @@ describe('PropertyFilter', () => {
       const result = PropertyFilter.getEssentials(versioned, 'nodes-base.unknownNode');
       expect([...result.required, ...result.common].map(p => p.name)).toContain('legacyField');
     });
+
+    it('leaves the schema and its gates alone when the version does not parse', () => {
+      for (const version of ['', 'abc', '0.2.21']) {
+        const names = (() => {
+          const result = PropertyFilter.getEssentials(versioned, 'nodes-base.unknownNode', version);
+          return [...result.required, ...result.common];
+        })();
+        expect(names.map(p => p.name), version).toContain('legacyField');
+        expect(names.find(p => p.name === 'newField')?.showWhen, version).toBeDefined();
+      }
+    });
+
+    it('accepts the stored "1,2" version format', () => {
+      const result = PropertyFilter.getEssentials(versioned, 'nodes-base.unknownNode', '1,2');
+      expect([...result.required, ...result.common].map(p => p.name)).toEqual(['mode', 'newField']);
+    });
+
+    it('skips null entries in a schema instead of throwing', () => {
+      expect(() => PropertyFilter.getEssentials([null, ...versioned] as any[], 'nodes-base.unknownNode', 2)).not.toThrow();
+    });
   });
 
   describe('options collections', () => {
@@ -164,6 +184,30 @@ describe('PropertyFilter', () => {
       // Only in one: says when it applies; option values with spaces are quoted
       expect(children.format).toBe('Values: iso|", ". Only when operation=getCurrentDate.');
       expect(options[0].showWhen).toBeUndefined();
+    });
+
+    it('leaves @version gates out of the "Only when" note', () => {
+      const gated = perOperation.map(prop => prop.name === 'options'
+        ? { ...prop, displayOptions: { show: { ...prop.displayOptions!.show, '@version': [{ _cnd: { gte: 2 } }] } } }
+        : prop);
+      const result = PropertyFilter.getEssentials(gated, 'nodes-base.unknownNode');
+      const format = result.common.find(p => p.name === 'options')!.options!.find(o => o.value === 'format');
+      expect(format?.description).toBe('Values: iso|", ". Only when operation=getCurrentDate.');
+    });
+
+    it('says when a long settings list is cut', () => {
+      const many = Array.from({ length: 30 }, (_, i) => ({ name: `setting${i}`, type: 'boolean', description: `Setting ${i}` }));
+      const result = PropertyFilter.getEssentials([{ name: 'options', type: 'collection', options: many }], 'nodes-base.unknownNode', 1);
+      const options = result.common.find(p => p.name === 'options')!;
+      expect(options.options).toHaveLength(25);
+      expect(options.usageHint).toBe('Lists 25 of 30 settings. get_node with mode "search_properties" or detail "full" shows the rest.');
+    });
+
+    it('keeps abbreviations inside the first sentence', () => {
+      const result = PropertyFilter.getEssentials([{ name: 'options', type: 'collection', options: [
+        { name: 'quoted', type: 'boolean', description: 'Whether to treat values as text, e.g. "1" stays a string. Second sentence.' },
+      ] }], 'nodes-base.unknownNode', 1);
+      expect(result.common[0].options![0].description).toBe('Whether to treat values as text, e.g. "1" stays a string.');
     });
 
     it('does not append options for service nodes with a resource selector', () => {

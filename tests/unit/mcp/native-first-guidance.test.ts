@@ -1,6 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { ExpressionExtensions } from 'n8n-workflow';
 import { DateTime } from 'luxon';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { N8NDocumentationMCPServer } from '@/mcp/server';
+import { closeSharedDatabase } from '@/database/shared-database';
+import { SERVER_INSTRUCTIONS } from '@/mcp/native-first';
 import {
   EXPRESSION_HELPERS,
   getExpressionHelpersGuide,
@@ -65,5 +73,46 @@ describe('expression_helpers reference', () => {
     // Jobs across items point at nodes, not at helpers or Code
     expect(essentials).toContain('Remove Duplicates');
     expect(essentials).toContain('Summarize');
+  });
+});
+
+const sourceDbPath = path.join(__dirname, '../../../data/nodes.db');
+
+describe.skipIf(!fs.existsSync(sourceDbPath))('initialize instructions', () => {
+  let server: N8NDocumentationMCPServer;
+  let tmpDir: string;
+  const previousDbPath = process.env.NODE_DB_PATH;
+
+  beforeAll(async () => {
+    // Work on a copy: opening the tracked database rewrites bytes in it.
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'n8n-mcp-instructions-'));
+    const dbCopy = path.join(tmpDir, 'nodes.db');
+    fs.copyFileSync(sourceDbPath, dbCopy);
+    process.env.NODE_DB_PATH = dbCopy;
+    server = new N8NDocumentationMCPServer();
+    await (server as any).initialized;
+  }, 60000);
+
+  afterAll(async () => {
+    await server?.close();
+    await closeSharedDatabase();
+    if (previousDbPath === undefined) delete process.env.NODE_DB_PATH;
+    else process.env.NODE_DB_PATH = previousDbPath;
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('reach a client through the custom initialize handler', async () => {
+    // server.ts replaces the SDK's initialize handler, so this is the path real clients take
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await (server as any).server.connect(serverTransport);
+    const client = new Client({ name: 'instructions-test', version: '1.0.0' });
+    await client.connect(clientTransport);
+    try {
+      expect(client.getInstructions()).toBe(SERVER_INSTRUCTIONS);
+      expect(SERVER_INSTRUCTIONS).toContain('expression_helpers');
+      expect(SERVER_INSTRUCTIONS).toMatch(/A Code node, only for/);
+    } finally {
+      await client.close();
+    }
   });
 });

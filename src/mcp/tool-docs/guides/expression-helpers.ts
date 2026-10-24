@@ -81,12 +81,12 @@ export const EXPRESSION_HELPERS: ExpressionHelper[] = [
   { type: 'Number', name: 'floor', call: 'floor() / ceil() / abs()', summary: 'Rounding and absolute value', example: { input: 2.7, output: 2 } },
   { type: 'Number', name: 'format', call: 'format(locale?, options?)', summary: 'Intl.NumberFormat, e.g. currency', example: { input: 1234.5, args: ['en-US', { style: 'currency', currency: 'EUR' }], output: '€1,234.50' } },
   { type: 'Number', name: 'isEven', call: 'isEven() / isOdd() / isInteger()', summary: 'Number checks', example: { input: 4, output: true } },
-  { type: 'Number', name: 'toDateTime', call: "toDateTime(unit?)", summary: "Epoch number to DateTime; unit 'ms' (default), 's', 'us' or 'excel'" },
+  { type: 'Number', name: 'toDateTime', call: 'toDateTime(unit?)', summary: "Epoch number to DateTime; unit 'ms' (default), 's', 'us' or 'excel'" },
 
   // Dates: DateTime ($now, $today, DateTime.fromISO(...)), Date, or an ISO string
   { type: 'Date', name: 'format', call: 'format(luxonFormat)', summary: 'Format with Luxon tokens', example: { input: '2026-10-24T10:30:00Z', args: ['yyyy-MM-dd'], output: '2026-10-24' } },
   { type: 'Date', name: 'plus', call: 'plus(n, unit) / minus(n, unit)', summary: "Add or subtract time; unit e.g. 'days', 'hours', 'months'" },
-  { type: 'Date', name: 'diffTo', call: "diffTo(other, unit?)", summary: "Difference to another date in a unit ('days' default), or several units as an object", example: { input: '2026-10-24T10:00:00Z', args: ['2026-10-20T08:00:00Z', ['days', 'hours']], output: { days: 4, hours: 2 } } },
+  { type: 'Date', name: 'diffTo', call: 'diffTo(other, unit?)', summary: "Difference to another date in a unit ('days' default), or several units as an object", example: { input: '2026-10-24T10:00:00Z', args: ['2026-10-20T08:00:00Z', ['days', 'hours']], output: { days: 4, hours: 2 } } },
   { type: 'Date', name: 'diffToNow', call: 'diffToNow(unit?)', summary: 'Difference to now' },
   { type: 'Date', name: 'isBetween', call: 'isBetween(start, end)', summary: 'Whether the date lies between two dates; both bounds excluded', example: { input: '2026-10-15T00:00:00Z', args: ['2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z'], output: true } },
   { type: 'Date', name: 'extract', call: 'extract(unit?)', summary: "Part of the date: 'year', 'month', 'week', 'day', 'hour', 'weekday', ...", example: { input: '2026-10-24T10:30:00Z', args: ['month'], output: 10 } },
@@ -134,9 +134,12 @@ function renderExample(helper: ExpressionHelper): string {
   if (!example) return '';
   const args = (example.args ?? []).map(renderValue).join(', ');
   let receiver = renderValue(example.input);
-  if (helper.type === 'Date') receiver = `'${example.input}'.toDateTime()`;
-  // `4.isEven()` and `{...}.hasField()` do not parse as written
-  else if (helper.type === 'Number' || helper.type === 'Object') receiver = `(${receiver})`;
+  if (helper.type === 'Date') {
+    receiver = `'${example.input}'.toDateTime()`;
+  } else if (helper.type === 'Number' || helper.type === 'Object') {
+    // `4.isEven()` and `{...}.hasField()` do not parse as written
+    receiver = `(${receiver})`;
+  }
   return `${receiver}.${helper.name}(${args}) → ${JSON.stringify(example.output)}`;
 }
 
@@ -203,5 +206,5 @@ ${globals}
 ${GOTCHAS}
 
 ## Related
-- tools_documentation({topic: "javascript_code_node_guide"}) for the cases that need a Code node: loops or recursion, state across runs, parsing no node handles, libraries, heavy all-items work`;
+- tools_documentation({topic: "javascript_code_node_guide"}) for the cases that need a Code node: loops or recursion that nodes cannot express, state across runs, parsing no node handles, libraries, heavy all-items work`;
 }

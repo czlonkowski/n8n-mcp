@@ -2364,10 +2364,6 @@ export class N8NDocumentationMCPServer {
         return a.rank - b.rank;
       });
 
-      const rankedNodes = intent
-        ? this.applySearchIntent(scoredNodes, intent.nodeTypes, cleanedQuery, limit)
-        : scoredNodes;
-      
       // If FTS didn't find key primary nodes, augment with LIKE search
       const hasHttpRequest = scoredNodes.some(n => n.node_type === 'nodes-base.httpRequest');
       if (cleanedQuery.toLowerCase().includes('http') && !hasHttpRequest) {
@@ -2375,7 +2371,11 @@ export class N8NDocumentationMCPServer {
         logger.debug('FTS missed HTTP Request node, augmenting with LIKE search');
         return this.searchNodesLIKE(query, limit, options);
       }
-      
+
+      const rankedNodes: NodeRow[] = intent
+        ? this.applySearchIntent(scoredNodes, intent.nodeTypes, cleanedQuery, limit)
+        : scoredNodes;
+
       const result: any = {
         query,
         results: rankedNodes.map(node => {
@@ -2486,31 +2486,24 @@ export class N8NDocumentationMCPServer {
   /**
    * Put an intent's core nodes at the top of FTS results, after any row whose
    * display name equals the query. A target the FTS query did not return is
-   * fetched with the same row shape. The result is cut to `limit`.
+   * read from the nodes table. The result is cut to `limit`.
    */
-  private applySearchIntent<T extends NodeRow & { rank: number; relevanceScore: number }>(
-    rows: T[],
+  private applySearchIntent(
+    rows: NodeRow[],
     nodeTypes: readonly string[],
     query: string,
     limit: number
-  ): T[] {
+  ): NodeRow[] {
     const lowerQuery = query.toLowerCase();
     const exactMatches = rows.filter(row => row.display_name.toLowerCase() === lowerQuery);
     const placed = new Set(exactMatches.map(row => row.node_type));
-    const promoted: T[] = [];
+    const promoted: NodeRow[] = [];
 
     for (const nodeType of nodeTypes) {
       if (placed.has(nodeType)) continue;
-      let row = rows.find(r => r.node_type === nodeType);
-      if (!row) {
-        const fetched = this.db!.prepare(`
-          SELECT n.*, 0 AS rank
-          FROM nodes n
-          WHERE n.node_type = ? AND n.is_community = 0
-        `).get(nodeType) as (NodeRow & { rank: number }) | undefined;
-        if (!fetched) continue;
-        row = { ...fetched, relevanceScore: this.calculateRelevanceScore(fetched, query) } as T;
-      }
+      const row = rows.find(r => r.node_type === nodeType)
+        ?? (this.db!.prepare('SELECT * FROM nodes WHERE node_type = ? AND is_community = 0').get(nodeType) as NodeRow | undefined);
+      if (!row) continue;
       promoted.push(row);
       placed.add(nodeType);
     }

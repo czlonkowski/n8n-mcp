@@ -59,6 +59,7 @@ export function filterPropertiesForVersion(properties: any[], version: string | 
 function filterList(properties: any[], version: number): any[] {
   const result: any[] = [];
   for (const property of properties) {
+    if (property == null) continue;
     if (!isShownAtVersion(property, version)) continue;
 
     if (property.type === 'collection' && Array.isArray(property.options)) {

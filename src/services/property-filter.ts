@@ -6,6 +6,7 @@
  */
 
 import { filterPropertiesForVersion } from '../parsers/version-display-gate';
+import { parseTypeVersion } from '../utils/typeversion';
 
 /** Set on a child of a merged options collection that applies to some modes only. */
 const APPLIES_WHEN = Symbol('appliesWhen');
@@ -227,9 +228,11 @@ export class PropertyFilter {
     }
     
     // The stored schema covers every typeVersion; keep only what `version` shows.
-    const versioned = version === undefined || version === null
+    // A version that does not parse leaves the schema and its gates as they are.
+    const numericVersion = parseTypeVersion(version);
+    const versioned = numericVersion === null
       ? allProperties
-      : this.resolveVersionGates(allProperties, version);
+      : this.resolveVersionGates(allProperties, numericVersion);
     const uniqueProperties = this.mergeOptionsCollections(this.deduplicateProperties(versioned));
     const config = this.ESSENTIAL_PROPERTIES[nodeType];
     
@@ -254,7 +257,7 @@ export class PropertyFilter {
    * gates from the top-level display conditions, so a property that is always
    * visible at that version is treated as unconditional.
    */
-  private static resolveVersionGates(properties: any[], version: string | number): any[] {
+  private static resolveVersionGates(properties: any[], version: number): any[] {
     return filterPropertiesForVersion(properties, version).map(prop => {
       const display = prop?.displayOptions;
       if (!display || (display.show?.['@version'] === undefined && display.hide?.['@version'] === undefined)) {
@@ -276,53 +279,43 @@ export class PropertyFilter {
    * Nodes often declare one `options` collection per operation or mode. Merge the
    * top-level `options` collections into the first one, so the agent sees every
    * available setting once. Other per-operation collections (additionalFields,
-   * updateFields, ...) stay separate: their union would mix unrelated operations. Display conditions are kept only when all
-   * merged collections share them; otherwise a child that is not in every
-   * collection records the conditions under which it applies.
+   * updateFields, ...) stay separate: their union would mix unrelated operations.
+   * Display conditions are kept only when all merged collections share them;
+   * otherwise a child that is not in every collection records the conditions
+   * under which it applies.
    */
   private static mergeOptionsCollections(properties: any[]): any[] {
-    const groups = new Map<string, any[]>();
-    for (const prop of properties) {
-      if (prop?.type !== 'collection' || prop.name !== 'options' || !Array.isArray(prop.options)) continue;
-      groups.set(prop.name, [...(groups.get(prop.name) ?? []), prop]);
+    const isOptionsCollection = (prop: any) => prop?.type === 'collection' && prop.name === 'options';
+    const collections = properties.filter(prop => isOptionsCollection(prop) && Array.isArray(prop.options));
+    if (collections.length < 2) return properties;
+
+    const first = properties.find(isOptionsCollection);
+    const conditions = JSON.stringify(first.displayOptions ?? null);
+    const shared = collections.every(c => JSON.stringify(c.displayOptions ?? null) === conditions);
+
+    // child name -> its first definition and the collections that contain it
+    const byName = new Map<string, { child: any; parents: Set<any> }>();
+    for (const collection of collections) {
+      for (const child of collection.options) {
+        if (!child?.name) continue;
+        const entry = byName.get(child.name) ?? { child, parents: new Set<any>() };
+        entry.parents.add(collection);
+        byName.set(child.name, entry);
+      }
     }
 
-    const result: any[] = [];
-    const emitted = new Set<string>();
-    for (const prop of properties) {
-      const collections = prop?.type === 'collection' ? groups.get(prop.name) : undefined;
-      if (!collections || collections.length < 2) {
-        result.push(prop);
-        continue;
-      }
-      if (emitted.has(prop.name)) continue;
-      emitted.add(prop.name);
+    const children = [...byName.values()].map(({ child, parents }) => {
+      if (shared || parents.size === collections.length) return child;
+      const appliesWhen = this.describeConditions([...parents].map(parent => parent.displayOptions));
+      return appliesWhen ? { ...child, [APPLIES_WHEN]: appliesWhen } : child;
+    });
+    const merged = { ...first, options: children, displayOptions: shared ? first.displayOptions : undefined };
 
-      const conditions = JSON.stringify(prop.displayOptions ?? null);
-      const shared = collections.every(c => JSON.stringify(c.displayOptions ?? null) === conditions);
-
-      // child name -> the collections that contain it
-      const owners = new Map<string, any[]>();
-      const firstSeen = new Map<string, any>();
-      for (const collection of collections) {
-        for (const child of collection.options) {
-          if (!child?.name) continue;
-          if (!firstSeen.has(child.name)) firstSeen.set(child.name, child);
-          const list = owners.get(child.name) ?? [];
-          if (!list.includes(collection)) list.push(collection);
-          owners.set(child.name, list);
-        }
-      }
-
-      const children = [...firstSeen.values()].map(child => {
-        const parents = owners.get(child.name)!;
-        if (shared || parents.length === collections.length) return child;
-        const appliesWhen = this.describeConditions(parents.map(parent => parent.displayOptions));
-        return appliesWhen ? { ...child, [APPLIES_WHEN]: appliesWhen } : child;
-      });
-      result.push({ ...prop, options: children, displayOptions: shared ? prop.displayOptions : undefined });
-    }
-    return result;
+    // The merged collection takes the place of the first one; the others are dropped
+    return properties.flatMap(prop => {
+      if (!isOptionsCollection(prop)) return [prop];
+      return prop === first ? [merged] : [];
+    });
   }
 
   /**
@@ -330,28 +323,33 @@ export class PropertyFilter {
    * e.g. `operation=formatDate|getCurrentDate`. Rules with the same keys are
    * folded into one clause; otherwise the clauses are joined with "or".
    * Returns undefined when any rule has no `show` conditions (always shown).
+   * `@version` gates are left out: they are resolved when a version is known.
    */
   private static describeConditions(rules: any[]): string | undefined {
-    const shows = rules.map(rule => rule?.show);
-    if (shows.some(show => !show || Object.keys(show).length === 0)) return undefined;
+    const shows = rules.map(rule => {
+      const { '@version': _gate, ...show } = rule?.show ?? {};
+      return show as Record<string, unknown>;
+    });
+    if (shows.some(show => Object.keys(show).length === 0)) return undefined;
 
-    const key = (show: Record<string, any>) => Object.keys(show).sort().join(',');
-    const clause = (show: Record<string, unknown[]>) => Object.keys(show).sort()
-      .map(name => `${name.replace(/^\//, '')}=${[...new Set(show[name].map(String))].join('|')}`)
+    const key = (show: Record<string, unknown>) => Object.keys(show).sort().join(',');
+    const clause = (show: Record<string, unknown>) => Object.keys(show).sort()
+      .map(name => {
+        const values = new Set(([] as unknown[]).concat(show[name]).map(String));
+        return `${name.replace(/^\//, '')}=${[...values].join('|')}`;
+      })
       .join(' & ');
 
-    if (shows.every(show => key(show) === key(shows[0]))) {
-      const folded: Record<string, unknown[]> = {};
-      for (const show of shows) {
-        for (const [name, values] of Object.entries(show)) {
-          folded[name] = [...(folded[name] ?? []), ...([] as unknown[]).concat(values)];
-        }
-      }
-      return clause(folded);
+    if (!shows.every(show => key(show) === key(shows[0]))) {
+      return shows.map(clause).join(' or ');
     }
-    return shows
-      .map(show => clause(Object.fromEntries(Object.entries(show).map(([name, values]) => [name, ([] as unknown[]).concat(values)]))))
-      .join(' or ');
+    const folded: Record<string, unknown[]> = {};
+    for (const show of shows) {
+      for (const [name, values] of Object.entries(show)) {
+        folded[name] = (folded[name] ?? []).concat(values);
+      }
+    }
+    return clause(folded);
   }
 
   /**
@@ -432,9 +430,15 @@ export class PropertyFilter {
       simplified.placeholder = prop.placeholder;
     }
     
+    let truncationNote: string | undefined;
     if ((prop.type === 'collection' || prop.type === 'fixedCollection') && Array.isArray(prop.options)) {
       // Child settings: name plus one line each, no deeper nesting
       simplified.options = this.summarizeChildren(prop);
+      const total = this.uniqueByName(prop.options).length;
+      if (total > simplified.options.length) {
+        truncationNote = `Lists ${simplified.options.length} of ${total} settings. ` +
+          'get_node with mode "search_properties" or detail "full" shows the rest.';
+      }
     } else if (prop.options && Array.isArray(prop.options)) {
       // Simplify options for select fields
       // Limit options to first 20 for better usability
@@ -474,7 +478,7 @@ export class PropertyFilter {
     if (dynamic) simplified.dynamicOptions = dynamic;
 
     // Add usage hints based on property characteristics
-    simplified.usageHint = this.generateUsageHint(prop);
+    simplified.usageHint = truncationNote ?? this.generateUsageHint(prop);
 
     return simplified;
   }
@@ -491,9 +495,7 @@ export class PropertyFilter {
    * collection or group, and the allowed values for an options field.
    */
   private static summarizeChildren(prop: any): Array<{ value: string; label: string; description?: string }> {
-    const seen = new Set<string>();
-    return prop.options
-      .filter((child: any) => child?.name && !seen.has(child.name) && seen.add(child.name))
+    return this.uniqueByName(prop.options)
       .slice(0, this.MAX_CHILD_SETTINGS)
       .map((child: any) => {
         const line = this.oneLine(child);
@@ -507,7 +509,7 @@ export class PropertyFilter {
 
   private static oneLine(setting: any): string {
     const parts: string[] = [];
-    const text = this.firstSentence(setting.description || setting.hint || '');
+    const text = this.firstSentence(setting.description || setting.hint);
     if (text) parts.push(/[.!?…]$/.test(text) ? text : `${text}.`);
 
     const nested = this.nestedFields(setting);
@@ -535,8 +537,17 @@ export class PropertyFilter {
     } else if (setting.type === 'fixedCollection' && Array.isArray(setting.options)) {
       fields = setting.options.flatMap((group: any) => Array.isArray(group?.values) ? group.values : []);
     }
+    return this.uniqueByName(fields.filter(field => field?.type !== 'notice'));
+  }
+
+  /** Items that have a name, keeping the first item of each name. */
+  private static uniqueByName(items: any[]): any[] {
     const seen = new Set<string>();
-    return fields.filter(field => field?.name && field.type !== 'notice' && !seen.has(field.name) && seen.add(field.name));
+    return items.filter(item => {
+      if (!item?.name || seen.has(item.name)) return false;
+      seen.add(item.name);
+      return true;
+    });
   }
 
   private static fieldLabel(field: any): string {
@@ -563,7 +574,8 @@ export class PropertyFilter {
     if (typeof text !== 'string') return '';
     const plain = text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
     if (!plain) return '';
-    const sentence = plain.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? plain;
+    // A sentence ends at . ! or ? before a space, except after "e.g", "i.e" and similar
+    const sentence = plain.match(/^.*?(?<!\b(?:e\.g|i\.e|etc|vs|approx|incl))[.!?](?=\s|$)/i)?.[0] ?? plain;
     return sentence.length > this.MAX_LINE_DESCRIPTION
       ? `${sentence.slice(0, this.MAX_LINE_DESCRIPTION - 1).trimEnd()}…`
       : sentence;
