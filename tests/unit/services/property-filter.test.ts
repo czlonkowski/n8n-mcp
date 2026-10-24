@@ -214,6 +214,13 @@ describe('PropertyFilter', () => {
       ]);
     });
 
+    it('strips nested and broken-up HTML tags from the line', () => {
+      const result = PropertyFilter.getEssentials([{ name: 'options', type: 'collection', options: [
+        { name: 'tagged', type: 'boolean', description: 'See <<b>b>the docs</b> <a href="x">here</a>.' },
+      ] }], 'nodes-base.unknownNode', 1);
+      expect(result.common[0].options![0].description).toBe('See the docs here.');
+    });
+
     it('keeps abbreviations inside the first sentence', () => {
       const result = PropertyFilter.getEssentials([{ name: 'options', type: 'collection', options: [
         { name: 'quoted', type: 'boolean', description: 'Whether to treat values as text, e.g. "1" stays a string. Second sentence.' },

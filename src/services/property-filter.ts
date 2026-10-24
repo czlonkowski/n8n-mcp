@@ -592,7 +592,14 @@ export class PropertyFilter {
 
   private static firstSentence(text: unknown): string {
     if (typeof text !== 'string') return '';
-    const plain = text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    // Strip HTML tags until none are left: one pass can leave a tag behind ("<<b>b>")
+    let stripped = text;
+    let previous: string;
+    do {
+      previous = stripped;
+      stripped = stripped.replace(/<[^<>]*>/g, '');
+    } while (stripped !== previous);
+    const plain = stripped.replace(/\s+/g, ' ').trim();
     if (!plain) return '';
     // A sentence ends at . ! or ? before a space, except after "e.g", "i.e" and similar
     const sentence = plain.match(/^.*?(?<!\b(?:e\.g|i\.e|etc|vs|approx|incl))[.!?](?=\s|$)/i)?.[0] ?? plain;

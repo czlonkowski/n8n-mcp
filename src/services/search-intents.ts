@@ -159,17 +159,21 @@ const STOP_WORDS = new Set([
   'how', 'to', 'do', 'i', 'can', 'need', 'want', 'the', 'a', 'an', 'my', 'in', 'n8n', 'node', 'nodes'
 ]);
 
-const TRAILING_PUNCTUATION = /[?!.,;:]+$/;
+const TRAILING_PUNCTUATION = new Set(['?', '!', '.', ',', ';', ':']);
+
+/** Remove trailing punctuation with a scan; a regex anchored at $ is quadratic on long runs. */
+function trimTrailingPunctuation(text: string): string {
+  let end = text.length;
+  while (end > 0 && TRAILING_PUNCTUATION.has(text[end - 1])) end--;
+  return text.slice(0, end);
+}
 
 /**
  * Lowercase, trim, drop trailing punctuation, collapse whitespace and remove
  * question/function words. Content words are kept as they are.
  */
 export function normalizeIntentQuery(query: string): string {
-  return query
-    .toLowerCase()
-    .trim()
-    .replace(TRAILING_PUNCTUATION, '')
+  return trimTrailingPunctuation(query.toLowerCase().trim())
     .split(/\s+/)
     .filter(word => word.length > 0 && !STOP_WORDS.has(word))
     .join(' ');

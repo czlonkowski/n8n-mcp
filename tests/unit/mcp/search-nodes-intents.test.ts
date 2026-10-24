@@ -70,6 +70,16 @@ describe('matchSearchIntent', () => {
   });
 });
 
+describe('normalizeIntentQuery on long input', () => {
+  it('handles a long run of trailing punctuation in linear time', () => {
+    const query = 'deduplicate' + '!'.repeat(50_000) + 'x';
+    const started = Date.now();
+    normalizeIntentQuery(query);
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(normalizeIntentQuery('Group by?!')).toBe('group by');
+  });
+});
+
 describe('SEARCH_INTENTS table', () => {
   it('has no phrase that maps to two intents', () => {
     const owner = new Map<string, string>();
