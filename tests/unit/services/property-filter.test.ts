@@ -240,6 +240,23 @@ describe('PropertyFilter', () => {
       ]);
     });
 
+    it('folds conditions only when the rules differ in one field', () => {
+      const collection = (show: Record<string, string[]>, child: string) =>
+        ({ name: 'options', type: 'collection', displayOptions: { show }, options: [{ name: child, type: 'number' }] });
+      const result = PropertyFilter.getEssentials([
+        collection({ resource: ['chat'], operation: ['complete'] }, 'maxTokens'),
+        collection({ resource: ['text'], operation: ['complete', 'edit'] }, 'maxTokens'),
+        collection({ resource: ['image'], operation: ['create'] }, 'size'),
+        collection({ resource: ['text'], operation: ['complete'] }, 'echo'),
+        collection({ resource: ['text'], operation: ['edit'] }, 'echo'),
+      ], 'nodes-base.unknownNode', 1);
+      const lines = Object.fromEntries(result.common.find(p => p.name === 'options')!.options!.map(o => [o.value, o.description]));
+      // chat/edit is not a valid combination, so the clauses stay apart
+      expect(lines.maxTokens).toBe('Only when operation=complete & resource=chat or operation=complete|edit & resource=text.');
+      // only the operation differs: folded
+      expect(lines.echo).toBe('Only when operation=complete|edit & resource=text.');
+    });
+
     it('writes out operator and hide conditions', () => {
       const result = PropertyFilter.getEssentials([{ name: 'options', type: 'collection', options: [
         { name: 'quoted', type: 'boolean', displayOptions: { show: { '/queryReplacement': [{ _cnd: { exists: true } }] } } },

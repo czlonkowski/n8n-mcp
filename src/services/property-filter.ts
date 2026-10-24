@@ -338,7 +338,13 @@ export class PropertyFilter {
     }
 
     const key = (show: Record<string, unknown[]>) => Object.keys(show).sort().join(',');
-    const foldable = parsed.every(rule =>
+    // Folding fields independently is only exact when the rules differ in one field:
+    // {resource: chat, operation: complete} + {resource: text, operation: edit}
+    // must not become resource=chat|text & operation=complete|edit.
+    const differingFields = Object.keys(parsed[0].show).filter(name =>
+      new Set(parsed.map(rule => JSON.stringify([...new Set((rule.show[name] ?? []).map(String))].sort()))).size > 1
+    );
+    const foldable = differingFields.length <= 1 && parsed.every(rule =>
       Object.keys(rule.hide).length === 0 &&
       key(rule.show) === key(parsed[0].show) &&
       Object.values(rule.show).flat().every(value => !this.isOperatorCondition(value))
