@@ -1198,10 +1198,7 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
       expect(result.error).toBeDefined();
     });
 
-    it('should handle negative case value gracefully', async () => {
-      // NOTE: Currently negative case values are accepted and mapped to sourceIndex=-1
-      // which n8n API accepts (though it may not behave correctly at runtime).
-      // TODO: Add validation to reject negative case values in future enhancement.
+    it('should reject a negative case value', async () => {
 
       // Create minimal workflow with Switch node
       const workflowName = createTestWorkflowName('Smart Params - Negative Case');
@@ -1243,7 +1240,6 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
       context.trackWorkflow(workflow.id);
 
       // Add connection with negative case value
-      // Currently accepted but should be validated in future
       const result = await handleUpdatePartialWorkflow(
         {
           id: workflow.id,
@@ -1266,7 +1262,7 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
               type: 'addConnection',
               source: 'Switch',
               target: 'Handler',
-              case: -1  // Negative value - should be validated but currently accepted
+              case: -1
             }
           ]
         },
@@ -1274,9 +1270,8 @@ describe('Integration: Smart Parameters with Real n8n API', () => {
         mcpContext
       );
 
-      // Currently succeeds (validation gap)
-      // TODO: Should fail validation when enhanced validation is added
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result)).toContain('-1');
     });
   });
 

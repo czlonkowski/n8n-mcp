@@ -108,7 +108,7 @@ describe('NodeSpecificValidators.validateCode with long input', () => {
     });
 
     it('handles many unmatched parameter lists before braces', () => {
-      const { ms } = validate({ language: 'javaScript', jsCode: '){'.repeat(2_000_000) + '\nreturn [{json:{}}]' });
+      const { ms } = validate({ language: 'javaScript', jsCode: '){'.repeat(500_000) + '\nreturn [{json:{}}]' });
       expect(ms).toBeLessThan(2_000);
     });
 

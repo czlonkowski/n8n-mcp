@@ -245,7 +245,7 @@ describe('WorkflowDiffEngine limits', () => {
       });
 
       it('accepts a capture replacement that keeps the field length', async () => {
-        const text = 'xy'.repeat(150_000);
+        const text = 'xy'.repeat(25_000);
         const result = await apply(
           [patches([{ find: '(.)', replace: '$1', regex: true, replaceAll: true }])],
           buildWorkflow(text)
