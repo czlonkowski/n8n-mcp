@@ -245,12 +245,14 @@ describe('PropertyFilter', () => {
         { name: 'quoted', type: 'boolean', displayOptions: { show: { '/queryReplacement': [{ _cnd: { exists: true } }] } } },
         { name: 'clash', type: 'boolean', displayOptions: { hide: { '/joinMode': ['keepMatches', 'keepNonMatches'] } } },
         { name: 'big', type: 'number', displayOptions: { show: { limit: [{ _cnd: { gte: 10 } }, 5] } } },
+        { name: 'named', type: 'string', displayOptions: { hide: { sheetName: [''] } } },
       ] }], 'nodes-base.unknownNode', 1);
       const lines = result.common[0].options!.map(o => o.description);
       expect(lines).toEqual([
         'Only when queryReplacement is set.',
         'Only when not joinMode=keepMatches|keepNonMatches.',
         'Only when (limit=5 or limit>=10).',
+        'Only when not sheetName="".',
       ]);
     });
 

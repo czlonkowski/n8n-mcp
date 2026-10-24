@@ -368,7 +368,9 @@ export class PropertyFilter {
   /** `name=a|b`, or the written-out operator for `_cnd` conditions. */
   private static describeField(rawName: string, values: unknown[]): string {
     const name = rawName.replace(/^\//, '');
-    const plain = [...new Set(values.filter(value => !this.isOperatorCondition(value)).map(String))];
+    const plain = [...new Set(values
+      .filter(value => !this.isOperatorCondition(value))
+      .map(value => (value === '' ? '""' : String(value))))];
     const parts = plain.length > 0 ? [`${name}=${plain.join('|')}`] : [];
     for (const value of values) {
       if (this.isOperatorCondition(value)) parts.push(this.describeOperator(name, (value as any)._cnd));
