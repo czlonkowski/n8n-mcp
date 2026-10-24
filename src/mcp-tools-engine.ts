@@ -4,7 +4,6 @@
  */
 import { NodeRepository } from './database/node-repository';
 import { PropertyFilter } from './services/property-filter';
-import { TaskTemplates } from './services/task-templates';
 import { ConfigValidator } from './services/config-validator';
 import { EnhancedConfigValidator } from './services/enhanced-config-validator';
 import { WorkflowValidator, WorkflowValidationResult } from './services/workflow-validator';

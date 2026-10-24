@@ -399,7 +399,6 @@ describe('Parameter Validation', () => {
       vi.spyOn(server as any, 'listNodes').mockResolvedValue({ nodes: [] });
       vi.spyOn(server as any, 'listAITools').mockResolvedValue({ tools: [] });
       vi.spyOn(server as any, 'getDatabaseStatistics').mockResolvedValue({ stats: {} });
-      vi.spyOn(server as any, 'listTasks').mockResolvedValue({ tasks: [] });
     });
 
     it('should allow tools_documentation with no parameters', async () => {

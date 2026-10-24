@@ -35,7 +35,6 @@ import { NodeRepository } from '../database/node-repository';
 import { DatabaseAdapter, createDatabaseAdapter } from '../database/database-adapter';
 import { getSharedDatabase, releaseSharedDatabase, SharedDatabaseState } from '../database/shared-database';
 import { PropertyFilter } from '../services/property-filter';
-import { TaskTemplates } from '../services/task-templates';
 import { ConfigValidator } from '../services/config-validator';
 import { EnhancedConfigValidator, ValidationMode, ValidationProfile } from '../services/enhanced-config-validator';
 import { PropertyDependencies } from '../services/property-dependencies';
@@ -3974,52 +3973,7 @@ Full documentation is being prepared. For now, use get_node_essentials for confi
     
     return value;
   }
-  
-  private async listTasks(category?: string): Promise<any> {
-    if (category) {
-      const categories = TaskTemplates.getTaskCategories();
-      const tasks = categories[category];
-      
-      if (!tasks) {
-        throw new Error(
-          `Unknown category: ${category}. Available categories: ${Object.keys(categories).join(', ')}`
-        );
-      }
-      
-      return {
-        category,
-        tasks: tasks.map(task => {
-          const template = TaskTemplates.getTaskTemplate(task);
-          return {
-            task,
-            description: template?.description || '',
-            nodeType: template?.nodeType || ''
-          };
-        })
-      };
-    }
-    
-    // Return all tasks grouped by category
-    const categories = TaskTemplates.getTaskCategories();
-    const result: any = {
-      totalTasks: TaskTemplates.getAllTasks().length,
-      categories: {}
-    };
-    
-    for (const [cat, tasks] of Object.entries(categories)) {
-      result.categories[cat] = tasks.map(task => {
-        const template = TaskTemplates.getTaskTemplate(task);
-        return {
-          task,
-          description: template?.description || '',
-          nodeType: template?.nodeType || ''
-        };
-      });
-    }
-    
-    return result;
-  }
-  
+
   /**
    * The typeVersion the validators see for a single-node config: the caller's `@version` when
    * it is a finite number (or numeric string), else the node's version from the database.
