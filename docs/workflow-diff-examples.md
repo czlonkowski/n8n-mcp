@@ -60,7 +60,7 @@ The `n8n_update_partial_workflow` tool allows you to make targeted changes to wo
 {
   "type": "updateNode",
   "nodeName": "HTTP Request",
-  "changes": {
+  "updates": {
     "parameters.url": "https://new-api.example.com/v2/users",
     "parameters.headers.parameters": [
       {
@@ -230,14 +230,14 @@ The `n8n_update_partial_workflow` tool allows you to make targeted changes to wo
     {
       "type": "updateNode",
       "nodeName": "Webhook 1",
-      "changes": {
+      "updates": {
         "parameters.path": "v2/webhook1"
       }
     },
     {
       "type": "updateNode",
       "nodeName": "Webhook 2",
-      "changes": {
+      "updates": {
         "parameters.path": "v2/webhook2"
       }
     },
@@ -441,13 +441,13 @@ Demonstrates handling many operations in a single request - no longer limited to
     {
       "type": "addConnection",
       "source": "Validate Email",
-      "sourceOutput": "true",
+      "branch": "true",
       "target": "Enrich with API"
     },
     {
       "type": "addConnection",
       "source": "Validate Email",
-      "sourceOutput": "false",
+      "branch": "false",
       "target": "Log Invalid Emails"
     },
     {
@@ -459,7 +459,8 @@ Demonstrates handling many operations in a single request - no longer limited to
       "type": "addConnection",
       "source": "Log Invalid Emails",
       "target": "Merge Results",
-      "targetInput": "input2"
+      "targetInput": "main",
+      "targetIndex": 1
     },
     {
       "type": "addConnection",
@@ -671,7 +672,7 @@ Even though the hoist exists, write operations in causal order — add the node 
       "type": "addNode",
       "node": {
         "name": "Schedule",
-        "type": "n8n-nodes-base.schedule",
+        "type": "n8n-nodes-base.scheduleTrigger",
         "position": [200, 300],
         "parameters": {
           "rule": {
