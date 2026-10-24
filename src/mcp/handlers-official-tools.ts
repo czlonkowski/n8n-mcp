@@ -60,7 +60,8 @@ const DEFAULT_MIN_VERSION = '2.34';
 /**
  * Shared "call one official tool, wrap the result" path for the passthrough
  * tools. `idempotent` says whether the call may be re-sent after a
- * connection-level failure — see `N8nOfficialMcpClient.callTool`.
+ * connection-level failure. `timeoutMs` is one budget for connection, tool
+ * discovery, the tool call and any retry.
  */
 export async function callOfficialTool(
   context: InstanceContext | undefined,
@@ -72,15 +73,16 @@ export async function callOfficialTool(
 ): Promise<McpToolResponse> {
   const client = getOfficialMcpClient(context);
   if (!client) return notConfiguredResponse(context, label) as McpToolResponse;
+  const deadlineAt = Date.now() + timeoutMs;
   try {
-    const caps = await client.capabilities();
+    const caps = await client.capabilities(false, { deadlineAt });
     if (!caps.reachable) return officialFailure(new OfficialMcpError(caps.error ?? 'OFFICIAL_MCP_TRANSPORT_ERROR', 'n8n MCP server is not reachable'), label) as McpToolResponse;
     const tool = toolAliases.find(t => caps.toolNames.includes(t));
     if (!tool) {
       const minVersion = OFFICIAL_TOOL_MIN_VERSION[toolAliases[0]] ?? DEFAULT_MIN_VERSION;
       return officialFailure(new OfficialMcpError('OFFICIAL_MCP_TOOL_UNAVAILABLE', `This instance does not expose ${toolAliases.join(' / ')} (needs n8n >= ${minVersion})`), label) as McpToolResponse;
     }
-    const result = await client.callTool(tool, args, { timeoutMs, idempotent });
+    const result = await client.callTool(tool, args, { timeoutMs, idempotent, deadlineAt });
     const data = result.json ?? result.text;
     // "Input validation error" is the literal prefix n8n's MCP server puts on
     // an arguments-rejected response (observed on n8n 2.36.7 — see the spike
