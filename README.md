@@ -95,6 +95,7 @@ n8n-MCP works with multiple AI-powered IDEs and tools:
 - [Cursor](./docs/CURSOR_SETUP.md) - Step-by-step Cursor IDE setup
 - [Windsurf](./docs/WINDSURF_SETUP.md) - Windsurf integration with project rules
 - [Codex](./docs/CODEX_SETUP.md) - Codex integration guide
+- [Kiro](./docs/KIRO_SETUP.md) - Kiro IDE and CLI setup
 - [Antigravity](./docs/ANTIGRAVITY_SETUP.md) - Antigravity integration guide
 
 ## Add Claude Skills (Optional)
