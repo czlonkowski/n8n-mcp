@@ -24,6 +24,9 @@ import {
   normalizeMcpWorkflowPosition,
 } from '../utils/mcp-input-normalizer';
 
+/** Operations that change no nodes or connections: saved without publishing (see metadataOnly). */
+const METADATA_ONLY_OPERATIONS = new Set(['updateName', 'moveToFolder', 'updateSettings', 'addTag', 'removeTag']);
+
 // Cached validator instance to avoid recreating on every mutation
 let cachedValidator: WorkflowValidator | null = null;
 
@@ -196,6 +199,10 @@ export async function handleUpdatePartialWorkflow(
 
     // Validate input
     const input = workflowDiffSchema.parse(args);
+    // A rename, folder move, settings or tag change leaves the graph alone, so it has nothing to
+    // publish; saving it with n8n's default publish-on-save would put an unpublished draft live.
+    const metadataOnly = input.operations.length > 0
+      && input.operations.every(op => METADATA_ONLY_OPERATIONS.has(op.type));
 
     // Get API client
     const client = getN8nApiClient(context);
@@ -417,6 +424,7 @@ export async function handleUpdatePartialWorkflow(
       const groupWriteOptions = {
         authoredGroups: new Set(diffResult.authoredGroupNames ?? []),
         onWarning: (message: string) => groupWarnings.push(message),
+        ...(metadataOnly ? { publishIfActive: false } : {}),
       };
 
       let updatedWorkflow;
@@ -526,6 +534,7 @@ export async function handleUpdatePartialWorkflow(
             // groups no longer fit the server state, they are dropped rather than failing the rollback.
             const restored = await client.updateWorkflow(input.id, workflowBefore, {
               onWarning: (message: string) => groupWarnings.push(message),
+              ...(metadataOnly ? { publishIfActive: false } : {}),
             });
             rollbackPerformed = true;
             restoredDraftVersionId = (restored as any)?.versionId;
