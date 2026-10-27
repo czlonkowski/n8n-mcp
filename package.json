@@ -170,7 +170,7 @@
     "vitest": "^3.2.6"
   },
   "dependencies": {
-    "acorn": "^8.16.0",
+    "acorn": "^8.19.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@n8n/n8n-nodes-langchain": "2.44.3",
     "dotenv": "^16.5.0",
@@ -190,8 +190,8 @@
     "zod": "3.25.76"
   },
   "optionalDependencies": {
-    "@rollup/rollup-darwin-arm64": "^4.50.0",
-    "@rollup/rollup-linux-x64-gnu": "^4.50.0",
+    "@rollup/rollup-darwin-arm64": "^4.65.0",
+    "@rollup/rollup-linux-x64-gnu": "^4.65.0",
     "better-sqlite3": "^11.10.0"
   },
   "overrides": {
