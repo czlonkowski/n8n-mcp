@@ -6,6 +6,8 @@
  */
 import express from 'express';
 import rateLimit from 'express-rate-limit';
+import path from 'path';
+import { z } from 'zod';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { N8NDocumentationMCPServer } from './mcp/server';
@@ -13,12 +15,14 @@ import { ConsoleManager } from './utils/console-manager';
 import { logger } from './utils/logger';
 import { redactHeaders, summarizeMcpBody } from './utils/redaction';
 import { AuthManager, buildBearerChallenge } from './utils/auth';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import dotenv from 'dotenv';
 import { getStartupBaseUrl, formatEndpointUrls, detectBaseUrl } from './utils/url-detector';
 import { PROJECT_VERSION } from './utils/version';
 import { v4 as uuidv4 } from 'uuid';
-import { createHmac, timingSafeEqual } from 'crypto';
+feat/workflow-builder-agent
+import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto' main
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import {
   negotiateProtocolVersion,
@@ -29,8 +33,11 @@ import { InstanceContext, pickInstanceContextFields, validateInstanceContext } f
 import { runWithRequestContext } from './utils/request-context';
 import { SessionState } from './types/session-state';
 import type { AdditionalTool } from './types/additional-tools';
-import { closeSharedDatabase } from './database/shared-database';
+import { closeSharedDatabase, getSharedDatabase, releaseSharedDatabase, SharedDatabaseState } from './database/shared-database';
 import { clearOfficialMcpClientCache } from './mcp/official-mcp-access';
+import { getN8nApiConfig, getN8nApiConfigFromContext } from './config/n8n-api';
+import { getN8nApiClient, handleCreateWorkflow } from './mcp/handlers-n8n-manager';
+import { WorkflowBuilderAgent, WorkflowDraft, WorkflowDraftSchema } from './services/workflow-builder-agent';
 
 dotenv.config();
 
@@ -53,6 +60,85 @@ interface MultiTenantHeaders {
 // Session management constants
 const MAX_SESSIONS = Math.max(1, parseInt(process.env.N8N_MCP_MAX_SESSIONS || '100', 10));
 const SESSION_CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const WORKFLOW_DRAFT_TTL_MS = 10 * 60 * 1000;
+const workflowPlanRequestSchema = z.object({ goal: z.string().min(1).max(4000) }).strict();
+const workflowCreateRequestSchema = z.object({
+  approved: z.literal(true),
+  draftToken: z.string().min(1).max(4096),
+  workflow: WorkflowDraftSchema,
+}).strict();
+
+interface WorkflowDraftTokenPayload {
+  version: 1;
+  draftId: string;
+  expiresAt: number;
+  targetFingerprint: string;
+  workflowHash: string;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function signDraftPayload(payload: WorkflowDraftTokenPayload, secret: string): string {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = createHmac('sha256', secret).update(encoded).digest('base64url');
+  return `${encoded}.${signature}`;
+}
+
+function verifyDraftToken(token: string, secret: string): WorkflowDraftTokenPayload | null {
+  const [encoded, signature, extra] = token.split('.');
+  if (!encoded || !signature || extra !== undefined) return null;
+  const expected = createHmac('sha256', secret).update(encoded).digest();
+  let actual: Buffer;
+  try {
+    actual = Buffer.from(signature, 'base64url');
+  } catch {
+    return null;
+  }
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as WorkflowDraftTokenPayload;
+    if (payload.version !== 1 || typeof payload.draftId !== 'string' || !Number.isSafeInteger(payload.expiresAt)
+      || typeof payload.targetFingerprint !== 'string' || typeof payload.workflowHash !== 'string') return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function getAgentRequestContext(req: express.Request): { context?: InstanceContext; error?: string } {
+  const n8nApiUrl = req.headers['x-n8n-url'] as string | undefined;
+  const n8nApiKey = req.headers['x-n8n-key'] as string | undefined;
+  const instanceId = req.headers['x-instance-id'] as string | undefined;
+  if (process.env.ENABLE_MULTI_TENANT === 'true' && (!n8nApiUrl || !n8nApiKey)) {
+    return { error: 'x-n8n-url and x-n8n-key headers are required in multi-tenant mode' };
+  }
+  if (!n8nApiUrl && !n8nApiKey && !instanceId) return {};
+
+  const candidate: InstanceContext = {
+    n8nApiUrl,
+    n8nApiKey,
+    instanceId,
+    sessionId: req.headers['x-session-id'] as string | undefined,
+  };
+  const validation = validateInstanceContext(candidate);
+  return validation.valid ? { context: candidate } : { error: 'Invalid n8n instance configuration' };
+}
+
+function getAgentTargetFingerprint(context?: InstanceContext): string | null {
+  const config = (context ? getN8nApiConfigFromContext(context) : null)
+    ?? (process.env.ENABLE_MULTI_TENANT === 'true' ? null : getN8nApiConfig());
+  if (!config) return null;
+  return createHash('sha256')
+    .update(`${config.baseUrl}\n${context?.instanceId || ''}\n${config.apiKey}`)
+    .digest('hex');
+}
 
 // Interval between SSE keep-alive comment frames on the Streamable HTTP
 // transport's open streams — the legacy SSEServerTransport path below has no
@@ -176,6 +262,9 @@ export class SingleSessionHTTPServer {
   private authToken: string | null = null;
   private cleanupTimer: NodeJS.Timeout | null = null;
   private additionalTools?: AdditionalTool[];
+  private workflowAgent?: WorkflowBuilderAgent;
+  private workflowAgentDatabase?: SharedDatabaseState;
+  private workflowAgentPromise?: Promise<WorkflowBuilderAgent>;
 
   constructor(options?: SingleSessionHTTPServerOptions) {
     this.additionalTools = options?.additionalTools;
@@ -204,6 +293,71 @@ export class SingleSessionHTTPServer {
       maxSessions: MAX_SESSIONS,
       sessionTimeout: this.sessionTimeout / 1000 / 60
     });
+  }
+
+  private getWorkflowBuilderAgent(): Promise<WorkflowBuilderAgent> {
+    if (this.workflowAgent) return Promise.resolve(this.workflowAgent);
+    if (!this.workflowAgentPromise) {
+      const configuredPath = process.env.NODE_DB_PATH;
+      const candidates = configuredPath
+        ? [configuredPath]
+        : [path.join(process.cwd(), 'data', 'nodes.db'), path.join(__dirname, '../data', 'nodes.db')];
+      const dbPath = candidates.find(candidate => candidate === ':memory:' || existsSync(candidate));
+      if (!dbPath) return Promise.reject(new Error('Node database not found'));
+
+      this.workflowAgentPromise = getSharedDatabase(dbPath)
+        .then(state => {
+          this.workflowAgentDatabase = state;
+          state.db.exec(`
+            CREATE TABLE IF NOT EXISTS workflow_agent_draft_approvals (
+              draft_id TEXT PRIMARY KEY,
+              expires_at INTEGER NOT NULL,
+              target_fingerprint TEXT NOT NULL,
+              workflow_hash TEXT NOT NULL,
+              consumed_at INTEGER
+            )
+          `);
+          this.workflowAgent = new WorkflowBuilderAgent(state.repository);
+          return this.workflowAgent;
+        })
+        .catch(error => {
+          this.workflowAgentPromise = undefined;
+          throw error;
+        });
+    }
+    return this.workflowAgentPromise;
+  }
+
+  private storeWorkflowDraftApproval(payload: WorkflowDraftTokenPayload): void {
+    const db = this.workflowAgentDatabase?.db;
+    if (!db) throw new Error('Workflow approval store is not initialized');
+    db.transaction(() => {
+      db.prepare('DELETE FROM workflow_agent_draft_approvals WHERE expires_at < ?').run(Date.now());
+      db.prepare(`
+        INSERT INTO workflow_agent_draft_approvals
+          (draft_id, expires_at, target_fingerprint, workflow_hash, consumed_at)
+        VALUES (?, ?, ?, ?, NULL)
+      `).run(payload.draftId, payload.expiresAt, payload.targetFingerprint, payload.workflowHash);
+    });
+  }
+
+  private consumeWorkflowDraftApproval(payload: WorkflowDraftTokenPayload): boolean {
+    const db = this.workflowAgentDatabase?.db;
+    if (!db) return false;
+    const result = db.prepare(`
+      UPDATE workflow_agent_draft_approvals
+      SET consumed_at = ?
+      WHERE draft_id = ? AND expires_at = ? AND target_fingerprint = ?
+        AND workflow_hash = ? AND consumed_at IS NULL AND expires_at > ?
+    `).run(
+      Date.now(),
+      payload.draftId,
+      payload.expiresAt,
+      payload.targetFingerprint,
+      payload.workflowHash,
+      Date.now(),
+    );
+    return result.changes === 1;
   }
   
   /**
@@ -1192,7 +1346,7 @@ export class SingleSessionHTTPServer {
       const allowedOrigin = process.env.CORS_ORIGIN || '*';
       res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
       res.setHeader('Access-Control-Allow-Methods', 'POST, GET, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Mcp-Session-Id');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Mcp-Session-Id, x-n8n-url, x-n8n-key, x-instance-id, x-session-id');
       res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
       res.setHeader('Access-Control-Max-Age', '86400');
       
@@ -1256,6 +1410,14 @@ export class SingleSessionHTTPServer {
       }
     });
 
+    const workflowAgentLimiter = rateLimit({
+      windowMs: parseInt(process.env.WORKFLOW_AGENT_RATE_LIMIT_WINDOW || '60000', 10),
+      max: parseInt(process.env.WORKFLOW_AGENT_RATE_LIMIT_MAX || '10', 10),
+      standardHeaders: true,
+      legacyHeaders: false,
+      handler: (_req, res) => res.status(429).json({ error: 'Workflow agent request limit exceeded' }),
+    });
+
     // Root endpoint with API information
     app.get('/', (req, res) => {
       const port = parseInt(process.env.PORT || '3000');
@@ -1277,6 +1439,10 @@ export class SingleSessionHTTPServer {
             url: endpoints.mcp,
             method: 'GET/POST',
             description: 'MCP endpoint - GET for info, POST for JSON-RPC'
+          },
+          workflowAgent: {
+            plan: { url: `${baseUrl}/api/agent/plan`, method: 'POST' },
+            create: { url: `${baseUrl}/api/agent/create`, method: 'POST' },
           }
         },
         authentication: {
@@ -1300,6 +1466,136 @@ export class SingleSessionHTTPServer {
         uptime: Math.floor(process.uptime()),
         timestamp: new Date().toISOString()
       });
+    });
+
+    app.post('/api/agent/plan', workflowAgentLimiter, authLimiter, jsonParser, async (req, res) => {
+      if (!this.authenticateRequest(req, res)) return;
+      const parsed = workflowPlanRequestSchema.safeParse(req.body);
+      if (!parsed.success || !parsed.data.goal.trim()) {
+        res.status(400).json({ error: 'Provide a goal between 1 and 4000 characters' });
+        return;
+      }
+
+      const contextResult = getAgentRequestContext(req);
+      if (contextResult.error) {
+        res.status(400).json({ error: contextResult.error });
+        return;
+      }
+      const targetFingerprint = getAgentTargetFingerprint(contextResult.context);
+      if (!targetFingerprint) {
+        res.status(503).json({ error: 'n8n API is not configured for this request' });
+        return;
+      }
+
+      const requestId = uuidv4();
+      try {
+        const agent = await this.getWorkflowBuilderAgent();
+        const plan = await agent.plan(parsed.data.goal);
+        const expiresAt = Date.now() + WORKFLOW_DRAFT_TTL_MS;
+        let draftToken: string | undefined;
+        if (plan.status === 'ready' && plan.validation?.valid && plan.workflow) {
+          const approval: WorkflowDraftTokenPayload = {
+            version: 1,
+            draftId: uuidv4(),
+            expiresAt,
+            targetFingerprint,
+            workflowHash: createHash('sha256').update(canonicalJson(plan.workflow)).digest('hex'),
+          };
+          this.storeWorkflowDraftApproval(approval);
+          draftToken = signDraftPayload(approval, this.authToken || '');
+        }
+
+        logger.info('[AUDIT] workflow_agent.plan', {
+          requestId,
+          instanceId: contextResult.context?.instanceId,
+          goalLength: parsed.data.goal.length,
+          status: plan.status,
+          valid: plan.validation?.valid,
+        });
+        res.json({ success: true, requestId, plan, draftToken, expiresAt: draftToken ? expiresAt : undefined });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.startsWith('goal must contain')) {
+          res.status(400).json({ error: message, requestId });
+          return;
+        }
+        if (message.includes('not configured')) {
+          res.status(503).json({ error: message, requestId });
+          return;
+        }
+        logger.error('Workflow agent planning failed', {
+          requestId,
+          errorType: error instanceof Error ? error.constructor.name : 'UnknownError',
+        });
+        res.status(502).json({ error: 'Workflow planning failed; check the server model configuration and logs', requestId });
+      }
+    });
+
+    app.post('/api/agent/create', workflowAgentLimiter, authLimiter, jsonParser, async (req, res) => {
+      if (!this.authenticateRequest(req, res)) return;
+      const parsed = workflowCreateRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: 'A workflow draft, valid draftToken, and approved: true are required' });
+        return;
+      }
+
+      const contextResult = getAgentRequestContext(req);
+      if (contextResult.error) {
+        res.status(400).json({ error: contextResult.error });
+        return;
+      }
+      const targetFingerprint = getAgentTargetFingerprint(contextResult.context);
+      if (!targetFingerprint || !getN8nApiClient(contextResult.context)) {
+        res.status(503).json({ error: 'n8n API is not configured for this request' });
+        return;
+      }
+
+      const tokenPayload = verifyDraftToken(parsed.data.draftToken, this.authToken || '');
+      if (!tokenPayload || tokenPayload.expiresAt <= Date.now()) {
+        res.status(401).json({ error: 'Draft token is invalid or expired; create a new plan' });
+        return;
+      }
+      const workflowHash = createHash('sha256').update(canonicalJson(parsed.data.workflow)).digest('hex');
+      if (tokenPayload.targetFingerprint !== targetFingerprint || tokenPayload.workflowHash !== workflowHash) {
+        res.status(409).json({ error: 'Draft or n8n target changed; create a new plan before approval' });
+        return;
+      }
+
+      const requestId = uuidv4();
+      try {
+        const agent = await this.getWorkflowBuilderAgent();
+        const validation = await agent.validate(parsed.data.workflow);
+        if (!validation.valid) {
+          res.status(422).json({ error: 'Workflow validation failed', validation, requestId });
+          return;
+        }
+
+        if (!this.consumeWorkflowDraftApproval(tokenPayload)) {
+          res.status(409).json({ error: 'Draft approval was already used or is no longer available', requestId });
+          return;
+        }
+
+        const result = await handleCreateWorkflow(parsed.data.workflow, contextResult.context);
+        if (!result.success) {
+          res.status(422).json({ success: false, requestId, result });
+          return;
+        }
+
+        logger.info('[AUDIT] workflow_agent.create', {
+          requestId,
+          instanceId: contextResult.context?.instanceId,
+          workflowId: (result.data as any)?.id,
+          nodeCount: parsed.data.workflow.nodes.length,
+          approved: true,
+        });
+        res.status(201).json({ success: true, requestId, result });
+      } catch (error) {
+        logger.error('Workflow agent create failed', {
+          requestId,
+          errorType: error instanceof Error ? error.constructor.name : 'UnknownError',
+        });
+        res.status(502).json({ error: 'Workflow creation failed; check the server logs', requestId });
+      }
     });
     
     // MCP GET endpoint — StreamableHTTP server-to-client stream + discovery info.
@@ -1862,6 +2158,10 @@ export class SingleSessionHTTPServer {
     // Close the shared database connection (only during process shutdown)
     // This must happen after all sessions are closed
     try {
+      if (this.workflowAgentDatabase) {
+        releaseSharedDatabase(this.workflowAgentDatabase);
+        this.workflowAgentDatabase = undefined;
+      }
       await closeSharedDatabase();
       logger.info('Shared database closed');
     } catch (error) {
