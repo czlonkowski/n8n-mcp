@@ -9,9 +9,11 @@
  *   npm run generate:docs:incremental  # Skip nodes with existing data
  *
  * Environment variables:
+ *   N8N_MCP_LLM_PROVIDER  - Provider preset (e.g. minimax); sets base URL/model defaults
+ *   N8N_MCP_LLM_REGION    - Region for the provider preset: global (default) or cn
  *   N8N_MCP_LLM_BASE_URL  - LLM server URL (default: http://localhost:1234/v1)
  *   N8N_MCP_LLM_MODEL     - LLM model name (default: qwen3-4b-thinking-2507)
- *   N8N_MCP_LLM_API_KEY   - LLM API key (falls back to OPENAI_API_KEY; default: 'not-needed')
+ *   N8N_MCP_LLM_API_KEY   - LLM API key (falls back to preset key/OPENAI_API_KEY; default: 'not-needed')
  *   N8N_MCP_LLM_TIMEOUT   - Request timeout in ms (default: 60000)
  *   N8N_MCP_DB_PATH       - Database path (default: ./data/nodes.db)
  */
@@ -80,9 +82,11 @@ Options:
   --llm-concurrency=N     Parallel LLM requests (default: 3)
 
 Environment Variables:
+  N8N_MCP_LLM_PROVIDER    Provider preset (e.g. minimax); sets base URL/model defaults
+  N8N_MCP_LLM_REGION      Region for the provider preset: global (default) or cn
   N8N_MCP_LLM_BASE_URL    LLM server URL (default: http://localhost:1234/v1)
   N8N_MCP_LLM_MODEL       LLM model name (default: qwen3-4b-thinking-2507)
-  N8N_MCP_LLM_API_KEY     LLM API key (falls back to OPENAI_API_KEY; default: 'not-needed')
+  N8N_MCP_LLM_API_KEY     LLM API key (falls back to preset key/OPENAI_API_KEY; default: 'not-needed')
   N8N_MCP_LLM_TIMEOUT     Request timeout in ms (default: 60000)
   N8N_MCP_DB_PATH         Database path (default: ./data/nodes.db)
 
