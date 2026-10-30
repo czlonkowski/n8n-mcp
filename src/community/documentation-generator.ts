@@ -137,7 +137,7 @@ export const LLM_PROVIDER_PRESETS: Record<string, LLMProviderPreset> = {
   minimax: {
     baseUrls: {
       global: 'https://api.minimax.io/v1',
-      cn: 'https://api.minimax.cn/v1',
+      cn: 'https://api.minimaxi.com/v1',
     },
     defaultRegion: 'global',
     defaultModel: 'MiniMax-M3.1-Flash',

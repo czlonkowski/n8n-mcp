@@ -25,7 +25,7 @@ describe('LLM provider presets', () => {
   it('exposes global and CN OpenAI-compatible endpoints', () => {
     expect(preset.baseUrls).toEqual({
       global: 'https://api.minimax.io/v1',
-      cn: 'https://api.minimax.cn/v1',
+      cn: 'https://api.minimaxi.com/v1',
     });
   });
 
@@ -101,7 +101,11 @@ describe('documentation generator HTTP requests', () => {
     expect(result.error).toBeUndefined();
     expect(result.summary).toEqual(summary);
     const { url, options, body } = request();
-    expect(url).toBe(`https://api.minimax.${region === 'cn' ? 'cn' : 'io'}/v1/chat/completions`);
+    expect(url).toBe(
+      region === 'cn'
+        ? 'https://api.minimaxi.com/v1/chat/completions'
+        : 'https://api.minimax.io/v1/chat/completions'
+    );
     expect(options?.method).toBe('POST');
     expect(options?.headers).toEqual({ 'Content-Type': 'application/json', Authorization: 'Bearer fixture-key' });
     // An exact body shape also excludes disabled thinking, effort=none,
