@@ -23,8 +23,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^1.0.1",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
