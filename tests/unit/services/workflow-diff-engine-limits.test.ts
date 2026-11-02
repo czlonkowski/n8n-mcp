@@ -290,17 +290,19 @@ describe('WorkflowDiffEngine limits', () => {
       });
 
       it('allows growth up to the cap', async () => {
+        // The regex doubles a 250,000-char field in 500 matches of 500 chars, not 250,000
+        // single-char matches, which overran the 100 ms regex limit on loaded CI runners.
         const result = await apply(
           [patches([
             { find: 'a', replace: 'b'.repeat(500), replaceAll: true },
-            { find: 'b', replace: 'cc', regex: true, replaceAll: true }
+            { find: 'b{500}', replace: '$&$&', regex: true, replaceAll: true }
           ])],
           buildWorkflow('a'.repeat(500))
         );
 
         expect(result.success).toBe(true);
         const text = result.workflow!.nodes.find((n: { name: string }) => n.name === 'Text')!.parameters.text as string;
-        expect(text).toBe('c'.repeat(500_000));
+        expect(text).toBe('b'.repeat(500_000));
       });
     });
 
