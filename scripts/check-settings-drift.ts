@@ -16,6 +16,7 @@
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
+import { load } from 'js-yaml';
 import * as ts from 'typescript';
 import {
   WORKFLOW_SETTINGS_PROPERTIES,
@@ -64,80 +65,159 @@ function compareVersions(a: SettingsVersion, b: SettingsVersion): number {
   return a.major - b.major || a.minor - b.minor || a.patch - b.patch;
 }
 
-const indentOf = (line: string): number => line.length - line.trimStart().length;
+type SchemaObject = Record<string, unknown>;
+
+const isObject = (value: unknown): value is SchemaObject =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** Follow local `#/components/schemas/<name>` references until a concrete schema is reached. */
+function deref(value: unknown, schemas: SchemaObject, seen = new Set<string>()): unknown {
+  if (!isObject(value) || typeof value.$ref !== 'string') return value;
+  const ref = value.$ref;
+  if (seen.has(ref)) throw new Error(`Circular $ref ${ref} in ${SCHEMA_PATH}`);
+  seen.add(ref);
+  return deref(schemas[ref.split('/').pop() as string], schemas, seen);
+}
+
+/** Where each write schema sits inside a workflow write request body. */
+const INLINE_LOCATIONS: Partial<Record<string, (body: SchemaObject) => unknown>> = {
+  [SCHEMA_NAME]: body => (body.properties as SchemaObject | undefined)?.settings,
+  [NODE_SCHEMA_NAME]: body =>
+    ((body.properties as SchemaObject | undefined)?.nodes as SchemaObject | undefined)?.items,
+};
+
+/** The JSON request-body schema of one operation, dereferenced, or undefined. */
+function requestBodySchema(operation: unknown, schemas: SchemaObject): unknown {
+  if (!isObject(operation)) return undefined;
+  const requestBody = deref(operation.requestBody, schemas);
+  const content = isObject(requestBody) && isObject(requestBody.content) ? requestBody.content : {};
+  const json = content['application/json'];
+  return deref(isObject(json) ? json.schema : undefined, schemas);
+}
 
 /**
- * Pull the property names out of `components.schemas.workflowSettings.properties`.
+ * Every copy of a write schema the spec carries: `components.schemas.<name>` and the copies
+ * written out in the POST /workflows and PUT /workflows/{id} request bodies.
  *
- * Indentation is measured rather than assumed, so a reformatted spec still parses; anything
- * this cannot find throws, which is the point - a silently empty result would read as "no
- * drift".
+ * The copies can disagree. In n8n 2.44 the named `node` schema lacked `extendsCredential`
+ * while both request bodies, which n8n validates writes against, listed it; n8n 2.45 dropped
+ * the named copies altogether. Reading all of them keeps a stale duplicate from hiding a field.
+ */
+function schemaCopies(doc: SchemaObject, schemaName: string): Array<{ where: string; schema: unknown }> {
+  const components = isObject(doc.components) ? doc.components : {};
+  const schemas = isObject(components.schemas) ? components.schemas : {};
+  const copies: Array<{ where: string; schema: unknown }> = [];
+
+  if (schemaName in schemas) {
+    copies.push({ where: `components.schemas.${schemaName}`, schema: deref(schemas[schemaName], schemas) });
+  }
+
+  const locate = INLINE_LOCATIONS[schemaName];
+  const paths = isObject(doc.paths) ? doc.paths : {};
+  if (locate) {
+    for (const [path, item] of Object.entries(paths)) {
+      if (!isObject(item)) continue;
+      const operation =
+        path === '/workflows' ? 'post' : /^\/workflows\/\{[^/}]+\}$/.test(path) ? 'put' : null;
+      if (!operation) continue;
+      const body = requestBodySchema(item[operation], schemas);
+      if (!isObject(body)) continue;
+      const located = locate(body);
+      if (located === undefined) continue;
+      copies.push({ where: `${operation.toUpperCase()} ${path} body`, schema: deref(located, schemas) });
+    }
+  }
+  return copies;
+}
+
+/**
+ * Pull the property names out of a write schema, as the union of every copy the spec carries
+ * (see schemaCopies). A property counts as read-only only when every copy that lists it marks
+ * it `readOnly: true` on the property itself (not inside its sub-schema).
+ *
+ * Anything this cannot find throws, which is the point - a silently empty result would read
+ * as "no drift".
  */
 export function parseSchemaProperties(
   yaml: string,
   schemaName = SCHEMA_NAME,
   readOnly?: Set<string>
 ): Set<string> {
-  const lines = yaml.split('\n');
-
-  const schemaIndex = lines.findIndex(line => new RegExp(`^\\s+${schemaName}:\\s*$`).test(line));
-  if (schemaIndex === -1) {
+  let doc: unknown;
+  try {
+    doc = load(yaml);
+  } catch (error) {
     throw new Error(
-      `No "${schemaName}:" schema in ${SCHEMA_PATH}. n8n may have renamed it - check the spec.`
+      `${SCHEMA_PATH} is not valid YAML (${error instanceof Error ? error.message : error})`
     );
   }
-  const schemaIndent = indentOf(lines[schemaIndex]);
-
-  let propertiesIndex = -1;
-  for (let i = schemaIndex + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.trim() === '') continue;
-    if (indentOf(line) <= schemaIndent) break; // left the schema without finding properties
-    // Any depth below the schema, so the step size is not assumed. The schema's own
-    // `properties:` is the first one inside it; a nested one always comes later.
-    if (line.trim() === 'properties:') {
-      propertiesIndex = i;
-      break;
-    }
+  if (!isObject(doc)) {
+    throw new Error(`${SCHEMA_PATH} did not parse to an OpenAPI document`);
   }
-  if (propertiesIndex === -1) {
-    throw new Error(`"${schemaName}" has no properties block in ${SCHEMA_PATH}`);
+  const components = isObject(doc.components) ? doc.components : {};
+  const schemas = isObject(components.schemas) ? components.schemas : {};
+
+  const copies = schemaCopies(doc, schemaName);
+  if (copies.length === 0) {
+    throw new Error(
+      `No "${schemaName}" schema in ${SCHEMA_PATH}, by name or in the workflow write request ` +
+        'bodies. n8n may have renamed or moved it - check the spec.'
+    );
   }
 
-  const propertiesIndent = indentOf(lines[propertiesIndex]);
   const names = new Set<string>();
-  let keyIndent: number | null = null;
-  let current: string | null = null;
-  let readOnlyIndent: number | null = null;
-
-  for (let i = propertiesIndex + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.trim() === '') continue;
-    const indent = indentOf(line);
-    if (indent <= propertiesIndent) break;
-
-    if (keyIndent === null) keyIndent = indent;
-    if (indent !== keyIndent) {
-      // Directly under the property above, `readOnly: true` marks a GET-only property. Deeper
-      // lines belong to a sub-schema and say nothing about the property itself.
-      if (current && indent > keyIndent && line.trim() === 'readOnly: true' && readOnlyIndent === indent) {
-        readOnly?.add(current);
-      }
-      continue;
+  const writableSomewhere = new Set<string>();
+  const readOnlySomewhere = new Set<string>();
+  for (const { where, schema } of copies) {
+    if (!isObject(schema)) {
+      throw new Error(`"${schemaName}" at ${where} is not a schema object in ${SCHEMA_PATH}`);
     }
-
-    const match = line.trim().match(/^([A-Za-z][A-Za-z0-9_]*):/);
-    current = match ? match[1] : null;
-    if (match) names.add(match[1]);
-    // The property's own attributes sit one level in; measured from the next line, not assumed.
-    readOnlyIndent = lines.slice(i + 1).find(next => next.trim() !== '')?.match(/^\s*/)?.[0].length ?? null;
+    if (!('properties' in schema)) {
+      throw new Error(`"${schemaName}" at ${where} has no properties block in ${SCHEMA_PATH}`);
+    }
+    for (const combinator of ['allOf', 'oneOf', 'anyOf']) {
+      if (combinator in schema) {
+        throw new Error(
+          `"${schemaName}" at ${where} uses ${combinator}; this check reads only its own ` +
+            'properties and would under-report - extend it before trusting the result.'
+        );
+      }
+    }
+    // An empty `properties:` loads as null; it falls through to the zero-properties error below.
+    const properties = schema.properties ?? {};
+    if (!isObject(properties)) {
+      throw new Error(`"${schemaName}" at ${where} has a properties block that is not a mapping`);
+    }
+    for (const [name, property] of Object.entries(properties)) {
+      names.add(name);
+      // readOnly may sit next to a $ref, so check the property before dereferencing it too.
+      const resolved = deref(property, schemas);
+      const isReadOnly =
+        (isObject(property) && property.readOnly === true) ||
+        (isObject(resolved) && resolved.readOnly === true);
+      (isReadOnly ? readOnlySomewhere : writableSomewhere).add(name);
+    }
   }
 
   if (names.size === 0) {
     throw new Error(`Parsed zero properties from "${schemaName}" - the spec format changed`);
   }
+  for (const name of readOnlySomewhere) {
+    if (!writableSomewhere.has(name)) readOnly?.add(name);
+  }
   return names;
 }
+
+/**
+ * Node properties the write schema accepts that we strip on purpose, with the reason. Each is
+ * left out of the "missing" report; it still counts for "removed" if we ever start sending it.
+ */
+export const IGNORED_NODE_PROPERTIES: Readonly<Record<string, string>> = {
+  // In the request bodies since n8n 2.42. n8n 2.45.7 accepts it but neither stores nor returns
+  // it, and sending it would make writes to instances older than 2.42 fail
+  // (additionalProperties: false), e.g. deploying a template whose nodes carry it.
+  extendsCredential: 'accepted but not stored by n8n; rejected by instances older than 2.42',
+};
 
 /**
  * Node-level drift: properties the node write schema accepts that cleanNodeForApi would strip,
@@ -148,7 +228,10 @@ export function diffNodeProperties(yaml: string): { missing: string[]; removed: 
   const readOnly = new Set<string>();
   const schema = parseSchemaProperties(yaml, NODE_SCHEMA_NAME, readOnly);
   return {
-    missing: [...schema].filter(name => !readOnly.has(name) && !WRITABLE_NODE_PROPERTIES.has(name)),
+    missing: [...schema].filter(
+      name =>
+        !readOnly.has(name) && !WRITABLE_NODE_PROPERTIES.has(name) && !(name in IGNORED_NODE_PROPERTIES)
+    ),
     removed: [...WRITABLE_NODE_PROPERTIES].filter(name => !schema.has(name)),
   };
 }

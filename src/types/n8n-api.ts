@@ -97,7 +97,7 @@ export interface Workflow {
   id?: string;
   name: string;
   description?: string; // Returned by GET but must be excluded from PUT/PATCH (n8n API limitation, Issue #431)
-  parentFolderId?: string | null; // Write-only (n8n 2.32+): create places into a folder, update moves (null = project root). Never present in GET responses.
+  parentFolderId?: string | null; // Write-only (n8n 2.32+): create places into a folder, update moves (null = project root). Never present in GET responses; n8n 2.45+ returns a read-only `parentFolder` object instead.
   nodes: WorkflowNode[];
   connections: WorkflowConnection;
   nodeGroups?: WorkflowNodeGroup[]; // Canvas groups (n8n 2.28+); absent on older instances
