@@ -2,12 +2,16 @@ import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { describe, it, expect } from 'vitest';
 import {
-  diffSettingsProperties,
+  diffSettingsProperties as diffSettingsPropertiesFor,
   parseEntitySettingsProperties,
   parseSchemaProperties,
   diffNodeProperties,
 } from '../../../scripts/check-settings-drift';
-import { WORKFLOW_SETTINGS_PROPERTIES } from '../../../src/constants/workflow-settings';
+import {
+  WORKFLOW_SETTINGS_PROPERTIES,
+  type SettingsVersion,
+  type WorkflowSettingProperty,
+} from '../../../src/constants/workflow-settings';
 
 /**
  * The drift check reads n8n's OpenAPI schema with a small hand-rolled parser rather than a YAML
@@ -412,9 +416,21 @@ describe('check-settings-drift parseEntitySettingsProperties', () => {
  */
 describe('check-settings-drift diffSettingsProperties', () => {
   const v236 = { major: 2, minor: 36, patch: 4 };
+  // Our table as it stood for n8n 2.36-2.45, when engineType was persisted but unpublished.
+  // n8n 2.46 published it, so the real table no longer carries an entity-only property.
+  const tableOf236: Record<string, WorkflowSettingProperty> = Object.fromEntries(
+    Object.entries(WORKFLOW_SETTINGS_PROPERTIES)
+      .filter(([name]) => name !== 'redactCallerExecutions')
+      .map(([name, meta]) => [name, name === 'engineType' ? { ...meta, entityOnly: true as const } : meta])
+  );
+  const diffSettingsProperties = (
+    schema: Set<string>,
+    entity: Set<string> | null,
+    target: SettingsVersion
+  ) => diffSettingsPropertiesFor(schema, entity, target, tableOf236);
   // The published schema of n8n 2.36 as the table models it: everything except derived-only keys
   const schemaOf236 = new Set(
-    Object.entries(WORKFLOW_SETTINGS_PROPERTIES)
+    Object.entries(tableOf236)
       .filter(([, meta]) => !meta.entityOnly)
       .map(([name]) => name)
   );
@@ -428,6 +444,19 @@ describe('check-settings-drift diffSettingsProperties', () => {
     expect(drift.unhandledEntityOnly).toEqual([]);
     expect(drift.publishedEntityOnly).toEqual([]);
     expect(drift.entityOnly).toEqual(['engineType']);
+  });
+
+  it('reports no drift for the shipped table against an n8n 2.46 shaped schema', () => {
+    // n8n 2.46 publishes engineType (ignored on write) and adds redactCallerExecutions, so
+    // schema and entity both carry every property of the real table.
+    const all = new Set(Object.keys(WORKFLOW_SETTINGS_PROPERTIES));
+    const drift = diffSettingsPropertiesFor(all, all, { major: 2, minor: 46, patch: 4 });
+
+    expect(drift).toEqual({
+      missing: [], removed: [], ahead: [], entityOnly: [], unhandledEntityOnly: [], publishedEntityOnly: [],
+    });
+    expect(WORKFLOW_SETTINGS_PROPERTIES.engineType).toMatchObject({ derived: true });
+    expect(WORKFLOW_SETTINGS_PROPERTIES.engineType.entityOnly).toBeUndefined();
   });
 
   it('flags an entity property the schema rejects and the table does not strip', () => {

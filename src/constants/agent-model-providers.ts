@@ -3,14 +3,16 @@
  * Source: n8n `packages/@n8n/api-types/src/agents/model-providers.ts`
  * (AGENT_MODEL_PROVIDER_CREDENTIAL_TYPES). The agents runtime validates
  * credentials against `packages/cli/src/modules/agents/llm-provider-defaults.ts`
- * (LLM_PROVIDER_DEFAULTS), which on n8n 2.43.5 has no entry for azureOpenAiApi,
- * azureEntraCognitiveServicesOAuth2Api or aws — those credentials are rejected
- * as incompatible even though the api-types table lists them. n8n 2.44 adds the
+ * (LLM_PROVIDER_DEFAULTS), which on n8n 2.43–2.45 has no entry for azureOpenAiApi,
+ * azureEntraCognitiveServicesOAuth2Api or aws, so those versions reject these
+ * credentials as incompatible even though the api-types table lists them. n8n 2.44 adds the
  * google-vertex provider (googleVertexAiApi). Its agent validation
  * (agent-validation.service.ts, credentialSupportsModel) checks credentials
  * against the api-types table, so Vertex counts as supported; LLM_PROVIDER_DEFAULTS
- * only picks a default model, and has no Vertex entry. Re-check both files on
- * each n8n update.
+ * only picks a default model, and has no Vertex entry. n8n 2.46 maps both Azure
+ * credential types to azure-openai in LLM_PROVIDER_DEFAULTS, for credentials whose
+ * Endpoint Type is Foundry; a Classic endpoint still fails, with
+ * `endpoint_type_unsupported`. Re-check both files on each n8n update.
  *
  * Provider keys are the identifiers n8n itself uses (the `provider` enum of
  * `discover_agent_assets` and the provider prefix of an agent config's
@@ -39,12 +41,20 @@ export const AGENT_MODEL_PROVIDER_CREDENTIAL_TYPES: Record<string, string[]> = {
   minimax: ['minimaxApi'],
 };
 
+/** Credential types the agents runtime always rejects, with the reason. */
 export const AGENT_UNSUPPORTED_CREDENTIAL_TYPES: Record<string, string> = {
-  azureOpenAiApi: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.43.5)',
-  azureEntraCognitiveServicesOAuth2Api: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.43.5)',
-  aws: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.43.5)',
+  aws: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.46.4)',
+};
+
+const AZURE_AGENT_CONDITION =
+  'accepts only on n8n 2.46 or later, with Endpoint Type set to Foundry; Classic endpoints are rejected';
+
+/** Credential types the agents runtime accepts only under the stated condition. */
+export const AGENT_CONDITIONAL_CREDENTIAL_TYPES: Record<string, string> = {
+  azureOpenAiApi: AZURE_AGENT_CONDITION,
+  azureEntraCognitiveServicesOAuth2Api: AZURE_AGENT_CONDITION,
 };
 
 export const AGENT_SUPPORTED_CREDENTIAL_TYPES = Object.values(AGENT_MODEL_PROVIDER_CREDENTIAL_TYPES)
   .flat()
-  .filter(t => !(t in AGENT_UNSUPPORTED_CREDENTIAL_TYPES));
+  .filter(t => !(t in AGENT_UNSUPPORTED_CREDENTIAL_TYPES) && !(t in AGENT_CONDITIONAL_CREDENTIAL_TYPES));

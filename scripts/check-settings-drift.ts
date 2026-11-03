@@ -21,6 +21,7 @@ import * as ts from 'typescript';
 import {
   WORKFLOW_SETTINGS_PROPERTIES,
   type SettingsVersion,
+  type WorkflowSettingProperty,
 } from '../src/constants/workflow-settings';
 import { WRITABLE_NODE_PROPERTIES } from '../src/services/n8n-validation';
 
@@ -431,14 +432,16 @@ export interface SettingsDrift {
 
 /**
  * Classify every property of the three sources. Pure so the gate itself is testable;
- * `entityProperties` is null when the entity axis cannot run (see main).
+ * `entityProperties` is null when the entity axis cannot run (see main). `table` defaults to
+ * ours; tests pass a fixture to model a past n8n release.
  */
 export function diffSettingsProperties(
   schemaProperties: Set<string>,
   entityProperties: Set<string> | null,
-  target: SettingsVersion
+  target: SettingsVersion,
+  table: Record<string, WorkflowSettingProperty> = WORKFLOW_SETTINGS_PROPERTIES
 ): SettingsDrift {
-  const ours = new Set(Object.keys(WORKFLOW_SETTINGS_PROPERTIES));
+  const ours = new Set(Object.keys(table));
 
   const missing = [...schemaProperties].filter(name => !ours.has(name));
 
@@ -453,7 +456,7 @@ export function diffSettingsProperties(
   const unhandledEntityOnly = entityProperties
     ? [...entityProperties].filter(name => {
         if (schemaProperties.has(name)) return false;
-        const meta = WORKFLOW_SETTINGS_PROPERTIES[name];
+        const meta = table[name];
         return !(meta?.derived === true && meta?.entityOnly === true);
       })
     : [];
@@ -462,7 +465,7 @@ export function diffSettingsProperties(
   // it. Stripping is no longer the only correct behaviour - callers might want to set it - so
   // the flag has to be reconsidered rather than silently kept.
   const publishedEntityOnly = [...schemaProperties].filter(
-    name => WORKFLOW_SETTINGS_PROPERTIES[name]?.entityOnly === true
+    name => table[name]?.entityOnly === true
   );
 
   // A property we know but this version lacks is only drift when we claim it already existed:
@@ -478,7 +481,7 @@ export function diffSettingsProperties(
   for (const name of ours) {
     if (schemaProperties.has(name)) continue;
     if (unhandledSet.has(name)) continue; // already reported with its actionable message
-    const meta = WORKFLOW_SETTINGS_PROPERTIES[name];
+    const meta = table[name];
     const introducedLater = compareVersions(meta.since, target) > 0;
     if (meta.derived && (entityProperties ? entityProperties.has(name) : !introducedLater)) {
       entityOnly.push(name);

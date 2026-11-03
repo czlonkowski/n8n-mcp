@@ -114,6 +114,7 @@ export const workflowSettingsSchema = z.object({
   timeSavedMode: z.enum(['fixed', 'dynamic']).optional(),
   timeSavedPerExecution: z.number().optional(),
   redactionPolicy: z.enum(['none', 'non-manual', 'manual-only', 'all']).optional(),
+  redactCallerExecutions: z.boolean().optional(),
   availableInMCP: z.boolean().optional(),
   customTelemetryTags: z
     .array(z.object({ key: z.string(), value: z.string() }))

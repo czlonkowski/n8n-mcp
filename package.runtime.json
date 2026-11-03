@@ -1,6 +1,6 @@
 {
   "name": "n8n-mcp-runtime",
-  "version": "2.100.0",
+  "version": "2.101.0",
   "description": "n8n MCP Server Runtime Dependencies Only",
   "private": true,
   "dependencies": {
@@ -13,7 +13,7 @@
     "ipaddr.js": "^1.9.1",
     "lru-cache": "^11.2.1",
     "sql.js": "^1.13.0",
-    "tslib": "^2.6.2",
+    "tslib": "^2.9.1",
     "undici": "^6.29.0",
     "uuid": "^11.1.1",
     "axios": "^1.21.0"

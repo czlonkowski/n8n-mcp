@@ -130,7 +130,7 @@ describe('handleManageAgents', () => {
     expect(client.callTool).toHaveBeenCalledWith('get_agent', { agentId: 'a' }, { timeoutMs: 30_000, idempotent: true });
     expect(r.hint).toContain('azureOpenAiApi'); expect(r.hint).toContain('openAiApi');
   });
-  it('treats the Azure Entra credential as unsupported and lists the providers added in n8n 2.40', async () => {
+  it('names the Foundry condition for the Azure Entra credential and lists the providers added in n8n 2.40', async () => {
     const client = fakeClient(ALL, {
       validate_agent: { ok: true, valid: false, errors: [], missing: ['credential'] },
       get_agent: { ok: true, agent: { id: 'a' }, config: { model: 'azure-openai/gpt-5.4-mini', credential: 'c1' } },
@@ -139,9 +139,22 @@ describe('handleManageAgents', () => {
     api.getN8nApiClient.mockReturnValue({ getCredential: vi.fn().mockResolvedValue({ id: 'c1', name: 'Azure Entra', type: 'azureEntraCognitiveServicesOAuth2Api' }) });
     const r = await handleManageAgents({ action: 'validate', args: { agentId: 'a' } });
     expect(r.hint).toContain('is type azureEntraCognitiveServicesOAuth2Api');
+    expect(r.hint).toContain('Endpoint Type set to Foundry');
+    expect(r.hint).toContain('Classic endpoints are rejected');
     const supported = r.hint!.split('one of these types: ')[1];
     expect(supported).toContain('moonshotApi'); expect(supported).toContain('alibabaCloudApi'); expect(supported).toContain('minimaxApi');
     expect(supported).not.toContain('azureEntraCognitiveServicesOAuth2Api');
+  });
+  it('states plainly that an aws credential is rejected', async () => {
+    const client = fakeClient(ALL, {
+      validate_agent: { ok: true, valid: false, errors: [], missing: ['credential'] },
+      get_agent: { ok: true, agent: { id: 'a' }, config: { model: 'aws-bedrock/some-model', credential: 'c1' } },
+    });
+    access.getOfficialMcpClient.mockReturnValue(client);
+    api.getN8nApiClient.mockReturnValue({ getCredential: vi.fn().mockResolvedValue({ id: 'c1', name: 'AWS', type: 'aws' }) });
+    const r = await handleManageAgents({ action: 'validate', args: { agentId: 'a' } });
+    expect(r.hint).toContain("is type aws, which n8n's agents runtime does not accept");
+    expect(r.hint).not.toContain('Otherwise');
   });
   it('attaches the credential-type hint on the failure branch too (call_agent reports it as an error)', async () => {
     // call_agent reports the same missing-credential condition as an official error
