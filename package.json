@@ -166,7 +166,7 @@
     "js-yaml": "^4.3.2",
     "msw": "^2.10.4",
     "nodemon": "^3.1.14",
-    "secretlint": "9.3.4",
+    "secretlint": "13.1.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
     "vitest": "^3.2.6"
