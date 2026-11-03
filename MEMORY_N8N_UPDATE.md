@@ -117,6 +117,10 @@ gh release list | head -1
 **Cause**: npm 11 skips the install scripts of packages not covered by `allowScripts`, so `npm install` does not recompile better-sqlite3 for the current Node.js and the rebuild falls back to sql.js, which has no FTS5
 **Solution**: `npm rebuild better-sqlite3`, then `npm run build && npm run rebuild && npm run validate`
 
+**Problem**: `npm run update:n8n` stops at the npm install step with `EBADPLATFORM` for a platform-specific package such as `@napi-rs/canvas-linux-arm64-musl`
+**Cause**: an n8n package lists a native binary for one platform as a regular dependency instead of an optional one (n8n-nodes-base 2.46 does this for the musl builds of `@napi-rs/canvas` and `@napi-rs/image`)
+**Solution**: map the package to `npm:empty-npm-package@1.0.0` in the `overrides` of `package.json`, then finish the update by hand: `npm install && npm rebuild better-sqlite3 && npm run check:settings-drift && npm run build && npm run rebuild && npm run validate`
+
 **Problem**: `npm run fetch:community` aborts (exit 134) with `Assertion failed: (env) != nullptr` in `RemoveEnvironmentCleanupHook`, while fetching or saving nodes
 **Cause**: better-sqlite3 11.10 crashes in a statement destructor during garbage collection under Node.js 24.21. Forcing sql.js does not help: the community fetch writes to FTS5-indexed tables, which sql.js lacks
 **Solution**: run the community fetch and the docs generators under Node.js 22, then recompile for the default Node.js. The fetch upserts, so re-running it after an abort is safe; check `sqlite3 data/nodes.db 'pragma integrity_check'` first

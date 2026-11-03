@@ -37,8 +37,8 @@ export interface WorkflowSettingProperty {
   /**
    * n8n manages this property server-side and does not take it from a write. Two flavours:
    * the schema documents it as ignored on create and update (`binaryMode`), or the property is
-   * persisted on the workflow entity but missing from the write schema entirely (`engineType`),
-   * where `additionalProperties: false` rejects the whole request. GET echoes both back, and our
+   * persisted on the workflow entity but missing from the write schema entirely (`engineType`
+   * before n8n 2.46), where `additionalProperties: false` rejects the whole request. GET echoes both back, and our
    * writes merge over a GET, so these are always stripped - sending them back changes nothing on
    * the instance that produced them and rejects the request on one that doesn't accept them.
    */
@@ -80,10 +80,13 @@ export const WORKFLOW_SETTINGS_PROPERTIES: Record<string, WorkflowSettingPropert
   credentialResolverId: { since: v(2, 33, 0), derived: true },
 
   // n8n 2.36.0 (n8n-io/n8n#36428): persisted on the workflow entity (the engine-v2 dispatcher
-  // reads settings.engineType === 'v2') but absent from the Public API write schema, so echoing
-  // back what GET returned rejects the whole write. Stripping is lossless: WorkflowService.update
-  // spreads stored settings under the request body, so an omitted key is preserved, not cleared.
-  engineType: { since: v(2, 36, 0), derived: true, entityOnly: true },
+  // reads settings.engineType === 'v2'). 2.36-2.45 left it out of the Public API write schema,
+  // so echoing back what GET returned rejected the whole write. 2.46 publishes it, documented as
+  // ignored on create and update, so it stays derived: stripping is lossless on every version,
+  // because WorkflowService.update spreads stored settings under the request body.
+  engineType: { since: v(2, 36, 0), derived: true },
+
+  redactCallerExecutions: { since: v(2, 46, 0) },
 };
 
 /**

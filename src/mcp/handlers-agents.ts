@@ -23,7 +23,11 @@ import {
   resolveOfficialTool,
 } from './agents-action-map';
 import { N8nOfficialMcpClient, OfficialMcpError, OFFICIAL_MCP_HINTS, OfficialToolResult } from '../services/n8n-official-mcp-client';
-import { AGENT_SUPPORTED_CREDENTIAL_TYPES, AGENT_UNSUPPORTED_CREDENTIAL_TYPES } from '../constants/agent-model-providers';
+import {
+  AGENT_CONDITIONAL_CREDENTIAL_TYPES,
+  AGENT_SUPPORTED_CREDENTIAL_TYPES,
+  AGENT_UNSUPPORTED_CREDENTIAL_TYPES,
+} from '../constants/agent-model-providers';
 import { getN8nApiClient } from './handlers-n8n-manager';
 import { logger } from '../utils/logger';
 
@@ -117,7 +121,7 @@ async function credentialIdFromResult(args: Record<string, unknown>, data: unkno
  * Attaches a hint when a result (success or failure alike — `call_agent`
  * reports this same condition as `isError:true` with `code:"agent_misconfigured"`,
  * per spike-log-3) reports a missing credential and that credential is a
- * type the agents runtime is known not to accept. Result-shape-based (keys
+ * type the agents runtime rejects, always or under a condition. Result-shape-based (keys
  * off `missing`, not `isError`). Never interpolates anything from the
  * official result itself beyond the credential id/type — both are opaque
  * identifiers, not free text.
@@ -136,9 +140,14 @@ async function credentialTypeHint(args: Record<string, unknown>, data: unknown, 
   if (!api) return undefined;
   try {
     const credential = await api.getCredential(credentialId);
+    const supported = AGENT_SUPPORTED_CREDENTIAL_TYPES.join(', ');
+    const condition = AGENT_CONDITIONAL_CREDENTIAL_TYPES[credential.type];
+    if (condition) {
+      return `Credential ${credentialId} is type ${credential.type}, which n8n's agents runtime ${condition}. Otherwise use a credential of one of these types: ${supported}.`;
+    }
     const reason = AGENT_UNSUPPORTED_CREDENTIAL_TYPES[credential.type];
     if (!reason) return undefined;
-    return `Credential ${credentialId} is type ${credential.type}, which n8n's agents runtime does not accept (${reason}). Use a credential of one of these types: ${AGENT_SUPPORTED_CREDENTIAL_TYPES.join(', ')}.`;
+    return `Credential ${credentialId} is type ${credential.type}, which n8n's agents runtime does not accept (${reason}). Use a credential of one of these types: ${supported}.`;
   } catch {
     return undefined; // no credential scope, or not found: the official result stands on its own
   }
