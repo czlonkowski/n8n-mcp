@@ -12,6 +12,7 @@ on:
     types: [opened, reopened]
   skip-bots: [dependabot, github-actions, copilot]
   reaction: eyes
+  manual-approval: agentic-triage # One reviewer approval on the activation job, before the agent runs.
 
 permissions:
   contents: read
@@ -28,21 +29,24 @@ safe-outputs:
   add-comment:
   noop:
     report-as-issue: false
-  missing-tool:
+  report-missing-tool:
     create-issue: false
   report-incomplete:
     create-issue: false
-  missing-data:
+  report-missing-data:
     create-issue: false
 
 tools:
+  bash: ["cat", "ls", "find", "grep", "head", "tail", "wc"] # Read-only commands for looking up code; issue content is untrusted (min-integrity: none).
   github:
     toolsets: [issues]
     read-only: true
     allowed-repos: [czlonkowski/n8n-mcp]
     min-integrity: none # Allow this workflow to examine issues from any author. The MCP server is read-only; comments and labels are written via the safe-outputs channel.
 
-environment: agentic-triage
+# gh-aw 1.0 gives this environment to activation, agent and detection. A protected one here would ask for
+# approval three times per issue, so the gate is on.manual-approval and the rest run without rules.
+environment: agentic-triage-passthrough
 
 timeout-minutes: 10
 source: githubnext/agentics/workflows/issue-triage.md@13377ddf7e35c2b6e47aa58f45acb228fba902c8
