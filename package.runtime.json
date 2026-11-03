@@ -1,6 +1,6 @@
 {
   "name": "n8n-mcp-runtime",
-  "version": "2.99.2",
+  "version": "2.100.0",
   "description": "n8n MCP Server Runtime Dependencies Only",
   "private": true,
   "dependencies": {
@@ -16,7 +16,7 @@
     "tslib": "^2.6.2",
     "undici": "^6.29.0",
     "uuid": "^11.1.1",
-    "axios": "^1.20.0"
+    "axios": "^1.21.0"
   },
   "engines": {
     "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
