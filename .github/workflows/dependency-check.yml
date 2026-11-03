@@ -60,6 +60,11 @@ jobs:
         working-directory: /tmp/fresh-install-test
         run: |
           npm init -y
+          # npm applies `overrides` only from the root project, so copy ours. They stub
+          # platform-only binaries that n8n-nodes-base 2.46 lists as plain dependencies
+          # (n8n-io/n8n#43006). The published package is built from package.runtime.json,
+          # which has no n8n packages, so npm users do not need them.
+          node -e "const fs=require('fs');const p=require('./package.json');p.overrides=require(process.env.GITHUB_WORKSPACE+'/package.json').overrides;fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
           # Install from tarball WITHOUT lockfile (simulates npm install n8n-mcp)
           # Use --ignore-scripts to skip native compilation of transitive deps like isolated-vm
           # (n8n-mcp only reads node metadata, it doesn't execute n8n nodes at runtime)
