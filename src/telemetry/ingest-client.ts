@@ -14,6 +14,7 @@
  * otherwise one client going quiet just shifts the hammering onto the other.
  */
 import { telemetryFetch } from './telemetry-fetch';
+import { stripTrailingSlashes } from '../utils/strip-trailing-slashes';
 
 export type IngestTable = 'telemetry_events' | 'telemetry_workflows' | 'workflow_mutations';
 export type ControlSignal = { kind: 'disable_version' | 'disable_process'; status: number };
@@ -103,7 +104,7 @@ export class IngestClient {
   private readonly fetchImpl: typeof fetch;
 
   constructor(private readonly opts: IngestClientOptions) {
-    this.base = opts.url.replace(/\/+$/, '');
+    this.base = stripTrailingSlashes(opts.url);
     this.fetchImpl = opts.fetchImpl ?? telemetryFetch;
   }
 

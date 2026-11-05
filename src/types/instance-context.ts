@@ -9,6 +9,7 @@
 import { createHash } from 'crypto';
 import { SSRFProtection } from '../utils/ssrf-protection';
 import { isValidMcpAccessToken } from '../config/n8n-api';
+import { stripTrailingSlashes } from '../utils/strip-trailing-slashes';
 
 export interface InstanceContext {
   /**
@@ -322,7 +323,7 @@ export function validateInstanceContext(context: InstanceContext): {
  */
 export function getInstanceScopeId(context?: InstanceContext): string {
   if (context?.n8nApiUrl && context?.n8nApiKey) {
-    const url = context.n8nApiUrl.trim().replace(/\/+$/, '').toLowerCase();
+    const url = stripTrailingSlashes(context.n8nApiUrl.trim()).toLowerCase();
     return createHash('sha256')
       .update(`n8n-mcp-wv:${url}:${context.n8nApiKey}`)
       .digest('hex')

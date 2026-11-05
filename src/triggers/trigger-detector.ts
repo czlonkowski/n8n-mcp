@@ -5,6 +5,7 @@
 import { Workflow, WorkflowNode } from '../types/n8n-api';
 import { normalizeNodeType } from '../utils/node-type-utils';
 import { TriggerType, DetectedTrigger, TriggerDetectionResult } from './types';
+import { stripTrailingSlashes } from '../utils/strip-trailing-slashes';
 
 /**
  * Node type patterns for each trigger type
@@ -295,7 +296,7 @@ export function buildTriggerUrl(
   trigger: DetectedTrigger,
   mode: 'production' | 'test' = 'production'
 ): string {
-  const cleanBaseUrl = baseUrl.replace(/\/+$/, ''); // Remove trailing slashes
+  const cleanBaseUrl = stripTrailingSlashes(baseUrl); // Remove trailing slashes
 
   switch (trigger.type) {
     case 'webhook': {

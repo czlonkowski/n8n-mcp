@@ -1,0 +1,18 @@
+name: n8n-mcp CodeQL config
+
+# security-extended adds lower-precision security queries on top of the
+# default suite (for example more injection, SSRF and crypto checks).
+queries:
+  - uses: security-extended
+
+# Scan shipped code and build scripts. Generated output, vendored packages and
+# test fixtures (which hold fake secrets and deliberately unsafe inputs) are left out.
+paths-ignore:
+  - dist
+  - node_modules
+  - ui-apps/dist
+  - ui-apps/node_modules
+  - data
+  - coverage
+  - tests
+  - '**/*.test.ts'
