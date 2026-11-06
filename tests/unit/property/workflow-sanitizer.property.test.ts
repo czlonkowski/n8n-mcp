@@ -70,10 +70,12 @@ const PROVIDERS: Provider[] = [
   { kind: 'stripe', prefix: ['sk', 'live', ''].join('_'), chars: ALNUM, length: 24 },
   { kind: 'stripe-restricted', prefix: ['rk', 'test', ''].join('_'), chars: ALNUM, length: 24 },
   { kind: 'github-fine-grained', prefix: ['github', 'pat', ''].join('_'), chars: [...ALNUM, '_'], length: 50 },
+  { kind: 'gitlab', prefix: ['gl', 'pat-'].join(''), chars: B64URL, length: 20, exact: true },
   { kind: 'github-classic', prefix: ['gh', 'p_'].join(''), chars: ALNUM, length: 36 },
   { kind: 'huggingface', prefix: ['hf', '_'].join(''), chars: ALNUM, length: 30 },
   { kind: 'notion', prefix: ['nt', 'n_'].join(''), chars: ALNUM, length: 40 },
   { kind: 'aws-access-key-id', prefix: ['AK', 'IA'].join(''), chars: [...UPPER, ...DIGIT], length: 16, exact: true },
+  { kind: 'google-api-key', prefix: ['AI', 'za'].join(''), chars: B64URL, length: 35, exact: true },
   { kind: 'google-oauth-secret', prefix: ['GOC', 'SPX-'].join(''), chars: B64URL, length: 28, exact: true },
   { kind: 'anthropic', prefix: ['sk', 'ant', 'api03', ''].join('-'), chars: B64URL, length: 40 },
   { kind: 'shopify', prefix: ['sh', 'pat_'].join(''), chars: HEX, length: 32, exact: true },
@@ -365,6 +367,16 @@ describe('WorkflowSanitizer properties', () => {
       }), { numRuns: 200 });
     });
 
+  });
+
+  it('redacts provider keys whatever character follows them', () => {
+    const followed = fc.constantFrom(...PROVIDERS).chain(providerSecret).chain((s) =>
+      fc.constantFrom(...(s.text.endsWith('-') ? ['a', '_', '-', ' '] : ['-', ' ', '.']))
+        .map((next) => ({ ...s, text: s.text + next })));
+    fc.assert(fc.property(caseArb(followed), (c) => {
+      fc.pre(secretOnlyFromInjection(c));
+      expectNoLeak(WorkflowSanitizer.sanitizeWorkflowRaw(c.workflow), c);
+    }), { numRuns: 500 });
   });
 
   it('connections keep pointing at the sanitized node names', () => {

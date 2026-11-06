@@ -145,14 +145,25 @@ export class SSRFProtection {
 
   /**
    * SECURITY (GHSA-qm7x-j9xp-x3gv): the form every hostname check compares:
-   * lowercase, without IPv6 brackets or trailing dots. Empty when nothing is left.
+   * lowercase, without IPv6 brackets or trailing dots, numeric IPv4 in dotted-quad
+   * form. Empty when nothing is left.
    */
   private static normalizeHostname(url: URL): string {
     let hostname = url.hostname.toLowerCase();
     if (hostname.startsWith('[') && hostname.endsWith(']')) {
       hostname = hostname.slice(1, -1);
     }
-    return hostname.replace(/\.+$/, '');
+    const stripped = hostname.replace(/\.+$/, '');
+    if (stripped === hostname || stripped === '' || isIPv6(stripped)) {
+      return stripped;
+    }
+    // SECURITY (GHSA-gwj8-fp64-q94q): canonical IPv4 form of a numeric host.
+    try {
+      const reparsed = new URL(`http://${stripped}/`).hostname;
+      return isIPv4(reparsed) ? reparsed : stripped;
+    } catch {
+      return stripped;
+    }
   }
 
   /**
