@@ -20,6 +20,7 @@ import {
 } from '../types';
 import { BaseTriggerHandler } from './base-handler';
 import { describeSizeLimitError, getMaxResponseBytes } from '../../services/n8n-api-client';
+import { stripTrailingSlashes } from '../../utils/strip-trailing-slashes';
 
 /**
  * Zod schema for form input validation
@@ -253,7 +254,7 @@ export class FormHandler extends BaseTriggerHandler<FormTriggerInput> {
 
       // Form triggers use /form/<webhookId> endpoint
       const formPath = triggerInfo?.webhookPath || triggerInfo?.node?.parameters?.path || input.workflowId;
-      const formUrl = `${baseUrl.replace(/\/+$/, '')}/form/${formPath}`;
+      const formUrl = `${stripTrailingSlashes(baseUrl)}/form/${formPath}`;
       if (!this.isUnderTriggerPrefix(formUrl, baseUrl, 'form')) {
         return this.errorResponse(input, 'Invalid form path', startTime, {
           details: {

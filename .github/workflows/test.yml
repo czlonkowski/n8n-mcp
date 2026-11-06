@@ -33,13 +33,14 @@ on:
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
-  checks: write
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     timeout-minutes: 15  # Increased from 10 to accommodate larger database with community nodes
     env:
       # A boolean flag (not the secrets themselves) recording whether a live n8n
@@ -50,9 +51,9 @@ jobs:
       # otherwise a partially-configured instance would run the step and then fail.
       HAS_N8N_INSTANCE: ${{ secrets.N8N_API_URL != '' && secrets.N8N_API_KEY != '' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           check-latest: true
@@ -116,7 +117,7 @@ jobs:
 
       - name: Upload UI failure traces
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ui-test-traces
           path: ui-apps/test-results/
@@ -174,7 +175,7 @@ jobs:
       # Upload test results artifacts
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
@@ -187,7 +188,7 @@ jobs:
       # Upload coverage artifacts
       - name: Upload coverage reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
@@ -198,7 +199,7 @@ jobs:
       # Upload coverage to Codecov
       - name: Upload coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
@@ -218,7 +219,7 @@ jobs:
       # Create test report comment for PRs
       - name: Create test report comment
         if: github.event_name == 'pull_request' && always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         continue-on-error: true
         with:
           script: |
@@ -310,7 +311,7 @@ jobs:
       
       - name: Upload test metadata
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-metadata-${{ github.run_number }}-${{ github.run_attempt }}
           path: test-metadata.json
@@ -326,9 +327,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           check-latest: true
@@ -351,15 +352,15 @@ jobs:
     permissions:
       checks: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download test results
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
 
       - name: Publish test results
-        uses: dorny/test-reporter@v3
+        uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
         if: always()
         continue-on-error: true
         with:

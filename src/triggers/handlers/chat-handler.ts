@@ -21,6 +21,7 @@ import {
 import { BaseTriggerHandler } from './base-handler';
 import { describeSizeLimitError, responseSizeLimits } from '../../services/n8n-api-client';
 import { buildTriggerUrl } from '../trigger-detector';
+import { stripTrailingSlashes } from '../../utils/strip-trailing-slashes';
 
 /**
  * Zod schema for chat input validation
@@ -80,7 +81,7 @@ export class ChatHandler extends BaseTriggerHandler<ChatTriggerInput> {
         chatUrl = buildTriggerUrl(baseUrl, triggerInfo, 'production');
       } else {
         // Default chat webhook path pattern
-        chatUrl = `${baseUrl.replace(/\/+$/, '')}/webhook/${input.workflowId}`;
+        chatUrl = `${stripTrailingSlashes(baseUrl)}/webhook/${input.workflowId}`;
       }
 
       if (!this.isUnderTriggerPrefix(chatUrl, baseUrl, 'webhook')) {

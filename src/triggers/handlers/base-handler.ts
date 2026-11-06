@@ -14,6 +14,7 @@ import {
   DetectedTrigger,
   BaseTriggerInput,
 } from '../types';
+import { stripTrailingSlashes } from '../../utils/strip-trailing-slashes';
 
 /**
  * Constructor type for trigger handlers
@@ -79,7 +80,7 @@ export abstract class BaseTriggerHandler<T extends BaseTriggerInput = BaseTrigge
     try {
       const target = new URL(triggerUrl);
       const base = new URL(baseUrl);
-      const triggerRoot = `${base.pathname.replace(/\/+$/, '')}/${prefix}/`;
+      const triggerRoot = `${stripTrailingSlashes(base.pathname)}/${prefix}/`;
       return target.origin === base.origin &&
         target.pathname.startsWith(triggerRoot) &&
         !/%(2e|2f|5c)/i.test(target.pathname.slice(triggerRoot.length));
