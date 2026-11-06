@@ -415,7 +415,9 @@ describe('SSRFProtection properties', () => {
     });
 
     it('rejects any blocked IPv4 address (loopback included) embedded in IPv6', () => {
-      fc.assert(fc.property(embeddedHost(blockedV4, [...TAIL_EMBEDDINGS, '6to4', 'teredo']), urlDecoration, ({ host }, d) => {
+      fc.assert(fc.property(embeddedHost(blockedV4, [...TAIL_EMBEDDINGS, '6to4', 'teredo']), urlDecoration, ({ addr, kind, host }, d) => {
+        // 0.0.0.1 in the compat form is ::1, the IPv6 loopback, which moderate allows on purpose.
+        fc.pre(!(kind === 'compat' && addr === '0.0.0.1'));
         const url = buildUrl(host, d);
         expect(sync(url).valid, url).toBe(false);
       }), RUNS);
