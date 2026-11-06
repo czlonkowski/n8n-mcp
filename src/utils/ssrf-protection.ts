@@ -152,7 +152,17 @@ export class SSRFProtection {
     if (hostname.startsWith('[') && hostname.endsWith(']')) {
       hostname = hostname.slice(1, -1);
     }
-    return hostname.replace(/\.+$/, '');
+    const stripped = hostname.replace(/\.+$/, '');
+    if (stripped === hostname || stripped === '' || isIPv6(stripped)) {
+      return stripped;
+    }
+    // SECURITY (GHSA-gwj8-fp64-q94q): canonical IPv4 form of a numeric host.
+    try {
+      const reparsed = new URL(`http://${stripped}/`).hostname;
+      return isIPv4(reparsed) ? reparsed : stripped;
+    } catch {
+      return stripped;
+    }
   }
 
   /**

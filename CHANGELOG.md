@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.101.1] - 2026-11-06
+
+### Security
+
+- Fix incomplete IPv4 host normalisation in URL validation (GHSA-gwj8-fp64-q94q). Found in an internal security review.
+- Fix missed redaction of some API key formats in telemetry (GHSA-68rj-xv59-f2ch). Found in an internal security review.
+
 ## [2.101.0] - 2026-11-03
 
 ### Changed

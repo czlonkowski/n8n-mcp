@@ -339,9 +339,9 @@ describe('SSRFProtection properties', () => {
   });
 
   describe('validateUrlSync, strict mode', () => {
-    it('rejects every IPv4 spelling of an address in a blocked range', () => {
-      fc.assert(fc.property(v4Host(blockedV4), urlDecoration, ({ host }, d) => {
-        const url = buildUrl(host, d);
+    it('rejects every IPv4 spelling of an address in a blocked range, with any trailing dots', () => {
+      fc.assert(fc.property(v4Host(blockedV4), trailingDots, urlDecoration, ({ host }, dots, d) => {
+        const url = buildUrl(host + dots, d);
         expect(sync(url).valid, url).toBe(false);
       }), RUNS);
     });
@@ -367,9 +367,9 @@ describe('SSRFProtection properties', () => {
       }), RUNS);
     });
 
-    it('accepts every IPv4 spelling of a public address', () => {
-      fc.assert(fc.property(v4Host(publicV4), urlDecoration, ({ host }, d) => {
-        const url = buildUrl(host, d);
+    it('accepts every IPv4 spelling of a public address, with any trailing dots', () => {
+      fc.assert(fc.property(v4Host(publicV4), trailingDots, urlDecoration, ({ host }, dots, d) => {
+        const url = buildUrl(host + dots, d);
         expect(sync(url), url).toEqual({ valid: true });
       }), RUNS);
     });
@@ -448,7 +448,7 @@ describe('SSRFProtection properties', () => {
 
   describe('cloud metadata, every mode', () => {
     const metadataHost = fc.oneof(
-      v4Host(metadataV4).map((h) => h.host),
+      fc.tuple(v4Host(metadataV4), trailingDots).map(([h, dots]) => h.host + dots),
       embeddedHost(metadataV4, [...TAIL_EMBEDDINGS, '6to4', 'teredo']).map((h) => h.host),
       metadataV6Host,
       metadataNameHost,
