@@ -26,7 +26,7 @@ const PII_PATTERNS = {
   creditCard: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g,
 
   // API keys and tokens (long alphanumeric strings)
-  apiKey: /\b[A-Za-z0-9_-]{32,}\b/g,
+  apiKey: /\b[A-Za-z0-9_-]{32,}(?:\b|(?<=-))/g, // SECURITY (GHSA-68rj-xv59-f2ch)
 
   // UUIDs
   uuid: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,

@@ -145,7 +145,8 @@ export class SSRFProtection {
 
   /**
    * SECURITY (GHSA-qm7x-j9xp-x3gv): the form every hostname check compares:
-   * lowercase, without IPv6 brackets or trailing dots. Empty when nothing is left.
+   * lowercase, without IPv6 brackets or trailing dots, numeric IPv4 in dotted-quad
+   * form. Empty when nothing is left.
    */
   private static normalizeHostname(url: URL): string {
     let hostname = url.hostname.toLowerCase();

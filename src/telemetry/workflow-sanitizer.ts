@@ -90,11 +90,11 @@ export class WorkflowSanitizer {
     { pattern: /[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*/g, placeholder: (token) => WorkflowSanitizer.redactJwts(token), requires: 'eyJ' },
 
     // Supabase secret and publishable keys
-    { pattern: /\bsb_(?:secret|publishable)_[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_])/g, placeholder: '[REDACTED_SUPABASE_KEY]' },
+    { pattern: /\bsb_(?:secret|publishable)_[A-Za-z0-9_-]{20,}(?:\b|(?<=-))/g, placeholder: '[REDACTED_SUPABASE_KEY]' },
 
     // OpenAI / OpenRouter — sk-proj- and sk-or- BEFORE the generic sk- below
-    { pattern: /\bsk-proj-[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_])/g, placeholder: '[REDACTED_LLM_API_KEY]' },
-    { pattern: /\bsk-or-(?:v1-)?[A-Za-z0-9-]{40,}(?![A-Za-z0-9_])/g, placeholder: '[REDACTED_LLM_API_KEY]' },
+    { pattern: /\bsk-proj-[A-Za-z0-9_-]{40,}(?:\b|(?<=-))/g, placeholder: '[REDACTED_LLM_API_KEY]' },
+    { pattern: /\bsk-or-(?:v1-)?[A-Za-z0-9-]{40,}(?:\b|(?<=-))/g, placeholder: '[REDACTED_LLM_API_KEY]' },
 
     // Stripe (sk_test/live, rk_test/live)
     { pattern: /\b(?:sk|rk)_(?:test|live)_[A-Za-z0-9]{24,}\b/g, placeholder: '[REDACTED_STRIPE_KEY]' },
@@ -104,13 +104,13 @@ export class WorkflowSanitizer {
     { pattern: /\bghp_[A-Za-z0-9]{36,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
 
     // GitLab PAT
-    { pattern: /\bglpat-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_])/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bglpat-[A-Za-z0-9_-]{20,}(?:\b|(?<=-))/g, placeholder: '[REDACTED_API_TOKEN]' },
 
     // Hugging Face, Notion, GoHighLevel, Slack
     { pattern: /\bhf_[A-Za-z0-9]{30,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
     { pattern: /\bntn_[A-Za-z0-9]{40,}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
-    { pattern: /\bpit-[a-f0-9-]{36}(?![A-Za-z0-9_])/g, placeholder: '[REDACTED_API_TOKEN]' },
-    { pattern: /\bxox[bpaors]-[A-Za-z0-9-]{10,}(?![A-Za-z0-9_])/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bpit-[a-f0-9-]{36}(?:\b|(?<=-))/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bxox[bpaors]-[A-Za-z0-9-]{10,}(?:\b|(?<=-))/g, placeholder: '[REDACTED_API_TOKEN]' },
 
     // AWS access key id
     { pattern: /\bAKIA[A-Z0-9]{16}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
@@ -118,10 +118,10 @@ export class WorkflowSanitizer {
     // Prefixed keys whose bodies can carry too few digits for the generic
     // fallback: Google API keys and OAuth client secrets, SendGrid, Anthropic,
     // Shopify.
-    { pattern: /\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_])/g, placeholder: '[REDACTED_API_TOKEN]' },
-    { pattern: /\bGOCSPX-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_])/g, placeholder: '[REDACTED_API_TOKEN]' },
-    { pattern: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_])/g, placeholder: '[REDACTED_API_TOKEN]' },
-    { pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_])/g, placeholder: '[REDACTED_LLM_API_KEY]' },
+    { pattern: /\bAIza[A-Za-z0-9_-]{35}(?:\b|(?<=-))/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bGOCSPX-[A-Za-z0-9_-]{20,}(?:\b|(?<=-))/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}(?:\b|(?<=-))/g, placeholder: '[REDACTED_API_TOKEN]' },
+    { pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}(?:\b|(?<=-))/g, placeholder: '[REDACTED_LLM_API_KEY]' },
     { pattern: /\bshpat_[a-f0-9]{32}\b/g, placeholder: '[REDACTED_API_TOKEN]' },
 
     // Generic OpenAI sk- (unchanged regex; placeholder upgraded to type-aware)
@@ -153,7 +153,7 @@ export class WorkflowSanitizer {
   // The negative lookahead keeps existing placeholders intact so sanitization
   // is idempotent.
   private static readonly OPAQUE_TOKEN_PATTERNS = [
-    /\b(?!REDACTED)(?=(?:[A-Za-z_-]{0,64}\d){3})(?=[^A-Z]{0,64}[A-Z])(?=[^a-z]{0,64}[a-z])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_])/g,
+    /\b(?!REDACTED)(?=(?:[A-Za-z_-]{0,64}\d){3})(?=[^A-Z]{0,64}[A-Z])(?=[^a-z]{0,64}[a-z])[A-Za-z0-9_-]{32,}(?:\b|(?<=-))/g,
     /\b(?!REDACTED)(?=[A-Za-z]{0,64}\d)[A-Za-z0-9]{32,}\b/g,
   ];
 

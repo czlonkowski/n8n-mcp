@@ -369,6 +369,16 @@ describe('WorkflowSanitizer properties', () => {
 
   });
 
+  it('redacts provider keys whatever character follows them', () => {
+    const followed = fc.constantFrom(...PROVIDERS).chain(providerSecret).chain((s) =>
+      fc.constantFrom(...(s.text.endsWith('-') ? ['a', '_', '-', ' '] : ['-', ' ', '.']))
+        .map((next) => ({ ...s, text: s.text + next })));
+    fc.assert(fc.property(caseArb(followed), (c) => {
+      fc.pre(secretOnlyFromInjection(c));
+      expectNoLeak(WorkflowSanitizer.sanitizeWorkflowRaw(c.workflow), c);
+    }), { numRuns: 500 });
+  });
+
   it('connections keep pointing at the sanitized node names', () => {
     fc.assert(fc.property(caseArb(fc.oneof(secretArb, basicAuthSecret)), (c) => {
       const out = WorkflowSanitizer.sanitizeWorkflowRaw(c.workflow);

@@ -23,4 +23,11 @@ describe('IntentSanitizer', () => {
     expect(sanitizer.sanitize('word '.repeat(2_001))).toBe('[TRUNCATED]');
     expect(sanitizer.sanitize('add a node')).toBe('add a node');
   });
+
+  it('removes long tokens whatever their last character', () => {
+    const sanitizer = new IntentSanitizer();
+    for (const token of ['a'.repeat(32), 'a'.repeat(31) + '-', 'a'.repeat(31) + '_']) {
+      expect(sanitizer.sanitize(`use ${token} now`)).not.toContain('a'.repeat(16));
+    }
+  });
 });

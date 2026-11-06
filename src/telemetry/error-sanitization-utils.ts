@@ -52,7 +52,7 @@ export function sanitizeErrorMessageCore(errorMessage: string): string {
 
     // 4. Long keys and quoted tokens
     sanitized = sanitized
-      .replace(/\b[a-zA-Z0-9_-]{32,}\b/g, '[KEY]')
+      .replace(/\b[a-zA-Z0-9_-]{32,}(?:\b|(?<=-))/g, '[KEY]') // SECURITY (GHSA-68rj-xv59-f2ch)
       .replace(/(['"])[a-zA-Z0-9_-]{16,}\1/g, '$1[TOKEN]$1');
 
     // 5. Generic credential patterns (after specific ones to avoid conflicts)

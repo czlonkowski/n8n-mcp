@@ -339,7 +339,7 @@ describe('SSRFProtection properties', () => {
   });
 
   describe('validateUrlSync, strict mode', () => {
-    it('rejects every IPv4 spelling of an address in a blocked range, with any trailing dots', () => {
+    it('rejects every IPv4 spelling of an address in a blocked range', () => {
       fc.assert(fc.property(v4Host(blockedV4), trailingDots, urlDecoration, ({ host }, dots, d) => {
         const url = buildUrl(host + dots, d);
         expect(sync(url).valid, url).toBe(false);
@@ -367,7 +367,7 @@ describe('SSRFProtection properties', () => {
       }), RUNS);
     });
 
-    it('accepts every IPv4 spelling of a public address, with any trailing dots', () => {
+    it('accepts every IPv4 spelling of a public address', () => {
       fc.assert(fc.property(v4Host(publicV4), trailingDots, urlDecoration, ({ host }, dots, d) => {
         const url = buildUrl(host + dots, d);
         expect(sync(url), url).toEqual({ valid: true });
