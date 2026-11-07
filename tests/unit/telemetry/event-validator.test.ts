@@ -158,4 +158,17 @@ describe('TelemetryEventValidator.validateEvent string sanitization', () => {
     expect(items[1]).toBe('mail [EMAIL]');
     expect(items[2]).toBe(3);
   });
+
+  it('drops a nested __proto__ key instead of replacing the copy\'s prototype', () => {
+    const v = new TelemetryEventValidator();
+    const event = v.validateEvent({
+      user_id: 'u',
+      event: 'some_event',
+      properties: JSON.parse('{"nested":{"__proto__":{"injected":"x"},"ok":1}}'),
+    });
+    const nested = event?.properties.nested as any;
+    expect(Object.getPrototypeOf(nested)).toBe(Object.prototype);
+    expect(nested.injected).toBeUndefined();
+    expect(nested.ok).toBe(1);
+  });
 });

@@ -266,7 +266,8 @@ function sanitizeNestedObject(obj: any, maxDepth: number): any {
       break;
     }
 
-    if (isSensitiveKey(key)) {
+    // `__proto__` would replace the copy's prototype instead of adding a field.
+    if (key === '__proto__' || isSensitiveKey(key)) {
       continue;
     }
 

@@ -3,6 +3,23 @@ import { WorkflowSanitizer } from '../../../src/telemetry/workflow-sanitizer';
 
 describe('WorkflowSanitizer', () => {
   describe('sanitizeWorkflow', () => {
+    it.each([
+      ['object', '{"Start":{"__proto__":{"injected":"x"}}}'],
+      ['array', '{"Start":{"__proto__":[[{"node":"End","type":"main","index":0}]]}}'],
+    ])('drops a __proto__ connection type (%s value)', (_shape, connectionsJson) => {
+      const workflow = {
+        nodes: [],
+        connections: JSON.parse(connectionsJson),
+      };
+
+      const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
+      const start = Object.values(sanitized.connections)[0] as any;
+
+      expect(Object.getPrototypeOf(start)).toBe(Object.prototype);
+      expect(start.injected).toBeUndefined();
+      expect(start[0]).toBeUndefined();
+    });
+
     it('drops __proto__ keys on the raw path at every depth', () => {
       const workflow = JSON.parse(
         '{"nodes":[],"connections":{"__proto__":{"main":[]}},' +

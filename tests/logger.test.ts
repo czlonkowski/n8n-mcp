@@ -98,7 +98,7 @@ describe('Logger', () => {
     it('should include prefix in messages', () => {
       logger.info('test message');
       
-      expect(consoleLogSpy).toHaveBeenCalledWith('[test] [INFO] test message');
+      expect(consoleLogSpy).toHaveBeenCalledWith('%s', '[test] [INFO] test message');
     });
 
     it('should include timestamp when enabled', () => {
@@ -108,7 +108,7 @@ describe('Logger', () => {
       
       timestampLogger.info('test message');
       
-      expect(consoleLogSpy).toHaveBeenCalledWith('[2024-01-01T00:00:00.000Z] [test] [INFO] test message');
+      expect(consoleLogSpy).toHaveBeenCalledWith('%s', '[2024-01-01T00:00:00.000Z] [test] [INFO] test message');
       
       dateSpy.mockRestore();
     });
@@ -117,7 +117,7 @@ describe('Logger', () => {
       const obj = { foo: 'bar' };
       logger.info('test message', obj, 123);
       
-      expect(consoleLogSpy).toHaveBeenCalledWith('[test] [INFO] test message', obj, 123);
+      expect(consoleLogSpy).toHaveBeenCalledWith('%s', '[test] [INFO] test message', obj, 123);
     });
   });
 

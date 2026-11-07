@@ -977,6 +977,7 @@ export class WorkflowSanitizer {
         sanitized[nodeId] = {};
 
         for (const [connType, connArray] of Object.entries(nodeConnections as any)) {
+          if (connType === '__proto__') continue;
           if (Array.isArray(connArray)) {
             sanitized[nodeId][connType] = connArray.map((conns: any) => {
               if (Array.isArray(conns)) {
