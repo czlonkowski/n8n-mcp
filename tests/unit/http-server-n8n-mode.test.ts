@@ -1,9 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi, MockedFunction } from 'vitest';
 import type { Request, Response, NextFunction } from 'express';
 import { SingleSessionHTTPServer } from '../../src/http-server-single-session';
+import * as n8nHandlers from '../../src/mcp/handlers-n8n-manager';
 
 // Mock dependencies
 vi.mock('../../src/utils/logger', () => ({
+  Logger: class {
+    debug = vi.fn();
+    error = vi.fn();
+    info = vi.fn();
+    warn = vi.fn();
+  },
   logger: {
     info: vi.fn(),
     error: vi.fn(),
@@ -623,6 +630,138 @@ describe('HTTP Server n8n Mode', () => {
       expect(typeof server.getSessionInfo).toBe('function');
       expect(typeof server.start).toBe('function');
       expect(typeof server.shutdown).toBe('function');
+    });
+  });
+
+  describe('Workflow agent REST API', () => {
+    const workflow = {
+      name: 'Order notification',
+      nodes: [{
+        id: 'webhook-1',
+        name: 'Webhook',
+        type: 'n8n-nodes-base.webhook',
+        typeVersion: 2,
+        position: [0, 0],
+        parameters: { httpMethod: 'POST' },
+      }],
+      connections: {},
+    };
+
+    function authorizedRequest(body: unknown) {
+      const { req, res } = createMockReqRes();
+      req.method = 'POST';
+      req.headers = { authorization: `Bearer ${TEST_AUTH_TOKEN}` };
+      req.body = body as Record<string, unknown>;
+      return { req, res };
+    }
+
+    function attachApprovalDatabase() {
+      const drafts = new Map<string, { expiresAt: number; target: string; hash: string; consumed: boolean }>();
+      const db = {
+        prepare: (sql: string) => ({
+          run: (...args: any[]) => {
+            if (sql.includes('DELETE FROM workflow_agent_draft_approvals')) {
+              for (const [draftId, draft] of drafts) {
+                if (draft.expiresAt < args[0]) drafts.delete(draftId);
+              }
+              return { changes: 0 };
+            }
+            if (sql.includes('INSERT INTO workflow_agent_draft_approvals')) {
+              drafts.set(args[0], { expiresAt: args[1], target: args[2], hash: args[3], consumed: false });
+              return { changes: 1 };
+            }
+            const draft = drafts.get(args[1]);
+            if (!draft || draft.expiresAt !== args[2] || draft.target !== args[3]
+              || draft.hash !== args[4] || draft.consumed || draft.expiresAt <= args[5]) {
+              return { changes: 0 };
+            }
+            draft.consumed = true;
+            return { changes: 1 };
+          },
+        }),
+        transaction: (callback: () => unknown) => callback(),
+      };
+      (server as any).workflowAgentDatabase = { db };
+    }
+
+    it('plans a workflow and creates only the exact approved, target-bound draft', async () => {
+      process.env.N8N_API_URL = 'https://n8n.example.test';
+      process.env.N8N_API_KEY = 'test-n8n-api-key';
+      server = new SingleSessionHTTPServer();
+      await server.start();
+      attachApprovalDatabase();
+
+      const agent = {
+        plan: vi.fn().mockResolvedValue({
+          status: 'ready',
+          summary: 'Create an order notification workflow.',
+          questions: [],
+          workflow,
+          validation: { valid: true, errors: [], warnings: [] },
+        }),
+        validate: vi.fn().mockResolvedValue({ valid: true, errors: [], warnings: [] }),
+      };
+      vi.spyOn(server as any, 'getWorkflowBuilderAgent').mockResolvedValue(agent);
+      vi.spyOn(n8nHandlers, 'getN8nApiClient').mockReturnValue({} as any);
+      const createWorkflow = vi.spyOn(n8nHandlers, 'handleCreateWorkflow').mockResolvedValue({
+        success: true,
+        data: { id: 'workflow-123', name: workflow.name, active: false, nodeCount: 1 },
+      } as any);
+
+      const planHandler = findHandler('post', '/api/agent/plan');
+      const planRequest = authorizedRequest({ goal: 'Notify the team for each new order' });
+      await planHandler(planRequest.req, planRequest.res);
+      const planResponse = (planRequest.res.json as any).mock.calls[0][0];
+      expect(planResponse.success).toBe(true);
+      expect(planResponse.draftToken).toEqual(expect.any(String));
+
+      const createHandler = findHandler('post', '/api/agent/create');
+      const createRequest = authorizedRequest({
+        approved: true,
+        draftToken: planResponse.draftToken,
+        workflow: planResponse.plan.workflow,
+      });
+      await createHandler(createRequest.req, createRequest.res);
+
+      expect(createRequest.res.status).toHaveBeenCalledWith(201);
+      expect(createWorkflow).toHaveBeenCalledWith(workflow, undefined);
+      expect(agent.validate).toHaveBeenCalledWith(workflow);
+
+      const replayRequest = authorizedRequest({
+        approved: true,
+        draftToken: planResponse.draftToken,
+        workflow: planResponse.plan.workflow,
+      });
+      await createHandler(replayRequest.req, replayRequest.res);
+      expect(replayRequest.res.status).toHaveBeenCalledWith(409);
+      expect(createWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a modified workflow after planning', async () => {
+      process.env.N8N_API_URL = 'https://n8n.example.test';
+      process.env.N8N_API_KEY = 'test-n8n-api-key';
+      server = new SingleSessionHTTPServer();
+      await server.start();
+      attachApprovalDatabase();
+      vi.spyOn(server as any, 'getWorkflowBuilderAgent').mockResolvedValue({
+        plan: vi.fn().mockResolvedValue({
+          status: 'ready', summary: 'Draft ready.', questions: [], workflow,
+          validation: { valid: true, errors: [], warnings: [] },
+        }),
+      });
+
+      const planRequest = authorizedRequest({ goal: 'Create an order webhook' });
+      await findHandler('post', '/api/agent/plan')(planRequest.req, planRequest.res);
+      const planResponse = (planRequest.res.json as any).mock.calls[0][0];
+      const changedWorkflow = { ...planResponse.plan.workflow, name: 'Changed after approval' };
+      const createRequest = authorizedRequest({
+        approved: true,
+        draftToken: planResponse.draftToken,
+        workflow: changedWorkflow,
+      });
+      await findHandler('post', '/api/agent/create')(createRequest.req, createRequest.res);
+
+      expect(createRequest.res.status).toHaveBeenCalledWith(409);
     });
   });
 
