@@ -1625,16 +1625,19 @@ describe('n8n-validation', () => {
       expect(errors).toEqual([]);
     });
 
-    it('should allow active workflow with legacy cron trigger', () => {
+    it.each([
+      ['Cron', 'n8n-nodes-base.cron'],
+      ['Interval', 'n8n-nodes-base.interval'],
+    ])('should allow active workflow with legacy %s trigger', (name, type) => {
       const workflow: Partial<Workflow> = {
-        name: 'Cron Workflow',
+        name: `${name} Workflow`,
         active: true,
         nodes: [
-          webhookNode('cron-1', 'Cron', 'n8n-nodes-base.cron', 1),
+          webhookNode('trigger-1', name, type, 1),
           webhookNode('set-1', 'Set', 'n8n-nodes-base.set', 3),
         ],
         connections: {
-          Cron: { main: [[{ node: 'Set', type: 'main', index: 0 }]] },
+          [name]: { main: [[{ node: 'Set', type: 'main', index: 0 }]] },
         },
       };
 

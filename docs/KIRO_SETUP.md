@@ -4,7 +4,7 @@ Connect n8n-MCP to Kiro IDE or Kiro CLI using a local stdio server. No n8n insta
 
 ## Prerequisites
 
-- Install Node.js 22.12+ (recommended) with npm, and make sure `node` and `npx` are available to Kiro on `PATH`.
+- Install Node.js `^22.23.4 || ^24.22.1 || >=26.12.1` with npm, and make sure `node` and `npx` are available to Kiro on `PATH`.
 - Use a current Kiro IDE or Kiro CLI release. The paths and commands below follow [Kiro's MCP configuration guide](https://kiro.dev/docs/mcp/configuration/).
 
 ## Choose a configuration file
