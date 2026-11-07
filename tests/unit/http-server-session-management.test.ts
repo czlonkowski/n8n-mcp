@@ -237,6 +237,7 @@ describe('HTTP Server Session Management', () => {
   function createMockReqRes() {
     const headers: { [key: string]: string } = {};
     const res = {
+      locals: {} as Record<string, unknown>,
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis(),
       send: vi.fn().mockReturnThis(),
@@ -1932,7 +1933,7 @@ describe('HTTP Server Session Management', () => {
       );
     });
 
-    it('GET /mcp returns 404 for a stale session ID (non-SSE, non-n8n)', async () => {
+    it('GET /mcp returns 404 for a stale session ID from a Streamable HTTP client', async () => {
       server = new SingleSessionHTTPServer();
       await server.start();
 
@@ -1942,6 +1943,8 @@ describe('HTTP Server Session Management', () => {
       const { req, res } = createMockReqRes();
       req.headers = {
         authorization: `Bearer ${TEST_AUTH_TOKEN}`,
+        // The SDK client opens its GET stream with this Accept header.
+        accept: 'text/event-stream',
         'mcp-session-id': 'stale-session-that-does-not-exist'
       };
 
@@ -1953,6 +1956,24 @@ describe('HTTP Server Session Management', () => {
           error: expect.objectContaining({ message: 'Session not found or expired' })
         })
       );
+      expect(res.locals.mcpSessionNotFound).toBe(true);
+    });
+
+    it('GET /mcp without a session ID still redirects SSE clients to /sse', async () => {
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('get', '/mcp');
+      const { req, res } = createMockReqRes();
+      req.headers = {
+        authorization: `Bearer ${TEST_AUTH_TOKEN}`,
+        accept: 'text/event-stream'
+      };
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.locals.mcpSessionNotFound).toBeUndefined();
     });
   });
 });

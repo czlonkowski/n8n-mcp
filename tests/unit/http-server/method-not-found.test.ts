@@ -500,6 +500,9 @@ describe('Unimplemented JSON-RPC methods return -32601 (#994)', () => {
       expect(predicate({}, { statusCode: 401, locals: { mcpMethodNotFound: 'yes' } })).toBe(false);
       // Ordinary success is unaffected.
       expect(predicate({}, { statusCode: 200, locals: {} })).toBe(true);
+      // A 404 for an expired session is exempt the same way, and only on exact true.
+      expect(predicate({}, { statusCode: 404, locals: { mcpSessionNotFound: true } })).toBe(true);
+      expect(predicate({}, { statusCode: 401, locals: { mcpSessionNotFound: 'yes' } })).toBe(false);
     });
   });
 

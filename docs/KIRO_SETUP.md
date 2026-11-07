@@ -90,5 +90,3 @@ Do not commit API keys. Management tools have the privileges of the configured n
 - **Server is missing or uses old settings:** Check JSON syntax and workspace/user/custom-agent overrides. On older Kiro releases, consult that release's MCP documentation or update Kiro.
 - **Management tools are missing:** Check that `N8N_API_URL` and `N8N_API_KEY` are set and that Kiro can expand the key reference. Reconnect the server after changing its launch environment.
 - **Local n8n requests are blocked:** Review `WEBHOOK_SECURITY_MODE` in [Security & Hardening](./SECURITY_HARDENING.md); do not disable network protections indiscriminately.
-
-This guide configures MCP tools only. Converting the bundled skills to Kiro Steering files is a separate follow-up, not required for the MCP connection.
