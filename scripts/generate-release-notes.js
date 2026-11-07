@@ -5,7 +5,7 @@
  * Used by GitHub Actions to create automated release notes
  */
 
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -14,8 +14,12 @@ function generateReleaseNotes(previousTag, currentTag) {
     console.log(`Generating release notes from ${previousTag} to ${currentTag}`);
 
     // Get commits between tags
-    const gitLogCommand = `git log --pretty=format:"%H|%s|%an|%ae|%ad" --date=short --no-merges ${previousTag}..${currentTag}`;
-    const commitsOutput = execSync(gitLogCommand, { encoding: 'utf8' });
+    // Arguments are passed as a list, so a tag name is never parsed by a shell.
+    const commitsOutput = execFileSync(
+      'git',
+      ['log', '--pretty=format:%H|%s|%an|%ae|%ad', '--date=short', '--no-merges', `${previousTag}..${currentTag}`],
+      { encoding: 'utf8' }
+    );
 
     if (!commitsOutput.trim()) {
       console.log('No commits found between tags');

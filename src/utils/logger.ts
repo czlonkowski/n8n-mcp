@@ -11,6 +11,14 @@ export interface LoggerConfig {
   timestamp?: boolean;
 }
 
+/**
+ * Replace line breaks so a value from a request cannot start a new, forged
+ * log line. Objects are left to console's inspect, which escapes them.
+ */
+export function stripLineBreaks(value: string): string {
+  return value.replace(/[\r\n\u2028\u2029]/g, ' ');
+}
+
 export class Logger {
   private config: LoggerConfig;
   private static instance: Logger;
@@ -50,7 +58,7 @@ export class Logger {
     }
     
     parts.push(`[${level}]`);
-    parts.push(message);
+    parts.push(stripLineBreaks(String(message)));
     
     return parts.join(' ');
   }
@@ -71,6 +79,7 @@ export class Logger {
     
     if (level <= this.config.level || allowErrorLogs) {
       const formattedMessage = this.formatMessage(levelName, message);
+      args = args.map((arg) => (typeof arg === 'string' ? stripLineBreaks(arg) : arg));
       
       // In HTTP mode during request handling, suppress console output (except errors)
       // The ConsoleManager will handle this, but we add a safety check

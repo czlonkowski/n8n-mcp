@@ -574,6 +574,9 @@ export class WorkflowSanitizer {
     const resourceLocatorMode = obj.__rl === true && typeof obj.mode === 'string' ? obj.mode : undefined;
 
     for (const [key, value] of Object.entries(obj)) {
+      // A `__proto__` key (own property after JSON.parse) would replace the
+      // copy's prototype instead of adding a field. Drop it.
+      if (key === '__proto__') continue;
       let kind = this.classifyKey(key);
       if (kind === 'none' && key === 'value') {
         if (resourceLocatorMode === 'url') {

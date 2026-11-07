@@ -3,6 +3,25 @@ import { WorkflowSanitizer } from '../../../src/telemetry/workflow-sanitizer';
 
 describe('WorkflowSanitizer', () => {
   describe('sanitizeWorkflow', () => {
+    it('drops a __proto__ key instead of replacing the copy\'s prototype', () => {
+      const parameters = JSON.parse('{"__proto__": {"injected": "x"}, "method": "GET"}');
+      const workflow = {
+        nodes: [
+          { id: '1', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', position: [0, 0], parameters },
+        ],
+        connections: {},
+      };
+
+      const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
+      const params = sanitized.nodes[0].parameters;
+
+      expect(Object.getPrototypeOf(params)).toBe(Object.prototype);
+      expect((params as any).injected).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(params, '__proto__')).toBe(false);
+      expect(params.method).toBe('GET');
+      expect(({} as any).injected).toBeUndefined();
+    });
+
     it('should remove API keys from parameters', () => {
       const workflow = {
         nodes: [
