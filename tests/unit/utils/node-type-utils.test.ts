@@ -211,6 +211,13 @@ describe('node-type-utils', () => {
       expect(isTriggerNode('n8n-nodes-base.cronTrigger')).toBe(true);
     });
 
+    it('recognizes the legacy Cron and Interval schedule nodes', () => {
+      expect(isTriggerNode('n8n-nodes-base.cron')).toBe(true);
+      expect(isTriggerNode('nodes-base.cron')).toBe(true);
+      expect(isTriggerNode('n8n-nodes-base.interval')).toBe(true);
+      expect(isTriggerNode('nodes-base.interval')).toBe(true);
+    });
+
     it('recognizes webhook triggers', () => {
       expect(isTriggerNode('n8n-nodes-base.webhook')).toBe(true);
       expect(isTriggerNode('n8n-nodes-base.webhookTrigger')).toBe(true);
@@ -271,6 +278,8 @@ describe('node-type-utils', () => {
     it('schedule triggers ARE activatable', () => {
       expect(isActivatableTrigger('n8n-nodes-base.scheduleTrigger')).toBe(true);
       expect(isActivatableTrigger('n8n-nodes-base.cronTrigger')).toBe(true);
+      expect(isActivatableTrigger('n8n-nodes-base.cron')).toBe(true);
+      expect(isActivatableTrigger('n8n-nodes-base.interval')).toBe(true);
     });
 
     it('manual triggers ARE activatable', () => {
@@ -309,6 +318,8 @@ describe('node-type-utils', () => {
       const desc = getTriggerTypeDescription('n8n-nodes-base.scheduleTrigger');
       expect(desc).toContain('Schedule');
       expect(desc).toContain('time-based');
+      expect(getTriggerTypeDescription('n8n-nodes-base.cron')).toContain('Schedule');
+      expect(getTriggerTypeDescription('n8n-nodes-base.interval')).toContain('Schedule');
     });
 
     it('describes manual triggers correctly', () => {

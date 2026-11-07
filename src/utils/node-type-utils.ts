@@ -142,13 +142,20 @@ export function getNodeTypeVariations(type: string): string[] {
   return [...new Set(variations)];
 }
 
+// Trigger nodes whose type name has no "trigger" or "webhook" marker.
+const LEGACY_UNSUFFIXED_TRIGGERS = new Set([
+  'nodes-base.start',
+  'nodes-base.cron',
+  'nodes-base.interval',
+]);
+
 /**
  * Check if a node is ANY type of trigger (including executeWorkflowTrigger)
  *
  * This function determines if a node can start a workflow execution.
  * Returns true for:
  * - Webhook triggers (webhook, webhookTrigger)
- * - Time-based triggers (schedule, cron)
+ * - Time-based triggers (schedule, legacy cron and interval)
  * - Poll-based triggers (emailTrigger, slackTrigger, etc.)
  * - Manual triggers (manualTrigger, start, formTrigger)
  * - Sub-workflow triggers (executeWorkflowTrigger)
@@ -177,9 +184,8 @@ export function isTriggerNode(nodeType: string): boolean {
     return true;
   }
 
-  // Check for specific trigger types that don't have 'trigger' in their name
-  // (manualTrigger and formTrigger are already caught by the 'trigger' check above)
-  return normalized === 'nodes-base.start';
+  // manualTrigger and formTrigger are already caught by the 'trigger' check above
+  return LEGACY_UNSUFFIXED_TRIGGERS.has(normalized);
 }
 
 /**
@@ -224,7 +230,7 @@ export function getTriggerTypeDescription(nodeType: string): string {
     return 'Webhook Trigger (HTTP requests)';
   }
 
-  if (lowerType.includes('schedule') || lowerType.includes('cron')) {
+  if (lowerType.includes('schedule') || lowerType.includes('cron') || normalized === 'nodes-base.interval') {
     return 'Schedule Trigger (time-based)';
   }
 
