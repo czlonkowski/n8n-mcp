@@ -271,6 +271,8 @@ jobs:
     if: needs.detect-version-change.outputs.version-changed == 'true'
     permissions:
       contents: write
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -300,12 +302,40 @@ jobs:
           npx -y @anthropic-ai/mcpb validate manifest.json
           npx -y @anthropic-ai/mcpb pack . "n8n-mcp-${VERSION}.mcpb"
 
+      # Subject for the SLSA provenance job: base64 of `sha256sum` output.
+      - name: Hash MCPB bundle
+        id: hash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.detect-version-change.outputs.new-version }}"
+          HASHES=$(sha256sum "n8n-mcp-${VERSION}.mcpb" | base64 -w0)
+          [ -n "$HASHES" ]
+          echo "hashes=$HASHES" >> "$GITHUB_OUTPUT"
+
       - name: Upload MCPB bundle to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ needs.detect-version-change.outputs.new-version }}"
           gh release upload "v$VERSION" "n8n-mcp-${VERSION}.mcpb" --clobber
+
+  # Signed SLSA build provenance for the release assets, uploaded to the
+  # release as n8n-mcp-<version>.intoto.jsonl. The generator must be referenced
+  # by tag, not by commit SHA: it verifies its own ref when it runs.
+  provenance:
+    name: Release Provenance
+    needs: [detect-version-change, package-mcpb]
+    if: needs.detect-version-change.outputs.version-changed == 'true'
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.package-mcpb.outputs.hashes }}
+      upload-assets: true
+      upload-tag-name: v${{ needs.detect-version-change.outputs.new-version }}
+      provenance-name: n8n-mcp-${{ needs.detect-version-change.outputs.new-version }}.intoto.jsonl
 
   build-and-verify:
     name: Build and Verify
@@ -683,7 +713,7 @@ jobs:
   notify-completion:
     name: Notify Release Completion
     runs-on: ubuntu-latest
-    needs: [detect-version-change, create-release, publish-npm, build-docker, update-documentation]
+    needs: [detect-version-change, create-release, provenance, publish-npm, build-docker, update-documentation]
     if: always() && needs.detect-version-change.outputs.version-changed == 'true'
     steps:
       - name: Create release summary
@@ -701,6 +731,12 @@ jobs:
             echo "- ✅ GitHub Release created: [$RELEASE_URL]($RELEASE_URL)" >> $GITHUB_STEP_SUMMARY
           else
             echo "- ❌ GitHub Release creation failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.provenance.result }}" = "success" ]; then
+            echo "- ✅ Signed SLSA provenance attached: \`n8n-mcp-$VERSION.intoto.jsonl\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ❌ SLSA provenance failed or was skipped" >> $GITHUB_STEP_SUMMARY
           fi
           
           if [ "${{ needs.publish-npm.result }}" = "success" ]; then

@@ -1,0 +1,3 @@
+# Default owner for everything in the repository. Branch rules on main
+# require a review from a code owner.
+* @czlonkowski

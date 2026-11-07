@@ -10,6 +10,21 @@ You can also email [security@n8n-mcp.com](mailto:security@n8n-mcp.com). This add
 
 Only the latest release receives security patches. We recommend always running the latest version.
 
+## Verifying Releases
+
+npm packages are published with [npm provenance](https://docs.npmjs.com/generating-provenance-statements). Check it with `npm audit signatures` in a project that installs n8n-mcp.
+
+Each GitHub release has the MCPB bundle and a signed SLSA provenance file for it, `n8n-mcp-<version>.intoto.jsonl`. Releases are built from the `main` branch, so verify with `--source-branch main`:
+
+```bash
+slsa-verifier verify-artifact n8n-mcp-<version>.mcpb \
+  --provenance-path n8n-mcp-<version>.intoto.jsonl \
+  --source-uri github.com/czlonkowski/n8n-mcp \
+  --source-branch main
+```
+
+Releases before 2.101.4 have no provenance file.
+
 ## Response Process
 
 1. We will acknowledge your report within 72 hours
