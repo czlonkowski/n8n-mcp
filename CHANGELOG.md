@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.101.4] - 2026-11-07
+
+### Security
+
+- **Signed build provenance for releases.** Each GitHub release now includes `n8n-mcp-<version>.intoto.jsonl`, a signed SLSA provenance file for the MCPB bundle, produced by the SLSA generic generator. `SECURITY.md` explains how to verify it with `slsa-verifier`. npm packages were already published with npm provenance.
+- **CODEOWNERS.** The main branch rules already required a code-owner review; the repository now has the file that names the owner.
+
 ## [2.101.3] - 2026-11-07
 
 ### Security
