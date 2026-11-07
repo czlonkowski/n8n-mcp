@@ -3,6 +3,57 @@ import { WorkflowSanitizer } from '../../../src/telemetry/workflow-sanitizer';
 
 describe('WorkflowSanitizer', () => {
   describe('sanitizeWorkflow', () => {
+    it.each([
+      ['object', '{"Start":{"__proto__":{"injected":"x"}}}'],
+      ['array', '{"Start":{"__proto__":[[{"node":"End","type":"main","index":0}]]}}'],
+    ])('drops a __proto__ connection type (%s value)', (_shape, connectionsJson) => {
+      const workflow = {
+        nodes: [],
+        connections: JSON.parse(connectionsJson),
+      };
+
+      const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
+      const start = Object.values(sanitized.connections)[0] as any;
+
+      expect(Object.getPrototypeOf(start)).toBe(Object.prototype);
+      expect(start.injected).toBeUndefined();
+      expect(start[0]).toBeUndefined();
+    });
+
+    it('drops __proto__ keys on the raw path at every depth', () => {
+      const workflow = JSON.parse(
+        '{"nodes":[],"connections":{"__proto__":{"main":[]}},' +
+          '"__proto__":{"apiKey":"sk-live-SECRETSECRETSECRET123456","note":"Contact john@example.com"}}'
+      );
+
+      const sanitized = WorkflowSanitizer.sanitizeWorkflowRaw(workflow);
+      const json = JSON.stringify(sanitized);
+
+      expect(json).not.toContain('SECRETSECRET');
+      expect(json).not.toContain('john@example.com');
+      expect(json).not.toContain('__proto__');
+      expect(Object.getPrototypeOf(sanitized)).toBe(Object.prototype);
+    });
+
+    it('drops a __proto__ key instead of replacing the copy\'s prototype', () => {
+      const parameters = JSON.parse('{"__proto__": {"injected": "x"}, "method": "GET"}');
+      const workflow = {
+        nodes: [
+          { id: '1', name: 'HTTP Request', type: 'n8n-nodes-base.httpRequest', position: [0, 0], parameters },
+        ],
+        connections: {},
+      };
+
+      const sanitized = WorkflowSanitizer.sanitizeWorkflow(workflow);
+      const params = sanitized.nodes[0].parameters;
+
+      expect(Object.getPrototypeOf(params)).toBe(Object.prototype);
+      expect((params as any).injected).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(params, '__proto__')).toBe(false);
+      expect(params.method).toBe('GET');
+      expect(({} as any).injected).toBeUndefined();
+    });
+
     it('should remove API keys from parameters', () => {
       const workflow = {
         nodes: [

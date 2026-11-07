@@ -1245,6 +1245,36 @@ describe('EnhancedConfigValidator', () => {
       });
     });
 
+    it('matches /api and /rest only as a whole path segment', () => {
+      const suggests = (url: string) =>
+        EnhancedConfigValidator.validateWithMode(
+          'nodes-base.httpRequest',
+          { url, method: 'GET', options: {} },
+          [{ name: 'url', type: 'string', required: true }],
+          'operation',
+          'ai-friendly'
+        ).suggestions.some((s: string) => s.includes('responseFormat'));
+
+      for (const url of [
+        'https://example.org/api',
+        'https://example.org/api/users',
+        'https://example.org/api?page=2',
+        'https://example.org/rest',
+        'https://example.org/rest/items',
+        'https://example.org/rest?x=1',
+      ]) {
+        expect(suggests(url), url).toBe(true);
+      }
+      for (const url of [
+        'https://example.org/apikeys',
+        'https://example.org/restaurant',
+        'https://example.org/v/apiary',
+        'https://example.org/restore/now',
+      ]) {
+        expect(suggests(url), url).toBe(false);
+      }
+    });
+
     it('should suggest responseFormat for case-insensitive API paths', () => {
       const nodeType = 'nodes-base.httpRequest';
       const testUrls = [

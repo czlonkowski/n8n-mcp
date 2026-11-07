@@ -475,8 +475,8 @@ export class EnhancedConfigValidator extends ConfigValidator {
       // Subdomain patterns (api.example.com)
       /^https?:\/\/api\./i.test(url) ||
       // Path patterns with word boundaries to prevent false positives like "therapist", "restaurant"
-      /\/api[\/\?]|\/api$/i.test(url) ||
-      /\/rest[\/\?]|\/rest$/i.test(url) ||
+      /\/api(?:[\/?]|$)/i.test(url) ||
+      /\/rest(?:[\/?]|$)/i.test(url) ||
       // Known API service domains (strict hostname match)
       hostMatches('supabase.co') ||
       host.includes('firebase') ||  // firebase has many variants (firebaseio.com, firebase.google.com, etc.)

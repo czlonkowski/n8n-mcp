@@ -9,7 +9,7 @@ import {
 import { ParsedNode, normalizeNodeVersion } from '../parsers/node-parser';
 import { SQLiteStorageService } from '../services/sqlite-storage-service';
 import { NodeTypeNormalizer } from '../utils/node-type-normalizer';
-import { logger } from '../utils/logger';
+import { logger, stripLineBreaks } from '../utils/logger';
 import { NPM_MISSING_README_PLACEHOLDER } from '../constants/npm-readme';
 
 // Default retention window for workflow version backups (days). Configurable
@@ -689,8 +689,9 @@ export class NodeRepository {
       // `nodeType` is passed as a separate argument (not interpolated into
       // the format string) so a value containing `%s` / `%d` / `%o` can't
       // hijack `console.error`'s format directives. Addresses CodeQL
-      // js/tainted-format-string.
-      console.error('Error getting default operation for', nodeType, error);
+      // js/tainted-format-string. Line breaks are replaced so the value
+      // cannot forge a log line (js/log-injection).
+      console.error('Error getting default operation for', stripLineBreaks(String(nodeType)), error);
       return undefined;
     }
 

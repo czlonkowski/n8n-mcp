@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.101.3] - 2026-11-07
+
+### Security
+
+Hardening from the CodeQL security-extended review. None of these is a known vulnerability.
+
+- Telemetry sanitizers: `__proto__` keys are dropped instead of being written to a plain-object copy, where they would replace the copy's prototype. This covers node parameters, connections, the raw workflow path and nested event properties.
+- Logger: line breaks in logged strings are replaced with spaces, so a value from a request cannot start a forged log line, and the message is passed after a fixed `%s` format so text in it is never read as a format directive.
+- Release notes script: `git log` arguments are passed as a list instead of a shell command string.
+- The `/api` and `/rest` path checks behind the `responseFormat` suggestion are written as a single anchored group. Matching is unchanged.
+
 ## [2.101.2] - 2026-11-07
 
 ### Fixed
