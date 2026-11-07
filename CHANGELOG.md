@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.101.2] - 2026-11-07
+
+### Fixed
+
+- **The legacy Cron and Interval nodes count as triggers** ([#1050](https://github.com/czlonkowski/n8n-mcp/issues/1050)). Trigger detection matched node types by name, and `n8n-nodes-base.cron` and `n8n-nodes-base.interval` contain no "trigger" marker. An active workflow started by either node failed `n8n_update_partial_workflow` with "No activatable trigger nodes found", and `validate_workflow` reported zero trigger nodes for it. Contributed in #1057; Interval added in this release.
+- **`GET /mcp` keeps a StreamableHTTP session alive and returns 404 for an unknown session** ([#834](https://github.com/czlonkowski/n8n-mcp/issues/834)). Only `POST /mcp` refreshed a session's last-access time, so the idle-session cleanup could remove a session whose client was holding a `GET` stream open. `GET /mcp` now refreshes it when a stream opens. A `GET /mcp` whose session ID matches no session now gets a JSON-RPC 404 ("Session not found or expired"), so the client starts a new session, as the MCP specification requires; before, Streamable HTTP clients got the 400 meant for legacy SSE clients. A "session not found" 404, on `GET` or `POST`, no longer counts as a failed authentication attempt, so a client retrying an expired session cannot use up the auth rate limit (`AUTH_RATE_LIMIT_MAX`) for its IP. A stream held open longer than `SESSION_TIMEOUT_MINUTES` without any other request can still be cleaned up. Contributed in #595.
+
+### Documentation
+
+- **Kiro setup guide** ([#481](https://github.com/czlonkowski/n8n-mcp/issues/481)). `docs/KIRO_SETUP.md` covers the Kiro IDE and CLI configuration files, the n8n management tools with `${N8N_API_KEY}` expansion, connection checks and troubleshooting. Contributed in #1182.
+
 ## [2.101.1] - 2026-11-06
 
 ### Security

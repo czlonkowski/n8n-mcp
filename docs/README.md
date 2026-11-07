@@ -16,6 +16,7 @@
 - [Cursor](./CURSOR_SETUP.md)
 - [Windsurf](./WINDSURF_SETUP.md)
 - [Codex](./CODEX_SETUP.md)
+- [Kiro](./KIRO_SETUP.md)
 - [Antigravity](./ANTIGRAVITY_SETUP.md)
 
 ## Configuration

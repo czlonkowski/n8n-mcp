@@ -237,6 +237,7 @@ describe('HTTP Server Session Management', () => {
   function createMockReqRes() {
     const headers: { [key: string]: string } = {};
     const res = {
+      locals: {} as Record<string, unknown>,
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis(),
       send: vi.fn().mockReturnThis(),
@@ -1883,6 +1884,96 @@ describe('HTTP Server Session Management', () => {
       await server.handleRequest(req as any, res as any);
 
       expect(res.status).toHaveBeenCalledWith(404);
+    });
+  });
+
+  describe('GET /mcp keepalive and unknown-session handling', () => {
+    it('GET /mcp refreshes lastAccess for an existing StreamableHTTP session', async () => {
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('get', '/mcp');
+      expect(handler).toBeTruthy();
+
+      const sessionId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+      // Import the mocked StreamableHTTPServerTransport so we can create an
+      // object that passes the instanceof check inside the GET handler.
+      const { StreamableHTTPServerTransport } = await import(
+        '@modelcontextprotocol/sdk/server/streamableHttp.js'
+      );
+      const transport = {
+        handleRequest: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        sessionId
+      };
+      // Make the plain object satisfy `instanceof StreamableHTTPServerTransport`
+      // so the handler enters the keepalive branch.
+      Object.setPrototypeOf(transport, (StreamableHTTPServerTransport as any).prototype);
+
+      const oldDate = new Date(Date.now() - 60_000);
+      (server as any).transports[sessionId] = transport;
+      (server as any).sessionMetadata[sessionId] = {
+        lastAccess: oldDate,
+        createdAt: new Date(Date.now() - 120_000)
+      };
+
+      const { req, res } = createMockReqRes();
+      req.headers = {
+        authorization: `Bearer ${TEST_AUTH_TOKEN}`,
+        'mcp-session-id': sessionId
+      };
+
+      await handler(req, res);
+
+      expect(transport.handleRequest).toHaveBeenCalled();
+      // lastAccess must be newer than before the GET — the keepalive fired.
+      expect((server as any).sessionMetadata[sessionId].lastAccess.getTime()).toBeGreaterThan(
+        oldDate.getTime()
+      );
+    });
+
+    it('GET /mcp returns 404 for a stale session ID from a Streamable HTTP client', async () => {
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('get', '/mcp');
+      expect(handler).toBeTruthy();
+
+      const { req, res } = createMockReqRes();
+      req.headers = {
+        authorization: `Bearer ${TEST_AUTH_TOKEN}`,
+        // The SDK client opens its GET stream with this Accept header.
+        accept: 'text/event-stream',
+        'mcp-session-id': 'stale-session-that-does-not-exist'
+      };
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.objectContaining({ message: 'Session not found or expired' })
+        })
+      );
+      expect(res.locals.mcpSessionNotFound).toBe(true);
+    });
+
+    it('GET /mcp without a session ID still redirects SSE clients to /sse', async () => {
+      server = new SingleSessionHTTPServer();
+      await server.start();
+
+      const handler = findHandler('get', '/mcp');
+      const { req, res } = createMockReqRes();
+      req.headers = {
+        authorization: `Bearer ${TEST_AUTH_TOKEN}`,
+        accept: 'text/event-stream'
+      };
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.locals.mcpSessionNotFound).toBeUndefined();
     });
   });
 });

@@ -1625,6 +1625,25 @@ describe('n8n-validation', () => {
       expect(errors).toEqual([]);
     });
 
+    it.each([
+      ['Cron', 'n8n-nodes-base.cron'],
+      ['Interval', 'n8n-nodes-base.interval'],
+    ])('should allow active workflow with legacy %s trigger', (name, type) => {
+      const workflow: Partial<Workflow> = {
+        name: `${name} Workflow`,
+        active: true,
+        nodes: [
+          webhookNode('trigger-1', name, type, 1),
+          webhookNode('set-1', 'Set', 'n8n-nodes-base.set', 3),
+        ],
+        connections: {
+          [name]: { main: [[{ node: 'Set', type: 'main', index: 0 }]] },
+        },
+      };
+
+      expect(validateWorkflowStructure(workflow)).toEqual([]);
+    });
+
     it('should detect missing workflow name', () => {
       const workflow = {
         nodes: [],
