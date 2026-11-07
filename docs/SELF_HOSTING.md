@@ -226,6 +226,49 @@ If you're running n8n locally (e.g., `http://localhost:5678` or Docker), you nee
 
 **Restart Claude Desktop after updating configuration** - That's it! 🎉
 
+## Podman (Windows)
+
+Podman can run the same container image. [Install Podman (or Podman Desktop)](https://podman-desktop.io/docs/installation/windows-install) and enable WSL2 for its default Windows provider; a supported Hyper-V provider is another option. Windows requires a running Linux VM managed by [Podman machine](https://docs.podman.io/en/latest/markdown/podman-machine-init.1.html), not just the Podman CLI:
+
+```powershell
+podman machine list
+# Only initialize if no machine exists:
+podman machine init
+# Start the machine if it is stopped:
+podman machine start
+podman info
+```
+
+For an existing non-default machine, use `podman machine start <name>`. Confirm `podman info` succeeds before starting Claude Desktop, and make sure `podman` is on Claude Desktop's PATH.
+
+For n8n running on the Windows host, use `http://host.containers.internal:5678`, not `localhost` (which refers to the MCP container). Ensure n8n listens on an interface reachable from the Podman VM and the host firewall permits that connection. See [Podman's host networking and environment options](https://docs.podman.io/en/latest/markdown/podman-run.1.html).
+
+**Claude Desktop configuration (with host n8n management tools):** Pass settings into the container with `-e`; setting only the client's `env` does not forward them automatically. Keep `-i` for stdio and do not add `-t` (TTY).
+
+> ⚠️ **Local development only:** The example below assumes `host.containers.internal` resolves to a private gateway address. This requires `WEBHOOK_SECURITY_MODE=permissive`: `moderate` allows loopback but still blocks RFC1918 private addresses. Only use this on a trusted local setup; it relaxes the SSRF gate for **both the n8n API client and webhook requests**, not just this hostname. Cloud metadata endpoints remain blocked. For a public HTTPS n8n instance, replace the URL and omit this setting to retain the default `strict` mode. See [Security & Hardening](./SECURITY_HARDENING.md).
+
+```json
+{
+  "mcpServers": {
+    "n8n-mcp": {
+      "command": "podman",
+      "args": [
+        "run", "-i", "--rm", "--init",
+        "-e", "MCP_MODE=stdio",
+        "-e", "LOG_LEVEL=error",
+        "-e", "DISABLE_CONSOLE_OUTPUT=true",
+        "-e", "N8N_API_URL=http://host.containers.internal:5678",
+        "-e", "N8N_API_KEY=your-api-key",
+        "-e", "WEBHOOK_SECURITY_MODE=permissive",
+        "ghcr.io/czlonkowski/n8n-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+Replace `your-api-key` with your n8n API key. For documentation and validation tools only, omit the `N8N_API_URL`, `N8N_API_KEY`, and `WEBHOOK_SECURITY_MODE` argument pairs. Restart Claude Desktop after saving the configuration. If you do not need container isolation, the [native npx setup](#npx-quick-local-setup) avoids the Podman machine and container networking prerequisites.
+
 ## Local Installation (For Development)
 
 **Prerequisites:** [Node.js](https://nodejs.org/) installed on your system
