@@ -13,7 +13,8 @@ export interface LoggerConfig {
 
 /**
  * Replace line breaks so a value from a request cannot start a new, forged
- * log line. Objects are left to console's inspect, which escapes them.
+ * log line. Plain objects are left to console's inspect, which escapes line
+ * breaks inside strings; an Error's stack is printed as it is.
  */
 export function stripLineBreaks(value: string): string {
   return value.replace(/[\r\n\u2028\u2029]/g, ' ');
@@ -78,8 +79,10 @@ export class Logger {
     }
     
     if (level <= this.config.level || allowErrorLogs) {
+      // Passed after a fixed '%s' so text in the message is never read as a
+      // format directive.
       const formattedMessage = this.formatMessage(levelName, message);
-      args = args.map((arg) => (typeof arg === 'string' ? stripLineBreaks(arg) : arg));
+      const safeArgs = args.map((arg) => (typeof arg === 'string' ? stripLineBreaks(arg) : arg));
       
       // In HTTP mode during request handling, suppress console output (except errors)
       // The ConsoleManager will handle this, but we add a safety check
@@ -90,13 +93,13 @@ export class Logger {
       
       switch (level) {
         case LogLevel.ERROR:
-          console.error(formattedMessage, ...args);
+          console.error('%s', formattedMessage, ...safeArgs);
           break;
         case LogLevel.WARN:
-          console.warn(formattedMessage, ...args);
+          console.warn('%s', formattedMessage, ...safeArgs);
           break;
         default:
-          console.log(formattedMessage, ...args);
+          console.log('%s', formattedMessage, ...safeArgs);
       }
     }
   }

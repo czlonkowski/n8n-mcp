@@ -971,6 +971,7 @@ export class WorkflowSanitizer {
     const sanitized: any = {};
 
     for (const [sourceName, nodeConnections] of Object.entries(connections)) {
+      if (sourceName === '__proto__') continue;
       const nodeId = this.sanitizeNodeName(sourceName);
       if (typeof nodeConnections === 'object' && nodeConnections !== null && !Array.isArray(nodeConnections)) {
         sanitized[nodeId] = {};
@@ -1018,7 +1019,10 @@ export class WorkflowSanitizer {
   static sanitizeWorkflowRaw(workflow: any): any {
     // Create a deep copy to avoid modifying original
     // SECURITY (GHSA-xvxq-x6hr-xc2c): nested versions are sanitized in place.
-    return this.sanitizeWorkflowRawInPlace(JSON.parse(JSON.stringify(workflow)), 0);
+    // The reviver drops `__proto__` keys at every depth: on a plain-object copy
+    // they would replace the prototype instead of being sanitized as data.
+    const copy = JSON.parse(JSON.stringify(workflow), (key, value) => (key === '__proto__' ? undefined : value));
+    return this.sanitizeWorkflowRawInPlace(copy, 0);
   }
 
   private static sanitizeWorkflowRawInPlace(sanitized: any, depth: number): any {

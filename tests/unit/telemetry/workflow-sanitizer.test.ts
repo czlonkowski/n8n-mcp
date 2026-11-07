@@ -3,6 +3,21 @@ import { WorkflowSanitizer } from '../../../src/telemetry/workflow-sanitizer';
 
 describe('WorkflowSanitizer', () => {
   describe('sanitizeWorkflow', () => {
+    it('drops __proto__ keys on the raw path at every depth', () => {
+      const workflow = JSON.parse(
+        '{"nodes":[],"connections":{"__proto__":{"main":[]}},' +
+          '"__proto__":{"apiKey":"sk-live-SECRETSECRETSECRET123456","note":"Contact john@example.com"}}'
+      );
+
+      const sanitized = WorkflowSanitizer.sanitizeWorkflowRaw(workflow);
+      const json = JSON.stringify(sanitized);
+
+      expect(json).not.toContain('SECRETSECRET');
+      expect(json).not.toContain('john@example.com');
+      expect(json).not.toContain('__proto__');
+      expect(Object.getPrototypeOf(sanitized)).toBe(Object.prototype);
+    });
+
     it('drops a __proto__ key instead of replacing the copy\'s prototype', () => {
       const parameters = JSON.parse('{"__proto__": {"injected": "x"}, "method": "GET"}');
       const workflow = {
