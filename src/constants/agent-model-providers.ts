@@ -43,7 +43,7 @@ export const AGENT_MODEL_PROVIDER_CREDENTIAL_TYPES: Record<string, string[]> = {
 
 /** Credential types the agents runtime always rejects, with the reason. */
 export const AGENT_UNSUPPORTED_CREDENTIAL_TYPES: Record<string, string> = {
-  aws: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.46.4)',
+  aws: 'not mapped in LLM_PROVIDER_DEFAULTS (verified on n8n 2.46.7)',
 };
 
 const AZURE_AGENT_CONDITION =

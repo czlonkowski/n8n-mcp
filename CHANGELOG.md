@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.102.0] - 2026-11-09
+
+### Changed
+
+- **Updated n8n to 2.46.7.** n8n-nodes-base and @n8n/n8n-nodes-langchain → 2.46.7, n8n-core → 2.46.6, n8n-workflow → 2.46.5 (all from 2.46.4; n8n 2.46.7 is the npm `stable` release, 2.47.3 is `beta`). The upstream changes are bug fixes; the only node source change is the deprecation callout in AI Agent V1. Rebuilt the node database: 3,501 nodes (842 core: 708 from n8n-nodes-base, 134 from @n8n/n8n-nodes-langchain; 2,659 community, 2,228 verified). `node_versions` has 674 rows, as before. The community node refresh saved 104 node rows from 59 npm packages. 2,645 of 2,659 community nodes have an AI summary; the other 14 come from packages without a README. The database is 76.7 MiB.
+- **Removed the `@napi-rs` musl overrides.** n8n 2.46.6 moved the Linux musl builds of `@napi-rs/canvas` and `@napi-rs/image` back to optional platform packages (n8n-io/n8n#43035), so `npm install` works on macOS and glibc Linux without the empty-package stubs added in 2.101.0. The `isolated-vm` stub stays.
+- **n8n 2.46.7 contract check.** No changes between 2.46.4 and 2.46.7 in the Public API, the workflow settings, n8n's MCP server or the agent model provider tables.
+
 ## [2.101.4] - 2026-11-07
 
 ### Security
