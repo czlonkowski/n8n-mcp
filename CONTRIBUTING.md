@@ -7,7 +7,7 @@ Contributions are welcome! Here's how to get started.
 1. Fork the repository
 2. **Allow the maintainer to push to your fork** - When creating your PR, check "Allow edits by maintainers". This speeds up the review process and allows the maintainer to make small adjustments directly.
 3. Create a feature branch (`git checkout -b feature/your-feature`)
-4. Make your changes
+4. Make your changes and add tests for them (see [Testing](#testing))
 5. Run tests (`npm test`)
 6. Submit a pull request
 
@@ -60,7 +60,9 @@ npm run dev:http       # HTTP dev mode
 
 ## Testing
 
-The project includes a comprehensive test suite:
+New functionality and bug fixes must include tests. A bug fix adds a regression test that fails without the fix, and a security fix always does. Pull requests without tests for changed behavior will be asked to add them before merge.
+
+The project includes a test suite:
 
 ```bash
 # Run all tests
