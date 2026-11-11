@@ -94,7 +94,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/n8n-mcp
 
 # Add container labels
 LABEL org.opencontainers.image.source="https://github.com/czlonkowski/n8n-mcp"
-LABEL org.opencontainers.image.description="n8n MCP Server - Runtime Only"
+LABEL org.opencontainers.image.description="MCP server that lets AI assistants operate n8n: debug, edit, validate, test and build workflows on any n8n instance"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL org.opencontainers.image.title="n8n-mcp"
 

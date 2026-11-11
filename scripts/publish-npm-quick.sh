@@ -39,7 +39,7 @@ cd $PUBLISH_DIR
 node -e "
 const pkg = require('./package.json');
 pkg.name = 'n8n-mcp';
-pkg.description = 'Integration between n8n workflow automation and Model Context Protocol (MCP)';
+pkg.description = 'MCP server that lets AI assistants operate n8n: debug, edit, validate, test and build workflows on any n8n instance';
 pkg.bin = { 'n8n-mcp': './dist/mcp/stdio-wrapper.js' };
 pkg.repository = { type: 'git', url: 'git+https://github.com/czlonkowski/n8n-mcp.git' };
 pkg.keywords = ['n8n', 'mcp', 'model-context-protocol', 'ai', 'workflow', 'automation'];

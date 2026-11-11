@@ -67,8 +67,8 @@ function buildManifest() {
     display_name: 'n8n-MCP',
     version: pkg.version,
     description:
-      'MCP server providing AI assistants with comprehensive access to n8n node ' +
-      'documentation and workflow management capabilities',
+      'MCP server that lets AI assistants operate n8n: debug, edit, validate, test ' +
+      'and build workflows on any n8n instance',
     author: {
       name: 'Romuald Członkowski',
       url: 'https://aiadvisors.pl/en',
