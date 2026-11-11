@@ -10,11 +10,41 @@
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16495/badge)](https://www.bestpractices.dev/projects/16495)
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/n8n-mcp?referralCode=n8n-mcp)
 
-A Model Context Protocol (MCP) server that provides AI assistants with comprehensive access to n8n node documentation, properties, and operations. Deploy in minutes to give Claude and other AI assistants deep knowledge about n8n's 3,501 workflow automation nodes (842 core + 2,659 community).
+n8n-MCP is an open-source MCP server that lets Claude, ChatGPT, Cursor, and other AI assistants operate n8n: read failed executions, edit workflows in place, validate and test them, manage credentials, and build new workflows. It works with any n8n instance that has the Public API enabled, and can use n8n's built-in MCP server as a second backend.
 
-## Overview
+## What You Can Do With It
 
-n8n-MCP serves as a bridge between n8n's workflow automation platform and AI models, enabling them to understand and work with n8n nodes effectively. It provides structured access to:
+- **Debug failing workflows** - `n8n_executions` reads an execution and, with `mode: "error"`, returns the error, the failing node, and sample items from the node before it.
+- **Edit workflows in place** - `n8n_update_partial_workflow` changes only the nodes and connections named in the request, including find-and-replace inside one large field such as a Code node (`patchNodeField`). n8n-MCP saves a snapshot before it changes a workflow, and `n8n_workflow_versions` can diff and roll back.
+- **Validate and fix before going live** - `validate_node`, `validate_workflow`, and `n8n_validate_workflow` report unknown nodes, invalid node versions, missing required fields, and broken connections or expressions. `n8n_autofix_workflow` repairs the common ones.
+- **Test** - `n8n_test_workflow` runs a workflow through its webhook, form, or chat trigger, or, through n8n's built-in MCP server, with pinned data when it has no such trigger.
+- **Manage the instance** - create, update, and delete credentials, work with data tables and folders, and run a security audit (`n8n_audit_instance`).
+- **Build new workflows** - bundled knowledge of 3,501 nodes and 2,352 templates, so the assistant configures real nodes instead of guessing.
+- **Work across several n8n instances** - on the [hosted service](https://www.n8n-mcp.com/docs/multi-instance), register production, staging, and client instances once and name the target on each call. Self-hosted HTTP mode can serve several instances with [per-request instance headers](./docs/HTTP_DEPLOYMENT.md#per-request-instance-headers-multi-tenant).
+
+## n8n-MCP and n8n's Built-In MCP Server
+
+n8n ships its own instance-level MCP server, and it covers a lot: building and editing workflows, executions, version history, data tables, and Agents. n8n-MCP does not replace it. The two differ in how they are built:
+
+| | n8n's built-in MCP server | n8n-MCP |
+|---|---|---|
+| Runs | Inside one n8n instance | As a separate server that talks to n8n |
+| Instances per connection | One | Several (hosted service, or multi-tenant HTTP mode) |
+| Credentials | Lists credentials and edits their descriptions | Creates, updates, and deletes credentials |
+| n8n versions | n8n 2.x; each tool has its own minimum version | Core workflow, execution, and credential tools work through the Public API, including on the n8n 1.x line |
+| Workflow access | Most operations need the workflow's "Available in MCP" setting, which is off by default | Every workflow the API key can reach |
+
+**The built-in server is enough when** you work with a single instance on a recent n8n 2.x, build and edit workflows on that instance, and set up credentials yourself in the n8n UI.
+
+**Add n8n-MCP when** you run more than one instance, want the assistant to create and update credentials, are on an n8n version without the built-in server, or want autofix, execution error analysis, templates, and a security audit.
+
+**Or use both through one connection.** Set `N8N_MCP_ACCESS_TOKEN` and n8n-MCP routes the operations the Public API cannot perform to n8n's own server: test runs with pinned data, n8n's native version history, live dropdown values, n8n Agents, and data-table column changes. The assistant still sees one MCP server. See [Official MCP Setup](./docs/OFFICIAL_MCP_SETUP.md).
+
+> **Naming note:** n8n's documentation uses `n8n-mcp` as the example connection name for its built-in server in some client configurations (for example `claude mcp add --transport http n8n-mcp https://<your-n8n-domain>/mcp-server/http`). That name points at n8n's own server. This project is a separate open-source server: `github.com/czlonkowski/n8n-mcp`, published on npm as `n8n-mcp`.
+
+## Node and Template Coverage
+
+The documentation and validation tools work without an n8n connection, against a bundled database:
 
 - **3,501 n8n nodes** - 842 core nodes + 2,659 community nodes (2,228 verified)
 - **Node properties** - 99% coverage with detailed schemas
@@ -54,11 +84,14 @@ AI results can be unpredictable. Protect your work!
 **[dashboard.n8n-mcp.com](https://dashboard.n8n-mcp.com)**
 
 - Free tier: 100 tool calls/day
-- Instant access: Start building workflows immediately
+- Instant access: Connect your n8n instance and start working on your workflows
+- Several n8n instances through one connection, on every plan ([multi-instance guide](https://www.n8n-mcp.com/docs/multi-instance))
+- OAuth sign-in for claude.ai and ChatGPT, API keys for IDEs and other MCP clients
+- Your n8n API key is stored encrypted and is never returned to the AI client
 - Always up-to-date: Latest n8n nodes and templates
 - No infrastructure: We handle everything
 
-Just sign up, get your API key, and connect your MCP client.
+The hosted service is run by the author of this project. Just sign up, connect your n8n instance, and connect your MCP client.
 
 **Want to self-host?** See the [Self-Hosting Guide](./docs/SELF_HOSTING.md) for npx, Docker, Railway, and local installation options.
 
