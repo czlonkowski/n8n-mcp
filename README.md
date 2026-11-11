@@ -15,7 +15,7 @@ n8n-MCP is an open-source MCP server that lets Claude, ChatGPT, Cursor, and othe
 ## What You Can Do With It
 
 - **Debug failing workflows** - `n8n_executions` reads an execution and, with `mode: "error"`, returns the error, the failing node, and sample items from the node before it.
-- **Edit workflows in place** - `n8n_update_partial_workflow` changes only the nodes and connections named in the request, including find-and-replace inside one large field such as a Code node (`patchNodeField`). n8n-MCP saves a snapshot before it changes a workflow, and `n8n_workflow_versions` can diff and roll back.
+- **Edit workflows in place** - `n8n_update_partial_workflow` applies targeted operations to the nodes and connections named in the request, so the assistant does not resend the whole workflow. This includes find-and-replace inside one large field such as a Code node (`patchNodeField`). By default n8n-MCP saves a snapshot before it changes a workflow's nodes or connections, and `n8n_workflow_versions` can diff and roll back.
 - **Validate and fix before going live** - `validate_node`, `validate_workflow`, and `n8n_validate_workflow` report unknown nodes, invalid node versions, missing required fields, and broken connections or expressions. `n8n_autofix_workflow` repairs the common ones.
 - **Test** - `n8n_test_workflow` runs a workflow through its webhook, form, or chat trigger, or, through n8n's built-in MCP server, with pinned data when it has no such trigger.
 - **Manage the instance** - create, update, and delete credentials, work with data tables and folders, and run a security audit (`n8n_audit_instance`).
@@ -31,12 +31,12 @@ n8n ships its own instance-level MCP server, and it covers a lot: building and e
 | Runs | Inside one n8n instance | As a separate server that talks to n8n |
 | Instances per connection | One | Several (hosted service, or multi-tenant HTTP mode) |
 | Credentials | Lists credentials and edits their descriptions | Creates, updates, and deletes credentials |
-| n8n versions | n8n 2.x; each tool has its own minimum version | Core workflow, execution, and credential tools work through the Public API, including on the n8n 1.x line |
+| n8n versions | Present since late n8n 1.x; most tools need n8n 2.12 or later, and each tool has its own minimum version | Workflow and execution tools work through the Public API on older versions too, including the 1.x line. Credential actions depend on what that version's API exposes, and newer tools state the version they need |
 | Workflow access | Most operations need the workflow's "Available in MCP" setting, which is off by default | Every workflow the API key can reach |
 
 **The built-in server is enough when** you work with a single instance on a recent n8n 2.x, build and edit workflows on that instance, and set up credentials yourself in the n8n UI.
 
-**Add n8n-MCP when** you run more than one instance, want the assistant to create and update credentials, are on an n8n version without the built-in server, or want autofix, execution error analysis, templates, and a security audit.
+**Add n8n-MCP when** you run more than one instance, want the assistant to create and update credentials, are on an older n8n version that predates the built-in tools you need, or want autofix, execution error analysis, templates, and a security audit.
 
 **Or use both through one connection.** Set `N8N_MCP_ACCESS_TOKEN` and n8n-MCP routes the operations the Public API cannot perform to n8n's own server: test runs with pinned data, n8n's native version history, live dropdown values, n8n Agents, and data-table column changes. The assistant still sees one MCP server. See [Official MCP Setup](./docs/OFFICIAL_MCP_SETUP.md).
 
@@ -71,7 +71,8 @@ The documentation and validation tools work without an n8n connection, against a
 
 AI results can be unpredictable, and n8n-MCP can change real workflows. **Try changes to important production workflows on a copy or a staging instance first.**
 
-- **Snapshots and rollback** - n8n-MCP saves a version of a workflow before it changes it. `n8n_workflow_versions` lists, diffs, and rolls back those versions.
+- **Snapshots and rollback** - by default n8n-MCP saves a version of a workflow before it changes its nodes or connections, and keeps up to 10 per workflow. `n8n_workflow_versions` lists, diffs, and rolls back those versions. A snapshot that fails to save does not stop the edit, so check that a version exists before relying on rollback for an important change.
+- **One editor at a time** - n8n-MCP reads a workflow, applies the change, and writes the whole workflow back, because n8n's Public API has no conditional write. An edit made in the n8n UI in between is overwritten, so do not edit a workflow in the UI while the assistant is working on it.
 - **Validate before deploying** - run `validate_workflow` on the change, and `n8n_validate_workflow` once it is in n8n.
 - **Keep exports** of workflows you cannot afford to lose.
 - **Limit what the assistant can do** - [Read-Only Deployment](#read-only-deployment) disables write operations.
