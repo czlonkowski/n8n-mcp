@@ -67,15 +67,14 @@ The documentation and validation tools work without an n8n connection, against a
 
 > 💼 **Need it built for you?** Work with [AiAdvisors — n8n automation audits, builds, and operations](https://aiadvisors.pl/en), run by the author of n8n-mcp and n8n-skills.
 
-## Important Safety Warning
+## Working Safely on Live Workflows
 
-**NEVER edit your production workflows directly with AI!** Always:
-- Make a copy of your workflow before using AI tools
-- Test in development environment first
-- Export backups of important workflows
-- Validate changes before deploying to production
+AI results can be unpredictable, and n8n-MCP can change real workflows. **Try changes to important production workflows on a copy or a staging instance first.**
 
-AI results can be unpredictable. Protect your work!
+- **Snapshots and rollback** - n8n-MCP saves a version of a workflow before it changes it. `n8n_workflow_versions` lists, diffs, and rolls back those versions.
+- **Validate before deploying** - run `validate_workflow` on the change, and `n8n_validate_workflow` once it is in n8n.
+- **Keep exports** of workflows you cannot afford to lose.
+- **Limit what the assistant can do** - [Read-Only Deployment](#read-only-deployment) disables write operations.
 
 ## Quick Start
 
