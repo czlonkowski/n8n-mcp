@@ -193,8 +193,8 @@
     "zod": "3.25.76"
   },
   "optionalDependencies": {
-    "@rollup/rollup-darwin-arm64": "^4.50.0",
-    "@rollup/rollup-linux-x64-gnu": "^4.50.0",
+    "@rollup/rollup-darwin-arm64": "^4.67.5",
+    "@rollup/rollup-linux-x64-gnu": "^4.67.5",
     "better-sqlite3": "^11.10.0"
   },
   "overrides": {
