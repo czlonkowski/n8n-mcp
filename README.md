@@ -9,6 +9,7 @@
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fczlonkowski%2Fn8n--mcp-green.svg)](https://github.com/czlonkowski/n8n-mcp/pkgs/container/n8n-mcp)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16495/badge)](https://www.bestpractices.dev/projects/16495)
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/n8n-mcp?referralCode=n8n-mcp)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/czlonkowski/n8n-mcp)
 
 n8n-MCP is an open-source MCP server that lets Claude, ChatGPT, Cursor, and other AI assistants operate n8n: read failed executions, edit workflows in place, validate and test them, manage credentials, and build new workflows. It works with any n8n instance that has the Public API enabled, and can use n8n's built-in MCP server as a second backend.
 
@@ -93,7 +94,7 @@ AI results can be unpredictable, and n8n-MCP can change real workflows. **Try ch
 
 The hosted service is run by the author of this project. Just sign up, connect your n8n instance, and connect your MCP client.
 
-**Want to self-host?** See the [Self-Hosting Guide](./docs/SELF_HOSTING.md) for npx, Docker, Railway, and local installation options.
+**Want to self-host?** See the [Self-Hosting Guide](./docs/SELF_HOSTING.md) for npx, Docker, Railway, Render, and local installation options.
 
 ## n8n Integration
 
@@ -477,7 +478,8 @@ Combine with a read-only n8n API key (Settings → API in your n8n instance) for
 
 ## Documentation
 
-- [Self-Hosting Guide](./docs/SELF_HOSTING.md) - npx, Docker, Railway, and local installation
+- [Self-Hosting Guide](./docs/SELF_HOSTING.md) - npx, Docker, Railway, Render, and local installation
+- [Render Deployment](./docs/RENDER_DEPLOYMENT.md) - Blueprint (`render.yaml`) on [Render](https://render.com/)
 - [Security & Hardening](./docs/SECURITY_HARDENING.md) - Trust model, hardening options, workflow restrictions
 - [n8n Deployment Guide](./docs/N8N_DEPLOYMENT.md) - Production deployment with n8n
 - [Database Configuration](./docs/DATABASE_CONFIGURATION.md) - SQLite adapters and memory optimization
