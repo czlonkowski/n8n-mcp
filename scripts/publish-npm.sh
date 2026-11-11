@@ -63,7 +63,7 @@ cd $PUBLISH_DIR
 node -e "
 const pkg = require('./package.json');
 pkg.name = 'n8n-mcp';
-pkg.description = 'Integration between n8n workflow automation and Model Context Protocol (MCP)';
+pkg.description = 'MCP server that lets AI assistants operate n8n: debug, edit, validate, test and build workflows on any n8n instance';
 pkg.main = 'dist/index.js';
 pkg.types = 'dist/index.d.ts';
 pkg.exports = {
