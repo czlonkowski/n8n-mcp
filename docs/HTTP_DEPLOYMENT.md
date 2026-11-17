@@ -9,7 +9,7 @@ n8n-MCP HTTP mode enables:
 - 🌐 Remote access from any Claude Desktop /Windsurf / other MCP Client 
 - 🔒 Token-based authentication
 - ⚡ Production-ready performance (~12ms response time)
-- 🚀 Optional n8n management tools (21 additional tools when configured)
+- 🚀 Optional n8n management tools (22 additional tools when configured)
 - ❌ Does not work with n8n MCP Tool
 
 ## 📐 Deployment Scenarios
@@ -167,7 +167,7 @@ Skip HTTP entirely and use stdio mode directly:
 
 ### n8n Management Tools (Optional)
 
-Enable 21 additional tools for managing n8n workflows by configuring API access:
+Enable 22 additional tools for managing n8n workflows by configuring API access:
 
 ⚠️ **Requires v2.7.1+** - Earlier versions had an issue with tool registration in Docker environments.
 
@@ -182,7 +182,7 @@ Enable 21 additional tools for managing n8n workflows by configuring API access:
 
 #### What This Enables
 
-When configured, you get **21 additional tools** (total: 28 tools). See the [README's tool table](../README.md#n8n-management-tools-21-tools---requires-api-configuration) for the full, current list grouped by category (workflow, execution, folder, data table, credential, security/audit, agents, and system tools).
+When configured, you get **22 additional tools** (total: 29 tools). See the [README's tool table](../README.md#n8n-management-tools-22-tools---requires-api-configuration) for the full, current list grouped by category (workflow, execution, folder, variable, data table, credential, security/audit, agents, and system tools).
 
 `N8N_MCP_ACCESS_TOKEN` additionally unlocks `n8n_manage_agents`, `n8n_explore_node_resources`, and the team-project fallback in `n8n_list_catalog` — see [Connecting n8n-mcp to n8n's instance-level MCP server](./OFFICIAL_MCP_SETUP.md). The MCP endpoint is derived from `N8N_API_URL`; instances that serve MCP from a split host (`N8N_MCP_BASE_URL`) are not supported.
 
@@ -903,7 +903,7 @@ DISABLED_TOOLS=n8n_create_workflow,n8n_update_full_workflow,n8n_update_partial_w
 Several tools bundle read and write operations under a single name. Use `DISABLED_TOOL_OPERATIONS` to block only their destructive branches while keeping `list` and `get`. This example names every write operation of every tool that has one:
 
 ```bash
-DISABLED_TOOL_OPERATIONS=n8n_executions:delete;n8n_test_workflow:auto,trigger,pinned,direct,expose;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_workflow_versions:delete,rollback,prune,expose;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration;n8n_manage_datatable:createTable,updateTable,deleteTable,insertRows,updateRows,upsertRows,deleteRows,addColumn,deleteColumn,renameColumn
+DISABLED_TOOL_OPERATIONS=n8n_executions:delete;n8n_test_workflow:auto,trigger,pinned,direct,expose;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_manage_variables:create,update,delete;n8n_workflow_versions:delete,rollback,prune,expose;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration;n8n_manage_datatable:createTable,updateTable,deleteTable,insertRows,updateRows,upsertRows,deleteRows,addColumn,deleteColumn,renameColumn
 ```
 
 Two entries need explaining. For `n8n_test_workflow`, all four of `auto`, `trigger`, `pinned` and `direct` run the workflow (an omitted or blank `method` counts as `auto`), leaving only the read-only `prepare`. And `expose` is not a value of any operation parameter: it is the `exposeToMcp` consent write of `n8n_test_workflow` and `n8n_workflow_versions`, which enables a workflow's "Available in MCP" setting. Omitting `expose` leaves that write reachable.

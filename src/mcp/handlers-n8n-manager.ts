@@ -14,6 +14,7 @@ import {
   ExecutionMode,
   Credential,
   TestRunStatus,
+  Variable,
 } from '../types/n8n-api';
 import type { TriggerType, TestWorkflowInput } from '../triggers/types';
 import {
@@ -5069,6 +5070,302 @@ export async function handleDeleteFolder(args: unknown, context?: InstanceContex
     };
   } catch (error) {
     return handleFolderError(error);
+  }
+}
+
+// ── Manage Variables ───────────────────────────────────────────────────────
+//
+// Instance variables ($vars in expressions) via the public API /variables routes,
+// licensed through feat:variables (not part of the free Community tier). n8n has no
+// get-by-id route and answers create/update with an empty body, so `get`, the
+// post-create ID lookup and the partial-update merge all read from the list.
+
+/** The list route's projectId value that selects global (unscoped) variables. */
+const VARIABLE_GLOBAL_FILTER = 'null';
+/** Largest page n8n's list route accepts. */
+const VARIABLE_PAGE_LIMIT = 250;
+/** Page cap for full scans (get, post-create lookup): 40 x 250 = 10,000 variables. */
+const VARIABLE_MAX_PAGES = 40;
+
+// Mirrors n8n's CreateVariablePublicDto so a bad key fails here with the rule spelled
+// out instead of as an opaque 400. Update uses the same rule although n8n's update DTO
+// allows a leading digit: {{ $vars.1KEY }} is not a valid expression.
+const variableValueSchema = z.string().max(1000, 'value cannot be longer than 1000 characters');
+const variableKeySchema = z.string().trim().min(1).max(50).regex(
+  /^[A-Za-z_][A-Za-z0-9_]*$/,
+  'key may contain only letters, digits and underscores, and must not start with a digit'
+);
+// null = no scope filter / global, the same as omitting it (the published schema
+// declares projectId as string|null for every action).
+const optionalVariableProjectId = z.preprocess(nullOrEmptyToUndefined, z.string().trim().min(1).max(36).optional());
+
+const listVariablesSchema = z.object({
+  // 'global' selects variables without a project.
+  projectId: optionalVariableProjectId,
+  state: optionalEmptyAware(z.literal('empty')),
+  limit: z.number().int().min(1).max(VARIABLE_PAGE_LIMIT).optional(),
+  cursor: optionalEmptyAware(z.string().trim().min(1)),
+});
+
+const getVariableSchema = z.object({
+  id: optionalEmptyAware(z.string().trim().min(1)),
+  key: optionalEmptyAware(z.string().trim().min(1)),
+  projectId: optionalVariableProjectId,
+}).refine((v) => v.id || v.key, { message: 'id or key is required', path: ['id'] });
+
+const createVariableSchema = z.object({
+  key: variableKeySchema,
+  // An empty value is a legitimate variable value on create (it is required anyway).
+  value: variableValueSchema,
+  projectId: optionalVariableProjectId,
+});
+
+const updateVariableSchema = z.object({
+  id: z.string().trim().min(1),
+  key: optionalEmptyAware(variableKeySchema),
+  // '' counts as omitted: lossy MCP clients send '' for every unset field (issue #774),
+  // and taking it literally would wipe the value on a key-only rename. Only the exact
+  // empty string: a whitespace value is a real value.
+  value: z.preprocess((v) => (v === '' ? undefined : v), variableValueSchema.optional()),
+  // The explicit way to set an empty value, since value: '' cannot mean it.
+  clearValue: z.boolean().optional(),
+  // null or 'global' = move to the global scope; omitted = keep the current scope.
+  projectId: z.preprocess(emptyToUndefined, z.string().trim().min(1).max(36).nullable().optional()),
+}).refine((v) => v.key !== undefined || v.value !== undefined || v.projectId !== undefined || v.clearValue, {
+  message: 'update needs at least one of key, value, clearValue or projectId',
+  path: ['value'],
+}).refine((v) => !(v.clearValue && v.value !== undefined), {
+  message: 'pass either value or clearValue, not both',
+  path: ['clearValue'],
+});
+
+const deleteVariableSchema = z.object({
+  id: z.string().trim().min(1),
+});
+
+type VariableProjectSummary = { id: string; name?: string } | null;
+
+function isGlobalAlias(projectId: string | null | undefined): boolean {
+  return projectId === null || (typeof projectId === 'string' && projectId.toLowerCase() === 'global');
+}
+
+/** Maps a user-supplied projectId to the list route's filter ('global' becomes 'null'). */
+function toVariableListScope(projectId: string | undefined): string | undefined {
+  return projectId && isGlobalAlias(projectId) ? VARIABLE_GLOBAL_FILTER : projectId;
+}
+
+function toProjectSummary(project: Variable['project']): VariableProjectSummary {
+  return project ? { id: project.id, name: project.name } : null;
+}
+
+/** Compact form returned to the agent: the full project object is mostly noise. */
+function toVariableSummary(variable: Variable) {
+  return {
+    id: variable.id,
+    key: variable.key,
+    value: variable.value,
+    type: variable.type,
+    project: toProjectSummary(variable.project),
+  };
+}
+
+/** Read every variable visible to the API key (optionally one project's / globals only). */
+async function listAllVariables(client: N8nApiClient, projectId?: string): Promise<{ variables: Variable[]; truncated: boolean }> {
+  const variables: Variable[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < VARIABLE_MAX_PAGES; page++) {
+    const result = await client.listVariables({
+      limit: VARIABLE_PAGE_LIMIT,
+      ...(cursor ? { cursor } : {}),
+      ...(projectId ? { projectId } : {}),
+    });
+    variables.push(...result.data);
+    if (!result.nextCursor) return { variables, truncated: false };
+    cursor = result.nextCursor;
+  }
+  return { variables, truncated: true };
+}
+
+const VARIABLE_LICENSE_HINT = 'Variables need an n8n license that includes the Variables feature (feat:variables; it is not part of the free Community edition) and an API key with variable:* scopes.';
+
+function handleVariableError(error: unknown): McpToolResponse {
+  const response = handleCrudError(error);
+  if (error instanceof N8nApiError) {
+    const base = (response.error ?? '').trimEnd();
+    const append = (hint: string) => {
+      response.error = `${base}${/[.!?]$/.test(base) ? '' : '.'} ${hint}`;
+    };
+    if (error.statusCode === 403) {
+      append(VARIABLE_LICENSE_HINT);
+    } else if (error.statusCode === 404) {
+      append('Check the variable id (find it with action=list); on n8n versions without the variables API the route itself is missing.');
+    } else if (/already exists/i.test(base)) {
+      append('Keys are unique per scope (global, or per project): update the existing variable instead.');
+    }
+  }
+  return response;
+}
+
+export async function handleListVariables(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = listVariablesSchema.parse(args || {});
+    const projectId = toVariableListScope(input.projectId);
+    const result = await client.listVariables({
+      ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      ...(input.cursor ? { cursor: input.cursor } : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(input.state ? { state: input.state } : {}),
+    });
+    return {
+      success: true,
+      data: {
+        variables: result.data.map(toVariableSummary),
+        returned: result.data.length,
+        ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+      },
+    };
+  } catch (error) {
+    return handleVariableError(error);
+  }
+}
+
+export async function handleGetVariable(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = getVariableSchema.parse(args || {});
+    const { variables, truncated } = await listAllVariables(client, toVariableListScope(input.projectId));
+    // With both id and key, a variable must match both: a mismatched pair is an error,
+    // not a silent pick of the id.
+    const matches = variables.filter((v) =>
+      (input.id === undefined || v.id === input.id) && (input.key === undefined || v.key === input.key));
+    const label = [input.id ? `id ${input.id}` : '', input.key ? `key "${input.key}"` : ''].filter(Boolean).join(' and ');
+    if (matches.length === 0) {
+      return {
+        success: false,
+        error: `No variable with ${label} is visible to this API key${input.projectId ? ' in that scope' : ''}.${truncated ? ` Only the first ${VARIABLE_PAGE_LIMIT * VARIABLE_MAX_PAGES} variables were searched.` : ''}`,
+        code: 'NOT_FOUND',
+      };
+    }
+    if (matches.length > 1) {
+      // The same key can exist once globally and once per project.
+      return {
+        success: false,
+        error: `${matches.length} variables share ${label}. Pass projectId ('global' for the global one) or the id.`,
+        details: { matches: matches.map(toVariableSummary) },
+      };
+    }
+    return {
+      success: true,
+      data: toVariableSummary(matches[0]),
+      // A key search that stopped at the page cap may have missed a same-key variable
+      // in another scope, so the match is unique only among the variables read.
+      ...(truncated && !input.id && !input.projectId
+        ? { warning: `Only the first ${VARIABLE_PAGE_LIMIT * VARIABLE_MAX_PAGES} variables were searched; another variable with this key may exist in a different scope. Pass projectId or the id to be sure.` }
+        : {}),
+    };
+  } catch (error) {
+    return handleVariableError(error);
+  }
+}
+
+export async function handleCreateVariable(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = createVariableSchema.parse(args);
+    const projectId = input.projectId && !isGlobalAlias(input.projectId) ? input.projectId : undefined;
+    await client.createVariable({ key: input.key, value: input.value, ...(projectId ? { projectId } : {}) });
+
+    // n8n returns 201 with no body; read the new variable back for its ID. A failed
+    // lookup does not undo the create, so it must not turn the result into an error.
+    let created: Variable | undefined;
+    try {
+      const { variables } = await listAllVariables(client, projectId ?? VARIABLE_GLOBAL_FILTER);
+      created = variables.find((v) => v.key === input.key);
+    } catch (lookupError) {
+      logger.debug('Variable created but the ID lookup failed', lookupError instanceof Error ? lookupError.message : lookupError);
+    }
+    const scopeLabel = projectId ? `project ${projectId}` : 'the global scope';
+    return {
+      success: true,
+      data: created
+        ? toVariableSummary(created)
+        : { key: input.key, value: input.value, project: projectId ? { id: projectId } : null },
+      message: created
+        ? `Variable "${input.key}" created in ${scopeLabel} with ID: ${created.id}. Reference it in expressions as {{ $vars.${input.key} }}.`
+        : `Variable "${input.key}" created in ${scopeLabel}, but its ID could not be read back - run action=list to find it.`,
+    };
+  } catch (error) {
+    return handleVariableError(error);
+  }
+}
+
+export async function handleUpdateVariable(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = updateVariableSchema.parse(args);
+
+    // n8n's PUT replaces the variable and requires both key and value, so fill the
+    // omitted one from the current record.
+    let key = input.key;
+    let value = input.clearValue ? '' : input.value;
+    // Echoed back as `project`; stays undefined (omitted) when neither the lookup
+    // nor the input says where the variable lives.
+    let project: VariableProjectSummary | undefined;
+    if (key === undefined || value === undefined) {
+      const { variables, truncated } = await listAllVariables(client);
+      const current = variables.find((v) => v.id === input.id);
+      if (!current) {
+        return {
+          success: false,
+          error: truncated
+            ? `Variable ${input.id} is not among the first ${VARIABLE_PAGE_LIMIT * VARIABLE_MAX_PAGES} variables. Pass both key and value so the update needs no lookup.`
+            : `No variable with id ${input.id} is visible to this API key. Find the id with action=list.`,
+          code: 'NOT_FOUND',
+        };
+      }
+      key = key ?? current.key;
+      value = value ?? current.value;
+      project = toProjectSummary(current.project);
+    }
+
+    // undefined = keep the current scope, null = move to global.
+    let projectId: string | null | undefined;
+    let scopeNote = '';
+    if (input.projectId !== undefined) {
+      projectId = isGlobalAlias(input.projectId) ? null : input.projectId;
+      project = projectId ? { id: projectId } : null;
+      scopeNote = projectId ? ` and moved to project ${projectId}` : ' and moved to the global scope';
+    }
+
+    await client.updateVariable(input.id, {
+      key: key as string,
+      value: value as string,
+      ...(projectId !== undefined ? { projectId } : {}),
+    });
+
+    return {
+      success: true,
+      data: { id: input.id, key, value, ...(project !== undefined ? { project } : {}) },
+      message: `Variable ${input.id} updated${scopeNote}.`,
+    };
+  } catch (error) {
+    return handleVariableError(error);
+  }
+}
+
+export async function handleDeleteVariable(args: unknown, context?: InstanceContext): Promise<McpToolResponse> {
+  try {
+    const client = ensureApiConfigured(context);
+    const input = deleteVariableSchema.parse(args);
+    await client.deleteVariable(input.id);
+    return {
+      success: true,
+      data: { id: input.id, deleted: true },
+      message: `Variable ${input.id} deleted. Expressions that read it now resolve to undefined.`,
+    };
+  } catch (error) {
+    return handleVariableError(error);
   }
 }
 

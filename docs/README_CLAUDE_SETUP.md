@@ -128,7 +128,7 @@ After restarting Claude Desktop:
 - **`get_template`** - Get a complete workflow JSON by template ID, ready to import
 
 ### Management Tools (`n8n_*`, require n8n API configuration)
-See the [n8n Management Tools table](../README.md#n8n-management-tools-21-tools---requires-api-configuration) in the main README for the full list of 21 tools covering workflow CRUD, executions, folders, data tables, credentials, and instance auditing.
+See the [n8n Management Tools table](../README.md#n8n-management-tools-22-tools---requires-api-configuration) in the main README for the full list of 22 tools covering workflow CRUD, executions, folders, data tables, credentials, and instance auditing.
 
 ### Example Questions to Ask Claude:
 - "Show me all n8n nodes for working with databases"

@@ -18,7 +18,7 @@ n8n-MCP is an open-source MCP server that lets Claude, ChatGPT, Cursor, and othe
 - **Edit workflows in place** - `n8n_update_partial_workflow` applies targeted operations to the nodes and connections named in the request, so the assistant does not resend the whole workflow. This includes find-and-replace inside one large field such as a Code node (`patchNodeField`). By default n8n-MCP saves a snapshot before it changes a workflow's nodes or connections, and `n8n_workflow_versions` can diff and roll back.
 - **Validate and fix before going live** - `validate_node`, `validate_workflow`, and `n8n_validate_workflow` report unknown nodes, invalid node versions, missing required fields, and broken connections or expressions. `n8n_autofix_workflow` repairs the common ones.
 - **Test** - `n8n_test_workflow` runs a workflow through its webhook, form, or chat trigger, or, through n8n's built-in MCP server, with pinned data when it has no such trigger.
-- **Manage the instance** - create, update, and delete credentials, work with data tables and folders, and run a security audit (`n8n_audit_instance`).
+- **Manage the instance** - create, update, and delete credentials, work with data tables, folders and variables, and run a security audit (`n8n_audit_instance`).
 - **Build new workflows** - bundled knowledge of 3,501 nodes and 2,352 templates, so the assistant configures real nodes instead of guessing.
 - **Work across several n8n instances** - on the [hosted service](https://www.n8n-mcp.com/docs/multi-instance), register production, staging, and client instances once and name the target on each call. Self-hosted HTTP mode can serve several instances with [per-request instance headers](./docs/HTTP_DEPLOYMENT.md#per-request-instance-headers-multi-tenant).
 
@@ -415,7 +415,7 @@ Save these instructions in your Claude Project for optimal n8n workflow assistan
   - `searchMode: 'by_metadata'` - Filter by `complexity`, `requiredService`, `targetAudience`
 - **`get_template`** - Get complete workflow JSON (modes: nodes_only, structure, full)
 
-### n8n Management Tools (21 tools - Requires API Configuration)
+### n8n Management Tools (22 tools - Requires API Configuration)
 These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
 
 #### Workflow Management
@@ -440,6 +440,9 @@ These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
 
 #### Folder Management
 - **`n8n_manage_folders`** - Manage workflow folders (create, list, get, rename, move, delete; n8n 2.19+). Place workflows into folders via `n8n_create_workflow`'s `parentFolderId` or `n8n_update_partial_workflow`'s `moveToFolder` operation (n8n 2.32+)
+
+#### Variable Management
+- **`n8n_manage_variables`** - Manage instance variables that workflows read as `{{ $vars.KEY }}` (list, get, create, update, delete; global or project-scoped). Needs an n8n license that includes Variables
 
 #### Data Table Management
 - **`n8n_manage_datatable`** - Manage n8n data tables, rows and columns (list, get, create, update, delete; `addColumn`/`deleteColumn`/`renameColumn` change an existing table's columns through n8n's own MCP server and need `N8N_MCP_ACCESS_TOKEN`)
@@ -468,7 +471,7 @@ DISABLED_TOOLS=n8n_create_workflow,n8n_update_full_workflow,n8n_update_partial_w
 For tools that bundle read and write operations under one name, block only the destructive operations while keeping `list` and `get`. Use this instead of a full `DISABLED_TOOLS` entry where the tool's read operations are acceptable — the `n8n_manage_datatable` and `n8n_test_workflow` entries below are the alternative to removing those tools entirely as above. The example names every write operation of every tool that has one:
 
 ```bash
-DISABLED_TOOL_OPERATIONS=n8n_executions:delete;n8n_test_workflow:auto,trigger,pinned,direct,expose;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_workflow_versions:delete,rollback,prune,expose;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration;n8n_manage_datatable:createTable,updateTable,deleteTable,insertRows,updateRows,upsertRows,deleteRows,addColumn,deleteColumn,renameColumn
+DISABLED_TOOL_OPERATIONS=n8n_executions:delete;n8n_test_workflow:auto,trigger,pinned,direct,expose;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_manage_variables:create,update,delete;n8n_workflow_versions:delete,rollback,prune,expose;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration;n8n_manage_datatable:createTable,updateTable,deleteTable,insertRows,updateRows,upsertRows,deleteRows,addColumn,deleteColumn,renameColumn
 ```
 
 Two details are easy to miss when writing your own list. For `n8n_test_workflow`, all four of `auto`, `trigger`, `pinned` and `direct` run the workflow (an omitted or blank `method` counts as `auto`), leaving only the read-only `prepare`. And `expose` is not a value of any operation parameter: it is the `exposeToMcp` consent write of `n8n_test_workflow` and `n8n_workflow_versions`, which enables a workflow's "Available in MCP" setting. Omitting `expose` leaves that write reachable.

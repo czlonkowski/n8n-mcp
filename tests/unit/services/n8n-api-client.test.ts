@@ -2398,47 +2398,55 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
       client = new N8nApiClient(defaultConfig);
     });
 
-    it('should get variables', async () => {
-      const variables = [{ id: '1', key: 'VAR1', value: 'value1' }];
-      mockAxiosInstance.get.mockResolvedValue({ data: { data: variables } });
-      
-      const result = await client.getVariables();
-      
-      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/variables');
-      expect(result).toEqual(variables);
+    it('lists variables with query params and the next cursor', async () => {
+      const variables = [{ id: '1', key: 'VAR1', value: 'value1', type: 'string', project: null }];
+      mockAxiosInstance.get.mockResolvedValue({ data: { data: variables, nextCursor: 'c2' } });
+
+      const result = await client.listVariables({ limit: 250, projectId: 'null' });
+
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/variables', { params: { limit: 250, projectId: 'null' } });
+      expect(result).toEqual({ data: variables, nextCursor: 'c2' });
     });
 
-    it('should return empty array when variables API not available', async () => {
-      mockAxiosInstance.get.mockRejectedValue(new Error('Not found'));
-      
-      const result = await client.getVariables();
-      
-      expect(result).toEqual([]);
-      expect(logger.warn).toHaveBeenCalledWith(
-        'Variables API not available, returning empty array'
+    it('surfaces list errors instead of returning an empty list', async () => {
+      // A 403 means the license lacks feat:variables; reporting "no variables" would hide that.
+      await mockAxiosInstance.simulateError('get', {
+        response: { status: 403, data: { message: 'Your license does not allow for feat:variables.' } },
+      });
+
+      await expect(client.listVariables()).rejects.toMatchObject({ statusCode: 403 });
+    });
+
+    it.each([
+      ['post', '/variables', 'POST'],
+      ['put', '/variables/123', 'PUT'],
+    ])('redacts variable values from the debug request log (%s)', async (method, url, label) => {
+      const requestInterceptor = mockAxiosInstance.interceptors.request.use.mock.calls[0][0];
+      vi.mocked(logger.debug).mockClear();
+      await requestInterceptor({ method, url, data: { key: 'K', value: 'secret-ish' } });
+      expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+        `n8n API Request: ${label} ${url}`,
+        expect.objectContaining({ data: '[REDACTED]' })
       );
     });
 
     it('should create variable', async () => {
       const variable = { key: 'NEW_VAR', value: 'new value' };
-      const created = { ...variable, id: '123' };
-      mockAxiosInstance.post.mockResolvedValue({ data: created });
-      
-      const result = await client.createVariable(variable);
-      
+      mockAxiosInstance.post.mockResolvedValue({ status: 201, data: '' });
+
+      await expect(client.createVariable(variable)).resolves.toBeUndefined();
+
       expect(mockAxiosInstance.post).toHaveBeenCalledWith('/variables', variable);
-      expect(result).toEqual(created);
     });
 
-    it('should update variable', async () => {
-      const updates = { value: 'updated value' };
-      const updated = { id: '123', key: 'VAR1', ...updates };
-      mockAxiosInstance.patch.mockResolvedValue({ data: updated });
-      
-      const result = await client.updateVariable('123', updates);
-      
-      expect(mockAxiosInstance.patch).toHaveBeenCalledWith('/variables/123', updates);
-      expect(result).toEqual(updated);
+    it('updates a variable with PUT, the only update route n8n has', async () => {
+      const body = { key: 'VAR1', value: 'updated value', projectId: null };
+      mockAxiosInstance.put.mockResolvedValue({ status: 204, data: '' });
+
+      await client.updateVariable('123', body);
+
+      expect(mockAxiosInstance.put).toHaveBeenCalledWith('/variables/123', body);
+      expect(mockAxiosInstance.patch).not.toHaveBeenCalled();
     });
 
     it('should delete variable', async () => {

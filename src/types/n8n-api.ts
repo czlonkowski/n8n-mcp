@@ -239,10 +239,39 @@ export interface Project {
 
 // Variable Types
 export interface Variable {
-  id?: string;
+  id: string;
   key: string;
   value: string;
-  type?: 'string';
+  type?: string;
+  /** null for a global variable; the owning project for a project-scoped one. */
+  project?: { id: string; name?: string; type?: string } | null;
+}
+
+export interface VariableListParams {
+  limit?: number;
+  cursor?: string;
+  /** A project ID, or the literal 'null' for global variables only. */
+  projectId?: string;
+  /** 'empty' returns only variables whose value is empty. */
+  state?: 'empty';
+}
+
+export interface VariableListResponse {
+  data: Variable[];
+  nextCursor: string | null;
+}
+
+export interface VariableCreateRequest {
+  key: string;
+  value: string;
+  projectId?: string;
+}
+
+export interface VariableUpdateRequest {
+  key: string;
+  value: string;
+  /** Omit to keep the current scope; null moves the variable to the global scope. */
+  projectId?: string | null;
 }
 
 // Import/Export Types

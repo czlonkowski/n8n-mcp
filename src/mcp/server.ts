@@ -1394,6 +1394,7 @@ export class N8NDocumentationMCPServer {
           : { valid: false, errors: [{ field: 'action', message: 'action is required' }] };
         break;
       case 'n8n_manage_folders':
+      case 'n8n_manage_variables':
       case 'n8n_manage_agents':
         validationResult = args.action
           ? { valid: true, errors: [] }
@@ -2004,6 +2005,21 @@ export class N8NDocumentationMCPServer {
           case 'delete': return n8nHandlers.handleDeleteFolder(args, this.instanceContext);
           default:
             throw new Error(`Unknown action: ${folderAction}. Valid actions: create, list, get, rename, move, delete`);
+        }
+      }
+
+      case 'n8n_manage_variables': {
+        this.validateToolParams(name, args, ['action']);
+        const variableAction = args.action;
+        // Each handler validates its own inputs via Zod schemas
+        switch (variableAction) {
+          case 'list':   return n8nHandlers.handleListVariables(args, this.instanceContext);
+          case 'get':    return n8nHandlers.handleGetVariable(args, this.instanceContext);
+          case 'create': return n8nHandlers.handleCreateVariable(args, this.instanceContext);
+          case 'update': return n8nHandlers.handleUpdateVariable(args, this.instanceContext);
+          case 'delete': return n8nHandlers.handleDeleteVariable(args, this.instanceContext);
+          default:
+            throw new Error(`Unknown action: ${variableAction}. Valid actions: list, get, create, update, delete`);
         }
       }
 

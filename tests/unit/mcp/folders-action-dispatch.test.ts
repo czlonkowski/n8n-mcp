@@ -10,6 +10,11 @@ const handlerMocks = vi.hoisted(() => ({
   handleRenameFolder: vi.fn().mockResolvedValue({ success: true, data: { action: 'rename' } }),
   handleMoveFolder: vi.fn().mockResolvedValue({ success: true, data: { action: 'move' } }),
   handleDeleteFolder: vi.fn().mockResolvedValue({ success: true, data: { action: 'delete' } }),
+  handleListVariables: vi.fn().mockResolvedValue({ success: true, data: { action: 'list' } }),
+  handleGetVariable: vi.fn().mockResolvedValue({ success: true, data: { action: 'get' } }),
+  handleCreateVariable: vi.fn().mockResolvedValue({ success: true, data: { action: 'create' } }),
+  handleUpdateVariable: vi.fn().mockResolvedValue({ success: true, data: { action: 'update' } }),
+  handleDeleteVariable: vi.fn().mockResolvedValue({ success: true, data: { action: 'delete' } }),
 }));
 
 vi.mock('../../../src/mcp/handlers-n8n-manager', async (importOriginal) => {
@@ -98,5 +103,53 @@ describe('n8n_manage_folders action dispatch', () => {
     await expect(
       server.testExecuteTool('n8n_manage_folders', { action: 'nope' })
     ).rejects.toThrow('create, list, get, rename, move, delete');
+  });
+});
+
+describe('n8n_manage_variables action dispatch', () => {
+  let server: TestableServer;
+
+  beforeEach(() => {
+    process.env.NODE_DB_PATH = ':memory:';
+    process.env.N8N_API_URL = 'https://example.invalid';
+    process.env.N8N_API_KEY = 'test-key';
+    delete process.env.DISABLED_TOOL_OPERATIONS;
+    server = new TestableServer();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    delete process.env.NODE_DB_PATH;
+    delete process.env.N8N_API_URL;
+    delete process.env.N8N_API_KEY;
+    delete process.env.DISABLED_TOOL_OPERATIONS;
+  });
+
+  it('routes every action to its own handler', async () => {
+    const cases: Array<[string, keyof typeof handlerMocks, Record<string, unknown>]> = [
+      ['list', 'handleListVariables', {}],
+      ['get', 'handleGetVariable', { key: 'K' }],
+      ['create', 'handleCreateVariable', { key: 'K', value: 'v' }],
+      ['update', 'handleUpdateVariable', { id: 'v1', value: 'w' }],
+      ['delete', 'handleDeleteVariable', { id: 'v1' }],
+    ];
+    for (const [action, handler, extra] of cases) {
+      await server.testExecuteTool('n8n_manage_variables', { action, ...extra });
+      expect(handlerMocks[handler]).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('forwards a null projectId untouched so update can move a variable to the global scope', async () => {
+    await server.testExecuteTool('n8n_manage_variables', { action: 'update', id: 'v1', projectId: null });
+    expect(handlerMocks.handleUpdateVariable).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'v1', projectId: null }),
+      undefined
+    );
+  });
+
+  it('lists the valid actions in the unknown-action error', async () => {
+    await expect(
+      server.testExecuteTool('n8n_manage_variables', { action: 'nope' })
+    ).rejects.toThrow('list, get, create, update, delete');
   });
 });

@@ -169,6 +169,7 @@ Inform the user to check their n8n version matches or is compatible with the sup
 - n8n_manage_datatable - Manage data tables, rows and columns (addColumn/deleteColumn/renameColumn need N8N_MCP_ACCESS_TOKEN)
 - n8n_manage_credentials - Manage credentials (action='list'/'get'/'create'/'update'/'delete'/'getSchema')
 - n8n_manage_folders - Manage workflow folders (action='create'/'list'/'get'/'rename'/'move'/'delete', n8n 2.19+; workflow placement via parentFolderId/moveToFolder needs 2.32+)
+- n8n_manage_variables - Manage instance variables read as $vars.KEY (action='list'/'get'/'create'/'update'/'delete'; needs a license with Variables)
 - n8n_audit_instance - Security audit of the n8n instance
 - n8n_manage_agents - Manage n8n Agents through n8n's instance-level MCP server (requires N8N_MCP_ACCESS_TOKEN, n8n 2.34+)
 - n8n_explore_node_resources - Resolve dynamic dropdown/resource-locator options (Slack channels, Google Sheets tabs, etc.) using a real credential (requires N8N_MCP_ACCESS_TOKEN)

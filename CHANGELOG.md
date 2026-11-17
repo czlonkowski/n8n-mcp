@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.103.0] - 2026-11-17
+
+### Added
+
+- **`n8n_manage_variables` tool.** Manages n8n instance variables, the values workflows read as `{{ $vars.KEY }}`. Actions: `list`, `get`, `create`, `update`, `delete`, for global or project-scoped variables. n8n has no route that reads one variable and its create and update routes return no body, so `get` filters the list, `create` reads the list once more to return the new ID, and `update` fills an omitted key or value from the current variable (n8n's update replaces the whole variable). An empty `value` on update counts as omitted, because some MCP clients send empty strings for unset fields; `clearValue: true` empties a value. Variables need an n8n license that includes them; on other instances every action returns 403 with a hint. `create`, `update` and `delete` can be disabled with `DISABLED_TOOL_OPERATIONS`.
+
+### Fixed
+
+- **Variable methods in the n8n API client.** `updateVariable` sent `PATCH`, which n8n does not route; it now sends `PUT` with the required key and value. `getVariables`, which returned an empty list on any error (including a missing license), is replaced by `listVariables`, which passes the pagination and filter parameters through and reports errors. Neither method was used by any tool before this release.
+- **Debug request logs no longer include variable values.** Request bodies sent to `/variables` are redacted, as bodies sent to `/credentials` already were.
+
 ## [2.102.0] - 2026-11-09
 
 ### Changed
