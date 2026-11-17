@@ -1,11 +1,38 @@
 ---
 name: n8n-code-javascript
-description: Write JavaScript code in n8n Code nodes. Use when writing JavaScript in n8n, using $input/$json/$node syntax, making HTTP requests with this.helpers / the $helpers global, working with dates using DateTime, troubleshooting Code node errors, choosing between Code node modes, or doing any custom data transformation in n8n. Always use this skill when a workflow needs a Code node — whether for data aggregation, filtering, API calls, format conversion, batch processing logic, or any custom JavaScript. Covers SplitInBatches loop patterns, cross-iteration data, pairedItem, and real-world production patterns. Also use when asked why a Code node or workflow is slow, which execution mode is faster, or how to cut per-item overhead on large datasets. EXCEPTION — for the AI-agent-callable Custom Code Tool (@n8n/n8n-nodes-langchain.toolCode, a tool attached to an AI Agent), use the n8n-code-tool skill instead; it has a different runtime contract.
+description: "Write, review, or debug JavaScript in an n8n Code node. Use when a Code node is already in the workflow (editing it, fixing an error, choosing its mode, making it faster), or when a new one is justified: no native node fits (check the job-to-node table in using-n8n-mcp-skills first) and the job is on the closed list — loops or recursion no node expresses, state across runs, parsing no node handles, an allowlisted library, heavy all-items work, or one short node replacing 4+ glue nodes. Covers $input/$json/$node in code, this.helpers, Luxon, SplitInBatches loops, cross-iteration data, pairedItem, per-item performance, and the \"Why Code:\" note. Filtering, totals, dedupe, sorting, joins, file formats and API paging have native nodes (Filter, Summarize, Remove Duplicates, Sort, Merge, Extract From File, HTTP Request): see n8n-node-configuration. EXCEPTION — for the AI-agent-callable Custom Code Tool (@n8n/n8n-nodes-langchain.toolCode), use n8n-code-tool; it has a different runtime contract."
 ---
 
 # JavaScript Code Node
 
 Expert guidance for writing JavaScript code in n8n Code nodes.
+
+---
+
+## Before you write a Code node
+
+A new Code node has to pass this gate first:
+
+1. **Is there a native node for the job?** Check the job-to-node table in `using-n8n-mcp-skills`: Filter, IF / Switch,
+   Summarize, Aggregate, Split Out, Merge, Compare Datasets, Remove Duplicates, Sort + Limit, Date & Time, XML / HTML /
+   Extract From File / Convert To File, HTTP Request (pagination, batching) and Crypto cover most reaches for Code.
+   Their configs are in `n8n-node-configuration` → NATIVE_NODES.md.
+2. **Would a short expression in that node do?** One expression, no function body — the helper methods (`.pluck()`,
+   `.sum()`, `.unique()`, `$ifEmpty()`, `.diffTo()`) are in `n8n-expression-syntax` and, on n8n-mcp 2.97.0+, in
+   `tools_documentation({topic: "expression_helpers"})`. Several statements inside `{{ }}` count as code, so they belong
+   here rather than in an Edit Fields field.
+3. **Is the job on the closed list?** Loops or recursion no node expresses, state across runs
+   (`$getWorkflowStaticData`), parsing no node handles, an allowlisted library, heavy all-items work (thousands of items,
+   stated or measured), or one short Code node (~15 lines) replacing 4+ glue nodes that only reshape data.
+
+If it passes, write the Code node and give it a note, so the next reader (and the review hooks) can see why:
+
+```json
+{ "name": "Flatten category tree", "type": "n8n-nodes-base.code", "notes": "Why Code: Split Out considered — the tree has arbitrary depth (recursion)", "notesInFlow": true }
+```
+
+Editing or debugging a Code node that is already there doesn't need the gate, but if the node does a native-node job,
+say so and offer the native replacement.
 
 ---
 
@@ -49,30 +76,26 @@ The Code node offers two execution modes. Choose based on your use case:
 
 - **How it works**: Code executes **once** regardless of input count
 - **Data access**: `$input.all()` or `items` array
-- **Best for**: Aggregation, filtering, batch processing, transformations, API calls with all data
+- **Best for**: logic that needs every item at once and passed the gate above
 - **Performance**: Faster for multiple items (single execution)
 
 ```javascript
-// Example: Calculate total from all items
-const allItems = $input.all();
-const total = allItems.reduce((sum, item) => sum + (item.json.amount || 0), 0);
-
-return [{
-  json: {
-    total,
-    count: allItems.length,
-    average: total / allItems.length
-  }
-}];
+// Example: running balance — each item depends on the ones before it,
+// which no native node expresses (Summarize gives one total per group, not a running one)
+let balance = 0;
+return $input.all().map(item => {
+  balance += item.json.amount || 0;
+  return { json: { ...item.json, balance } };
+});
 ```
 
 **When to use:**
-- ✅ Comparing items across the dataset
-- ✅ Calculating totals, averages, or statistics
-- ✅ Sorting or ranking items
-- ✅ Deduplication
-- ✅ Building aggregated reports
-- ✅ Combining data from multiple items
+- ✅ Each item depends on earlier items (running totals, sessionizing events, gap detection)
+- ✅ Multi-pass algorithms or recursion over nested data of unknown depth
+- ✅ Heavy transforms over thousands of items where one node beats a long chain (measured)
+
+Native first: totals, averages and counts → **Summarize**; sorting or ranking → **Sort + Limit**; deduplication →
+**Remove Duplicates**; items into one array → **Aggregate**; joining two lists → **Merge**.
 
 ### Run Once for Each Item
 
@@ -117,7 +140,11 @@ Mode choice is the single biggest performance lever in a Code node. Each *per-it
 | Expression in any node (IF / Set / etc.) | ~0.2 ms/item |
 | Code **Each Item** (a full sandbox per item) | ~0.6 ms/item — ~25–30× All Items |
 
-So `Run Once for Each Item` over 10k items is ~6 s of pure overhead vs ~0.2 s in `Run Once for All Items`. Use Each Item only when an item genuinely needs isolating (independent error handling, or a per-item API call you can't batch); otherwise loop *inside* one All Items node. Expression complexity itself is essentially free (~90% of the cost is the per-item context, not your code) and every node→node hop re-copies all items — so reduce the *number* of per-item boundaries, don't micro-optimize each one. Below a few hundred items none of this matters; reach for it on the hot path (large item counts, little I/O).
+So `Run Once for Each Item` over 10k items is ~6 s of pure overhead vs ~0.2 s in `Run Once for All Items`. Use Each Item only when an item genuinely needs isolating (independent error handling, or a per-item API call you can't batch); otherwise loop *inside* one All Items node. Expression complexity itself is essentially free (~90% of the cost is the per-item context, not your code) and every node→node hop re-copies all items — so reduce the *number* of per-item boundaries, don't micro-optimize each one.
+
+On top of the per-item cost, every Code node run pays a fixed hand-off to the task runner. In the default internal mode the runner stops after 15 s idle (`N8N_RUNNERS_AUTO_SHUTDOWN_TIMEOUT`), so a workflow that runs now and then pays a cold start of hundreds of milliseconds on most runs. Native transform nodes process all items in one in-process call and skip that hand-off.
+
+**What this means for node choice.** Most workflows are I/O-bound, and below a few hundred items none of these costs matter: choose by readability, which means native nodes first. Performance becomes the deciding argument only for heavy all-items work — thousands of items per run, transform work rather than I/O dominating, stated by the user or measured. Then one All Items Code node can beat a long chain of nodes, and the reason goes in its `Why Code:` note. These figures are the pack's one measured reference; the other skills point here instead of repeating them.
 
 **See**: [DATA_ACCESS.md](DATA_ACCESS.md) → "Mode Performance" for the corollaries, hop costs, and scale check.
 
@@ -242,15 +269,7 @@ return null;
 
 ## Common Patterns Overview
 
-The most useful Code node shapes from production workflows. One quick example — sum/aggregate across all items:
-
-```javascript
-const items = $input.all();
-const total = items.reduce((sum, item) => sum + (item.json.amount || 0), 0);
-return [{ json: { total, count: items.length, average: total / items.length } }];
-```
-
-The full library covers 10 patterns: multi-source aggregation, regex filtering, markdown/structured-text parsing, JSON comparison, CRM/form transformation, release processing, array transformation with computed fields, Slack Block Kit formatting, top-N ranking, and string-aggregation reporting — each with variations.
+The most useful Code node shapes from production workflows, for when Code passed the gate. Several of them have a native equivalent (totals → Summarize, top-N → Sort + Limit, JSON comparison → Compare Datasets, string aggregation → Aggregate or Summarize `concatenate`); each pattern in the library opens with its native alternative. The full library covers 10 patterns: multi-source aggregation, regex filtering, markdown/structured-text parsing, JSON comparison, CRM/form transformation, release processing, array transformation with computed fields, Slack Block Kit formatting, top-N ranking, and string-aggregation reporting — each with variations.
 
 **See**: [COMMON_PATTERNS.md](COMMON_PATTERNS.md) for the 10 detailed production patterns (and the Best Practices section: validate input, try-catch, filter-early, array methods over loops, console.log debugging).
 
@@ -321,23 +340,24 @@ Hard-won lessons from real deployments — summarized here, with code in [DATA_A
 
 ## When to Use Code Node
 
-> **Before reaching for a Code node, walk the transform gatekeeper** in the n8n Expression Syntax skill: expression → arrow-function IIFE inside an Edit Fields field → Code node, in that order. The first two paths cover most "transform this data" tasks at ~1–10ms each, versus the Code node's sandboxed ~500–1000ms — a ~100x gap on pure single-item shaping, with no functional difference. The Code node earns its place only for whole-dataset aggregation (`$input.all()`), allowlisted libraries, or async work. And before writing code for crypto (HMAC, hashing, signing) or XML/SOAP/RSS parsing, check for a **native node** — n8n has a Crypto node (`nodes-base.crypto`) and an XML node (`nodes-base.xml`) that cover those without any JavaScript. Dropping into Code for something a native node already does is one of the most common false positives.
+Code is the last rung, after the service's own node, a native node for the job, and a short expression inside that node.
+The gate at the top of this skill is the test; this is the closed list it checks against:
 
-Use Code node when:
-- ✅ Complex transformations requiring multiple steps
-- ✅ Custom calculations or business logic
-- ✅ Recursive operations
-- ✅ API response parsing with complex structure
-- ✅ Multi-step conditionals
-- ✅ Data aggregation across items
+| Code is right for | Example | Not Code |
+|---|---|---|
+| Loops or recursion no node expresses | flatten a tree of unknown depth; multi-pass matching | one level of nesting → Split Out |
+| State across runs | counters or cursors in `$getWorkflowStaticData` | "only new items" → Remove Duplicates across executions |
+| Parsing no node handles | fixed-width records, a custom log format | CSV / XLSX / PDF / XML / HTML → Extract From File, XML, HTML |
+| An allowlisted library | `require('some-lib')` the instance allows | hashing / HMAC / UUID → Crypto |
+| Heavy all-items work | thousands of items, transform-bound, stated or measured | a few hundred items → native nodes |
+| One short node replacing 4+ glue nodes | ~15 lines that would otherwise be a Set → Split Out → Set → Aggregate chain that only reshapes data | a chain with real routing or I/O in it |
 
-Consider other nodes when:
-- ❌ Simple field mapping → Use **Set** node
-- ❌ Basic filtering → Use **Filter** node
-- ❌ Simple conditionals → Use **IF** or **Switch** node
-- ❌ HTTP requests only → Use **HTTP Request** node
+Not on the list, so not Code: filtering (Filter), routing (IF / Switch), totals and counts (Summarize), top-N (Sort + Limit),
+dedupe (Remove Duplicates), joins (Merge), diffs (Compare Datasets), dates (Date & Time or a Luxon expression), API calls
+and paging (HTTP Request), crypto and XML (Crypto, XML).
 
-**Code node excels at**: Complex logic that would require chaining many simple nodes
+Every Code node that stays carries the note `Why Code: <native node considered> — <reason>` (set `notes`, and
+`notesInFlow: true` to show it on the canvas). The create/update hooks remind you when a Code node has no such note.
 
 ---
 
@@ -376,6 +396,7 @@ Consider other nodes when:
 
 Before deploying Code nodes, verify:
 
+- [ ] **Passed the gate** - No native node fits; `notes` starts with `Why Code:`
 - [ ] **Code is not empty** - Must have meaningful logic
 - [ ] **Return statement exists** - Returns items, not a primitive/`null`
 - [ ] **Canonical return format** - Each item: `{json: {...}}` (bare objects auto-wrap, but be explicit)

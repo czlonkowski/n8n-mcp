@@ -2,6 +2,10 @@
 
 Production-tested patterns for n8n Code nodes. These patterns are proven in real workflows.
 
+> **Native first.** Every pattern below opens with the native nodes that do the same job. Use the Code version only
+> when the job passed the gate in SKILL.md (no native node fits, and it is on the closed list), and give the node a
+> `Why Code:` note. The job-to-node table in `using-n8n-mcp-skills` lists the native nodes.
+
 ---
 
 ## Overview
@@ -23,6 +27,8 @@ This guide covers the 10 most useful Code node patterns for n8n workflows. Each 
 ---
 
 ## Pattern 1: Multi-Source Data Aggregation
+
+> **Native first:** Merge (`append`, or `combineByFields` on a shared key) joins sources; Edit Fields gives each source the same shape. Use this pattern when the sources' shapes differ too much for one Merge.
 
 **Use Case**: Combining data from multiple APIs, RSS feeds, webhooks, or databases
 
@@ -127,6 +133,8 @@ processedArticles = processedArticles.filter(article => {
 
 ## Pattern 2: Regex Filtering & Pattern Matching
 
+> **Native first:** a Filter or IF condition with the `regex` / `contains` string operator keeps or routes matching items. Use this pattern when you need to count or extract many matches per item.
+
 **Use Case**: Content analysis, keyword extraction, mention tracking, text parsing
 
 **When to use:**
@@ -229,6 +237,8 @@ const urls = text.match(urlPattern) || [];
 ---
 
 ## Pattern 3: Markdown Parsing & Structured Data Extraction
+
+> **Native first:** Markdown (to HTML) + HTML `extractHtmlContent` with CSS selectors, or Extract From File for CSV / XLSX / PDF. This pattern is for free-form text no node parses (a parsing exception).
 
 **Use Case**: Parsing formatted text, extracting structured fields, content transformation
 
@@ -347,6 +357,8 @@ if (frontmatterMatch) {
 ---
 
 ## Pattern 4: JSON Comparison & Validation
+
+> **Native first:** Compare Datasets (outputs: in A only / same / different / in B only) diffs two lists on a key. Use this pattern for a deep diff inside one pair of objects.
 
 **Use Case**: Workflow versioning, configuration validation, change detection, data integrity
 
@@ -485,6 +497,8 @@ function validateSchema(data, schema) {
 
 ## Pattern 5: CRM Data Transformation
 
+> **Native first:** Edit Fields with short expressions maps a form to a CRM shape, or the CRM node's own field slots do it directly. Use this pattern only when the mapping needs loops or several statements per field.
+
 **Use Case**: Lead enrichment, data normalization, API preparation, form data processing
 
 **When to use:**
@@ -601,6 +615,8 @@ function calculateLeadScore(data) {
 
 ## Pattern 6: Release Information Processing
 
+> **Native first:** the GitHub node fetches releases; Sort + Limit picks the latest; Edit Fields shapes them. Use this pattern for semver comparison or changelog parsing.
+
 **Use Case**: Version management, changelog parsing, release notes generation, GitHub API processing
 
 **When to use:**
@@ -699,6 +715,8 @@ if (match) {
 
 ## Pattern 7: Array Transformation with Context
 
+> **Native first:** this is usually Edit Fields — computed fields are short expressions (`{{ $json.price * $json.qty }}`), with Split Out / Aggregate around it for arrays. Code only if the fields need multi-statement logic.
+
 **Use Case**: Quick data transformation, field mapping, adding computed fields
 
 **When to use:**
@@ -771,6 +789,8 @@ const categorized = $input.all().map(item => ({
 ---
 
 ## Pattern 8: Slack Block Kit Formatting
+
+> **Native first:** the Slack node takes the blocks as an expression in its Blocks field (`={{ { "blocks": [...] } }}`, see NODE_FAMILY_GOTCHAS.md in n8n-node-configuration). Build blocks in Code only when their number depends on loops over data.
 
 **Use Case**: Chat notifications, rich message formatting, interactive messages
 
@@ -894,6 +914,8 @@ function truncate(text, maxLength = 3000) {
 
 ## Pattern 9: Top N Filtering & Ranking
 
+> **Native first:** Filter (threshold) → Sort (by score, descending) → Limit (N). Use this pattern when the score itself needs a multi-step calculation.
+
 **Use Case**: RAG pipelines, ranking algorithms, result filtering, leaderboards
 
 **When to use:**
@@ -962,6 +984,8 @@ const topPercentile = $input.all().filter(item => item.json.score >= percentile9
 ---
 
 ## Pattern 10: String Aggregation & Reporting
+
+> **Native first:** Summarize with `concatenate` (per group) or Aggregate, then one expression with `.join('\n')` in the message field. Use this pattern for multi-section reports with loops.
 
 **Use Case**: Report generation, log aggregation, content concatenation, summary creation
 

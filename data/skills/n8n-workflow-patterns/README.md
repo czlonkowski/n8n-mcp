@@ -192,7 +192,7 @@ Every pattern follows this checklist:
 - [ ] Create workflow with appropriate trigger
 - [ ] Add data source nodes
 - [ ] Configure authentication/credentials
-- [ ] Add transformation nodes (Set, Code, IF)
+- [ ] Add transformation nodes (native first: Filter, IF, Summarize, Merge…; Code only with a `Why Code:` note)
 - [ ] Add output/action nodes
 - [ ] Configure error handling
 
@@ -212,7 +212,7 @@ Every pattern follows this checklist:
 
 **Weather to Slack** (Template #2947):
 ```
-Schedule (daily 8 AM) → HTTP Request (weather) → Set → Slack
+Schedule (daily 8 AM) → HTTP Request (weather) → Slack (message built with expressions)
 ```
 
 **Webhook Processing**: 1,085 templates
@@ -248,4 +248,4 @@ Use `search_templates` to find examples for your use case!
 ---
 
 **Part of**: n8n-skills repository
-**Conceived by**: Romuald Członkowski - [www.aiadvisors.pl/en](https://www.aiadvisors.pl/en)
+**Conceived by**: Romuald Członkowski - [aiadvisors.pl/en](https://aiadvisors.pl/en)

@@ -84,7 +84,7 @@ The pattern is always the same: producer names a property, consumers point at th
 
 ## Reading binary in a Code node
 
-Most workflows never read the bytes — they pass binary straight through to a consumer. When you genuinely need the bytes (hashing, parsing, text extraction), use `getBinaryDataBuffer` in a Code node. Do **not** grab `$binary.<key>.data` and base64-decode it yourself; the helper handles n8n's storage modes (in-memory vs filesystem) for you.
+Most workflows never read the bytes — they pass binary straight through to a consumer. Hashing a file is the Crypto node (`binaryData: true`), and parsing or extracting text is Extract From File for every format it supports. When you genuinely need the bytes for a format no node handles, use `getBinaryDataBuffer` in a Code node. Do **not** grab `$binary.<key>.data` and base64-decode it yourself; the helper handles n8n's storage modes (in-memory vs filesystem) for you.
 
 ```javascript
 // Code node, "Run Once for Each Item"
@@ -107,7 +107,7 @@ return [{
 
 ## Writing binary in a Code node
 
-Build the slot yourself: base64 the bytes, then add a mime type and file name so consumers know what they're getting.
+Convert To File writes CSV, XLSX, JSON, HTML and text files from items without code. For anything else, build the slot yourself: base64 the bytes, then add a mime type and file name so consumers know what they're getting.
 
 ```javascript
 const text = 'Hello, world!';

@@ -49,8 +49,10 @@ Trigger → HTTP Request → [Transform] → [Action] → [Error Handler]
 
 **Typical flow**:
 ```
-HTTP Request → Code (parse) → Set (map fields) → Action
+Service node or HTTP Request → Split Out (when the body wraps an array) → Filter → Action
 ```
+
+Map fields in the action node's own slots; add an Edit Fields node only when several nodes read the same mapped values.
 
 ### 4. Action
 **Common actions**:
@@ -77,30 +79,13 @@ Error Trigger → Log Error → Notify Admin → Retry Logic (optional)
 **Example** (Fetch GitHub issues):
 ```
 1. Schedule (every hour)
-2. HTTP Request
-   - Method: GET
-   - URL: https://api.github.com/repos/owner/repo/issues
-   - Auth: Bearer Token
-   - Query: state=open
-3. Code (filter by labels)
-4. Set (map to database schema)
-5. Postgres (upsert issues)
+2. GitHub (Repository → Get Issues, Return All; filters: state = open, labels = bug)
+3. Postgres (upsert issues; map id, title, created_at in the node's column slots)
 ```
 
-**Response Handling**:
-```javascript
-// Code node - filter issues
-const issues = $input.all();
-return issues
-  .filter(item => item.json.labels.some(l => l.name === 'bug'))
-  .map(item => ({
-    json: {
-      id: item.json.id,
-      title: item.json.title,
-      created_at: item.json.created_at
-    }
-  }));
-```
+The service node pages, authenticates and filters by label itself. With HTTP Request instead (only when the GitHub
+node lacks the operation — note it as `Why HTTP:`), use the pagination option and a Filter node with the condition
+`{{ $json.labels.pluck('name').includes('bug') }}` is true.
 
 ### 2. API to API Integration
 **Flow**: Trigger → Fetch from API A → Transform → Send to API B
@@ -108,23 +93,24 @@ return issues
 **Example** (Jira to Slack):
 ```
 1. Schedule (every 15 minutes)
-2. HTTP Request (GET Jira tickets updated today)
-3. IF (check if tickets exist)
-4. Set (format for Slack)
-5. HTTP Request (POST to Slack webhook)
+2. Jira (Issue → Get Many, Return All; options.jql = `updated >= startOfDay()`)
+3. Slack (post the message; the text maps the issue fields with expressions)
 ```
+
+No IF is needed for "tickets exist": when Jira returns no items, the Slack node doesn't run.
 
 ### 3. Data Enrichment
 **Flow**: Trigger → Fetch base data → Call enrichment API → Combine → Store
 
 **Example** (Enrich contacts with company data):
 ```
-1. Postgres (SELECT new contacts)
-2. Code (extract company domains)
-3. HTTP Request (call Clearbit API for each domain)
-4. Set (combine contact + company data)
-5. Postgres (UPDATE contacts with enrichment)
+1. Postgres "Get new contacts" (SELECT new contacts)
+2. Clearbit (Company → Enrich; domain = `{{ $json.email.extractDomain() }}`)
+3. Postgres (UPDATE contacts; contact fields from `$('Get new contacts').item.json`, company fields from `$json`)
 ```
+
+The domain is one helper expression, and each enrichment pairs back to its contact through `$('Node').item`, so
+neither a Code nor a Set node is needed.
 
 ### 4. Monitoring & Alerting
 **Flow**: Schedule → Check API health → IF unhealthy → Alert
@@ -247,51 +233,22 @@ return issues
 
 ### Pagination
 
-#### Pattern 1: Offset-based
-```
-1. Set (initialize: page=1, has_more=true)
-2. HTTP Request (GET /api/items?page={{$json.page}})
-3. Code (check if more pages)
-4. IF (has_more === true)
-   └→ Set (increment page) → Loop to step 2
-```
+Use HTTP Request's built-in pagination option — not a Set → HTTP → Code → IF loop. It fetches every page in one node
+and returns the combined items. (A service node's "Return All" usually pages for you; prefer the service node.)
 
-**Code node** (check pagination):
-```javascript
-const items = $input.first().json;
-const currentPage = $json.page || 1;
+| API style | `paginationMode` | Next page | Stop when (`completeExpression`) |
+|---|---|---|---|
+| Page number / offset | `updateAParameterInEachRequest` | `qs` param `page` = `{{ $pageCount + 1 }}` (offset: `{{ $pageCount * 100 }}`) | `{{ !$response.body.has_more }}`, or `responseIsEmpty` |
+| Cursor in the body | `updateAParameterInEachRequest` | `qs` param `cursor` = `{{ $response.body.next_cursor }}` | `{{ !$response.body.next_cursor }}` |
+| Next URL in the body | `responseContainsNextURL` | `nextURL` = `{{ $response.body.next }}` | `{{ !$response.body.next }}` |
+| Link header | `responseContainsNextURL` | `nextURL` = `{{ $response.headers.link?.match(/<([^>]+)>;\s*rel="next"/)?.[1] }}` | `{{ !$response.headers.link?.includes('rel="next"') }}` |
 
-return [{
-  json: {
-    items: items.results,
-    page: currentPage + 1,
-    has_more: items.next !== null
-  }
-}];
-```
-
-#### Pattern 2: Cursor-based
-```
-1. HTTP Request (GET /api/items)
-2. Code (extract next_cursor)
-3. IF (next_cursor exists)
-   └→ Set (cursor={{$json.next_cursor}}) → Loop to step 1
-```
-
-#### Pattern 3: Link Header
-```javascript
-// Code node - parse Link header
-const linkHeader = $input.first().json.headers['link'];
-const hasNext = linkHeader && linkHeader.includes('rel="next"');
-
-return [{
-  json: {
-    items: $input.first().json.body,
-    has_next: hasNext,
-    next_url: hasNext ? parseNextUrl(linkHeader) : null
-  }
-}];
-```
+- **Always set `limitPagesFetched: true` and `maxRequests`.** Without a cap, a stop condition that never fires pages
+  forever.
+- A page whose body is an object (`{ "data": [...], "has_more": true }`) arrives as one item per page: add a Split Out on
+  `data`. An array body is split into items automatically.
+- Full JSON for each mode, the variables (`$pageCount`, `$response`, `$request`) and the traps are in
+  `n8n-node-configuration` → NATIVE_NODES.md → "HTTP Request pagination".
 
 ### Error Responses (400-599)
 
@@ -323,52 +280,33 @@ HTTP Request (continueOnFail: true)
 ## Rate Limiting
 
 ### Pattern 1: Wait Between Requests
+
+HTTP Request's batching option throttles without a loop: `options.batching.batch` with `batchSize: 1` and
+`batchInterval: 1000` (ms between batches). Use a loop only when several nodes per item must be throttled together:
+
 ```
-Split In Batches (1 item per batch)
+Loop Over Items (batch size = your limit)
   → HTTP Request
   → Wait (1 second)
-  → Loop
+  → back to Loop Over Items
 ```
 
-### Pattern 2: Exponential Backoff
-```javascript
-// Code node
-const maxRetries = 3;
-let retryCount = $json.retryCount || 0;
+### Pattern 2: Retries and Backoff
 
-if ($json.error && retryCount < maxRetries) {
-  const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
-
-  return [{
-    json: {
-      ...$json,
-      retryCount: retryCount + 1,
-      waitTime: delay
-    }
-  }];
-}
-```
+Start with the node settings: `retryOnFail: true`, `maxTries: 3`, `waitBetweenTries: 2000` retries with a fixed delay
+(see `n8n-error-handling`). When the API needs a growing delay, route the error output (`onError:
+"continueErrorOutput"`) to a Wait node whose amount is `{{ 2 ** $runIndex }}` seconds and back into the request, with
+an IF that stops after N runs (`{{ $runIndex < 4 }}`).
 
 ### Pattern 3: Respect Rate Limit Headers
-```javascript
-// Code node - check rate limit
-const headers = $input.first().json.headers;
-const remaining = parseInt(headers['x-ratelimit-remaining'] || '999');
-const resetTime = parseInt(headers['x-ratelimit-reset'] || '0');
 
-if (remaining < 10) {
-  const now = Math.floor(Date.now() / 1000);
-  const waitSeconds = resetTime - now;
+Turn on the HTTP Request's "Include Response Headers and Status" response option, then:
 
-  return [{
-    json: {
-      shouldWait: true,
-      waitSeconds: Math.max(waitSeconds, 0)
-    }
-  }];
-}
-
-return [{ json: { shouldWait: false } }];
+```
+HTTP Request (full response)
+  → IF  {{ Number($json.headers['x-ratelimit-remaining'] ?? 999) < 10 }}
+      ├─ true  → Wait (until {{ DateTime.fromSeconds(Number($json.headers['x-ratelimit-reset'])).toISO() }}) → next request
+      └─ false → next request
 ```
 
 ---
@@ -471,12 +409,15 @@ HTTP Request → Process Data
 **Error Workflow**:
 ```
 Error Trigger
-  → Set (extract error details)
-  → Slack (alert team)
-  → Database (log error for analysis)
+  ├─→ Slack (alert team; the message reads the trigger payload with expressions)
+  └─→ Database (log error for analysis; same fields)
 ```
 
 ### Pattern 4: Circuit Breaker
+
+A failure count that survives between executions is state across runs, one of the closed-list Code cases. Keep the
+counter in `$getWorkflowStaticData('global')` and note the node `Why Code: state across runs (failure counter)`.
+
 ```javascript
 // Code node - circuit breaker logic
 const failures = $json.recentFailures || 0;
@@ -494,41 +435,23 @@ return [{ json: { canProceed: true } }];
 ## Response Transformation
 
 ### Extract Nested Data
-```javascript
-// Code node
-const response = $input.first().json;
 
-return response.data.items.map(item => ({
-  json: {
-    id: item.id,
-    name: item.attributes.name,
-    email: item.attributes.contact.email
-  }
-}));
-```
+Split Out on the array (`fieldToSplitOut: "data.items"`), then read the nested fields where they're used
+(`{{ $json.attributes.contact.email }}`), or in one Edit Fields node when several nodes read them. For one value in one
+field, `$jmespath()` does it inline (see `n8n-expression-syntax`).
 
 ### Flatten Arrays
-```javascript
-// Code node - flatten nested array
-const items = $input.all();
-const flattened = items.flatMap(item =>
-  item.json.results.map(result => ({
-    json: {
-      parent_id: item.json.id,
-      ...result
-    }
-  }))
-);
 
-return flattened;
-```
+Split Out keeps parent fields when you ask it to: `fieldToSplitOut: "results"`, `include: "selectedOtherFields"`,
+`fieldsToInclude: "id"` gives one item per result with the parent's `id` alongside. Arrays nested more than one level
+deep take one Split Out per level; arbitrary depth (a tree) is a recursion case for Code.
 
 ### Combine Multiple API Responses
 ```
 HTTP Request 1 (users)
-  → Set (store users)
-  → HTTP Request 2 (orders for each user)
-  → Merge (combine users + orders)
+  ├─→ HTTP Request 2 (orders for each user)
+  └─→ Merge input 1
+HTTP Request 2 → Merge input 2 (Combine by Fields: users.id = orders.user_id, joinMode enrichInput1)
 ```
 
 ---
@@ -571,13 +494,9 @@ For file downloads:
 ## Performance Optimization
 
 ### 1. Parallel Requests
-Use **Split In Batches** with multiple items:
-```
-Set (create array of IDs)
-  → Split In Batches (10 items per batch)
-  → HTTP Request (processes all 10 in parallel)
-  → Loop
-```
+Each input item becomes one request, and HTTP Request sends a batch of them together. Cap the concurrency with the
+batching option (`options.batching.batch.batchSize`, plus `batchInterval` in ms between batches) — no Split In Batches
+loop needed. With one item holding an array of IDs, put a Split Out on the array first.
 
 ### 2. Caching
 ```

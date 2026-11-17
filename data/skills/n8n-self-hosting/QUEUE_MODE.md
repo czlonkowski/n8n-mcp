@@ -106,6 +106,11 @@ execution. See `CREDENTIAL_OVERWRITES.md`.
   edit `deploy.replicas` and re-run `docker compose up -d`, or override at launch with
   `docker compose up -d --scale n8n-worker=N` — a `--scale` value supersedes `replicas` (passing
   both at once just prints a harmless conflict warning).
+- **With external task runners (required for Python Code nodes) replicas stop working.** Each
+  worker needs its own `n8nio/runners` sidecar pointed at *that* worker's broker. A single runner
+  service behind the `n8n-worker` DNS name serves one random replica, and Code nodes on the other
+  workers time out. Define explicit `n8n-worker-N` + `task-runners-N` pairs and scale by adding
+  pairs. See `TASK_RUNNERS.md`.
 - Rough capacity ≈ `replicas × concurrency` simultaneous executions, bounded by CPU/RAM and
   `DB_POSTGRESDB_POOL_SIZE` (default 2 per process — raise it if many workers exhaust the pool).
 - Optionally cap load with `N8N_CONCURRENCY_PRODUCTION_LIMIT` (default `-1` = off). Caveats:

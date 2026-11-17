@@ -61,9 +61,9 @@ The error Respond node, in JSON:
   "name": "Respond Error",
   "parameters": {
     "respondWith": "json",
-    "responseCode": 502,
-    "responseBody": "={{ JSON.stringify({ error: 'upstream_error', message: 'External service failed' }) }}",
+    "responseBody": "={{ { error: 'upstream_error', message: 'External service failed' } }}",
     "options": {
+      "responseCode": 502,
       "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] }
     }
   }
@@ -96,34 +96,38 @@ That's not over-engineering — it's the difference between the caller getting a
 
 ---
 
-## Input validation: the Set-node schema validator
+## Input validation: conditions on the canvas
 
-For structured input validation, don't hand-roll an IF chain per field. Run the whole check as an **IIFE inside a single Set node**, branch on its result with one IF, and respond. One node does the work, and it's far faster than a recursive validator running in a Code node + sub-workflow (the sub-workflow invocation dominates that cost).
-
-The validator node assigns one object field, `result`, computed by the expression below. The expression is **schema-specific** — edit the `REQUIRED_SCHEMA` constant and the per-field checks for your endpoint. The *output keys* are a contract the Respond node consumes — don't rename them.
+Put the checks in an **IF** node: one condition per rule, combinator `and`. True → your logic; false → a 400 Respond.
+Every rule is visible on the canvas, and adding one is adding a condition.
 
 ```json
 {
-  "type": "n8n-nodes-base.set",
-  "name": "Validate Schema",
+  "type": "n8n-nodes-base.if",
+  "typeVersion": 2.3,
+  "name": "Input valid?",
   "parameters": {
-    "mode": "manual",
-    "assignments": {
-      "assignments": [
-        {
-          "id": "a1",
-          "name": "result",
-          "type": "object",
-          "value": "={{ (() => { const body = $json.body || {}; const errors = []; const REQUIRED_SCHEMA = { type: 'object', properties: { name: { type: 'string', minLength: 1, description: 'Customer full name' }, email: { type: 'string', pattern: '^\\\\S+@\\\\S+\\\\.\\\\S+$', description: 'Contact email address' }, plan: { type: 'string', enum: ['starter','pro','enterprise'], description: 'Subscription plan' }, seat_count: { type: 'integer', minimum: 1, maximum: 500, description: 'Number of licensed seats' } }, required: ['name','email','plan','seat_count'], additionalProperties: false }; if (!('name' in body)) errors.push({ p: 'name', m: 'Missing required field \"name\"', d: 'Customer full name' }); else if (typeof body.name !== 'string') errors.push({ p: 'name', m: 'Expected type \"string\"', d: 'Customer full name' }); if (!('email' in body)) errors.push({ p: 'email', m: 'Missing required field \"email\"', d: 'Contact email address' }); else if (!/^\\S+@\\S+\\.\\S+$/.test(body.email)) errors.push({ p: 'email', m: '\"' + body.email + '\" is not valid', d: 'Contact email address' }); if (!('plan' in body)) errors.push({ p: 'plan', m: 'Missing required field \"plan\"', d: 'Subscription plan' }); else if (['starter','pro','enterprise'].indexOf(body.plan) === -1) errors.push({ p: 'plan', m: '\"' + body.plan + '\" is not allowed. Must be one of: starter, pro, enterprise', d: 'Subscription plan' }); if (!('seat_count' in body)) errors.push({ p: 'seat_count', m: 'Missing required field \"seat_count\"', d: 'Number of licensed seats' }); else { const v = body.seat_count; if (typeof v !== 'number' || !Number.isFinite(v) || Math.floor(v) !== v) errors.push({ p: 'seat_count', m: 'Expected type \"integer\"', d: 'Number of licensed seats' }); else if (v < 1 || v > 500) errors.push({ p: 'seat_count', m: 'Must be between 1 and 500', d: 'Number of licensed seats' }); } if (errors.length === 0) return { valid: true, validationError: null }; const lines = errors.map(e => '• ' + e.p + ': ' + e.m + (e.d ? ' - ' + e.d : '')); const details = {}; errors.forEach(e => { if (!(e.p in details)) details[e.p] = e.m; }); return { valid: false, validationError: 'Validation failed (' + errors.length + ' issue' + (errors.length > 1 ? 's' : '') + '):\\n' + lines.join('\\n'), details: details, requiredSchema: REQUIRED_SCHEMA }; })() }}"
-        }
-      ]
+    "conditions": {
+      "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+      "conditions": [
+        { "leftValue": "={{ typeof $json.body.name === 'string' && $json.body.name.length > 0 }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } },
+        { "leftValue": "={{ /^\\S+@\\S+\\.\\S+$/.test($json.body.email ?? '') }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } },
+        { "leftValue": "={{ ['starter', 'pro', 'enterprise'].includes($json.body.plan) }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } },
+        { "leftValue": "={{ Number.isInteger($json.body.seat_count) && $json.body.seat_count >= 1 && $json.body.seat_count <= 500 }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+      ],
+      "combinator": "and"
     },
     "options": {}
   }
 }
 ```
 
-Then an IF on `={{ $json.result.valid }}` (boolean → true) routes to your business logic (200) on the true branch, and to a 400 Respond on the false branch:
+Write each rule as a boolean expression tested with `is true`, not as a typed comparison (`number` ≥ 1). The input is
+untrusted: with strict type validation, a typed comparison on a value of the wrong type (`"seat_count": "five"`) makes
+the node throw instead of returning false, and the caller gets a 500 instead of a 400.
+
+The false branch responds with a static body that echoes the expected schema, so the caller (or an LLM driving the
+call) can fix the request:
 
 ```json
 {
@@ -131,64 +135,153 @@ Then an IF on `={{ $json.result.valid }}` (boolean → true) routes to your busi
   "name": "Respond 400",
   "parameters": {
     "respondWith": "json",
-    "responseCode": 400,
-    "responseBody": "={{ JSON.stringify({ error: 'validation_error', message: $json.result.validationError, details: $json.result.details, request_schema: $json.result.requiredSchema }) }}"
+    "options": { "responseCode": 400 },
+    "responseBody": "={{ { error: 'validation_error', message: 'The request body does not match request_schema.', request_schema: { type: 'object', additionalProperties: false, required: ['name', 'email', 'plan', 'seat_count'], properties: { name: { type: 'string', minLength: 1 }, email: { type: 'string', format: 'email' }, plan: { type: 'string', enum: ['starter', 'pro', 'enterprise'] }, seat_count: { type: 'integer', minimum: 1, maximum: 500 } } } } }}"
   }
 }
 ```
 
-### The procedure for adapting it
+The status code lives in `options.responseCode`; a top-level `responseCode` is ignored and the node returns 200. Pass the
+body as an object; a string body is parsed as JSON first, so `JSON.stringify(...)` only adds a step (see
+**n8n-node-configuration** NODE_FAMILY_GOTCHAS.md).
 
-1. **Lift the three-node shape** (Webhook → Validate Schema → IF → success/400 Respond) into your endpoint. Don't reinvent the graph.
-2. **Edit `REQUIRED_SCHEMA` and the per-field checks** for your input. The pattern per field is mechanical: presence check → type check → constraint check → `errors.push(...)`.
-3. **Leave the output keys alone.** The IIFE returns `{ valid, validationError, details, requiredSchema }` and the Respond node reads exactly those names. Rename one and the response body breaks.
+### Exception: per-field messages (a Code node)
 
-The output contract:
+When the caller needs to know **which** field failed and why, the IF can't say it. Replace the IF with one Code node that
+loops over a schema list — the loop is the closed-list reason — and branch on its result with an IF on
+`={{ $json.valid }}`. Set the node's note: `Why Code: IF considered — per-field messages need a loop over the schema`.
+
+```javascript
+// Run Once for All Items. Edit FIELDS for your endpoint; keep the output keys.
+const body = $input.first().json.body ?? {};
+const FIELDS = [
+  { name: 'name', type: 'string', required: true, minLength: 1, description: 'Customer full name' },
+  { name: 'email', type: 'string', required: true, pattern: '^\\S+@\\S+\\.\\S+$', description: 'Contact email address' },
+  { name: 'plan', type: 'string', required: true, enum: ['starter', 'pro', 'enterprise'], description: 'Subscription plan' },
+  { name: 'seat_count', type: 'integer', required: true, minimum: 1, maximum: 500, description: 'Number of licensed seats' },
+];
+const details = {};
+for (const f of FIELDS) {
+  const v = body[f.name];
+  if (v === undefined) { if (f.required) details[f.name] = `Missing required field "${f.name}"`; continue; }
+  const typeOk = f.type === 'integer' ? Number.isInteger(v) : typeof v === f.type;
+  if (!typeOk) details[f.name] = `Expected type "${f.type}"`;
+  else if (f.minLength !== undefined && v.length < f.minLength) details[f.name] = `Must be at least ${f.minLength} character(s)`;
+  else if (f.pattern && !new RegExp(f.pattern).test(v)) details[f.name] = `"${v}" is not valid`;
+  else if (f.enum && !f.enum.includes(v)) details[f.name] = `"${v}" is not allowed. Must be one of: ${f.enum.join(', ')}`;
+  else if ((f.minimum !== undefined && v < f.minimum) || (f.maximum !== undefined && v > f.maximum)) details[f.name] = `Must be between ${f.minimum} and ${f.maximum}`;
+}
+for (const key of Object.keys(body)) if (!FIELDS.some(f => f.name === key)) details[key] = 'Unknown field';
+
+const requiredSchema = {
+  type: 'object', additionalProperties: false,
+  required: FIELDS.filter(f => f.required).map(f => f.name),
+  properties: Object.fromEntries(FIELDS.map(({ name, required, ...rule }) => [name, rule])),
+};
+const issues = Object.entries(details).map(([field, msg]) => `• ${field}: ${msg}`);
+return [{ json: issues.length === 0
+  ? { valid: true, validationError: null }
+  : { valid: false, validationError: `Validation failed (${issues.length} issue${issues.length > 1 ? 's' : ''}):\n${issues.join('\n')}`, details, requiredSchema } }];
+```
+
+The 400 Respond reads the result:
+
+```
+={{ { error: 'validation_error', message: $json.validationError, details: $json.details, request_schema: $json.requiredSchema } }}
+```
+
+The output contract (the Respond depends on these key names):
 
 - Valid: `{ valid: true, validationError: null }`
 - Invalid: `{ valid: false, validationError: <summary string>, details: { <field>: <message> }, requiredSchema: <schema echoed back> }`
 
-Echoing the schema back lets the caller — or an LLM driving the call — self-correct.
+`FIELDS` is the one place to edit: the checks and the echoed schema are built from it, so they can't drift apart.
+Unknown fields are reported, which is what `additionalProperties: false` in the echoed schema promises.
 
 ### Constraint cookbook
 
-| Need | Inline check |
-|---|---|
-| Required field present | `if (!("name" in body)) errors.push(...)` |
-| Type check | `else if (typeof body.name !== "string") errors.push(...)` |
-| String length / regex | `body.name.length < N`, `/regex/.test(body.email)` |
-| Number range | `body.seat_count < min`, `> max` |
-| Integer | `Math.floor(v) !== v` (also reject non-numbers) |
-| Enum | `["a","b","c"].indexOf(body.plan) === -1` |
-| Array | `Array.isArray(body.tags)`, `body.tags.length < N` |
-| Conditional | nest inside `if (body.type === "X") { ... }` |
+| Need | IF rule (boolean expression) | `FIELDS` entry (Code exception) |
+|---|---|---|
+| Required, non-empty string | `typeof $json.body.name === 'string' && $json.body.name.length > 0` | `type: 'string', required: true, minLength: 1` |
+| Pattern | `/^\S+@\S+\.\S+$/.test($json.body.email ?? '')` | `pattern: '^\\S+@\\S+\\.\\S+$'` |
+| Enum | `['a', 'b'].includes($json.body.plan)` | `enum: ['a', 'b']` |
+| Integer in range | `Number.isInteger($json.body.n) && $json.body.n >= 1 && $json.body.n <= 500` | `type: 'integer', minimum: 1, maximum: 500` |
+| Array with items | `Array.isArray($json.body.tags) && $json.body.tags.length > 0` | add an `array` branch to the type check |
+| Conditional rule | a second IF after the first, or `$json.body.type !== 'X' \|\| <rule>` | a `when` key the loop checks |
 
-### The escaping gotcha (regex backslashes)
+### Escaping in workflow JSON
 
-Inside a JSON `responseBody`/`value` string, a regex like `\S` in the `REQUIRED_SCHEMA` literal needs **four** backslashes (`^\\\\S+...`) because it survives two layers of escaping — JSON string → JS string. The regex literal *executed* inside the IIFE (`/^\\S+@\\S+\\.\\S+$/`) needs only two per `\S`. If your email validation silently never matches, this is why.
+In the IF rules the regex is a JavaScript literal inside the expression: `/^\S+@\S+\.\S+$/`. In the Code node it is a
+string passed to `new RegExp`, so each backslash is written twice (`'^\\S+@\\S+\\.\\S+$'`). When either lands in workflow
+JSON (an expression string or `jsCode`), every backslash doubles once more. If an email check never matches, count the
+backslashes.
 
 ---
 
-## 5xx: differentiate the body, but keep it one responder
+## 5xx: route by cause, one static Respond per status
 
-A single error responder for all 5xx is fine. Differentiate the *body* (and code) by inspecting which failure happened, with an expression instead of a Switch:
+Error outputs from several fallible nodes can fan in to one **Switch** that classifies the failure. Each output goes to a
+Respond with a fixed code and a fixed body; the fallback output catches everything else as 500. Every status is visible
+on the canvas, and adding a case is adding a rule.
 
-```javascript
-// responseBody on one Respond node:
-{{ (() => {
-    const err = $json.error ?? {};
-    const msg = err.message ?? '';
-    if (/timeout/i.test(msg))     return JSON.stringify({ error: 'upstream_timeout',   message: 'External service did not respond in time' });
-    if (/rate limit/i.test(msg))  return JSON.stringify({ error: 'service_unavailable', message: 'Upstream rate limit hit' });
-    return JSON.stringify({ error: 'internal_error', message: 'An internal error occurred' });
-})() }}
-
-// responseCode on the same node:
-{{ /timeout/i.test($json.error?.message ?? '') ? 504
-   : (/rate limit/i.test($json.error?.message ?? '') ? 503 : 500) }}
+```
+error outputs (main[1]) ─→ Switch "Classify error"
+                             ├─ message contains "timeout"    → Respond 504 upstream_timeout
+                             ├─ message contains "rate limit" → Respond 503 service_unavailable
+                             └─ fallback (extra output)       → Respond 500 internal_error
 ```
 
-Reach for Switch + multiple Respond nodes only when the responses diverge *structurally* (different headers, redirect, different body shape). Same shape, different number = one expression-driven Respond.
+```json
+{
+  "type": "n8n-nodes-base.switch",
+  "typeVersion": 3.4,
+  "name": "Classify error",
+  "parameters": {
+    "mode": "rules",
+    "rules": {
+      "values": [
+        {
+          "conditions": {
+            "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict", "version": 3 },
+            "conditions": [ { "leftValue": "={{ $json.error?.message ?? '' }}", "rightValue": "timeout", "operator": { "type": "string", "operation": "contains" } } ],
+            "combinator": "and"
+          },
+          "renameOutput": true,
+          "outputKey": "upstream_timeout"
+        },
+        {
+          "conditions": {
+            "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict", "version": 3 },
+            "conditions": [ { "leftValue": "={{ $json.error?.message ?? '' }}", "rightValue": "rate limit", "operator": { "type": "string", "operation": "contains" } } ],
+            "combinator": "and"
+          },
+          "renameOutput": true,
+          "outputKey": "service_unavailable"
+        }
+      ]
+    },
+    "options": { "fallbackOutput": "extra", "renameFallbackOutput": "internal_error" }
+  }
+}
+```
+
+Each Respond is static, for example:
+
+```json
+{
+  "type": "n8n-nodes-base.respondToWebhook",
+  "name": "Respond 504",
+  "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ { error: 'upstream_timeout', message: 'External service did not respond in time' } }}",
+    "options": { "responseCode": 504 }
+  }
+}
+```
+
+- Without `fallbackOutput: "extra"`, an error no rule matches is dropped and the caller waits until it times out.
+- A single Respond with a computed code is fine for exactly two outcomes, as one short ternary in its Response Code field
+  (`options.responseCode` = `={{ $json.error?.message?.includes('timeout') ? 504 : 500 }}`). From three outcomes on, use the Switch.
 
 ---
 
@@ -212,8 +305,8 @@ Instead: log the full error privately, return a sanitized message.
 
 ```json
 // Respond Error keeps the body clean:
-{ "responseCode": 502,
-  "responseBody": "={{ JSON.stringify({ error: 'upstream_error', message: 'External service failed' }) }}" }
+{ "responseBody": "={{ { error: 'upstream_error', message: 'External service failed' } }}",
+  "options": { "responseCode": 502 } }
 ```
 
 The caller sees a clean message; the detail stays internal. Full do-not-leak list in **RESPONSE_SHAPES.md**.

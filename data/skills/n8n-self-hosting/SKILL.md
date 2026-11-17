@@ -1,6 +1,6 @@
 ---
 name: n8n-self-hosting
-description: Deploy a production self-hosted n8n end-to-end to a fresh Linux VM over SSH, using Docker Compose behind a Caddy reverse proxy with automatic HTTPS. Use whenever the user wants to self-host, install, set up, provision, or deploy n8n on their own server/VPS/box (Hetzner, DigitalOcean, AWS EC2, bare metal, etc.) — in either single/regular mode or queue mode with workers — or to update, back up, restore, or harden such an instance. This is for SELF-HOSTED n8n (Docker), not n8n Cloud and not building workflows. The skill makes the agent ask single-vs-queue first, collect the domain/SSH/timezone inputs, generate fresh secrets on the box, and bring the stack up with TLS. Trigger on "deploy n8n", "self-host n8n", "install n8n on my server", "n8n docker compose", "n8n queue mode / workers / scaling", "n8n reverse proxy / SSL", "back up / update my n8n", or "we don't want to give every user the OAuth client secret" / "enable the Sign in with Google button" (credential overwrites).
+description: Deploy a production self-hosted n8n end-to-end to a fresh Linux VM over SSH, using Docker Compose behind a Caddy reverse proxy with automatic HTTPS. Use whenever the user wants to self-host, install, provision, or deploy n8n on their own server/VPS (Hetzner, DigitalOcean, AWS EC2, bare metal) — single/regular mode or queue mode with workers — or to update, back up, restore, or harden such an instance, or make Python Code nodes run on it (task runners). For SELF-HOSTED n8n (Docker), not n8n Cloud and not building workflows. The skill makes the agent ask single-vs-queue first, collect domain/SSH/timezone inputs, generate fresh secrets on the box, and bring the stack up with TLS. Trigger on "deploy n8n", "self-host n8n", "n8n docker compose", "n8n queue mode / workers", "n8n reverse proxy / SSL", "back up / update my n8n", "Python runner unavailable" / "n8nio/runners sidecar", or "we don't want to give every user the OAuth client secret" / "enable Sign in with Google" (credential overwrites).
 ---
 
 # Deploying self-hosted n8n
@@ -64,6 +64,11 @@ A misstep here leaks client credentials. Be diligent:
   unless listed in `N8N_ENABLED_MODULES`. Ask only if the user brings one up; if they do, read
   the modules section of `QUEUE_MODE.md` before enabling it, because in queue mode it has to
   reach the workers as well.
+- **Python Code nodes / who edits workflows** — ask *"Will workflows use Python Code nodes, or
+  will anyone besides you edit workflows?"* A yes to either means task runners in **external
+  mode**: a `n8nio/runners` sidecar (one per worker in queue mode). The stock `n8nio/n8n` image has
+  no Python 3, so in the default internal mode every Python Code node fails with `Python runner
+  unavailable: Python 3 is missing from this system`. Read `TASK_RUNNERS.md` before step 3.
 
 ## The deploy flow
 
@@ -99,6 +104,9 @@ detail; `SECURITY.md` covers secret generation and hardening; `DAY2.md` covers u
   - `Caddyfile` → `<DATA_FOLDER>/caddy_config/Caddyfile`
   - **queue only:** `init-data.sh` → `<DATA_FOLDER>/init-data.sh`, then `chmod +x` it
   - the matching `.env.*.example` → `<DATA_FOLDER>/.env`
+- **External task runners (Python):** add the runner env vars and the `task-runners` sidecar to
+  the compose now (`TASK_RUNNERS.md` has the snippet for each mode). Generate
+  `N8N_RUNNERS_AUTH_TOKEN` in step 4 with the other secrets.
 
 ### 4. Fill `.env` + generate secrets
 - Set `DATA_FOLDER`, `DOMAIN_NAME`, `SUBDOMAIN`, `SSL_EMAIL`, `GENERIC_TIMEZONE`.
@@ -132,6 +140,9 @@ detail; `SECURITY.md` covers secret generation and hardening; `DAY2.md` covers u
   Only the public-URL/proxy vars should differ. Anything else means a behavioural setting reached
   the main but not the workers — and workers are what execute workflows, so it fails at runtime
   in one node rather than at boot. `QUEUE_MODE.md` explains the rule.
+- **External task runners:** `docker compose logs n8n | grep 'Registered runner'` must show both
+  `launcher-javascript` and `launcher-python` (queue: check every worker). Then smoke-test a
+  Python Code node (`TASK_RUNNERS.md` → Verify).
 - Open `https://<fqdn>` → the **owner setup** screen. **Whoever completes that signup form first
   claims the instance** — an exposed un-owned instance is a race, so create the owner account
   immediately, before sharing the URL. Enable 2FA. (Automated deploys can pre-provision the
@@ -153,6 +164,11 @@ detail; `SECURITY.md` covers secret generation and hardening; `DAY2.md` covers u
   binary-data and encryption settings belong in the shared `x-n8n-env` anchor so workers get
   them too; only the public-URL/proxy vars are main-only. See `QUEUE_MODE.md`.
 - **Don't use `:latest` blindly.** Pin `N8N_IMAGE_TAG`; update deliberately (`DAY2.md`).
+- **Don't promise Python Code nodes on the stock image in internal mode.** They need the
+  `n8nio/runners` sidecar, on exactly the n8n version, with imports allowlisted in the launcher
+  config. By default even `import json` is rejected. See `TASK_RUNNERS.md`.
+- **Don't `--scale` queue workers once runners are external.** A sidecar serves exactly one
+  worker. Add worker + runner pairs instead (`TASK_RUNNERS.md`).
 
 ## Reference files
 
@@ -162,6 +178,7 @@ detail; `SECURITY.md` covers secret generation and hardening; `DAY2.md` covers u
 - **`CREDENTIAL_OVERWRITES.md`** — managed OAuth: register one OAuth app instance-wide so users
   never see a client ID/secret ("Sign in with Google" on self-hosted). The endpoint-vs-env choice,
   the **mandatory** endpoint auth token, parent-type inheritance, persistence and worker reload.
+- **`TASK_RUNNERS.md`** — task runners in external mode: why Python Code nodes need the `n8nio/runners` sidecar, the compose snippet for single mode and the one-sidecar-per-worker pattern for queue mode, allowlisting Python/JS modules via `/etc/n8n-task-runners.json`, the builtin deny list, verification, failure signatures, and upgrading n8n and the runners together.
 - **`DAY2.md`** — changing a setting (env var) safely, updating the image, backing up (encryption key + volume + Postgres), and restoring.
 - **`assets/`** — the templates: `docker-compose.single.yml`, `docker-compose.queue.yml`, `Caddyfile`, `.env.single.example`, `.env.queue.example`, `init-data.sh`.
 

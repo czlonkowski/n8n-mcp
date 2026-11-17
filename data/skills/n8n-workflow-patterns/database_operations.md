@@ -36,9 +36,11 @@ Trigger → [Query/Read] → [Transform] → [Write/Update] → [Verify/Log]
 **Purpose**: Map between different database schemas or formats
 
 **Typical nodes**:
-- **Set** - Field mapping
-- **Code** - Complex transformations
-- **Merge** - Combine data from multiple sources
+- **None** - Map fields in the write node's own column slots
+- **Edit Fields (Set)** - A named step when several nodes read the mapped values
+- **Merge / Compare Datasets** - Combine sources, diff them for a sync
+- **Summarize / Remove Duplicates** - Totals, dedupe
+- **Code** - Only the closed list (see `n8n-code-javascript`)
 
 ### 4. Database Write Nodes
 **Operations**:
@@ -65,13 +67,14 @@ Trigger → [Query/Read] → [Transform] → [Write/Update] → [Verify/Log]
 **Example** (Postgres to MySQL sync):
 ```
 1. Schedule (every 15 minutes)
-2. Postgres (SELECT * FROM users WHERE updated_at > {{$json.last_sync}})
-3. IF (check if records exist)
-4. Set (map Postgres schema to MySQL schema)
-5. MySQL (INSERT or UPDATE users)
-6. Postgres (UPDATE sync_log SET last_sync = NOW())
-7. Slack (notify: "Synced X users")
+2. Postgres "Get changed users" (SELECT * FROM users WHERE updated_at > $1; queryReplacement = {{ $json.last_sync }})
+3. MySQL (INSERT or UPDATE users; map columns in the node's column slots)
+4. Postgres (UPDATE sync_log SET last_sync = NOW(); executeOnce: true)
+5. Slack (notify: "Synced {{ $('Get changed users').all().length }} users"; executeOnce: true)
 ```
+
+No IF for "records exist": with no items, the downstream nodes don't run.
+
 
 **Incremental sync query**:
 ```sql
@@ -101,9 +104,8 @@ LIMIT 1000
    ├─ Postgres (SELECT orders)
    ├─ MySQL (SELECT customers)
    └─ MongoDB (SELECT products)
-3. Merge (combine all data)
-4. Code (transform to warehouse schema)
-5. Postgres (warehouse - INSERT into fact_sales)
+3. Merge (combine by fields: orders.customer_id = customers.id, then a second Merge for products; or one SQL-mode Merge with numberInputs 3)
+4. Postgres (warehouse - INSERT into fact_sales; columns mapped in the node)
 6. Email (send summary report)
 ```
 
@@ -127,8 +129,8 @@ LIMIT 1000
 ```
 1. Schedule (monthly)
 2. Postgres (SELECT * FROM orders WHERE created_at < NOW() - INTERVAL '2 years')
-3. Code (convert to JSON)
-4. Write File (save to archive.json)
+3. Convert To File (operation toJson)
+4. Read/Write Files from Disk (save to archive.json)
 5. Google Drive (upload archive)
 6. Postgres (DELETE FROM orders WHERE created_at < NOW() - INTERVAL '2 years')
 ```
@@ -330,7 +332,7 @@ Set (initialize: last_id=0)
   → Postgres (SELECT * FROM table WHERE id > {{$json.last_id}} ORDER BY id LIMIT 1000)
   → IF (records returned)
     ├─ Process records
-    ├─ Code (get max id from batch)
+    ├─ Summarize (max of id) → the next query's last_id
     └─ Loop back
   └─ [No records] → End
 ```
@@ -399,69 +401,20 @@ Error Trigger:
 
 ## Data Transformation
 
-### Schema Mapping
-```javascript
-// Code node - map schemas
-const sourceData = $input.all();
+### Schema Mapping, type conversion, aggregation
 
-return sourceData.map(item => ({
-  json: {
-    // Source → Target mapping
-    user_id: item.json.id,
-    full_name: `${item.json.first_name} ${item.json.last_name}`,
-    email_address: item.json.email,
-    registration_date: new Date(item.json.created_at).toISOString(),
-    // Computed fields
-    is_premium: item.json.plan_type === 'pro',
-    // Default values
-    status: item.json.status || 'active'
-  }
-}));
-```
+These are native jobs:
 
-### Data Type Conversions
-```javascript
-// Code node - convert data types
-return $input.all().map(item => ({
-  json: {
-    // String to number
-    user_id: parseInt(item.json.user_id),
-    // String to date
-    created_at: new Date(item.json.created_at),
-    // Number to boolean
-    is_active: item.json.active === 1,
-    // JSON string to object
-    metadata: JSON.parse(item.json.metadata || '{}'),
-    // Null handling
-    email: item.json.email || null
-  }
-}));
-```
+| Job | Native way |
+|---|---|
+| Rename / map fields | the write node's column slots, each a short expression (`{{ $json.first_name + ' ' + $json.last_name }}`) |
+| Type conversion | in the same expression: `{{ $json.user_id.toNumber() }}`, `{{ $json.created_at.toDateTime().toISO() }}`, `{{ $json.metadata.parseJson() }}`, `{{ $json.active === 1 }}` |
+| Defaults | `{{ $ifEmpty($json.status, 'active') }}` |
+| Totals per day / group | Summarize: split by the date field, `count` and `sum` of `amount` — or `GROUP BY` in the query itself |
+| Group by a derived key (the date part of a timestamp) | Edit Fields adds `day = {{ $json.created_at.toDateTime().format('yyyy-MM-dd') }}`, then Summarize splits by `day` |
 
-### Aggregation
-```javascript
-// Code node - aggregate data
-const items = $input.all();
-
-const summary = items.reduce((acc, item) => {
-  const date = item.json.created_at.split('T')[0];
-  if (!acc[date]) {
-    acc[date] = { count: 0, total: 0 };
-  }
-  acc[date].count++;
-  acc[date].total += item.json.amount;
-  return acc;
-}, {});
-
-return Object.entries(summary).map(([date, data]) => ({
-  json: {
-    date,
-    count: data.count,
-    total: data.total,
-    average: data.total / data.count
-  }
-}));
-```
+A Code node is right here only when a mapping needs loops (one source row becomes a variable number of target rows in
+ways Split Out can't express) — with a `Why Code:` note.
 
 ---
 
@@ -610,49 +563,17 @@ GRANT ALL PRIVILEGES TO n8n_workflow;
 ```
 
 ### 3. Validate Input Data
-```javascript
-// Code node - validate before write
-const email = $json.email;
-const name = $json.name;
 
-// Validation
-if (!email || !email.includes('@')) {
-  throw new Error('Invalid email address');
-}
-
-if (!name || name.length < 2) {
-  throw new Error('Invalid name');
-}
-
-// Sanitization
-return [{
-  json: {
-    email: email.toLowerCase().trim(),
-    name: name.trim()
-  }
-}];
-```
+Check before the write with an IF (or Filter) node, one condition per rule — `{{ $json.email.isEmail() }}` is true,
+`{{ ($json.name ?? '').trim().length >= 2 }}` is true — and send failures to their own branch. Normalize in the write
+node's slots: `{{ $json.email.toLowerCase().trim() }}`. For per-field error messages back to a caller, see the Code
+validator exception in `n8n-error-handling`.
 
 ### 4. Encrypt Sensitive Data
-```javascript
-// Code node - encrypt before storage
-const crypto = require('crypto');
 
-const algorithm = 'aes-256-cbc';
-const key = Buffer.from($credentials.encryptionKey, 'hex');
-const iv = crypto.randomBytes(16);
-
-const cipher = crypto.createCipheriv(algorithm, key, iv);
-let encrypted = cipher.update($json.sensitive_data, 'utf8', 'hex');
-encrypted += cipher.final('hex');
-
-return [{
-  json: {
-    encrypted_data: encrypted,
-    iv: iv.toString('hex')
-  }
-}];
-```
+Use the Crypto node (typeVersion 2), action `encrypt`: the passphrase or key comes from a `crypto` credential, never from
+the workflow JSON (`$credentials` doesn't exist inside a Code node). Configure its mode and cipher from `get_node` on the
+user's version. Prefer encryption the database provides (pgcrypto, column encryption) when it's available.
 
 ---
 

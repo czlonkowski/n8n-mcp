@@ -51,6 +51,8 @@ services:
       - N8N_HIRING_BANNER_ENABLED=false
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
       - N8N_RUNNERS_ENABLED=true
+      # Python Code nodes (and real code isolation) need task runners in EXTERNAL mode:
+      # an n8nio/runners sidecar on the same tag. The stock image has no Python 3. See TASK_RUNNERS.md.
       - N8N_DEFAULT_BINARY_DATA_MODE=filesystem
       # --- optional backend modules (opt-in; off unless listed) ---
       # e.g. `agents` for the Agents feature. Uncomment to enable.

@@ -96,4 +96,4 @@ Teaches how to use n8n-mcp MCP server tools correctly for efficient workflow bui
 ---
 
 **Part of**: n8n-skills repository
-**Conceived by**: Romuald Członkowski - [www.aiadvisors.pl/en](https://www.aiadvisors.pl/en)
+**Conceived by**: Romuald Członkowski - [aiadvisors.pl/en](https://aiadvisors.pl/en)

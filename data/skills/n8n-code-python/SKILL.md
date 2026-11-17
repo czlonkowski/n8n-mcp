@@ -1,501 +1,213 @@
 ---
 name: n8n-code-python
-description: Write Python code in n8n Code nodes. Use when writing Python in n8n, using _input/_json/_node syntax, working with standard library, or need to understand Python limitations in n8n Code nodes. Use this skill when the user specifically requests Python for an n8n Code node. Note — JavaScript is recommended for 95% of use cases — only use Python when the user explicitly prefers it or the task requires Python-specific standard library capabilities (regex, hashlib, statistics). EXCEPTION — for Python in the AI-agent-callable Custom Code Tool (@n8n/n8n-nodes-langchain.toolCode), use the n8n-code-tool skill instead (input is _query, return must be a string).
+description: Write Python in n8n Code nodes (native Python, `language` pythonNative, n8n 2.x). Use when the user explicitly wants Python in a Code node, when migrating old Pyodide/"Python (Beta)" code that used _input/_json/_node/_now, or when a Python Code node fails with NameError, "Security violations detected", "Import of standard library module … is disallowed", "__build_class__ not found", "A 'json' property isn't a dictionary", or "Python runner unavailable". Covers the only two variables (_items/_item), dict-only access, imports blocked by default, the sandbox's denied builtins, accepted return shapes, and how errors interact with onError. JavaScript is the default for Code nodes — native Python has no n8n helpers and, by default, no imports. EXCEPTION — for Python in the AI-agent-callable Custom Code Tool (@n8n/n8n-nodes-langchain.toolCode), use the n8n-code-tool skill instead (input is _query, return must be a string).
 ---
 
-# Python Code Node (Beta)
+# Python Code Node (native)
 
-Expert guidance for writing Python code in n8n Code nodes.
-
----
-
-## ⚠️ Important: JavaScript First
-
-**Recommendation**: Use **JavaScript for 95% of use cases**. Only use Python when:
-- You need specific Python standard library functions
-- You're significantly more comfortable with Python syntax
-- You're doing data transformations better suited to Python
-
-**Why JavaScript is preferred:**
-- Full n8n helper functions (`this.helpers.httpRequest`, etc.)
-- Luxon DateTime library for advanced date/time operations
-- No external library limitations
-- Better n8n documentation and community support
+Since n8n 2.0 the Code node's Python runs as **native Python in a task runner** (`language:
+"pythonNative"`). The old Pyodide "Python (Beta)" is gone, and with it every n8n helper it had:
+`_input`, `_json`, `_node`, `_now`, `_today` and `_jmespath` all raise `NameError` now. Code copied
+from old templates, forum posts or older docs usually breaks on this.
 
 ---
 
-## Quick Start
+## JavaScript first — stronger than before
 
-```python
-# Basic template for Python Code nodes
-items = _input.all()
-
-# Process data
-processed = []
-for item in items:
-    processed.append({
-        "json": {
-            **item["json"],
-            "processed": True,
-            "timestamp": datetime.now().isoformat()
-        }
-    })
-
-return processed
-```
-
-### Essential Rules
-
-1. **Consider JavaScript first** - Use Python only when necessary
-2. **Access data**: `_input.all()`, `_input.first()`, or `_input.item`
-3. **CRITICAL**: Must return `[{"json": {...}}]` format
-4. **CRITICAL**: Webhook data is under `_json["body"]` (not `_json` directly)
-5. **CRITICAL LIMITATION**: **No external libraries** (no requests, pandas, numpy)
-6. **Standard library only**: json, datetime, re, base64, hashlib, urllib.parse, math, random, statistics
+Native Python gives you two variables and plain Python, and **by default no imports**: no
+`json`, `datetime` or `re`. Everything n8n-specific (`$('Node')`, `$jmespath`, Luxon,
+`this.helpers.httpRequest`, static data) exists only in JavaScript. Use Python only when the user
+explicitly asks for it. Even then, first check whether an expression, Edit Fields, or a native
+node (Crypto, Date & Time, HTML, XML) does the job. See **n8n-code-javascript** and the transform
+gatekeeper in **n8n-expression-syntax**.
 
 ---
 
-## Mode Selection Guide
-
-Same as JavaScript - choose based on your use case:
-
-### Run Once for All Items (Recommended - Default)
-
-**Use this mode for:** 95% of use cases
-
-- **How it works**: Code executes **once** regardless of input count
-- **Data access**: `_input.all()` or `_items` array (Native mode)
-- **Best for**: Aggregation, filtering, batch processing, transformations
-- **Performance**: Faster for multiple items (single execution)
+## Quick start
 
 ```python
-# Example: Calculate total from all items
-all_items = _input.all()
-total = sum(item["json"].get("amount", 0) for item in all_items)
-
-return [{
-    "json": {
-        "total": total,
-        "count": len(all_items),
-        "average": total / len(all_items) if all_items else 0
-    }
-}]
-```
-
-### Run Once for Each Item
-
-**Use this mode for:** Specialized cases only
-
-- **How it works**: Code executes **separately** for each input item
-- **Data access**: `_input.item` or `_item` (Native mode)
-- **Best for**: Item-specific logic, independent operations, per-item validation
-- **Performance**: Slower for large datasets (multiple executions)
-
-```python
-# Example: Add processing timestamp to each item
-item = _input.item
-
-return [{
-    "json": {
-        **item["json"],
-        "processed": True,
-        "processed_at": datetime.now().isoformat()
-    }
-}]
-```
-
----
-
-## Python Modes: Beta vs Native
-
-n8n offers two Python execution modes:
-
-### Python (Beta) - Recommended
-- **Use**: `_input`, `_json`, `_node` helper syntax
-- **Best for**: Most Python use cases
-- **Helpers available**: `_now`, `_today`, `_jmespath()`
-- **Import**: `from datetime import datetime`
-
-```python
-# Python (Beta) example
-items = _input.all()
-now = _now  # Built-in datetime object
-
-return [{
-    "json": {
-        "count": len(items),
-        "timestamp": now.isoformat()
-    }
-}]
-```
-
-### Python (Native) (Beta)
-- **Use**: `_items`, `_item` variables only
-- **No helpers**: No `_input`, `_now`, etc.
-- **More limited**: Standard Python only
-- **Use when**: Need pure Python without n8n helpers
-
-```python
-# Python (Native) example
-processed = []
-
-for item in _items:
-    processed.append({
-        "json": {
-            "id": item["json"].get("id"),
-            "processed": True
-        }
-    })
-
-return processed
-```
-
-**Recommendation**: Use **Python (Beta)** for better n8n integration.
-
----
-
-## Data Access Patterns
-
-Access input data through underscore-prefixed variables. Each item is a dict shaped `{"json": {...}}`, so the actual fields live under `["json"]`.
-
-```python
-# Pattern 1: _input.all() - Most common. Arrays, batch ops, aggregations
-all_items = _input.all()            # list of {"json": {...}} dicts
-
-# Pattern 2: _input.first() - Very common. Single objects, API responses
-data = _input.first()["json"]       # built-in safety vs all_items[0]
-
-# Pattern 3: _input.item - "Run Once for Each Item" mode ONLY
-current = _input.item["json"]       # None/error in All Items mode
-
-# Pattern 4: _node - Reference a specific named node
-webhook_data = _node["Webhook"]["json"]
-http_data = _node["HTTP Request"]["json"]
-```
-
-**See**: [DATA_ACCESS.md](DATA_ACCESS.md) for the comprehensive guide — six `_input.all()` recipes (filter, transform, aggregate, sort, group, deduplicate), `_input.first()` and `_input.item` examples, multi-node combining, the JS-vs-Python variable table, and the decision tree.
-
----
-
-## Critical: Webhook Data Structure
-
-**MOST COMMON MISTAKE**: Webhook data is nested under `["body"]`
-
-```python
-# ❌ WRONG - Will raise KeyError
-name = _json["name"]
-email = _json["email"]
-
-# ✅ CORRECT - Webhook data is under ["body"]
-name = _json["body"]["name"]
-email = _json["body"]["email"]
-
-# ✅ SAFER - Use .get() for safe access
-webhook_data = _json.get("body", {})
-name = webhook_data.get("name")
-```
-
-**Why**: Webhook node wraps all request data under `body` property. This includes POST data, query parameters, and JSON payloads.
-
-**See**: [DATA_ACCESS.md](DATA_ACCESS.md) for full webhook structure details
-
----
-
-## Return Format Requirements
-
-**CRITICAL RULE**: Always return list of dictionaries with `"json"` key
-
-### Correct Return Formats
-
-```python
-# ✅ Single result
-return [{
-    "json": {
-        "field1": value1,
-        "field2": value2
-    }
-}]
-
-# ✅ Multiple results
+# Run Once for All Items (default mode)
 return [
-    {"json": {"id": 1, "data": "first"}},
-    {"json": {"id": 2, "data": "second"}}
+    {"json": {"name": it["json"]["name"], "revenue": it["json"]["revenue"]}}
+    for it in _items
+    if it["json"].get("active")
 ]
-
-# ✅ List comprehension
-transformed = [
-    {"json": {"id": item["json"]["id"], "processed": True}}
-    for item in _input.all()
-    if item["json"].get("valid")
-]
-return transformed
-
-# ✅ Empty result (when no data to return)
-return []
-
-# ✅ Conditional return
-if should_process:
-    return [{"json": processed_data}]
-else:
-    return []
 ```
-
-### Incorrect Return Formats
 
 ```python
-# ❌ WRONG: Dictionary without list wrapper
-return {
-    "json": {"field": value}
-}
-
-# ❌ WRONG: List without json wrapper
-return [{"field": value}]
-
-# ❌ WRONG: Plain string
-return "processed"
-
-# ❌ WRONG: Incomplete structure
-return [{"data": value}]  # Should be {"json": value}
+# Run Once for Each Item
+row = _item["json"]
+return {"json": {**row, "name_upper": (row.get("name") or "").upper()}}
 ```
 
-**Why it matters**: Next nodes expect list format. Incorrect format causes workflow execution to fail.
-
-**See**: [ERROR_PATTERNS.md](ERROR_PATTERNS.md) #2 for detailed error solutions
-
----
-
-## Critical Limitation: No External Libraries
-
-**MOST IMPORTANT PYTHON LIMITATION**: Cannot import external packages on default installs.
-
-> **Self-hosted exception**: external package availability depends entirely on the instance's Python runner configuration. If the user states their self-hosted instance has specific packages available in the Python runner environment, use them — don't refuse. When unsure, ask or write standard-library-only code.
-
-**❌ NOT available** (raise `ModuleNotFoundError`): `requests`, `pandas`, `numpy`, `scipy`, `bs4`/BeautifulSoup, `lxml`.
-
-**✅ Available** (standard library only): `json`, `datetime`, `re`, `base64`, `hashlib`, `urllib.parse`, `math`, `random`, `statistics`.
-
-### Workarounds
-
-**Need HTTP requests?**
-- ✅ Use **HTTP Request node** before Code node
-- ✅ Or switch to **JavaScript** and use `this.helpers.httpRequest()` (the bare `$helpers` global is undefined in the task-runner sandbox)
-
-**Need data analysis (pandas/numpy)?**
-- ✅ Use Python **statistics** module for basic stats
-- ✅ Or switch to **JavaScript** for most operations
-- ✅ Manual calculations with lists and dictionaries
-
-**Need web scraping (BeautifulSoup)?**
-- ✅ Use **HTTP Request node** + **HTML Extract node**
-- ✅ Or switch to **JavaScript** with regex/string methods
-
-**See**: [STANDARD_LIBRARY.md](STANDARD_LIBRARY.md) for complete reference
+Node config: `{"language": "pythonNative", "mode": "runOnceForAllItems" | "runOnceForEachItem",
+"pythonCode": "..."}` on `n8n-nodes-base.code` typeVersion 2.
 
 ---
 
-## Common Patterns Overview
+## The only inputs: `_items` and `_item`
 
-Based on production workflows, the most useful Python patterns are:
+| Mode | Variable | Shape |
+|---|---|---|
+| Run Once for All Items | `_items` | `list` of plain dicts `{"json": {...}, "pairedItem": {...}}` |
+| Run Once for Each Item | `_item` | one plain dict `{"json": {...}, "pairedItem": {...}}` |
 
-1. **Data Transformation** - Transform all items with list comprehensions
-2. **Filtering & Aggregation** - Sum, filter, count with built-in functions
-3. **String Processing with Regex** - Extract patterns from text with `re`
-4. **Data Validation** - Validate and clean data, attach error lists
-5. **Statistical Analysis** - Calculate mean/median/stdev with the `statistics` module
+- Each variable exists **only in its own mode**. `_items` in each-item mode (or `_item` in
+  all-items mode) raises `NameError`.
+- **Dict access only.** `it["json"]["name"]` or `it["json"].get("name")`. `it.json.name` raises
+  `AttributeError: 'dict' object has no attribute 'json'`.
+- **No other nodes.** There is no `_node` / `$('Node')` equivalent. If you need data from another
+  branch, bring it in with Merge first, or read it in JavaScript.
+- **Webhook payloads** are under `["body"]`: `_items[0]["json"].get("body", {}).get("email")`.
+- **Binary data** isn't covered here. Read and write binary in JavaScript (see **n8n-binary-and-data**).
+- **pairedItem:** returning `_items` / `_item` keeps it. When you build new dicts and downstream
+  uses `$('Node').item`, add `"pairedItem": {"item": i}` to each returned item. That isn't
+  verified on native Python yet, so test-run before relying on it.
+- Missing keys: prefer `.get(key, default)`. `row["missing"]` raises `KeyError`.
 
-Copy-ready snippets for all five live in [COMMON_PATTERNS.md](COMMON_PATTERNS.md#quick-pattern-snippets), alongside 10 fully detailed production patterns (multi-source aggregation, markdown parsing, JSON comparison, CRM normalization, dictionary lookup, top-N filtering, and more).
+Migration table for legacy code:
+
+| Legacy (Pyodide) | Native |
+|---|---|
+| `_input.all()` | `_items` |
+| `_input.first()["json"]` | `_items[0]["json"]` (guard `if _items`) |
+| `_input.item` / `_json` | `_item` / `_item["json"]` |
+| `_node["X"]` | not available: Merge upstream, or use JS |
+| `_now`, `_today` | not available: pass `{{ $now.toISO() }}` in via Edit Fields, or use JS |
+| `_jmespath(data, q)` | not available: `$jmespath` in an expression, or a comprehension |
+| `item.json.field` | `item["json"]["field"]` |
 
 ---
 
-## Error Prevention - Top 5 Mistakes
+## Imports: blocked by default
 
-1. **Importing external libraries** (Python-specific) → `import requests` raises `ModuleNotFoundError`. Use the HTTP Request node or JavaScript instead.
-2. **Empty code or missing return** → every path must end with `return [{"json": ...}]`.
-3. **Incorrect return format** → wrap in a list: `{"json": {...}}` becomes `[{"json": {...}}]`.
-4. **KeyError on dictionary access** → use `.get()`: `_json.get("user", {}).get("name", "Unknown")`.
-5. **Webhook body nesting** → read via `["body"]`: `_json.get("body", {}).get("email", "no-email")`.
+Every `import` (standard library and third-party) is checked against an allowlist **before the
+code runs**. The default allowlist is empty, so even `import json` rejects the whole node:
 
-**See**: [ERROR_PATTERNS.md](ERROR_PATTERNS.md) for the comprehensive guide — each error with wrong-vs-right code, error messages, nested-access fixes, an `AttributeError` bonus case, a prevention checklist, and a quick-fix table.
-
----
-
-## Standard Library Reference
-
-Most useful modules: `json` (parse/generate), `datetime` (dates + `timedelta`), `re` (regex), `base64` (encode/decode), `hashlib` (hashing), `urllib.parse` (URL ops), and `statistics` (mean/median/stdev). Also available: `math`, `random`, `collections`, `itertools`, `functools`.
-
-For a condensed cheat sheet plus full per-module examples, see [STANDARD_LIBRARY.md](STANDARD_LIBRARY.md#quick-reference-most-useful-modules).
-
----
-
-## Best Practices
-
-### 1. Always Use .get() for Dictionary Access
-
-```python
-# ✅ SAFE: Won't crash if field missing
-value = item["json"].get("field", "default")
-
-# ❌ RISKY: Crashes if field doesn't exist
-value = item["json"]["field"]
+```
+Security violations detected
+Line 1: Import of standard library module 'json' is disallowed. Allowed stdlib modules: none
 ```
 
-### 2. Handle None/Null Values Explicitly
-
-```python
-# ✅ GOOD: Default to 0 if None
-amount = item["json"].get("amount") or 0
-
-# ✅ GOOD: Check for None explicitly
-text = item["json"].get("text")
-if text is None:
-    text = ""
-```
-
-### 3. Use List Comprehensions for Filtering
-
-```python
-# ✅ PYTHONIC: List comprehension
-valid = [item for item in items if item["json"].get("active")]
-
-# ❌ VERBOSE: Manual loop
-valid = []
-for item in items:
-    if item["json"].get("active"):
-        valid.append(item)
-```
-
-### 4. Return Consistent Structure
-
-```python
-# ✅ CONSISTENT: Always list with "json" key
-return [{"json": result}]  # Single result
-return results  # Multiple results (already formatted)
-return []  # No results
-```
-
-### 5. Debug with print() Statements
-
-```python
-# Debug statements appear in browser console (F12)
-items = _input.all()
-print(f"Processing {len(items)} items")
-print(f"First item: {items[0] if items else 'None'}")
-```
+- **n8n Cloud:** no imports at all.
+- **Self-hosted:** the admin can allowlist modules in the task-runner config (see
+  **n8n-self-hosting** → `TASK_RUNNERS.md`). Some instances therefore allow `json`, `datetime`
+  and `re`, and most don't.
+- **Default to import-free code.** If an import would really help, confirm it first: a
+  one-line test node `import json` + `return [{"json": {"ok": True}}]`, or ask the user. Never
+  assume.
+- Without imports: parse JSON strings upstream (`{{ JSON.parse($json.payload) }}` in Edit Fields).
+  Do date math with the Date & Time node or Luxon in an expression. ISO-8601 strings still compare and sort correctly as
+  plain strings. Use the Crypto node for hashing.
+- `requests`, `pandas` and `numpy` are never available unless the admin built a custom runner
+  image. Use the HTTP Request node for HTTP.
 
 ---
 
-## Production Gotchas
+## Sandbox limits (these fail even without imports)
 
-### SplitInBatches Loop Semantics
+| You write | What happens | Use instead |
+|---|---|---|
+| `eval`, `exec`, `compile`, `open`, `input`, `type`, `getattr`, `setattr`, `hasattr`, `vars`, `dir`, `globals`, `locals`, `object`, `memoryview`, `breakpoint` | `NameError: name 'type' is not defined` (runtime) | `isinstance(x, dict)`; `key in d` / `d.get(key)` |
+| `class Foo: ...` | `__build_class__ not found` (runtime) | dicts + functions |
+| `x.__class__`, `"{0.__class__}".format(x)`, `__import__("json")` | `Security violations detected` (whole node rejected before running) | — |
+| `global counter` inside a function | `NameError: name 'counter' is not defined`, because your code runs inside a wrapper function | `nonlocal counter` |
 
-The SplitInBatches node has two outputs:
-- `main[0]` = **done** — fires ONCE after all batches complete
-- `main[1]` = **each batch** — fires for every batch (the loop body)
-
-Always add a **Limit 1** node after the done output.
-
-### Correct Node Reference Syntax
-
-```python
-# ❌ WRONG
-data = _node['HTTP Request']['json']
-
-# ✅ CORRECT - call .first() then access json
-data = _node['HTTP Request'].first()['json']
-```
-
-### Cross-Iteration Data Not Available in Python
-
-`$getWorkflowStaticData('global')` may not be available in Python Beta mode. If you need to accumulate data across SplitInBatches iterations, use a JavaScript Code node for the accumulation logic instead.
+Everything else in plain Python works (verified): comprehensions, generators, lambdas, closures,
+recursion, `try`/`except`, f-strings / `.format()` / `%`, `sorted`/`min`/`max`/`sum`/`any`/`all`/
+`enumerate`/`zip`/`round`, sets, `isinstance`, `print()` (output goes to the browser console).
 
 ---
 
-## When to Use Python vs JavaScript
+## Return shapes (verified)
 
-### Use Python When:
-- ✅ You need `statistics` module for statistical operations
-- ✅ You're significantly more comfortable with Python syntax
-- ✅ Your logic maps well to list comprehensions
-- ✅ You need specific standard library functions
+Observed on n8n 2.38.5. The auto-wrapping and passthrough behaviours below are undocumented and could
+change in a later release. Re-check with a test run after upgrading n8n.
 
-### Use JavaScript When:
-- ✅ You need HTTP requests (`this.helpers.httpRequest()`)
-- ✅ You need advanced date/time (DateTime/Luxon)
-- ✅ You want better n8n integration
-- ✅ **For 95% of use cases** (recommended)
+**Run Once for All Items**
 
-### Consider Other Nodes When:
-- ❌ Simple field mapping → Use **Set** node
-- ❌ Basic filtering → Use **Filter** node
-- ❌ Simple conditionals → Use **IF** or **Switch** node
-- ❌ HTTP requests only → Use **HTTP Request** node
+| Return | Result |
+|---|---|
+| `[{"json": {...}}, ...]` | canonical, N items |
+| `[{...}, ...]` (plain dicts) | auto-wrapped under `json`, N items |
+| `{"json": {...}}` or a single plain dict | 1 item |
+| `_items` (mutated in place) | passthrough with your changes |
+| `None` / no `return` | error `Cannot read properties of null (reading 'json')` |
 
----
+**Run Once for Each Item**
 
-## Integration with Other Skills
+| Return | Result |
+|---|---|
+| `{"json": {...}}`, a plain dict, or `_item` | 1 item |
+| `None` | the item is **dropped** (a built-in filter) |
+| a **list** | error `A 'json' property isn't a dictionary [item 0]` |
 
-### Works With:
+**Value conversion on output:** `tuple` becomes a list, `set` becomes the *string* `"{1, 2}"`,
+and a `datetime` becomes `str(dt)` (`"2026-09-16 10:18:00.025792"`, not ISO). Convert explicitly
+(`sorted(s)`, `dt.isoformat()`).
 
-**n8n Expression Syntax**:
-- Expressions use `{{ }}` syntax in other nodes
-- Code nodes use Python directly (no `{{ }}`)
-- When to use expressions vs code
-
-**n8n MCP Tools Expert**:
-- How to find Code node: `search_nodes({query: "code"})`
-- Get configuration help: `get_node({nodeType: "nodes-base.code"})`
-- Validate code: `validate_node({nodeType: "nodes-base.code", config: {...}})`
-
-**n8n Node Configuration**:
-- Mode selection (All Items vs Each Item)
-- Language selection (Python vs JavaScript)
-- Understanding property dependencies
-
-**n8n Workflow Patterns**:
-- Code nodes in transformation step
-- When to use Python vs JavaScript in patterns
-
-**n8n Validation Expert**:
-- Validate Code node configuration
-- Handle validation errors
-- Auto-fix common issues
-
-**n8n Code JavaScript**:
-- When to use JavaScript instead
-- Comparison of JavaScript vs Python features
-- Migration from Python to JavaScript
+Prefer the explicit `[{"json": ...}]` in all-items mode and `{"json": ...}` in each-item mode.
+The auto-wrapping works, but the explicit shape makes the intent obvious to the next reader.
 
 ---
 
-## Quick Reference Checklist
+## Errors and `onError`
 
-Before deploying Python Code nodes, verify:
+A plain `raise ValueError("bad row")` fails the node with that message. When the node has an
+`onError` continue mode, the three failure kinds behave **differently** (verified):
 
-- [ ] **Considered JavaScript first** - Using Python only when necessary
-- [ ] **Code is not empty** - Must have meaningful logic
-- [ ] **Return statement exists** - Must return list of dictionaries
-- [ ] **Proper return format** - Each item: `{"json": {...}}`
-- [ ] **Data access correct** - Using `_input.all()`, `_input.first()`, or `_input.item`
-- [ ] **No external imports** - Only standard library (json, datetime, re, etc.)
-- [ ] **Safe dictionary access** - Using `.get()` to avoid KeyError
-- [ ] **Webhook data** - Access via `["body"]` if from webhook
-- [ ] **Mode selection** - "All Items" for most cases
-- [ ] **Output consistent** - All code paths return same structure
+| Failure | `continueErrorOutput` | `continueRegularOutput` |
+|---|---|---|
+| Runtime exception (`raise`, `KeyError`, `NameError`, denied builtin) | `{"error": "<message>"}` on the error output (`main[1]`) ✅ | `{"error": "<message>"}` on the main output |
+| Static rejection (`Security violations detected`: import, dunder) | node marked failed, but the **input items, unchanged, go out the success output**; `main[1]` stays empty | input items, unchanged, on the main output |
+| Bad return shape (list in each-item mode, `None` in all-items mode) | same: **unchanged input on the success output** | same |
 
----
+The last two are silent-data traps: downstream nodes receive unprocessed input as if the code had
+run, and the execution still shows success. No error branch catches them. Prevent them (no
+imports unless confirmed, correct return shape) and confirm with a real test run, checking the
+Code node's status and output (see **n8n-error-handling**).
 
-## Additional Resources
+Other messages:
 
-### Related Files
-- [DATA_ACCESS.md](DATA_ACCESS.md) - Comprehensive Python data access patterns
-- [COMMON_PATTERNS.md](COMMON_PATTERNS.md) - 10 Python patterns for n8n
-- [ERROR_PATTERNS.md](ERROR_PATTERNS.md) - Top 5 errors and solutions
-- [STANDARD_LIBRARY.md](STANDARD_LIBRARY.md) - Complete standard library reference
-
-### n8n Documentation
-- Code Node Guide: https://docs.n8n.io/code/code-node/
-- Python in n8n: https://docs.n8n.io/code/builtin/python-modules/
+- `Python runner unavailable: Python 3 is missing from this system`: the self-hosted instance has
+  no Python task runner (the stock image ships none). It's an infrastructure problem, not a code
+  problem. See **n8n-self-hosting** → `TASK_RUNNERS.md`.
+- `validate_node` / `validate_workflow` catch a few Python mistakes (`import requests`, missing
+  `return`, `return None`). They do **not** catch `_input`/`_json`, dot access, blocked stdlib
+  imports, dunder access or classes. A test execution is the only reliable check.
 
 ---
 
-**Ready to write Python in n8n Code nodes - but consider JavaScript first!** Use Python for specific needs, reference the error patterns guide to avoid common mistakes, and leverage the standard library effectively.
+## Performance
+
+Each Python Code node costs roughly 0.4 s (about 1 s when the runner is cold), noticeably more
+than a JS Code node or an expression. Process lists in **Run Once for All Items** mode rather than
+per item, and don't chain several small Python nodes where one would do.
+
+---
+
+## Checklist
+
+- [ ] The user actually asked for Python. Otherwise JS, an expression, or a native node.
+- [ ] Mode matches the variable: `_items` (all items) / `_item` (each item).
+- [ ] Only dict access. No `_input`, `_json`, `_node`, `_now` or `_jmespath`.
+- [ ] No `import` unless confirmed allowlisted on *this* instance.
+- [ ] No classes, `type()`, `getattr`/`hasattr` or dunders. `nonlocal` instead of `global`.
+- [ ] Return shape fits the mode. Sets and datetimes converted explicitly.
+- [ ] Ran a real test execution and inspected the output items (validation alone won't catch the traps above).
+
+---
+
+## Reference
+
+- **[COMMON_PATTERNS.md](COMMON_PATTERNS.md)**: 12 import-free patterns, each verified on a live
+  n8n instance (filter, aggregate, group, dedupe, top N, flatten, validate, drop items, text
+  report, safe nested access, running totals, ISO timestamps).
+
+## Related skills
+
+- **n8n-code-javascript**: the default for Code nodes, with all n8n helpers.
+- **n8n-expression-syntax**: `$jmespath`, Luxon and the transform gatekeeper, often a better fit than any Code node.
+- **n8n-code-tool**: Python in the AI-agent Custom Code Tool (`_query`, returns a string).
+- **n8n-error-handling**: wiring error outputs; the passthrough trap above.
+- **n8n-self-hosting**: enabling the Python task runner and allowlisting modules.

@@ -129,7 +129,7 @@ Inside the body, read them as `$json.list_of_ids`, or from anywhere downstream a
 
 ### The final Return node — the legitimate Set exception
 
-Shape the output with a final **Set / Edit Fields** node, named `Return` or `Return <thing>`. This is the one place a Set node earns its keep against the usual "don't add a trailing Set node" advice from **n8n-expression-syntax**: the implicit consumer of a sub-workflow's last node is *every caller*, so an explicit Set makes the return contract visible — a reader sees the whole API by reading one node, and you strip any noise fields the last computation node carried.
+Shape the output with a final **Set / Edit Fields** node, named `Return` or `Return <thing>`. This is a return item, one of the named steps where Edit Fields earns its place (the antipattern in **n8n-expression-syntax** is only a Set that re-maps fields for the next node): the implicit consumer of a sub-workflow's last node is *every caller*, so an explicit Set makes the return contract visible — a reader sees the whole API by reading one node, and you strip any noise fields the last computation node carried.
 
 ---
 

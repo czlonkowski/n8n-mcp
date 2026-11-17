@@ -47,21 +47,21 @@ Apply surgically with `patchNodeField` on `parameters.options.fallbackOutput`, o
 
 ## Merge
 
-Two traps, both silent. They live on different Merge modes — `numberOfInputs` on Append/Combine, `useDataOfInput` on Choose Branch — so in practice you hit one or the other, not both.
+Two traps, both silent. The input count lives on Append, SQL Query, Combine by Position and Choose Branch; `useDataOfInput` lives on Choose Branch. Combine by Fields and Combine All always take exactly 2 inputs.
 
 ### Trap 1: input count defaults to 2
 
 **Symptom:** you wire 3+ sources into a Merge, the canvas shows three wires going in, the workflow validates and runs — but only the first two sources' items appear downstream. The third silently drops.
 
-**Cause:** `numberOfInputs` defaults to `2`. The third wire connects to an input slot that doesn't exist on the node.
+**Cause:** `numberInputs` defaults to `2`. The third wire connects to an input slot that doesn't exist on the node. The parameter is `numberInputs` (Merge v3.x), not `numberOfInputs`: n8n ignores an unknown parameter name, so the node stays at 2.
 
-**Fix:** set `numberOfInputs` to match your wire count.
+**Fix:** set `numberInputs` to match your wire count. To join 3+ lists on a key, use `mode: "combineBySql"` (which takes `numberInputs`) or chain two Combine by Fields merges.
 
 ```json
-{ "parameters": { "mode": "append", "numberOfInputs": 3 } }
+{ "parameters": { "mode": "append", "numberInputs": 3 } }
 ```
 
-Verify with `get_node` for the merge node on the user's n8n version — the field name has shifted across versions. After building, pull the workflow with `n8n_get_workflow` and confirm `parameters.numberOfInputs` matches the number of source entries in the `connections` object feeding it.
+Verify with `get_node` (`mode: "search_properties"`, `propertyQuery: "input"`) on the user's n8n version. After building, pull the workflow with `n8n_get_workflow` and confirm `parameters.numberInputs` matches the number of source entries in the `connections` object feeding it.
 
 ### Trap 2: `useDataOfInput` is 1-indexed, connections are 0-indexed
 
@@ -186,9 +186,9 @@ Entry and exit of request/response API workflows. `get_node` is canonical for fi
 
 **Symptom:** an error branch returns HTTP 200 with an error body. The caller's HTTP client sees success while the body says failure — the worst of both worlds, because the caller's error handling never fires.
 
-**Cause:** `responseCode` defaults to `200` on every Respond to Webhook node, including the ones you wired to error paths.
+**Cause:** `options.responseCode` defaults to `200` on every Respond to Webhook node, including the ones you wired to error paths. The field lives under `options`: a top-level `responseCode` (a common mistake, and what older examples show) is ignored, so the node still returns 200.
 
-**Fix:** set `responseCode` explicitly on every Respond branch — 4xx for caller errors (400 validation, 401/403 auth, 409 conflict, 429 rate limit), 5xx for server errors. A workflow can have multiple Respond nodes, one per response shape; n8n returns whichever fires first.
+**Fix:** set `options.responseCode` explicitly on every Respond branch (`"options": { "responseCode": 502 }`) — 4xx for caller errors (400 validation, 401/403 auth, 409 conflict, 429 rate limit), 5xx for server errors. A workflow can have multiple Respond nodes, one per response shape; n8n returns whichever fires first.
 
 ### Use `responseMode: "responseNode"` for real request/response APIs
 
@@ -198,13 +198,15 @@ Entry and exit of request/response API workflows. `get_node` is canonical for fi
 
 **Fix:** set `parameters.responseMode: "responseNode"` on the Webhook trigger and control the response with explicit Respond to Webhook nodes. (`lastNode` returns the last node's output synchronously — fine for simple cases; `responseNode` is the flexible choice for multi-status APIs.)
 
-### `respondWith: "json"` takes the object, not a stringified string
+### `respondWith: "json"`: pass the object
 
-**Symptom:** the response body comes back double-encoded — escaped quotes, a JSON string wrapped in another JSON string.
+**Symptom:** the node fails with "Invalid JSON in 'Response Body' field", or a body built by string concatenation breaks
+as soon as the data contains a quote.
 
-**Cause:** the `responseBody` field accepts both an object and a string. If you pass `JSON.stringify(obj)`, n8n serializes that string again.
+**Cause:** a string `responseBody` is parsed as JSON before it's sent (Respond to Webhook 1.5), so a hand-built string
+must be valid JSON. `JSON.stringify(...)` produces valid JSON, so it works, but it adds a step.
 
-**Fix:** pass the object directly in expression mode and let the node serialize it once:
+**Fix:** build the object in expression mode and let the node serialize it once:
 
 ```
 ={{ { "status": "ok", "id": $('Create Record').item.json.id } }}

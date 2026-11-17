@@ -203,7 +203,16 @@ Before/after examples and the full cannot-fix detail are in **[ERROR_CATALOG.md]
 
 ## False Positives
 
-The validator overhaul (n8n-mcp ≥ 2.63.0) removed the classic false positives — template literals inside expressions, optional chaining, omitted-operation defaults, the Webhook → Respond-to-Webhook pattern, IF/Filter legacy shapes, and more no longer fire. There is no standing list of "known false positives to ignore."
+The validator overhaul (n8n-mcp ≥ 2.63.0) removed the classic false positives — template literals inside expressions, optional chaining, omitted-operation defaults, the Webhook → Respond-to-Webhook pattern, IF/Filter legacy shapes, and more no longer fire.
+
+**Known exceptions (n8n-mcp 2.85.0, reported upstream; re-check after upgrading):**
+
+- **ERROR "Incorrect error output configuration… appear to be error handlers but are in main[0]"** on a fan-out where one target is a Respond to Webhook or Send Email node, or has *error / fail / catch / exception* in its name. Moving Respond to Webhook onto `main[1]`, as suggested, means the webhook only answers when the upstream node fails. Treat it as a false positive **only when** the message matches this text exactly **and** you've inspected `connections` and confirmed the named node sits on the success path by design. In that case keep the wiring, say in your reply that you're ignoring n8n-mcp#1111 and why, and **don't run `n8n_autofix_workflow` with the default fix types** (exclude `error-output-config`, or it may rewire the success path). Every other `valid: false` error still gets fixed. ([n8n-mcp#1111](https://github.com/czlonkowski/n8n-mcp/issues/1111))
+- **Warning "Possible missing $ prefix"** on `json`/`items` *inside a string*, e.g. `$jmespath($('X').all(), "[?json.country=='PL'].json.name")`. The `json.` prefix is required there, so ignore the warning. ([#1115](https://github.com/czlonkowski/n8n-mcp/issues/1115))
+- **`validate_node` on a `language: "pythonNative"` Code node → "Code cannot be empty" (`jsCode`)**. The error is false; validate the workflow instead. ([#1112](https://github.com/czlonkowski/n8n-mcp/issues/1112))
+- **Python "Return value must be a list of dicts"** for a single-dict return in all-items mode. n8n accepts it and emits one item. ([#1113](https://github.com/czlonkowski/n8n-mcp/issues/1113))
+
+**Blind spots (valid workflow, wrong result at runtime):** `$jmespath` syntax/quoting mistakes inside expressions ([#1114](https://github.com/czlonkowski/n8n-mcp/issues/1114)); *any* JS error inside `{{ }}`, which resolves to `null` while the execution stays green (see **n8n-expression-syntax**); native-Python mistakes such as legacy `_input`/`_json`, dot access, blocked imports and classes ([#1113](https://github.com/czlonkowski/n8n-mcp/issues/1113), see **n8n-code-python**). Validation plus a successful run still isn't proof: inspect the output values.
 
 What remains are **best-practice advisories** (surfaced only under `ai-friendly` / `strict`) that flag a real trade-off but may be acceptable in your case. Not every advisory needs a fix — many are context-dependent. Common ones and when each is acceptable vs. worth fixing:
 

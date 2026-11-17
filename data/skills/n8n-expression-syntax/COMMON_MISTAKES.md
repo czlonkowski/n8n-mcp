@@ -362,6 +362,47 @@ The same holds for optional chaining (`{{ $json.user?.email }}`) and string-keye
 
 ---
 
+## 16. JMESPath String in Double Quotes
+
+**Problem**: `$jmespath` filter returns `[]` even though matching data exists — no error
+
+❌ **Wrong**:
+```
+{{ $jmespath($json, 'customers[?country=="PL"].name') }}      // → []
+```
+
+✅ **Correct**:
+```
+{{ $jmespath($json, "customers[?country=='PL'].name") }}      // → ["Acme", "Bar"]
+{{ $jmespath($json, "customers[?revenue > `100000`].name") }} // numbers in backticks
+```
+
+**Why it fails**: in JMESPath, `"PL"` is a quoted **field name**, not a string. The filter compares `country` to a field called `PL`, which doesn't exist, so nothing matches. String literals use single quotes; numbers and booleans use backticks. A bare number (`revenue > 100000`) or `and`/`=` instead of `&&`/`==` is a parse error, and the whole expression becomes `null` (see #17).
+
+**Same trap over items**: `$jmespath($('Node').all(), "[?country=='PL']")` also returns `[]`. Items are `{json: …}` wrappers, so write `[?json.country=='PL'].json.name`, or map first: `$input.all().map(i => i.json)`.
+
+**How to identify**: `[]` or `null` from a query whose data you can see in the input panel.
+
+---
+
+## 17. Runtime Error Hidden as `null`
+
+**Problem**: A field comes out `null`/empty (or a Filter drops every item) while the node and execution show success
+
+❌ **Wrong assumption**: "It ran green, so the expression works."
+
+**Why it happens**: verified on n8n 2.38 with the default expression runtime: at runtime n8n swallows JavaScript errors inside `{{ }}` other than its own `ExpressionError`s. `$json.missing.field`, `JSON.parse` on bad input, a thrown `Error` and a JMESPath syntax error all resolved to `null` instead of failing the node. The editor preview shows the error; the execution doesn't. Other versions or engines may fail the node instead. Either way, never trust a green run on its own.
+
+✅ **Fix / check**:
+```
+{{ (() => { try { return JSON.stringify($json.payload.items.map(i => i.id)) } catch (e) { return 'ERROR: ' + e.message } })() }}
+```
+Wrap temporarily to see the message, fix the path, then remove the wrapper. Always inspect output values after a test run, and guard optional paths with `?.` / `??`.
+
+**How to identify**: unexpected `null`s in output; Filter/IF sending everything to the false side.
+
+---
+
 ## Quick Reference Table
 
 | Error | Symptom | Fix |
@@ -381,6 +422,9 @@ The same holds for optional chaining (`{{ $json.user?.email }}`) and string-keye
 | Missing .json | Undefined | Add .json |
 | Template literal / `+` outside {{ }} | Literal text | Wrap in {{ }} (both work inside) |
 | Empty {{ }} | Literal braces | Add expression |
+| JMESPath `"PL"` in a filter | `[]`, no error | `'PL'` for strings, `` `100` `` for numbers |
+| JMESPath over `.all()` without `json.` | `[]` | `[?json.field=='x'].json.name` |
+| Any JS error inside {{ }} at runtime | `null`, node still succeeds | Check preview + output values; try/catch wrapper to see the message |
 
 ---
 
@@ -394,6 +438,7 @@ When expression doesn't work:
 4. **Check case**: Does node name match exactly?
 5. **Check path**: Is the property path correct?
 6. **Use expression editor**: Preview shows actual result
+   - At runtime errors become `null` silently. If output is `null`, the preview's error is the real cause.
 7. **Check context**: Is it a Code node? Remove {{ }}
 
 ---

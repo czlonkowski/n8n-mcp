@@ -67,7 +67,7 @@ For an HTTP download, the one field that matters is `responseFormat`. Confirm it
 
 ## Reading and writing binary in a Code node
 
-Most workflows never need to crack open the bytes — they just pass binary through to a consumer (email attachment, file upload, Slack file). When you do need the raw bytes, do it in a Code node.
+Most workflows never need to crack open the bytes — they just pass binary through to a consumer (email attachment, file upload, Slack file). Most byte jobs have a native node: **Extract From File** (CSV, XLSX, PDF text, JSON, plain text → items or a field), **Convert To File** (items → CSV / XLSX / JSON / text file), **Crypto** (hash a file with `binaryData: true`), **Compression** (zip / gzip). Read or write raw bytes in a Code node only when no node handles the format, with a `Why Code:` note.
 
 **Read** with `getBinaryDataBuffer` — do not try to base64-decode `$binary.<key>.data` by hand:
 

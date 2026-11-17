@@ -46,6 +46,8 @@ x-n8n-env: &n8n-env
   N8N_HIRING_BANNER_ENABLED: "false"
   N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
   N8N_RUNNERS_ENABLED: "true"
+  # Python Code nodes (and real code isolation) need task runners in EXTERNAL mode:
+  # one n8nio/runners sidecar PER WORKER, same tag. That replaces `replicas`. See TASK_RUNNERS.md.
   # Queue mode does NOT support filesystem binary mode — binary data lives in
   # Postgres (`database`) so main + workers all see it. S3/Azure external
   # storage needs an Enterprise license — see QUEUE_MODE.md.

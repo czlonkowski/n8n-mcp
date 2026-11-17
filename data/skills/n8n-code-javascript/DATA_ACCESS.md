@@ -15,6 +15,10 @@ In n8n Code nodes, you access data from previous nodes using built-in variables 
 4. **`$node["NodeName"].json`** - Specific node references
 5. **`$json`** - Direct current item (legacy, use `$input` instead)
 
+> **Native first.** These patterns show how to read data once a Code node passed the gate in SKILL.md. Several
+> examples here (filter, sort and limit, dedupe, sum, grouping) are native-node jobs in a real workflow: Filter,
+> Sort + Limit, Remove Duplicates, Summarize. Use them as Code idioms, not as a reason to add a Code node.
+
 ---
 
 ## Pattern 1: $input.all() - Process All Items
@@ -707,21 +711,10 @@ return items.map(item => ({
 
 ### Pattern: Pagination Handling
 
-```javascript
-const currentPage = $input.all();
-const pageNumber = $node["Set Page"].json.page || 1;
-
-// Combine with previous pages
-const allPreviousPages = $node["Accumulator"]?.json.accumulated || [];
-
-return [{
-  json: {
-    accumulated: [...allPreviousPages, ...currentPage],
-    currentPage: pageNumber,
-    totalItems: allPreviousPages.length + currentPage.length
-  }
-}];
-```
+Don't accumulate pages in Code. HTTP Request's pagination option fetches every page and returns the combined items
+(page-number, offset, cursor and next-URL APIs, with a page cap): see `n8n-node-configuration` → NATIVE_NODES.md →
+"HTTP Request pagination". Paging in Code is only for an API whose next-page rule the option can't express, and then it
+is a loop exception with a `Why Code:` note.
 
 ### Pattern: Conditional Node Reference
 
@@ -742,6 +735,10 @@ return [{json: data}];
 ```
 
 ### Pattern: Multi-Node Aggregation
+
+Native first: a Merge node in `append` mode (set `numberInputs` to the branch count) collects branch outputs without
+code. Reach for this pattern only when the sources are optional or conditional and a Merge would wait on branches that
+never run.
 
 ```javascript
 // Collect data from multiple named nodes
@@ -800,7 +797,7 @@ So `Run Once for Each Item` over 10k items is ~6 s of pure overhead vs ~0.2 s fo
 Two corollaries you will hit constantly:
 
 - **Expression complexity is essentially free.** An elaborate `{{ }}` measures the same as a trivial one — ~90% of the cost is n8n building the per-item context, not running your code. Don't simplify expressions for speed; reduce the *number* of per-item boundaries instead.
-- **Every node→node hop re-copies all items** (~0.05 ms/item per hop). Six chained All Items Code nodes cost ~7× a single node doing the same six steps, so consolidate a hot transform chain into one All Items node — and never build a chain of *Each Item* Code nodes, where the per-item tax multiplies by node count (a 6-node Each-Item chain over 2k items ≈ 7 s).
+- **Every node→node hop re-copies all items** (~0.05 ms/item per hop). Six chained All Items Code nodes cost ~7× a single node doing the same six steps. On a measured hot path (thousands of items, transform-bound) that makes one All Items node the heavy all-items exception, recorded in its `Why Code:` note; below that, native nodes win on readability. Never build a chain of *Each Item* Code nodes, where the per-item tax multiplies by node count (a 6-node Each-Item chain over 2k items ≈ 7 s).
 
 **Scale check:** below a few hundred items this is all sub-100 ms and not worth a thought, and most real workflows are dominated by I/O (HTTP / DB / Sheets round-trips) that dwarfs node overhead. Reach for these rules on the hot path — large item counts with little I/O — not everywhere.
 
