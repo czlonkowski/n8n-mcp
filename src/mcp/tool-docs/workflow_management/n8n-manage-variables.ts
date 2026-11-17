@@ -12,7 +12,7 @@ export const n8nManageVariablesDoc: ToolDocumentation = {
       'Workflows read variables as {{ $vars.KEY }} - they are read-only at runtime',
       "Keys are unique per scope: global (the default) or one project. Pass projectId to scope a variable to a project, 'global' to target globals only",
       'Values are strings of up to 1000 characters, readable by every instance user (global variables) or every project member (project variables) - store secrets in credentials instead',
-      'Variables need a license with the Variables feature (not the free Community edition) and an API key with variable:* scopes; otherwise every action returns 403',
+      'Variables need a license with the Variables feature (not the free Community edition) and an API key with variable:* scopes; otherwise every action returns 403. Operators hide the tool with DISABLE_ENTERPRISE_TOOLS=true',
       'update needs only the fields that change; the tool fills in the rest from the current variable',
     ]
   },
@@ -38,7 +38,7 @@ export const n8nManageVariablesDoc: ToolDocumentation = {
     },
     returns: `Depends on action:
 - list: {variables: [{id, key, value, type, project}], returned, nextCursor?} - project is null for global variables, {id, name} otherwise
-- get: {id, key, value, type, project}, plus a warning when a key search stopped at the 10,000-variable cap
+- get: {id, key, value, type, project}. A key search without projectId that stops at the 10,000-variable cap fails with INCOMPLETE_SEARCH
 - create: {id, key, value, type, project} (or {key, value, project} with a note if the id could not be read back)
 - update: {id, key, value, project?}
 - delete: {id, deleted: true}`,
@@ -75,6 +75,7 @@ export const n8nManageVariablesDoc: ToolDocumentation = {
       'Variables are read-only inside workflows - a Code or Set node cannot change them; only this API (or the UI) can',
       'An empty value on update is ignored, because some MCP clients send empty strings for every unset field. To make a value empty, pass clearValue: true',
       'Renaming a key breaks every expression that uses the old {{ $vars.OLD_KEY }}',
+      'n8n has no conditional update. An update that omits key or value fills it from a read just before the write, so a concurrent change to the other field can be overwritten; pass both key and value when several clients edit the same variable',
     ],
     relatedTools: ['n8n_list_catalog', 'n8n_update_partial_workflow', 'n8n_manage_credentials'],
   },

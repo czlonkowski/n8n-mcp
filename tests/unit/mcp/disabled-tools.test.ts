@@ -45,6 +45,42 @@ describe('Disabled Tools Feature (Issue #410)', () => {
   afterEach(() => {
     delete process.env.NODE_DB_PATH;
     delete process.env.DISABLED_TOOLS;
+    delete process.env.DISABLE_ENTERPRISE_TOOLS;
+  });
+
+  describe('DISABLE_ENTERPRISE_TOOLS', () => {
+    it('leaves license-gated tools enabled by default', () => {
+      server = new TestableN8NMCPServer();
+      expect(server.testGetDisabledTools().has('n8n_manage_variables')).toBe(false);
+    });
+
+    it.each(['true', 'TRUE', '1', 'yes'])('disables license-gated tools when set to %s', (value) => {
+      process.env.DISABLE_ENTERPRISE_TOOLS = value;
+      server = new TestableN8NMCPServer();
+      expect(server.testGetDisabledTools().has('n8n_manage_variables')).toBe(true);
+    });
+
+    it('combines with DISABLED_TOOLS', () => {
+      process.env.DISABLE_ENTERPRISE_TOOLS = 'true';
+      process.env.DISABLED_TOOLS = 'n8n_delete_workflow';
+      server = new TestableN8NMCPServer();
+      const disabled = server.testGetDisabledTools();
+      expect(disabled.has('n8n_manage_variables')).toBe(true);
+      expect(disabled.has('n8n_delete_workflow')).toBe(true);
+    });
+
+    it('ignores other values', () => {
+      process.env.DISABLE_ENTERPRISE_TOOLS = 'false';
+      server = new TestableN8NMCPServer();
+      expect(server.testGetDisabledTools().has('n8n_manage_variables')).toBe(false);
+    });
+
+    it('names DISABLE_ENTERPRISE_TOOLS in the refusal', async () => {
+      process.env.DISABLE_ENTERPRISE_TOOLS = 'true';
+      server = new TestableN8NMCPServer();
+      await expect(server.testExecuteTool('n8n_manage_variables', { action: 'list' }))
+        .rejects.toThrow("Tool 'n8n_manage_variables' is disabled via DISABLE_ENTERPRISE_TOOLS environment variable");
+    });
   });
 
   describe('getDisabledTools() - Environment Variable Parsing', () => {

@@ -79,6 +79,12 @@ describe('Variable Handlers (n8n_manage_variables)', () => {
       expect(mockApiClient.listVariables).toHaveBeenCalledWith({});
     });
 
+    it('treats a blank limit as omitted', async () => {
+      const result = await handlers.handleListVariables({ action: 'list', limit: '' });
+      expect(result.success).toBe(true);
+      expect(mockApiClient.listVariables).toHaveBeenCalledWith({});
+    });
+
     it('rejects a limit above the 250 n8n accepts', async () => {
       const result = await handlers.handleListVariables({ action: 'list', limit: 500 });
       expect(result.success).toBe(false);
@@ -123,14 +129,28 @@ describe('Variable Handlers (n8n_manage_variables)', () => {
       expect(result.success).toBe(true);
     });
 
-    it('warns that a unique key match may be incomplete when the scan hit the page cap', async () => {
+    it('fails with INCOMPLETE_SEARCH when an unscoped key scan hit the page cap', async () => {
       mockApiClient.listVariables
         .mockResolvedValueOnce({ data: [otherVar], nextCursor: 'more' })
         .mockResolvedValue({ data: [globalVar], nextCursor: 'more' });
       const result = await handlers.handleGetVariable({ action: 'get', key: 'CHANNEL' });
       expect(mockApiClient.listVariables).toHaveBeenCalledTimes(40);
+      expect(result).toMatchObject({ success: false, code: 'INCOMPLETE_SEARCH' });
+      expect(result.details.matches).toHaveLength(1);
+    });
+
+    it('stops paging once an id lookup finds its variable', async () => {
+      mockApiClient.listVariables.mockResolvedValue({ data: [globalVar], nextCursor: 'more' });
+      const result = await handlers.handleGetVariable({ action: 'get', id: 'v1' });
+      expect(mockApiClient.listVariables).toHaveBeenCalledTimes(1);
       expect(result.success).toBe(true);
-      expect(result.warning).toMatch(/another variable with this key may exist/);
+    });
+
+    it('stops paging once a scoped key lookup finds its variable', async () => {
+      mockApiClient.listVariables.mockResolvedValue({ data: [globalVar], nextCursor: 'more' });
+      const result = await handlers.handleGetVariable({ action: 'get', key: 'API_URL', projectId: 'global' });
+      expect(mockApiClient.listVariables).toHaveBeenCalledTimes(1);
+      expect(result.data.id).toBe('v1');
     });
 
     it('returns NOT_FOUND for an unknown id', async () => {
@@ -239,6 +259,19 @@ describe('Variable Handlers (n8n_manage_variables)', () => {
     it('empties the value with clearValue', async () => {
       await handlers.handleUpdateVariable({ action: 'update', id: 'v3', clearValue: true, value: '' });
       expect(mockApiClient.updateVariable).toHaveBeenCalledWith('v3', { key: 'CHANNEL', value: '' });
+    });
+
+    it('treats a blank clearValue as omitted', async () => {
+      const result = await handlers.handleUpdateVariable({ action: 'update', id: 'v1', value: 'new', clearValue: '' });
+      expect(result.success).toBe(true);
+      expect(mockApiClient.updateVariable).toHaveBeenCalledWith('v1', expect.objectContaining({ value: 'new' }));
+    });
+
+    it('stops paging once the lookup finds the variable to update', async () => {
+      mockApiClient.listVariables.mockResolvedValue({ data: [globalVar], nextCursor: 'more' });
+      await handlers.handleUpdateVariable({ action: 'update', id: 'v1', value: 'new' });
+      expect(mockApiClient.listVariables).toHaveBeenCalledTimes(1);
+      expect(mockApiClient.updateVariable).toHaveBeenCalledWith('v1', { key: 'API_URL', value: 'new' });
     });
 
     it('rejects clearValue together with a value', async () => {

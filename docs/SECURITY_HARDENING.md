@@ -15,6 +15,7 @@ Whoever has access to the MCP session effectively has the same privileges as the
 | `CORS_ORIGIN` | Origin allowed to call the HTTP endpoint from a browser. Defaults to `*`. | `https://your-client.example` |
 | `N8N_MCP_MAX_SESSIONS` / `SESSION_TIMEOUT_MINUTES` | Cap on concurrent MCP sessions (default 100; new sessions are refused at the cap) and idle timeout in minutes (default 30). Lower them to limit memory use per process. | `20` / `15` |
 | `DISABLED_TOOLS` | Comma-separated list of MCP tools to disable. | `n8n_create_workflow,n8n_test_workflow` |
+| `DISABLE_ENTERPRISE_TOOLS` | Set to `true` to remove the tools that need a paid n8n license feature (currently `n8n_manage_variables`), for instances on the free Community edition. Combines with `DISABLED_TOOLS`. | `true` |
 | `DISABLED_TOOL_OPERATIONS` | Disable single operations of a tool instead of the whole tool, as `tool:op1,op2;tool2:op3`. See `.env.example` for a read-only recipe. | `n8n_executions:delete;n8n_workflow_versions:delete,rollback,prune` |
 | `N8N_MCP_DISABLE_UI_APPS` | Set to `true` to stop advertising result cards (MCP Apps UI metadata). Tools and their text results are unchanged. | `true` |
 | `N8N_MCP_VERSION_CHECK_DISABLED` | Set to `true` or `1` to stop `n8n_health_check` from requesting the latest n8n-mcp version from `registry.npmjs.org`. With `N8N_MCP_TELEMETRY_DISABLED=true` as well, n8n-mcp sends no requests other than those to your n8n instance. The health check then reports `upToDate: null` and `checkStatus: "disabled"`. | `true` |

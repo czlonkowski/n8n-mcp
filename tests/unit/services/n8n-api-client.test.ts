@@ -2408,6 +2408,12 @@ badRequest('request/body/nodeGroups/0 must NOT have additional properties')
       expect(result).toEqual({ data: variables, nextCursor: 'c2' });
     });
 
+    it('rejects a malformed list body instead of reporting no variables', async () => {
+      // e.g. a proxy answering 200 with an HTML login page
+      mockAxiosInstance.get.mockResolvedValue({ data: '<html>login</html>' });
+      await expect(client.listVariables()).rejects.toThrow(/Invalid response from n8n API for variables/);
+    });
+
     it('surfaces list errors instead of returning an empty list', async () => {
       // A 403 means the license lacks feat:variables; reporting "no variables" would hide that.
       await mockAxiosInstance.simulateError('get', {

@@ -1040,6 +1040,13 @@ export const TOOL_OPERATION_DEFAULT: Record<string, string> = {
 };
 
 /**
+ * Tools whose every action needs an n8n license feature that the free
+ * Community edition lacks. `DISABLE_ENTERPRISE_TOOLS=true` removes them, for
+ * deployments whose instances run the Community edition.
+ */
+export const ENTERPRISE_TOOLS: readonly string[] = ['n8n_manage_variables'];
+
+/**
  * The write/destructive operation values per multi-operation tool. Used by
  * DISABLED_TOOL_OPERATIONS filtering: when every destructive value has been
  * disabled, the filtered tool is effectively read-only and its MCP annotations

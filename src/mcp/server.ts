@@ -24,6 +24,7 @@ import {
   getValidOperations,
   isOperationDisabled,
   resolveRequestedOperation,
+  disabledToolEnvVar,
 } from './tool-policy';
 import { makeToolsN8nFriendly } from './tools-n8n-friendly';
 import { getWorkflowExampleString } from './workflow-examples';
@@ -929,7 +930,7 @@ export class N8NDocumentationMCPServer {
             type: 'text',
             text: JSON.stringify({
               error: 'TOOL_DISABLED',
-              message: `Tool '${name}' is not available in this deployment. It has been disabled via DISABLED_TOOLS environment variable.`,
+              message: `Tool '${name}' is not available in this deployment. It has been disabled via ${disabledToolEnvVar(name)} environment variable.`,
               tool: name
             }, null, 2)
           }],
@@ -1682,7 +1683,7 @@ export class N8NDocumentationMCPServer {
     // in case of future refactoring or direct executeTool() calls
     const disabledTools = this.getDisabledTools();
     if (disabledTools.has(name)) {
-      throw new Error(`Tool '${name}' is disabled via DISABLED_TOOLS environment variable`);
+      throw new Error(`Tool '${name}' is disabled via ${disabledToolEnvVar(name)} environment variable`);
     }
 
     // Defense in depth: operation-level check

@@ -5103,7 +5103,7 @@ const listVariablesSchema = z.object({
   // 'global' selects variables without a project.
   projectId: optionalVariableProjectId,
   state: optionalEmptyAware(z.literal('empty')),
-  limit: z.number().int().min(1).max(VARIABLE_PAGE_LIMIT).optional(),
+  limit: optionalEmptyAware(z.number().int().min(1).max(VARIABLE_PAGE_LIMIT)),
   cursor: optionalEmptyAware(z.string().trim().min(1)),
 });
 
@@ -5128,7 +5128,7 @@ const updateVariableSchema = z.object({
   // empty string: a whitespace value is a real value.
   value: z.preprocess((v) => (v === '' ? undefined : v), variableValueSchema.optional()),
   // The explicit way to set an empty value, since value: '' cannot mean it.
-  clearValue: z.boolean().optional(),
+  clearValue: optionalEmptyAware(z.boolean()),
   // null or 'global' = move to the global scope; omitted = keep the current scope.
   projectId: z.preprocess(emptyToUndefined, z.string().trim().min(1).max(36).nullable().optional()),
 }).refine((v) => v.key !== undefined || v.value !== undefined || v.projectId !== undefined || v.clearValue, {
@@ -5169,8 +5169,16 @@ function toVariableSummary(variable: Variable) {
   };
 }
 
-/** Read every variable visible to the API key (optionally one project's / globals only). */
-async function listAllVariables(client: N8nApiClient, projectId?: string): Promise<{ variables: Variable[]; truncated: boolean }> {
+/**
+ * Read the variables visible to the API key (optionally one project's / globals only).
+ * `stopAt` ends the scan at the first page holding a match; pass it only when the
+ * target is unique (an id, or a key within one scope), since later pages go unread.
+ */
+async function listAllVariables(
+  client: N8nApiClient,
+  projectId?: string,
+  stopAt?: (variable: Variable) => boolean,
+): Promise<{ variables: Variable[]; truncated: boolean }> {
   const variables: Variable[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < VARIABLE_MAX_PAGES; page++) {
@@ -5180,7 +5188,7 @@ async function listAllVariables(client: N8nApiClient, projectId?: string): Promi
       ...(projectId ? { projectId } : {}),
     });
     variables.push(...result.data);
-    if (!result.nextCursor) return { variables, truncated: false };
+    if (!result.nextCursor || (stopAt && result.data.some(stopAt))) return { variables, truncated: false };
     cursor = result.nextCursor;
   }
   return { variables, truncated: true };
@@ -5234,11 +5242,15 @@ export async function handleGetVariable(args: unknown, context?: InstanceContext
   try {
     const client = ensureApiConfigured(context);
     const input = getVariableSchema.parse(args || {});
-    const { variables, truncated } = await listAllVariables(client, toVariableListScope(input.projectId));
     // With both id and key, a variable must match both: a mismatched pair is an error,
     // not a silent pick of the id.
-    const matches = variables.filter((v) =>
-      (input.id === undefined || v.id === input.id) && (input.key === undefined || v.key === input.key));
+    const isMatch = (v: Variable) =>
+      (input.id === undefined || v.id === input.id) && (input.key === undefined || v.key === input.key);
+    // An id, or a key within one scope, names at most one variable, so the scan can stop
+    // at its page. A key across all scopes can match several: read everything.
+    const unique = input.id !== undefined || input.projectId !== undefined;
+    const { variables, truncated } = await listAllVariables(client, toVariableListScope(input.projectId), unique ? isMatch : undefined);
+    const matches = variables.filter(isMatch);
     const label = [input.id ? `id ${input.id}` : '', input.key ? `key "${input.key}"` : ''].filter(Boolean).join(' and ');
     if (matches.length === 0) {
       return {
@@ -5255,15 +5267,17 @@ export async function handleGetVariable(args: unknown, context?: InstanceContext
         details: { matches: matches.map(toVariableSummary) },
       };
     }
-    return {
-      success: true,
-      data: toVariableSummary(matches[0]),
-      // A key search that stopped at the page cap may have missed a same-key variable
-      // in another scope, so the match is unique only among the variables read.
-      ...(truncated && !input.id && !input.projectId
-        ? { warning: `Only the first ${VARIABLE_PAGE_LIMIT * VARIABLE_MAX_PAGES} variables were searched; another variable with this key may exist in a different scope. Pass projectId or the id to be sure.` }
-        : {}),
-    };
+    if (truncated && !unique) {
+      // The page cap may have hidden a same-key variable in another scope, so one
+      // match among the variables read does not make it the only one.
+      return {
+        success: false,
+        error: `Only the first ${VARIABLE_PAGE_LIMIT * VARIABLE_MAX_PAGES} variables were searched, so another variable with key "${input.key}" may exist in a different scope. Pass projectId ('global' for the global one) or the id.`,
+        code: 'INCOMPLETE_SEARCH',
+        details: { matches: matches.map(toVariableSummary) },
+      };
+    }
+    return { success: true, data: toVariableSummary(matches[0]) };
   } catch (error) {
     return handleVariableError(error);
   }
@@ -5280,8 +5294,9 @@ export async function handleCreateVariable(args: unknown, context?: InstanceCont
     // lookup does not undo the create, so it must not turn the result into an error.
     let created: Variable | undefined;
     try {
-      const { variables } = await listAllVariables(client, projectId ?? VARIABLE_GLOBAL_FILTER);
-      created = variables.find((v) => v.key === input.key);
+      const isCreated = (v: Variable) => v.key === input.key;
+      const { variables } = await listAllVariables(client, projectId ?? VARIABLE_GLOBAL_FILTER, isCreated);
+      created = variables.find(isCreated);
     } catch (lookupError) {
       logger.debug('Variable created but the ID lookup failed', lookupError instanceof Error ? lookupError.message : lookupError);
     }
@@ -5313,8 +5328,9 @@ export async function handleUpdateVariable(args: unknown, context?: InstanceCont
     // nor the input says where the variable lives.
     let project: VariableProjectSummary | undefined;
     if (key === undefined || value === undefined) {
-      const { variables, truncated } = await listAllVariables(client);
-      const current = variables.find((v) => v.id === input.id);
+      const isTarget = (v: Variable) => v.id === input.id;
+      const { variables, truncated } = await listAllVariables(client, undefined, isTarget);
+      const current = variables.find(isTarget);
       if (!current) {
         return {
           success: false,

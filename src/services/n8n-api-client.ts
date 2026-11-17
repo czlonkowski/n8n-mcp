@@ -24,6 +24,7 @@ import {
   HealthCheckResponse,
   N8nVersionInfo,
   VariableListParams,
+  Variable,
   VariableListResponse,
   VariableCreateRequest,
   VariableUpdateRequest,
@@ -1550,11 +1551,8 @@ export class N8nApiClient {
   async listVariables(params: VariableListParams = {}): Promise<VariableListResponse> {
     try {
       const response = await this.client.get('/variables', { params });
-      const data = response.data;
-      return {
-        data: Array.isArray(data?.data) ? data.data : [],
-        nextCursor: data?.nextCursor ?? null,
-      };
+      const result = this.validateListResponse<Variable>(response.data, 'variables');
+      return { data: result.data, nextCursor: result.nextCursor ?? null };
     } catch (error) {
       throw handleN8nApiError(error);
     }

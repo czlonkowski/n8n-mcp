@@ -442,7 +442,7 @@ These tools require `N8N_API_URL` and `N8N_API_KEY` in your configuration.
 - **`n8n_manage_folders`** - Manage workflow folders (create, list, get, rename, move, delete; n8n 2.19+). Place workflows into folders via `n8n_create_workflow`'s `parentFolderId` or `n8n_update_partial_workflow`'s `moveToFolder` operation (n8n 2.32+)
 
 #### Variable Management
-- **`n8n_manage_variables`** - Manage instance variables that workflows read as `{{ $vars.KEY }}` (list, get, create, update, delete; global or project-scoped). Needs an n8n license that includes Variables
+- **`n8n_manage_variables`** - Manage instance variables that workflows read as `{{ $vars.KEY }}` (list, get, create, update, delete; global or project-scoped). Needs an n8n license that includes Variables; set `DISABLE_ENTERPRISE_TOOLS=true` to hide it on Community-edition instances
 
 #### Data Table Management
 - **`n8n_manage_datatable`** - Manage n8n data tables, rows and columns (list, get, create, update, delete; `addColumn`/`deleteColumn`/`renameColumn` change an existing table's columns through n8n's own MCP server and need `N8N_MCP_ACCESS_TOKEN`)
