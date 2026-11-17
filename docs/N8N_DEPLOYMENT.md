@@ -430,7 +430,7 @@ docker compose up -d
 
 ### Available Tools
 
-Once connected, you can use these MCP tools in n8n. See the [README's tool table](../README.md#core-tools-7-tools) for the documentation tools (no API key required) and the [n8n Management Tools table](../README.md#n8n-management-tools-21-tools---requires-api-configuration) for the tools that require n8n API key configuration.
+Once connected, you can use these MCP tools in n8n. See the [README's tool table](../README.md#core-tools-7-tools) for the documentation tools (no API key required) and the [n8n Management Tools table](../README.md#n8n-management-tools-22-tools---requires-api-configuration) for the tools that require n8n API key configuration.
 
 ### Using with AI Agents
 

@@ -863,6 +863,38 @@ Two sources:
     },
   },
   {
+    name: 'n8n_manage_variables',
+    description: `Manage n8n instance variables - the read-only key/value pairs workflows read in expressions as {{ $vars.KEY }}. Actions: list, get, create, update, delete. Variables need an n8n license that includes them (not the free Community edition) and an API key with variable:* scopes. Keys are unique per scope: global (default) or one project. Values are plain strings of up to 1000 characters, readable by everyone in the variable's scope - keep secrets in credentials, not variables.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'get', 'create', 'update', 'delete'],
+          description: 'Operation: list=page through variables, get=one variable by id or key, create=new variable, update=change key, value or scope, delete=remove variable',
+        },
+        id: { type: 'string', description: 'Variable ID (required for update and delete; for get, alternative to key)' },
+        key: { type: 'string', description: 'For create: variable key (required; letters, digits and underscores, not starting with a digit, max 50). For get: look up by key. For update: new key.' },
+        value: { type: 'string', description: 'For create: variable value (required, max 1000 characters). For update: new value; an empty string counts as omitted - use clearValue to empty it.' },
+        clearValue: { type: 'boolean', description: 'For update: set the value to an empty string' },
+        projectId: {
+          type: ['string', 'null'],
+          description: "Scope. For create: project to create the variable in (omit or 'global' for a global variable). For update: project to move it to, or null/'global' to make it global; omit to keep the current scope. For list/get: only variables of this project, or 'global' for global variables only.",
+        },
+        state: { type: 'string', enum: ['empty'], description: "For list: 'empty' returns only variables whose value is empty" },
+        limit: { type: 'number', description: 'For list: page size (1-250, default 100)' },
+        cursor: { type: 'string', description: "For list: pagination cursor from the previous response's nextCursor" },
+      },
+      required: ['action'],
+    },
+    annotations: {
+      title: 'Manage Variables',
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    },
+  },
+  {
     name: 'n8n_manage_credentials',
     description: 'Manage n8n credentials. Actions: list, get, create, update, delete, getSchema. Use getSchema to discover required fields before creating. For list, page beyond 100 results with cursor (from the previous response\'s nextCursor). NOTE: list/get need an n8n deployment whose public API permits credential reads — older n8n versions, restricted API keys, or instance settings can reject them, returning NOT_SUPPORTED (create, delete, getSchema — and update where the API version supports it — still work). SECURITY: credential data values are never logged.',
     inputSchema: {
@@ -987,6 +1019,7 @@ export const TOOL_OPERATION_PARAM: Record<string, string> = {
   'n8n_test_workflow': 'method',
   'n8n_evaluations': 'action',
   'n8n_manage_folders': 'action',
+  'n8n_manage_variables': 'action',
   'n8n_workflow_versions': 'mode',
   'n8n_manage_agents': 'action',
   'n8n_list_catalog': 'kind',
@@ -1007,6 +1040,13 @@ export const TOOL_OPERATION_DEFAULT: Record<string, string> = {
 };
 
 /**
+ * Tools whose every action needs an n8n license feature that the free
+ * Community edition lacks. `DISABLE_ENTERPRISE_TOOLS=true` removes them, for
+ * deployments whose instances run the Community edition.
+ */
+export const ENTERPRISE_TOOLS: readonly string[] = ['n8n_manage_variables'];
+
+/**
  * The write/destructive operation values per multi-operation tool. Used by
  * DISABLED_TOOL_OPERATIONS filtering: when every destructive value has been
  * disabled, the filtered tool is effectively read-only and its MCP annotations
@@ -1023,6 +1063,8 @@ export const DESTRUCTIVE_TOOL_OPERATIONS: Record<string, Set<string>> = {
   // Every write action; list/get are the read paths. delete is the sharpest — without
   // transferToFolderId it archives the folder's workflows.
   'n8n_manage_folders': new Set(['create', 'rename', 'move', 'delete']),
+  // list/get are the read paths.
+  'n8n_manage_variables': new Set(['create', 'update', 'delete']),
   // `expose` is virtual: it is not a `mode` value but the consent write behind
   // `exposeToMcp: true` on the native modes.
   'n8n_workflow_versions': new Set(['delete', 'rollback', 'prune', 'expose']),

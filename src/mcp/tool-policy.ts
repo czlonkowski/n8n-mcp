@@ -1,6 +1,7 @@
 /**
  * Deployment policy for tools and their operations, parsed from the
- * `DISABLED_TOOLS` and `DISABLED_TOOL_OPERATIONS` environment variables.
+ * `DISABLED_TOOLS`, `DISABLE_ENTERPRISE_TOOLS` and `DISABLED_TOOL_OPERATIONS`
+ * environment variables.
  *
  * Extracted from `N8NDocumentationMCPServer` so handlers (and services such as
  * `mcp-exposure`) can consult the same policy without importing the server.
@@ -18,6 +19,7 @@ import {
   TOOL_OPERATION_PARAM,
   TOOL_OPERATION_DEFAULT,
   DESTRUCTIVE_TOOL_OPERATIONS,
+  ENTERPRISE_TOOLS,
 } from './tools-n8n-manager';
 
 const MAX_ENV_LENGTH = 10000;
@@ -28,19 +30,51 @@ let disabledToolsCache: { env: string; value: Set<string> } | null = null;
 let disabledOperationsCache: { env: string; value: Map<string, Set<string>> } | null = null;
 
 /**
- * Parse `DISABLED_TOOLS` into the set of tool names to filter out of
- * registration and refuse at call time.
+ * The set of tool names to filter out of registration and refuse at call
+ * time: the `DISABLED_TOOLS` list, plus `ENTERPRISE_TOOLS` when
+ * `DISABLE_ENTERPRISE_TOOLS` is on.
  *
  * Safety limits: at most 10KB of environment value, at most 200 tool names.
  */
 export function getDisabledTools(): Set<string> {
   const env = process.env.DISABLED_TOOLS || '';
-  if (disabledToolsCache?.env === env) return disabledToolsCache.value;
+  const enterpriseOff = isEnterpriseToolsDisabled();
+  const cacheKey = `${enterpriseOff ? '1' : '0'}|${env}`;
+  if (disabledToolsCache?.env === cacheKey) return disabledToolsCache.value;
 
-  if (!env) {
-    disabledToolsCache = { env, value: new Set() };
-    return disabledToolsCache.value;
+  const value = parseDisabledToolsEnv(env);
+  if (enterpriseOff) {
+    for (const tool of ENTERPRISE_TOOLS) value.add(tool);
+    logger.info(`DISABLE_ENTERPRISE_TOOLS: disabled ${ENTERPRISE_TOOLS.join(', ')}`);
   }
+
+  disabledToolsCache = { env: cacheKey, value };
+  return value;
+}
+
+/**
+ * The environment variable that disabled a tool, for error messages:
+ * `DISABLED_TOOLS` when it lists the tool, otherwise `DISABLE_ENTERPRISE_TOOLS`.
+ */
+export function disabledToolEnvVar(toolName: string): 'DISABLED_TOOLS' | 'DISABLE_ENTERPRISE_TOOLS' {
+  const listed = parseDisabledToolsEnvQuiet(process.env.DISABLED_TOOLS || '').has(toolName);
+  return !listed && isEnterpriseToolsDisabled() && ENTERPRISE_TOOLS.includes(toolName)
+    ? 'DISABLE_ENTERPRISE_TOOLS'
+    : 'DISABLED_TOOLS';
+}
+
+function parseDisabledToolsEnvQuiet(env: string): Set<string> {
+  return new Set(env.substring(0, MAX_ENV_LENGTH).split(',').map(t => t.trim()).filter(Boolean));
+}
+
+/** Whether `DISABLE_ENTERPRISE_TOOLS` is set to `true`, `1` or `yes`. */
+function isEnterpriseToolsDisabled(): boolean {
+  const raw = (process.env.DISABLE_ENTERPRISE_TOOLS || '').trim().toLowerCase();
+  return raw === 'true' || raw === '1' || raw === 'yes';
+}
+
+function parseDisabledToolsEnv(env: string): Set<string> {
+  if (!env) return new Set();
 
   let raw = env;
   if (raw.length > MAX_ENV_LENGTH) {
@@ -62,11 +96,10 @@ export function getDisabledTools(): Set<string> {
     logger.info(`Disabled tools configured: ${tools.join(', ')}`);
   }
 
-  disabledToolsCache = { env, value: new Set(tools) };
-  return disabledToolsCache.value;
+  return new Set(tools);
 }
 
-/** Whether the whole tool is disabled by `DISABLED_TOOLS`. */
+/** Whether the whole tool is disabled by `DISABLED_TOOLS` or `DISABLE_ENTERPRISE_TOOLS`. */
 export function isToolDisabled(toolName: string): boolean {
   return getDisabledTools().has(toolName);
 }

@@ -23,7 +23,11 @@ import {
   TagListResponse,
   HealthCheckResponse,
   N8nVersionInfo,
+  VariableListParams,
   Variable,
+  VariableListResponse,
+  VariableCreateRequest,
+  VariableUpdateRequest,
   WebhookRequest,
   WorkflowExport,
   WorkflowImport,
@@ -298,8 +302,9 @@ export class N8nApiClient {
         config.httpAgent = agents.httpAgent;
         config.httpsAgent = agents.httpsAgent;
 
-        // Redact request body for credential endpoints to prevent secret leakage
-        const isSensitive = config.url?.includes('/credentials') && config.method !== 'get';
+        // Redact request bodies that carry secrets or user values: credential data and
+        // variable values.
+        const isSensitive = /\/(credentials|variables)/.test(config.url ?? '') && config.method !== 'get';
         logger.debug(`n8n API Request: ${config.method?.toUpperCase()} ${config.url}`, {
           params: config.params,
           data: isSensitive ? '[REDACTED]' : config.data,
@@ -1539,30 +1544,32 @@ export class N8nApiClient {
   }
 
   // Variable Management
-  async getVariables(): Promise<Variable[]> {
+  //
+  // Public API /variables (license feat:variables). n8n answers create and update
+  // with an empty 201/204, so neither method returns the variable: callers that need
+  // the stored record read it back with listVariables().
+  async listVariables(params: VariableListParams = {}): Promise<VariableListResponse> {
     try {
-      const response = await this.client.get('/variables');
-      return response.data.data || [];
-    } catch (error) {
-      // Variables might not be available in all n8n versions
-      logger.warn('Variables API not available, returning empty array');
-      return [];
-    }
-  }
-
-  async createVariable(variable: Partial<Variable>): Promise<Variable> {
-    try {
-      const response = await this.client.post('/variables', variable);
-      return response.data;
+      const response = await this.client.get('/variables', { params });
+      const result = this.validateListResponse<Variable>(response.data, 'variables');
+      return { data: result.data, nextCursor: result.nextCursor ?? null };
     } catch (error) {
       throw handleN8nApiError(error);
     }
   }
 
-  async updateVariable(id: string, variable: Partial<Variable>): Promise<Variable> {
+  async createVariable(variable: VariableCreateRequest): Promise<void> {
     try {
-      const response = await this.client.patch(`/variables/${encodeApiPathSegment(id, 'variableId')}`, variable);
-      return response.data;
+      await this.client.post('/variables', variable);
+    } catch (error) {
+      throw handleN8nApiError(error);
+    }
+  }
+
+  /** PUT replaces the variable: n8n's public DTO requires both key and value. */
+  async updateVariable(id: string, variable: VariableUpdateRequest): Promise<void> {
+    try {
+      await this.client.put(`/variables/${encodeApiPathSegment(id, 'variableId')}`, variable);
     } catch (error) {
       throw handleN8nApiError(error);
     }

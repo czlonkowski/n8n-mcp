@@ -600,6 +600,43 @@ describe('Disabled Tool Operations Feature (Issue #714)', () => {
   // column actions that route to n8n's own MCP server.
   // ---------------------------------------------------------------------------
 
+  describe('n8n_manage_variables operations', () => {
+    it('should block the write actions at call time', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_manage_variables:create,update,delete';
+      server = new TestableN8NMCPServer();
+
+      for (const action of ['create', 'update', 'delete']) {
+        await expect(
+          server.testExecuteTool('n8n_manage_variables', { action, id: 'v1', key: 'K', value: 'v' })
+        ).rejects.toThrow(`Operation '${action}' on tool 'n8n_manage_variables' is disabled by server policy`);
+      }
+    });
+
+    it('should not block list and get when the writes are disabled', async () => {
+      process.env.DISABLED_TOOL_OPERATIONS = 'n8n_manage_variables:create,update,delete';
+      server = new TestableN8NMCPServer();
+
+      for (const action of ['list', 'get']) {
+        try {
+          await server.testExecuteTool('n8n_manage_variables', { action, key: 'K' });
+        } catch (error: any) {
+          expect(error.message).not.toContain('disabled by server policy');
+        }
+      }
+    });
+
+    it('should recompute annotations to read-only when every write action is disabled', () => {
+      const disabledOps = new Map([['n8n_manage_variables', new Set(['create', 'update', 'delete'])]]);
+      server = new TestableN8NMCPServer();
+      const cache = server.testBuildFilteredToolDefinitions(disabledOps);
+
+      const filtered = cache.get('n8n_manage_variables');
+      expect(filtered.inputSchema.properties.action.enum).toEqual(['list', 'get']);
+      expect(filtered.annotations.readOnlyHint).toBe(true);
+      expect(filtered.annotations.destructiveHint).toBe(false);
+    });
+  });
+
   describe('n8n_manage_datatable operations', () => {
     it('should strip the disabled actions from the enum but stay destructive', () => {
       const disabledOps = new Map([['n8n_manage_datatable', new Set(['deletetable', 'deleterows'])]]);
