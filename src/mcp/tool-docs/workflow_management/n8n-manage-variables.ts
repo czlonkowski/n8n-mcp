@@ -62,10 +62,10 @@ export const n8nManageVariablesDoc: ToolDocumentation = {
     ],
     performance: 'list is one API call. get, create and update without both key and value add a full list read (n8n holds variables in memory, so this stays fast up to thousands of variables).',
     errorHandling: `- 403: the instance license has no Variables feature (the free Community edition does not), the API key lacks variable:* scopes, or the key has no access to the variable's project
-- 404: unknown variable id; on n8n versions without the variables API the route itself is missing
+- 404 or NOT_FOUND: unknown variable id; on n8n versions without the variables API the route itself is missing. n8n answers delete of an unknown id with 403, so the tool looks the id up and reports NOT_FOUND when no visible variable has it
 - 400 "already exists": the key is taken in that scope - update the existing variable instead
 - "Variables limit reached": the license caps the number of variables
-- Invalid key or a value over 1000 characters fails locally with the rule before any API call`,
+- Invalid key or a value over 1000 characters fails locally before any API call; the error names the field and the rule ("Invalid input - key: ...")`,
     bestPractices: [
       'Use UPPER_SNAKE_CASE keys - they read clearly in {{ $vars.KEY }} expressions',
       'List before creating: keys must be unique per scope',

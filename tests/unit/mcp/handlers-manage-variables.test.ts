@@ -207,8 +207,17 @@ describe('Variable Handlers (n8n_manage_variables)', () => {
     it.each(['1ABC', 'has-dash', 'a'.repeat(51)])('rejects key %s before calling n8n', async (key) => {
       const result = await handlers.handleCreateVariable({ action: 'create', key, value: 'x' });
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Invalid input');
+      // The field is named in the message itself, since some clients drop `details`.
+      expect(result.error).toMatch(/^Invalid input - key: /);
       expect(mockApiClient.createVariable).not.toHaveBeenCalled();
+    });
+
+    it('states the key rule in the error message', async () => {
+      const result = await handlers.handleCreateVariable({ action: 'create', key: '1bad-key', value: 'x' });
+      expect(result.error).toBe(
+        'Invalid input - key: key may contain only letters, digits and underscores, and must not start with a digit'
+      );
+      expect(result.details.errors[0].path).toEqual(['key']);
     });
 
     it('rejects a value over 1000 characters', async () => {
@@ -287,7 +296,7 @@ describe('Variable Handlers (n8n_manage_variables)', () => {
 
     it('rejects renaming to a key that starts with a digit', async () => {
       const result = await handlers.handleUpdateVariable({ action: 'update', id: 'v3', key: '1CHANNEL' });
-      expect(result.error).toBe('Invalid input');
+      expect(result.error).toMatch(/^Invalid input - key: key may contain only letters/);
       expect(mockApiClient.updateVariable).not.toHaveBeenCalled();
     });
 
@@ -329,6 +338,41 @@ describe('Variable Handlers (n8n_manage_variables)', () => {
       mockApiClient.deleteVariable.mockRejectedValue(new N8nApiError('Variable with id v1 not found', 404, 'NOT_FOUND'));
       const result = await handlers.handleDeleteVariable({ action: 'delete', id: 'v1' });
       expect(result.error).toMatch(/not found\. Check the variable id/);
+    });
+
+    // n8n answers 403 (not 404) when the id does not exist.
+    const forbidden = () => new N8nApiError('You are not allowed to delete this variable', 403, 'API_ERROR');
+
+    it('reports NOT_FOUND when n8n returns 403 for an id no visible variable has', async () => {
+      mockApiClient.deleteVariable.mockRejectedValue(forbidden());
+      const result = await handlers.handleDeleteVariable({ action: 'delete', id: 'missing' });
+      expect(result.success).toBe(false);
+      expect(result.code).toBe('NOT_FOUND');
+      expect(result.error).toMatch(/No variable with id missing is visible/);
+      expect(result.error).not.toMatch(/license/);
+    });
+
+    it('keeps the license hint on 403 when the variable exists', async () => {
+      mockApiClient.deleteVariable.mockRejectedValue(forbidden());
+      const result = await handlers.handleDeleteVariable({ action: 'delete', id: 'v2' });
+      expect(result.code).not.toBe('NOT_FOUND');
+      expect(result.error).toMatch(/Variables need an n8n license/);
+    });
+
+    it('keeps the license hint on 403 when the lookup itself fails', async () => {
+      mockApiClient.deleteVariable.mockRejectedValue(forbidden());
+      mockApiClient.listVariables.mockRejectedValue(new N8nApiError('Forbidden', 403, 'API_ERROR'));
+      const result = await handlers.handleDeleteVariable({ action: 'delete', id: 'missing' });
+      expect(result.code).not.toBe('NOT_FOUND');
+      expect(result.error).toMatch(/Variables need an n8n license/);
+    });
+
+    it('keeps the license hint on 403 when the lookup stops at the page cap', async () => {
+      mockApiClient.deleteVariable.mockRejectedValue(forbidden());
+      mockApiClient.listVariables.mockResolvedValue({ data: [otherVar], nextCursor: 'more' });
+      const result = await handlers.handleDeleteVariable({ action: 'delete', id: 'missing' });
+      expect(result.code).not.toBe('NOT_FOUND');
+      expect(result.error).toMatch(/Variables need an n8n license/);
     });
   });
 });

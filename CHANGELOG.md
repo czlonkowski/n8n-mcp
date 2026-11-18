@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.103.2] - 2026-11-18
+
+### Fixed
+
+- **`n8n_manage_variables` delete of an unknown id reports `NOT_FOUND`.** n8n answers it with 403 "You are not allowed to delete this variable", and the tool added its license and key-scope hint, which sent callers to check settings that were fine. On a 403 from delete the tool now looks the id up and returns `NOT_FOUND` when no variable visible to the API key has it. A 403 for an existing variable, or a lookup that fails or stops at the page cap, keeps the original error and hint.
+- **`n8n_manage_variables` input errors name the field and the rule.** The error was the bare "Invalid input", with the reason only in `details`, which some MCP clients do not show. It now reads, for example, "Invalid input - key: key may contain only letters, digits and underscores, and must not start with a digit". `details` is unchanged.
+
 ## [2.103.1] - 2026-11-17
 
 ### Changed

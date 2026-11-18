@@ -5198,6 +5198,12 @@ const VARIABLE_LICENSE_HINT = 'Variables need an n8n license that includes the V
 
 function handleVariableError(error: unknown): McpToolResponse {
   const response = handleCrudError(error);
+  if (error instanceof z.ZodError) {
+    // Name the field and the rule in the message itself: some clients show only `error`.
+    const issues = error.errors.map((issue) => (issue.path.length ? `${issue.path.join('.')}: ${issue.message}` : issue.message));
+    response.error = `Invalid input - ${issues.join('; ')}`;
+    return response;
+  }
   if (error instanceof N8nApiError) {
     const base = (response.error ?? '').trimEnd();
     const append = (hint: string) => {
@@ -5374,7 +5380,24 @@ export async function handleDeleteVariable(args: unknown, context?: InstanceCont
   try {
     const client = ensureApiConfigured(context);
     const input = deleteVariableSchema.parse(args);
-    await client.deleteVariable(input.id);
+    try {
+      await client.deleteVariable(input.id);
+    } catch (deleteError) {
+      // n8n answers 403, not 404, for an unknown id. Check whether the id exists so the
+      // caller is not sent to fix a license or key scopes that are fine.
+      if (deleteError instanceof N8nApiError && deleteError.statusCode === 403) {
+        const isTarget = (v: Variable) => v.id === input.id;
+        const lookup = await listAllVariables(client, undefined, isTarget).catch(() => undefined);
+        if (lookup && !lookup.truncated && !lookup.variables.some(isTarget)) {
+          return {
+            success: false,
+            error: `No variable with id ${input.id} is visible to this API key. Find the id with action=list.`,
+            code: 'NOT_FOUND',
+          };
+        }
+      }
+      throw deleteError;
+    }
     return {
       success: true,
       data: { id: input.id, deleted: true },
