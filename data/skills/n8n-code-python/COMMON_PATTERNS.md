@@ -1,917 +1,251 @@
-# Common Patterns - Python Code Node
+# Common Patterns — native Python Code node
 
-Production-tested Python patterns for n8n Code nodes.
+Twelve import-free patterns. Each block below was run verbatim in a Code node (`language: "pythonNative"`) on n8n 2.38.5 against the sample input shown, and the noted output was observed. They use only `_items` / `_item`, dict access, and builtins that the sandbox allows — no imports, classes, `type()`, or dunders (see SKILL.md → Sandbox limits).
 
----
+Before using any of these, re-check the first rule of the skill: **is Python actually what the user asked for?** Most of these are one expression, an Edit Fields field, or a native node (Filter, Aggregate, Split Out, Remove Duplicates, Sort, Limit) in a JavaScript-first workflow.
 
-## ⚠️ Important: JavaScript First
+**Sample input** (3 items, e.g. after Split Out):
 
-**Use JavaScript for 95% of use cases.**
-
-Python in n8n has **NO external libraries** (no requests, pandas, numpy).
-
-Only use Python when:
-- You have complex Python-specific logic
-- You need Python's standard library features
-- You're more comfortable with Python than JavaScript
-
-For most workflows, **JavaScript is the better choice**.
-
----
-
-## Pattern Overview
-
-These 10 patterns cover common n8n Code node scenarios using Python:
-
-1. **Multi-Source Data Aggregation** - Combine data from multiple nodes
-2. **Regex-Based Filtering** - Filter items using pattern matching
-3. **Markdown to Structured Data** - Parse markdown into structured format
-4. **JSON Object Comparison** - Compare two JSON objects for changes
-5. **CRM Data Transformation** - Transform CRM data to standard format
-6. **Release Notes Processing** - Parse and categorize release notes
-7. **Array Transformation** - Reshape arrays and extract fields
-8. **Dictionary Lookup** - Create and use lookup dictionaries
-9. **Top N Filtering** - Get top items by score/value
-10. **String Aggregation** - Aggregate strings with formatting
-
----
-
-## Pattern 1: Multi-Source Data Aggregation
-
-**Use case**: Combine data from multiple sources (APIs, webhooks, databases).
-
-**Scenario**: Aggregate news articles from multiple sources.
-
-### Implementation
-
-```python
-from datetime import datetime
-
-all_items = _input.all()
-processed_articles = []
-
-for item in all_items:
-    source_name = item["json"].get("name", "Unknown")
-    source_data = item["json"]
-
-    # Process Hacker News source
-    if source_name == "Hacker News" and source_data.get("hits"):
-        for hit in source_data["hits"]:
-            processed_articles.append({
-                "title": hit.get("title", "No title"),
-                "url": hit.get("url", ""),
-                "summary": hit.get("story_text") or "No summary",
-                "source": "Hacker News",
-                "score": hit.get("points", 0),
-                "fetched_at": datetime.now().isoformat()
-            })
-
-    # Process Reddit source
-    elif source_name == "Reddit" and source_data.get("data"):
-        for post in source_data["data"].get("children", []):
-            post_data = post.get("data", {})
-            processed_articles.append({
-                "title": post_data.get("title", "No title"),
-                "url": post_data.get("url", ""),
-                "summary": post_data.get("selftext", "")[:200],
-                "source": "Reddit",
-                "score": post_data.get("score", 0),
-                "fetched_at": datetime.now().isoformat()
-            })
-
-# Sort by score descending
-processed_articles.sort(key=lambda x: x["score"], reverse=True)
-
-# Return as n8n items
-return [{"json": article} for article in processed_articles]
+```json
+[
+  {"name": "Acme", "country": "PL", "revenue": 120000, "active": true,  "contact": {"email": "a@acme.pl", "first-name": "Jan"},  "orders": [{"id": "A1", "total": 500}, {"id": "A2", "total": 1500}]},
+  {"name": "Foo",  "country": "DE", "revenue": 30000,  "active": false, "contact": {"email": "f@foo.de", "first-name": "Hans"}, "orders": [{"id": "F1", "total": 90}]},
+  {"name": "Bar",  "country": "PL", "revenue": 80000,  "active": true,  "contact": {"email": null, "first-name": "Ola"},       "orders": []}
+]
 ```
 
-### Key Techniques
-
-- Process multiple data sources in one loop
-- Normalize different data structures
-- Use datetime for timestamps
-- Sort by criteria
-- Return properly formatted items
+| # | Pattern | Mode |
+|---|---|---|
+| 1 | Filter and reshape | All Items |
+| 2 | Totals and averages | All Items |
+| 3 | Group by a field | All Items |
+| 4 | Deduplicate by key | All Items |
+| 5 | Top N by a field | All Items |
+| 6 | One item per nested element | All Items |
+| 7 | Validate and flag | Each Item |
+| 8 | Keep only some items (each-item) | Each Item |
+| 9 | Text report | All Items |
+| 10 | Safe nested access | All Items |
+| 11 | Running state with nonlocal | All Items |
+| 12 | ISO timestamps without datetime | All Items |
 
 ---
 
-## Pattern 2: Regex-Based Filtering
+## 1. Filter and reshape
 
-**Use case**: Filter items based on pattern matching in text fields.
-
-**Scenario**: Filter support tickets by priority keywords.
-
-### Implementation
+**Mode:** Run Once for All Items. Keep active customers above a threshold and emit only the fields downstream needs.
 
 ```python
-import re
-
-all_items = _input.all()
-priority_tickets = []
-
-# High priority keywords pattern
-high_priority_pattern = re.compile(
-    r'\b(urgent|critical|emergency|asap|down|outage|broken)\b',
-    re.IGNORECASE
-)
-
-for item in all_items:
-    ticket = item["json"]
-
-    # Check subject and description
-    subject = ticket.get("subject", "")
-    description = ticket.get("description", "")
-    combined_text = f"{subject} {description}"
-
-    # Find matches
-    matches = high_priority_pattern.findall(combined_text)
-
-    if matches:
-        priority_tickets.append({
-            "json": {
-                **ticket,
-                "priority": "high",
-                "matched_keywords": list(set(matches)),
-                "keyword_count": len(matches)
-            }
-        })
-    else:
-        priority_tickets.append({
-            "json": {
-                **ticket,
-                "priority": "normal",
-                "matched_keywords": [],
-                "keyword_count": 0
-            }
-        })
-
-# Sort by keyword count (most urgent first)
-priority_tickets.sort(key=lambda x: x["json"]["keyword_count"], reverse=True)
-
-return priority_tickets
+return [
+    {"json": {"name": it["json"]["name"], "revenue": it["json"]["revenue"]}}
+    for it in _items
+    if it["json"].get("active") and it["json"].get("revenue", 0) >= 50000
+]
 ```
 
-### Key Techniques
-
-- Use re.compile() for reusable patterns
-- re.IGNORECASE for case-insensitive matching
-- Combine multiple text fields for searching
-- Extract and deduplicate matches
-- Sort by priority indicators
+**Output:** 2 items: `{name, revenue}` for Acme and Bar.
 
 ---
 
-## Pattern 3: Markdown to Structured Data
+## 2. Totals and averages
 
-**Use case**: Parse markdown text into structured data.
-
-**Scenario**: Extract tasks from markdown checklist.
-
-### Implementation
+**Mode:** Run Once for All Items. One summary item from all input items. `max(..., default=0)` and the `if count` guard keep empty input from raising.
 
 ```python
-import re
-
-markdown_text = _input.first()["json"]["body"].get("markdown", "")
-
-# Parse markdown checklist
-tasks = []
-lines = markdown_text.split("\n")
-
-for line in lines:
-    # Match: - [ ] Task or - [x] Task
-    match = re.match(r'^\s*-\s*\[([ x])\]\s*(.+)$', line, re.IGNORECASE)
-
-    if match:
-        checked = match.group(1).lower() == 'x'
-        task_text = match.group(2).strip()
-
-        # Extract priority if present (e.g., [P1], [HIGH])
-        priority_match = re.search(r'\[(P\d|HIGH|MEDIUM|LOW)\]', task_text, re.IGNORECASE)
-        priority = priority_match.group(1).upper() if priority_match else "NORMAL"
-
-        # Remove priority tag from text
-        clean_text = re.sub(r'\[(P\d|HIGH|MEDIUM|LOW)\]', '', task_text, flags=re.IGNORECASE).strip()
-
-        tasks.append({
-            "text": clean_text,
-            "completed": checked,
-            "priority": priority,
-            "original_line": line.strip()
-        })
-
-return [{
-    "json": {
-        "tasks": tasks,
-        "total": len(tasks),
-        "completed": sum(1 for t in tasks if t["completed"]),
-        "pending": sum(1 for t in tasks if not t["completed"])
-    }
-}]
+revenues = [it["json"].get("revenue") or 0 for it in _items]
+count = len(revenues)
+return [{"json": {
+    "count": count,
+    "total": sum(revenues),
+    "average": round(sum(revenues) / count, 2) if count else 0,
+    "max": max(revenues, default=0),
+}}]
 ```
 
-### Key Techniques
-
-- Line-by-line parsing
-- Multiple regex patterns for extraction
-- Extract metadata from text
-- Calculate summary statistics
-- Return structured data
+**Output:** `{count: 3, total: 230000, average: 76666.67, max: 120000}`
 
 ---
 
-## Pattern 4: JSON Object Comparison
+## 3. Group by a field
 
-**Use case**: Compare two JSON objects to find differences.
-
-**Scenario**: Compare old and new user profile data.
-
-### Implementation
+**Mode:** Run Once for All Items. `setdefault` builds the buckets; emit one item per group, sorted.
 
 ```python
-import json
-
-all_items = _input.all()
-
-# Assume first item is old data, second is new data
-old_data = all_items[0]["json"] if len(all_items) > 0 else {}
-new_data = all_items[1]["json"] if len(all_items) > 1 else {}
-
-changes = {
-    "added": {},
-    "removed": {},
-    "modified": {},
-    "unchanged": {}
-}
-
-# Find all unique keys
-all_keys = set(old_data.keys()) | set(new_data.keys())
-
-for key in all_keys:
-    old_value = old_data.get(key)
-    new_value = new_data.get(key)
-
-    if key not in old_data:
-        # Added field
-        changes["added"][key] = new_value
-    elif key not in new_data:
-        # Removed field
-        changes["removed"][key] = old_value
-    elif old_value != new_value:
-        # Modified field
-        changes["modified"][key] = {
-            "old": old_value,
-            "new": new_value
-        }
-    else:
-        # Unchanged field
-        changes["unchanged"][key] = old_value
-
-return [{
-    "json": {
-        "changes": changes,
-        "summary": {
-            "added_count": len(changes["added"]),
-            "removed_count": len(changes["removed"]),
-            "modified_count": len(changes["modified"]),
-            "unchanged_count": len(changes["unchanged"]),
-            "has_changes": len(changes["added"]) > 0 or len(changes["removed"]) > 0 or len(changes["modified"]) > 0
-        }
-    }
-}]
+groups = {}
+for it in _items:
+    row = it["json"]
+    key = row.get("country") or "unknown"
+    groups.setdefault(key, {"country": key, "customers": [], "revenue": 0})
+    groups[key]["customers"].append(row["name"])
+    groups[key]["revenue"] += row.get("revenue") or 0
+return [{"json": g} for g in sorted(groups.values(), key=lambda g: g["revenue"], reverse=True)]
 ```
 
-### Key Techniques
-
-- Set operations for key comparison
-- Dictionary .get() for safe access
-- Categorize changes by type
-- Create summary statistics
-- Return detailed comparison
+**Output:** `{country: "PL", customers: ["Acme", "Bar"], revenue: 200000}`, then DE.
 
 ---
 
-## Pattern 5: CRM Data Transformation
+## 4. Deduplicate by key
 
-**Use case**: Transform CRM data to standard format.
-
-**Scenario**: Normalize data from different CRM systems.
-
-### Implementation
+**Mode:** Run Once for All Items. Keeps the first item per normalized key and returns the original items, so all fields are preserved.
 
 ```python
-from datetime import datetime
-import re
-
-all_items = _input.all()
-normalized_contacts = []
-
-for item in all_items:
-    raw_contact = item["json"]
-    source = raw_contact.get("source", "unknown")
-
-    # Normalize email
-    email = raw_contact.get("email", "").lower().strip()
-
-    # Normalize phone (remove non-digits)
-    phone_raw = raw_contact.get("phone", "")
-    phone = re.sub(r'\D', '', phone_raw)
-
-    # Parse name
-    if "full_name" in raw_contact:
-        name_parts = raw_contact["full_name"].split(" ", 1)
-        first_name = name_parts[0] if len(name_parts) > 0 else ""
-        last_name = name_parts[1] if len(name_parts) > 1 else ""
-    else:
-        first_name = raw_contact.get("first_name", "")
-        last_name = raw_contact.get("last_name", "")
-
-    # Normalize status
-    status_raw = raw_contact.get("status", "").lower()
-    status = "active" if status_raw in ["active", "enabled", "true", "1"] else "inactive"
-
-    # Create normalized contact
-    normalized_contacts.append({
-        "json": {
-            "id": raw_contact.get("id", ""),
-            "first_name": first_name.strip(),
-            "last_name": last_name.strip(),
-            "full_name": f"{first_name} {last_name}".strip(),
-            "email": email,
-            "phone": phone,
-            "status": status,
-            "source": source,
-            "normalized_at": datetime.now().isoformat(),
-            "original_data": raw_contact
-        }
-    })
-
-return normalized_contacts
-```
-
-### Key Techniques
-
-- Multiple field name variations handling
-- String cleaning and normalization
-- Regex for phone number cleaning
-- Name parsing logic
-- Status normalization
-- Preserve original data
-
----
-
-## Pattern 6: Release Notes Processing
-
-**Use case**: Parse release notes and categorize changes.
-
-**Scenario**: Extract features, fixes, and breaking changes from release notes.
-
-### Implementation
-
-```python
-import re
-
-release_notes = _input.first()["json"]["body"].get("notes", "")
-
-categories = {
-    "features": [],
-    "fixes": [],
-    "breaking": [],
-    "other": []
-}
-
-# Split into lines
-lines = release_notes.split("\n")
-
-for line in lines:
-    line = line.strip()
-
-    # Skip empty lines and headers
-    if not line or line.startswith("#"):
+seen = set()
+unique = []
+for it in _items:
+    key = (it["json"].get("country") or "").lower()
+    if key in seen:
         continue
-
-    # Remove bullet points
-    clean_line = re.sub(r'^[\*\-\+]\s*', '', line)
-
-    # Categorize
-    if re.search(r'\b(feature|add|new)\b', clean_line, re.IGNORECASE):
-        categories["features"].append(clean_line)
-    elif re.search(r'\b(fix|bug|patch|resolve)\b', clean_line, re.IGNORECASE):
-        categories["fixes"].append(clean_line)
-    elif re.search(r'\b(breaking|deprecated|remove)\b', clean_line, re.IGNORECASE):
-        categories["breaking"].append(clean_line)
-    else:
-        categories["other"].append(clean_line)
-
-return [{
-    "json": {
-        "categories": categories,
-        "summary": {
-            "features": len(categories["features"]),
-            "fixes": len(categories["fixes"]),
-            "breaking": len(categories["breaking"]),
-            "other": len(categories["other"]),
-            "total": sum(len(v) for v in categories.values())
-        }
-    }
-}]
+    seen.add(key)
+    unique.append(it)
+return unique
 ```
 
-### Key Techniques
-
-- Line-by-line parsing
-- Pattern-based categorization
-- Bullet point removal
-- Skip headers and empty lines
-- Summary statistics
+**Output:** 2 items (first PL, first DE).
 
 ---
 
-## Pattern 7: Array Transformation
+## 5. Top N by a field
 
-**Use case**: Reshape arrays and extract specific fields.
-
-**Scenario**: Transform user data array to extract specific fields.
-
-### Implementation
+**Mode:** Run Once for All Items. `sorted(..., key=..., reverse=True)[:N]` then rank with `enumerate`.
 
 ```python
-all_items = _input.all()
-
-# Extract and transform
-transformed = []
-
-for item in all_items:
-    user = item["json"]
-
-    # Extract nested fields
-    profile = user.get("profile", {})
-    settings = user.get("settings", {})
-
-    transformed.append({
-        "json": {
-            "user_id": user.get("id"),
-            "email": user.get("email"),
-            "name": profile.get("name", "Unknown"),
-            "avatar": profile.get("avatar_url"),
-            "bio": profile.get("bio", "")[:100],  # Truncate to 100 chars
-            "notifications_enabled": settings.get("notifications", True),
-            "theme": settings.get("theme", "light"),
-            "created_at": user.get("created_at"),
-            "last_login": user.get("last_login_at")
-        }
-    })
-
-return transformed
+top = sorted(_items, key=lambda it: it["json"].get("revenue") or 0, reverse=True)[:2]
+return [{"json": {"rank": i + 1, "name": it["json"]["name"]}} for i, it in enumerate(top)]
 ```
 
-### Key Techniques
-
-- Field extraction from nested objects
-- Default values with .get()
-- String truncation
-- Flattening nested structures
+**Output:** `{rank: 1, name: "Acme"}`, `{rank: 2, name: "Bar"}`
 
 ---
 
-## Pattern 8: Dictionary Lookup
+## 6. One item per nested element
 
-**Use case**: Create lookup dictionary for fast data access.
-
-**Scenario**: Look up user details by ID.
-
-### Implementation
+**Mode:** Run Once for All Items. Fan an array inside each item out into separate items — the Python equivalent of Split Out with parent fields attached.
 
 ```python
-all_items = _input.all()
-
-# Build lookup dictionary
-users_by_id = {}
-
-for item in all_items:
-    user = item["json"]
-    user_id = user.get("id")
-
-    if user_id:
-        users_by_id[user_id] = {
-            "name": user.get("name"),
-            "email": user.get("email"),
-            "status": user.get("status")
-        }
-
-# Example: Look up specific users
-lookup_ids = [1, 3, 5]
-looked_up = []
-
-for user_id in lookup_ids:
-    if user_id in users_by_id:
-        looked_up.append({
-            "json": {
-                "id": user_id,
-                **users_by_id[user_id],
-                "found": True
-            }
-        })
-    else:
-        looked_up.append({
-            "json": {
-                "id": user_id,
-                "found": False
-            }
-        })
-
-return looked_up
+out = []
+for it in _items:
+    customer = it["json"]
+    for order in customer.get("orders", []):
+        out.append({"json": {"customer": customer["name"], "order_id": order["id"], "total": order["total"]}})
+return out
 ```
 
-### Key Techniques
-
-- Dictionary comprehension alternative
-- O(1) lookup time
-- Handle missing keys gracefully
-- Preserve lookup order
+**Output:** 3 items: `{customer, order_id, total}`
 
 ---
 
-## Pattern 9: Top N Filtering
+## 7. Validate and flag
 
-**Use case**: Get top items by score or value.
-
-**Scenario**: Get top 10 products by sales.
-
-### Implementation
+**Mode:** Run Once for Each Item. Each-item mode: attach `valid` + `problems` instead of failing the run; route on `valid` with an IF node afterwards.
 
 ```python
-all_items = _input.all()
+row = _item["json"]
+problems = []
+if not row.get("name"):
+    problems.append("name missing")
+email = (row.get("contact") or {}).get("email")
+if not email or "@" not in email:
+    problems.append("email missing or invalid")
+return {"json": {**row, "valid": not problems, "problems": problems}}
+```
 
-# Extract products with sales
-products = []
+**Output:** Bar gets `valid: false, problems: ["email missing or invalid"]`.
 
-for item in all_items:
-    product = item["json"]
-    products.append({
-        "id": product.get("id"),
-        "name": product.get("name"),
-        "sales": product.get("sales", 0),
-        "revenue": product.get("revenue", 0.0),
-        "category": product.get("category")
-    })
+---
 
-# Sort by sales descending
-products.sort(key=lambda p: p["sales"], reverse=True)
+## 8. Keep only some items (each-item)
 
-# Get top 10
-top_10 = products[:10]
+**Mode:** Run Once for Each Item. In each-item mode `return None` drops the item — a Filter node in code form.
 
-return [
-    {
-        "json": {
-            **product,
-            "rank": index + 1
-        }
-    }
-    for index, product in enumerate(top_10)
+```python
+if _item["json"].get("country") != "PL":
+    return None
+return _item
+```
+
+**Output:** 2 items (the PL customers).
+
+---
+
+## 9. Text report
+
+**Mode:** Run Once for All Items. f-strings with format specs (`:,`) and `"\n".join` for a message body (Slack, email).
+
+```python
+lines = [
+    f"- {it['json']['name']} ({it['json']['country']}): {it['json']['revenue']:,} PLN"
+    for it in sorted(_items, key=lambda it: it["json"]["name"])
 ]
+return [{"json": {"report": "Customers:\n" + "\n".join(lines), "lines": len(lines)}}]
 ```
 
-### Key Techniques
-
-- List sorting with custom key
-- Slicing for top N
-- Add ranking information
-- Enumerate for index
+**Output:** `"Customers:\n- Acme (PL): 120,000 PLN\n- Bar (PL): 80,000 PLN\n- Foo (DE): 30,000 PLN"`
 
 ---
 
-## Pattern 10: String Aggregation
+## 10. Safe nested access
 
-**Use case**: Aggregate strings with formatting.
-
-**Scenario**: Create summary text from multiple items.
-
-### Implementation
+**Mode:** Run Once for All Items. A small `dig()` helper instead of chained `[...]` lookups that raise on missing keys/indexes. `isinstance` replaces the denied `type()`.
 
 ```python
-all_items = _input.all()
+def dig(data, *path, default=None):
+    for key in path:
+        if isinstance(data, dict) and key in data:
+            data = data[key]
+        elif isinstance(data, list) and isinstance(key, int) and -len(data) <= key < len(data):
+            data = data[key]
+        else:
+            return default
+    return data
 
-# Collect messages
-messages = []
-
-for item in all_items:
-    data = item["json"]
-
-    user = data.get("user", "Unknown")
-    message = data.get("message", "")
-    timestamp = data.get("timestamp", "")
-
-    # Format each message
-    formatted = f"[{timestamp}] {user}: {message}"
-    messages.append(formatted)
-
-# Join with newlines
-summary = "\n".join(messages)
-
-# Create statistics
-total_length = sum(len(msg) for msg in messages)
-average_length = total_length / len(messages) if messages else 0
-
-return [{
-    "json": {
-        "summary": summary,
-        "message_count": len(messages),
-        "total_characters": total_length,
-        "average_length": round(average_length, 2)
-    }
-}]
+return [{"json": {
+    "first_order_total": dig(it["json"], "orders", 0, "total", default=0),
+    "first_name": dig(it["json"], "contact", "first-name", default=""),
+}} for it in _items]
 ```
 
-### Key Techniques
-
-- String formatting with f-strings
-- Join lists with separator
-- Calculate string statistics
-- Handle empty lists
+**Output:** Bar (no orders) gets `first_order_total: 0`.
 
 ---
 
-## Pattern Comparison: Python vs JavaScript
+## 11. Running state with nonlocal
 
-### Data Access
-
-```python
-# Python
-all_items = _input.all()
-first_item = _input.first()
-current = _input.item
-webhook_data = _json["body"]
-
-# JavaScript
-const allItems = $input.all();
-const firstItem = $input.first();
-const current = $input.item;
-const webhookData = $json.body;
-```
-
-### Dictionary/Object Access
+**Mode:** Run Once for All Items. Code runs inside a wrapper function, so `global` fails — use `nonlocal` for state shared with helper functions.
 
 ```python
-# Python - Dictionary key access
-name = user["name"]           # May raise KeyError
-name = user.get("name", "?")  # Safe with default
+running = 0
+def add(value):
+    nonlocal running
+    running += value
+    return running
 
-# JavaScript - Object property access
-const name = user.name;              // May be undefined
-const name = user.name || "?";       // Safe with default
+return [{"json": {"name": it["json"]["name"], "cumulative": add(it["json"]["revenue"])}} for it in _items]
 ```
 
-### Array Operations
-
-```python
-# Python - List comprehension
-filtered = [item for item in items if item["active"]]
-
-# JavaScript - Array methods
-const filtered = items.filter(item => item.active);
-```
-
-### Sorting
-
-```python
-# Python
-items.sort(key=lambda x: x["score"], reverse=True)
-
-# JavaScript
-items.sort((a, b) => b.score - a.score);
-```
+**Output:** cumulative 120000 → 150000 → 230000
 
 ---
 
-## Best Practices
+## 12. ISO timestamps without datetime
 
-### 1. Use .get() for Safe Access
-
-```python
-# ✅ SAFE: Use .get() with defaults
-name = user.get("name", "Unknown")
-email = user.get("email", "no-email@example.com")
-
-# ❌ RISKY: Direct key access
-name = user["name"]  # KeyError if missing!
-```
-
-### 2. Handle Empty Lists
+**Mode:** Run Once for All Items. *Illustrative, no input needed* (the timestamps are inline). With no `datetime` import, ISO-8601 strings in the same timezone still sort and compare correctly as strings; slice for year/month buckets. Real date math belongs in expressions (Luxon) or JS.
 
 ```python
-# ✅ SAFE: Check before processing
-items = _input.all()
-if items:
-    first = items[0]
-else:
-    return [{"json": {"error": "No items"}}]
-
-# ❌ RISKY: Assume items exist
-first = items[0]  # IndexError if empty!
+stamps = ["2026-09-16T10:00:00Z", "2026-01-02T08:30:00Z", "2025-12-31T23:59:59Z"]
+return [{"json": {
+    "latest": max(stamps),
+    "in_2026": [s for s in stamps if s[:4] == "2026"],
+    "by_month": sorted({s[:7] for s in stamps}),
+}}]
 ```
 
-### 3. Use List Comprehensions
-
-```python
-# ✅ PYTHONIC: List comprehension
-active = [item for item in items if item["json"].get("active")]
-
-# ❌ VERBOSE: Traditional loop
-active = []
-for item in items:
-    if item["json"].get("active"):
-        active.append(item)
-```
-
-### 4. Return Proper Format
-
-```python
-# ✅ CORRECT: Array of objects with "json" key
-return [{"json": {"field": "value"}}]
-
-# ❌ WRONG: Just the data
-return {"field": "value"}
-
-# ❌ WRONG: Array without "json" wrapper
-return [{"field": "value"}]
-```
-
-### 5. Use Standard Library
-
-```python
-# ✅ GOOD: Use standard library
-import statistics
-average = statistics.mean(numbers)
-
-# ✅ ALSO GOOD: Built-in functions
-average = sum(numbers) / len(numbers) if numbers else 0
-
-# ❌ CAN'T DO: External libraries
-import numpy as np  # ModuleNotFoundError!
-```
+**Output:** `latest: "2026-09-16T10:00:00Z"`, `by_month: ["2025-12", "2026-01", "2026-09"]`
 
 ---
 
-## Quick Pattern Snippets
+## Not covered here — and why
 
-Condensed, copy-ready versions of the most common Python operations. Use these as starting points before reaching for the full patterns above.
-
-### 1. Data Transformation
-
-Transform all items with list comprehensions.
-
-```python
-items = _input.all()
-
-return [
-    {
-        "json": {
-            "id": item["json"].get("id"),
-            "name": item["json"].get("name", "Unknown").upper(),
-            "processed": True
-        }
-    }
-    for item in items
-]
-```
-
-### 2. Filtering & Aggregation
-
-Sum, filter, count with built-in functions.
-
-```python
-items = _input.all()
-total = sum(item["json"].get("amount", 0) for item in items)
-valid_items = [item for item in items if item["json"].get("amount", 0) > 0]
-
-return [{
-    "json": {
-        "total": total,
-        "count": len(valid_items)
-    }
-}]
-```
-
-### 3. String Processing with Regex
-
-Extract patterns from text.
-
-```python
-import re
-
-items = _input.all()
-email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-
-all_emails = []
-for item in items:
-    text = item["json"].get("text", "")
-    emails = re.findall(email_pattern, text)
-    all_emails.extend(emails)
-
-# Remove duplicates
-unique_emails = list(set(all_emails))
-
-return [{
-    "json": {
-        "emails": unique_emails,
-        "count": len(unique_emails)
-    }
-}]
-```
-
-### 4. Data Validation
-
-Validate and clean data.
-
-```python
-items = _input.all()
-validated = []
-
-for item in items:
-    data = item["json"]
-    errors = []
-
-    # Validate fields
-    if not data.get("email"):
-        errors.append("Email required")
-    if not data.get("name"):
-        errors.append("Name required")
-
-    validated.append({
-        "json": {
-            **data,
-            "valid": len(errors) == 0,
-            "errors": errors if errors else None
-        }
-    })
-
-return validated
-```
-
-### 5. Statistical Analysis
-
-Calculate statistics with the statistics module.
-
-```python
-from statistics import mean, median, stdev
-
-items = _input.all()
-values = [item["json"].get("value", 0) for item in items if "value" in item["json"]]
-
-if values:
-    return [{
-        "json": {
-            "mean": mean(values),
-            "median": median(values),
-            "stdev": stdev(values) if len(values) > 1 else 0,
-            "min": min(values),
-            "max": max(values),
-            "count": len(values)
-        }
-    }]
-else:
-    return [{"json": {"error": "No values found"}}]
-```
-
----
-
-## When to Use Each Pattern
-
-| Pattern | When to Use |
-|---------|-------------|
-| Multi-Source Aggregation | Combining data from different nodes/sources |
-| Regex Filtering | Text pattern matching, validation, extraction |
-| Markdown Parsing | Processing formatted text into structured data |
-| JSON Comparison | Detecting changes between objects |
-| CRM Transformation | Normalizing data from different systems |
-| Release Notes | Categorizing text by keywords |
-| Array Transformation | Reshaping data, extracting fields |
-| Dictionary Lookup | Fast ID-based lookups |
-| Top N Filtering | Getting best/worst items by criteria |
-| String Aggregation | Creating formatted text summaries |
-
----
-
-## Summary
-
-**Key Takeaways**:
-- Use `.get()` for safe dictionary access
-- List comprehensions are pythonic and efficient
-- Handle empty lists/None values
-- Use standard library (json, datetime, re)
-- Return proper n8n format: `[{"json": {...}}]`
-
-**Remember**:
-- JavaScript is recommended for 95% of use cases
-- Python has NO external libraries
-- Use n8n nodes for complex operations
-- Code node is for data transformation, not API calls
-
-**See Also**:
-- [SKILL.md](SKILL.md) - Python Code overview
-- [DATA_ACCESS.md](DATA_ACCESS.md) - Data access patterns
-- [STANDARD_LIBRARY.md](STANDARD_LIBRARY.md) - Available modules
-- [ERROR_PATTERNS.md](ERROR_PATTERNS.md) - Avoid common mistakes
+- **Parsing JSON strings, regex, hashing, real date arithmetic** need `json` / `re` / `hashlib` / `datetime`, which are blocked unless the instance allowlists them. Do these with a native node or an expression first (Date & Time or Luxon, `.parseJson()`, `.match()`, the Crypto node), or in a JavaScript Code node.
+- **Reading another node's output** — native Python has no `_node`. Merge the branches first, or use JavaScript `$('Node Name')`.
+- **HTTP calls** — HTTP Request node.

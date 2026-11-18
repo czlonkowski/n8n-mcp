@@ -50,7 +50,7 @@ Pull the workflow first, then walk the list top to bottom. For each item, inspec
 - [ ] **User input interpolated into a query string.** Any DB node with `{{ ... }}` inside `parameters.query` — n8n substitutes it into the SQL *before* the driver binds parameters, so it's an injection vector. Use `$1, $2` placeholders + `parameters.options.queryReplacement` (Postgres/MySQL); object filters for Mongo. → **n8n-node-configuration** → [NODE_FAMILY_GOTCHAS.md](../n8n-node-configuration/NODE_FAMILY_GOTCHAS.md) (Database)
 
 ### Connection bugs (valid but broken)
-- [ ] **Merge with 3+ sources but `numberOfInputs` still 2.** Third source silently drops. → **n8n-node-configuration** → NODE_FAMILY_GOTCHAS.md (Merge)
+- [ ] **Merge with 3+ sources but `numberInputs` still 2** (or set under the wrong name `numberOfInputs`, which is ignored). Third source silently drops. → **n8n-node-configuration** → NODE_FAMILY_GOTCHAS.md (Merge)
 - [ ] **Merge index off-by-one.** `parameters.useDataOfInput` is 1-indexed; the wire sits at `connections.<source>.main[N-1]`. Mismatch passes through the wrong source silently. Verify with `n8n_get_workflow`. → **n8n-node-configuration** → NODE_FAMILY_GOTCHAS.md (Merge)
 - [ ] **Error output enabled but unwired, or wired but not enabled.** If `parameters.onError` is `continueErrorOutput` but the node's error output is empty, failed items are silently dropped; if a node feeds an error branch but `onError` isn't set, the branch is unreachable and a failure halts the workflow. `validate_workflow` now surfaces both as warnings (n8n-mcp ≥ 2.63.0), but neither flips `valid:false`, so this stays a review item. **Locate the error output by node type**: it is the *last* `main[]` slot after the node's natural outputs — `main[1]` on a single-output node like HTTP Request, but `main[2]` on an IF (whose `main[1]` is the normal false branch) and similarly on Switch/Split In Batches. Don't mistake a wired second branch on a multi-output node for an unwired error output. → **n8n-validation-expert**
 
@@ -59,29 +59,31 @@ Pull the workflow first, then walk the list top to bottom. For each item, inspec
 
 ### Webhook API workflows
 - [ ] **Webhook performing a sensitive action with `parameters.authentication: "none"`.** "Sensitive" = mutates state, sends external messages, hits production data, triggers paid actions. Anyone with the URL can fire it. Set `authentication` to `basicAuth`/`headerAuth` with a matching credential. → **n8n-workflow-patterns** (webhook), **n8n-mcp-tools-expert** (credentials)
-- [ ] **Error branch returns HTTP 200.** `responseCode` defaults to 200 on every Respond node, including error paths. The caller sees success while the body says failure. → **n8n-node-configuration** → NODE_FAMILY_GOTCHAS.md (Webhook)
+- [ ] **Error branch returns HTTP 200.** `options.responseCode` defaults to 200 on every Respond node, including error paths — and a top-level `responseCode` is ignored, so check where it's set. The caller sees success while the body says failure. → **n8n-node-configuration** → NODE_FAMILY_GOTCHAS.md (Webhook)
 
 ---
 
 ## SHOULD FIX
 
 ### Set-node antipattern
-- [ ] **Set node feeding 0 or 1 downstream consumer.** The most common antipattern. Delete it and inline the expression at the consumer. Exceptions: 2+ consumers of a non-trivial derived value, or a sub-workflow's final Return node. → **n8n-expression-syntax** ("The Set-node antipattern and branch convergence")
+- [ ] **Set node that only re-maps fields for the next node.** The most common antipattern. Delete it and inline the expressions at the consumer. Keep Edit Fields when it creates something: a constant item, an error or return item (incl. a sub-workflow's final Return node), a payload object, or a value several nodes read. → **n8n-expression-syntax** ("The Set-node antipattern and branch convergence")
 - [ ] **Set node building an email / Slack body.** Build the body inline in the comms node's body field. → **n8n-expression-syntax**
 - [ ] **Set node mapping fields right before a write node.** Map directly in the write node's per-field expression slots. → **n8n-node-configuration**
 - [ ] **Multiple consecutive Set nodes each defining one field.** Collapse into one, or eliminate. → **n8n-expression-syntax**
 
 ### Code-node antipattern
-- [ ] **Code node doing pure single-item shaping** (`.map`/`.filter`/`.find`, field rename, optional chaining). Use an expression or an Edit Fields arrow-function IIFE — same result, ~100x faster, more readable. → **n8n-code-javascript** (the transform gatekeeper)
+- [ ] **Code node doing a native-node job.** Filtering (Filter), routing (IF / Switch), totals (Summarize), top-N (Sort + Limit), dedupe (Remove Duplicates), joins (Merge), diffs (Compare Datasets), arrays (Split Out / Aggregate), dates (Date & Time), API paging (HTTP Request pagination), or single-item shaping (short expressions in the consumer). Check the job-to-node table in **using-n8n-mcp-skills**; configs in **n8n-node-configuration** → NATIVE_NODES.md.
+- [ ] **Code or HTTP Request node without a `Why Code:` / `Why HTTP:` note.** A Code node that stays must be on the closed list (loops or recursion no node expresses, state across runs, parsing no node handles, a library, heavy all-items work, one short node replacing 4+ glue nodes) and say so in `notes`. → **n8n-code-javascript**
+- [ ] **Function body inside `{{ }}` in a non-Code node** (`(() => { … })()`). Several statements in an expression are code: a native node plus short expressions, or a Code node with a `Why Code:` note. → **n8n-expression-syntax** (the transform gatekeeper)
 - [ ] **Code node using `crypto.createHash` / `crypto.createHmac`.** Use the native Crypto node (`nodes-base.crypto`). Recurring slip. → **n8n-code-javascript**
 - [ ] **Code node parsing XML / SOAP / RSS.** Use the native XML node (`nodes-base.xml`) + Edit Fields for extraction. → **n8n-code-javascript**
-- [ ] **Code node + Set node combo** (Set builds inputs, Code transforms). One Edit Fields arrow-function IIFE does both. → **n8n-code-javascript**
-- [ ] **Python Code node where JS would do.** JS is recommended for ~95% of cases; reserve Python for its standard-library strengths (regex, hashlib, statistics) when the user asked for it. → **n8n-code-python**
+- [ ] **HMAC verified over `JSON.stringify($json.body)`.** Valid signatures fail. Webhook `options.rawBody: true` + Crypto (typeVersion 2, `binaryData: true`, secret from a `crypto` credential). → **n8n-node-configuration** → NATIVE_NODES.md
+- [ ] **Python Code node where JS would do.** Use Python only when the user asked for it: native Python has no n8n helpers and, by default, no imports (not even `json`/`re`/`datetime`). Also flag legacy `_input`/`_json`/`_node`/`_now` usage or `item.json.x` dot access. Those fail on n8n 2.x. → **n8n-code-python**
 
 ### Expression discipline
 - [ ] **`$json.x` deep in a branchy / multi-step workflow.** Switch to `$('Source Node').item.json.x` for refactor stability; the `$json` form breaks silently when an intermediate is inserted or context is cleared. → **n8n-expression-syntax** (non-negotiable)
 - [ ] **Branches converge with `$json` references downstream.** Whichever branch fired last wins, non-deterministically. Insert a NoOp (`Combine Inputs`) at the merge and reference it by name; use a Set to normalize if the branch shapes differ. → **n8n-expression-syntax**
-- [ ] **DateTime node used for date math/formatting.** Use a Luxon expression inline (`DateTime.fromISO(...).toFormat(...)`). → **n8n-expression-syntax**
+- [ ] **Date & Time node without `options.includeInputFields: true`** where downstream nodes still need the item's other fields — they're dropped. (The node itself is fine; so is an inline Luxon one-liner.) → **n8n-node-configuration** → NATIVE_NODES.md
 - [ ] **`$env.X` in any expression.** Doesn't work, throws at runtime. Use `$vars.X` (paid plans), a Data Table, or a credential for secrets. → **n8n-expression-syntax**
 - [ ] **`.all().map()/filter()/reduce()` aggregation without `executeOnce: true`** on the node. It re-runs the full aggregation per input item — wasted work, and N identical outputs where one was expected. (Leave `executeOnce` off when `.all()` is a per-item *lookup* keyed by the current item.) → **n8n-expression-syntax**
 
@@ -129,7 +131,7 @@ Pull the workflow first, then walk the list top to bottom. For each item, inspec
 
 ### Readability
 - [ ] **Workflow `description` empty or one line.** Two sentences: what it does and why it exists (the "why" is the part that otherwise gets lost). → **n8n-workflow-patterns**
-- [ ] **Code node with no one-line comment** explaining why simpler tools weren't used. → **n8n-code-javascript**
+- [ ] **Code node with no `Why Code:` note** naming the native node considered and the closed-list reason. → **n8n-code-javascript**
 - [ ] **Multi-line expression that isn't indented or commented.** Most n8n users aren't coders — format it like real code. → **n8n-expression-syntax**
 
 ---
@@ -145,7 +147,7 @@ MUST FIX
   - Node `Lookup user`: {{ $json.email }} interpolated into parameters.query. -> NODE_FAMILY_GOTCHAS.md (Database)
 
   Connections
-  - Node `Merge customer + Stripe`: 3 sources wired but parameters.numberOfInputs = 2; third drops. -> NODE_FAMILY_GOTCHAS.md (Merge)
+  - Node `Merge customer + Stripe`: 3 sources wired but parameters.numberInputs = 2; third drops. -> NODE_FAMILY_GOTCHAS.md (Merge)
 
 SHOULD FIX
   Set-node antipattern

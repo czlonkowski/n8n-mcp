@@ -1,6 +1,6 @@
 ---
 name: n8n-node-configuration
-description: Operation-aware node configuration guidance. Use when configuring nodes, understanding property dependencies, determining required fields, choosing between get_node detail levels, or learning common configuration patterns by node type. Always use this skill when setting up node parameters — it explains which fields are required for each operation, how displayOptions control field visibility, and when to use patchNodeField for surgical edits vs full node updates.
+description: Operation-aware node configuration guidance. Use when configuring nodes, understanding property dependencies, determining required fields, choosing between get_node detail levels, or learning common configuration patterns by node type — including the native nodes that replace Code (Summarize, Aggregate, Split Out, Merge, Compare Datasets, Remove Duplicates, Sort, Limit, Date & Time, HTTP Request pagination, Crypto). Always use this skill when setting up node parameters — it explains which fields are required for each operation, how displayOptions control field visibility, and when to use patchNodeField for surgical edits vs full node updates.
 ---
 
 # n8n Node Configuration
@@ -128,12 +128,13 @@ get_node({
 ```
 
 **Returns** (~1-2K tokens):
-- Required fields
-- Common options
+- Required fields, resolved for the node's current typeVersion
 - Operation list
+- The settings inside `options` collections (n8n-mcp 2.97.0+): name + one line with nested field names, allowed
+  values and when each applies — HTTP Request pagination and batching, Webhook raw body, Merge combine settings, …
 - Metadata
 
-**Use**: 95% of configuration needs
+**Use**: 95% of configuration needs. Read the options list before deciding a job needs a Code node.
 
 ### Full Detail (Use Sparingly)
 
@@ -168,7 +169,8 @@ get_node({
 ### Decision Tree
 
 1. Starting a new node config → `get_node` (standard).
-2. Standard has what you need → configure with it. Otherwise continue.
+2. Standard has what you need → configure with it. Otherwise continue. (On n8n-mcp 2.97.0+ standard also lists each
+   `options` collection; a list cut at 25 settings says so.)
 3. Looking for a specific field → `search_properties` mode. Otherwise continue.
 4. Still need more → `get_node({detail: "full"})`.
 
@@ -325,7 +327,7 @@ See the n8n Workflow Patterns skill for detailed loop and nested loop patterns.
 
 ### Google Sheets Node
 
-**Per-item execution**: Each input item triggers a separate API call. If you have 100 items and use a Google Sheets "Append Row" node, it makes 100 API calls. To write in bulk, aggregate items in a Code node first, then use a single HTTP Request with the Sheets API.
+**Per-item execution**: Each input item triggers a separate API call. If you have 100 items and use a Google Sheets "Append Row" node, it makes 100 API calls. To write in bulk, collect the rows into one item with an Aggregate node first, then use a single HTTP Request with the Sheets API.
 
 **Formula columns**: Never use `append` on sheets with formula columns — it overwrites formulas. Instead, use HTTP Request with Google Sheets API `values.update` (PUT) method and a `googleApi` credential.
 
@@ -490,15 +492,33 @@ n8n_update_partial_workflow({
 
 ---
 
+## Native Nodes for Data Jobs
+
+The job-to-node table in `using-n8n-mcp-skills` picks the node; **[NATIVE_NODES.md](NATIVE_NODES.md)** has each one's
+`parameters` JSON and traps. The traps that bite most:
+
+- **Summarize** — `fieldsToSplitBy` is one comma-separated string; outputs are named `sum_amount`, `count_id`, …
+- **Split Out** — `include` defaults to `noOtherFields`: the parent's fields are dropped unless you keep them.
+- **Merge** — `combineByFields` + `joinMode` (`keepMatches`, `keepNonMatches`, `enrichInput1`, …); `numberInputs` only on
+  append / SQL / position / choose-branch modes.
+- **Compare Datasets** — four outputs in fixed order: in A only, same, different, in B only.
+- **Remove Duplicates** — `removeItemsSeenInPreviousExecutions` dedupes across runs (v2), replacing static-data Code.
+- **Date & Time** — set `options.includeInputFields: true`, or only the new date field survives.
+- **HTTP Request pagination** — always `limitPagesFetched: true` + `maxRequests`; an object body arrives as one item per page.
+- **Crypto** — use typeVersion 2: HMAC and signing secrets come from a `crypto` credential (v1 kept them in the JSON).
+- **Node settings** — `executeOnce`, `alwaysOutputData`, `notes` / `notesInFlow` sit next to `parameters`, not inside it.
+
+---
+
 ## Silent-Failure Gotchas by Node Family
 
 Some misconfigurations pass `validate_node` and `validate_workflow` clean, run without error, and quietly do the wrong thing — `get_node` shows the fields exist but not what happens when you omit them. The high-frequency ones:
 
 - **Switch** — no `options.fallbackOutput` ⇒ unmatched items silently dropped.
-- **Merge** — `numberOfInputs` defaults to 2 (extra sources drop); `useDataOfInput` is 1-indexed vs the 0-indexed `connections.<src>.main[idx]` slot (`useDataOfInput: "N"` → `main[N-1]`).
+- **Merge** — `numberInputs` defaults to 2 (extra sources drop; `numberOfInputs` is not a field and is ignored); `useDataOfInput` is 1-indexed vs the 0-indexed `connections.<src>.main[idx]` slot (`useDataOfInput: "N"` → `main[N-1]`).
 - **Database** — `{{ }}` interpolation into `parameters.query` is SQL injection; use `$1/$2` placeholders + `options.queryReplacement`.
 - **Slack** — Block Kit must be wrapped `={{ { "blocks": ... } }}` or it posts as plain text.
-- **Webhook / Respond** — `responseCode` defaults to 200 even on error branches.
+- **Webhook / Respond** — `options.responseCode` defaults to 200 even on error branches; a top-level `responseCode` is ignored.
 - **Schedule Trigger** — timezone is workflow-level (Workflow Settings), not per-rule.
 
 Full symptom/cause/fix detail (in JSON + `n8n_update_partial_workflow` terms) in **[NODE_FAMILY_GOTCHAS.md](NODE_FAMILY_GOTCHAS.md)**.
@@ -511,6 +531,7 @@ For comprehensive guides on specific topics:
 
 - **[DEPENDENCIES.md](DEPENDENCIES.md)** - Deep dive into property dependencies and displayOptions
 - **[OPERATION_PATTERNS.md](OPERATION_PATTERNS.md)** - Common configuration patterns by node type
+- **[NATIVE_NODES.md](NATIVE_NODES.md)** - Configs for the native nodes that replace Code (transform, dedupe, diff, dates, pagination, HMAC, files) and node settings
 - **[NODE_FAMILY_GOTCHAS.md](NODE_FAMILY_GOTCHAS.md)** - Silent runtime traps by family (Switch, Merge, Database, Slack, Webhook, Schedule)
 
 ---

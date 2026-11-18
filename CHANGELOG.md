@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.103.1] - 2026-11-17
+
+### Changed
+
+- **Bundled skills pack synced to n8n-skills v1.38.0** (from v1.34.0). The pack now documents `n8n_manage_variables`: the tools-expert skill gains a Variables section and a WORKFLOW_GUIDE entry covering the five actions, global and project scopes, `clearValue`, the license requirement, `DISABLE_ENTERPRISE_TOOLS` and the `INCOMPLETE_SEARCH` error; the router and workflow-patterns skills point to it; and the expression-syntax skill gains a `$vars` section. The pack and the `n8n_manage_variables` tool documentation now state that a project variable is visible only to workflows in that project. The sync also brings in the n8n-skills releases since v1.34.0: the per-call `instance` argument in the multi-instance skill (v1.36.0) and native-first node selection across the pack (v1.37.0), which adds `n8n-node-configuration/NATIVE_NODES.md` and `n8n-self-hosting/TASK_RUNNERS.md` and the Python Code skill rewritten for native Python on n8n 2.x (the Pyodide runtime it described was removed in n8n 2.0; `DATA_ACCESS.md`, `ERROR_PATTERNS.md` and `STANDARD_LIBRARY.md` are gone).
+
 ## [2.103.0] - 2026-11-17
 
 ### Added

@@ -47,6 +47,7 @@ Activates when the user wants to:
 - Set up n8n with Docker Compose, a reverse proxy, or SSL/HTTPS
 - Run n8n in queue mode / with workers / scale n8n
 - Update, back up, restore, or harden a self-hosted n8n
+- Make Python Code nodes work on self-hosted n8n (task runners in external mode)
 
 **Not** for n8n Cloud, and not for building workflows (that's the rest of the pack).
 
@@ -55,6 +56,7 @@ Activates when the user wants to:
 - "Install self-hosted n8n with Docker and HTTPS on this Ubuntu server."
 - "Set up n8n with workers so it can handle a lot of executions."
 - "How do I back up and update my self-hosted n8n?"
+- "My Python Code node says 'Python runner unavailable: Python 3 is missing from this system'."
 
 ---
 
@@ -68,6 +70,7 @@ flow, verification, and "what not to do."
 - **SINGLE_MODE.md** — single-instance specifics, SQLite vs Postgres, when/how to graduate to queue.
 - **QUEUE_MODE.md** — queue architecture, worker scaling/concurrency, the shared encryption key, binary data (`database` mode; Enterprise S3/Azure), webhook processors, multi-main licensing.
 - **SECURITY.md** — secret generation, the encryption-key rules, and the full hardening checklist.
+- **TASK_RUNNERS.md** — task runners in external mode: the `n8nio/runners` sidecar that Python Code nodes need, one sidecar per queue worker, module allowlists (`/etc/n8n-task-runners.json`), verification and failure signatures.
 - **DAY2.md** — updating the image, backing up (key + volume + Postgres), and restoring.
 
 ### assets/
@@ -90,7 +93,10 @@ when inspecting, and keep internal services off the public interface.
 
 ## Version
 
-**Version**: 1.1.0 — realigned with the restructured official hosting docs
+**Version**: 1.2.0 — task runners in external mode (`TASK_RUNNERS.md`), verified on a live n8n 2.38.5 box: the
+`n8nio/runners` sidecar that Python Code nodes need, one sidecar per queue worker, Python/JS module
+allowlists via the launcher config, and upgrading n8n and the runners together.
+Previously 1.1.0 — realigned with the restructured official hosting docs
 ([docs.n8n.io/deploy/host-n8n](https://docs.n8n.io/deploy/host-n8n)): queue-mode binary data
 moved to `database` mode (filesystem is unsupported in queue mode), SSRF protection, encryption-key
 rotation, task-runner isolation modes, owner pre-provisioning, CLI backup/export, and monitoring

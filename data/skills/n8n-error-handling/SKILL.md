@@ -74,6 +74,25 @@ Valid `onError` values:
 
 Full failure-mode catalog, fan-in/fan-out shapes, and verification: **NODE_ERROR_OUTPUTS.md**.
 
+### Failures the error output never sees
+
+A correctly wired error output still misses whole classes of failure. Verified on n8n 2.38.5:
+
+| Failure | With `continueErrorOutput` | With `continueRegularOutput` |
+|---|---|---|
+| JS error **inside `{{ }}`** (TypeError on a missing path, `JSON.parse` on bad input, a thrown `Error`, a JMESPath syntax error) | nothing fires; the field is `null` and items take the **success** path | same |
+| Python Code node **rejected before running** (blocked import, dunder access: `Security violations detected`) or **bad return shape** (list in each-item mode) | node marked failed, but the **unchanged input items leave through the success output**; `main[1]` stays empty and the execution shows success | unchanged input items pass through |
+| Exception **while** code runs (`raise`/`throw`, `KeyError`, `NameError`) | routed to `main[1]` as `{ error }` ✅ | `{ error }` item on the main output |
+
+So an error branch alone can't guard these:
+
+- **Guard the data, not just the node.** After a transform whose output matters, check that the
+  field you produced exists (IF/Filter on `{{ $json.total !== undefined && $json.total !== null }}`)
+  and send the miss down the error path yourself.
+- **Test-run and read node statuses and output values.** The Python cases show a red node inside a
+  green execution. The expression cases show nothing but `null`s.
+- Root causes and fixes: **n8n-expression-syntax** (Debugging) and **n8n-code-python** (Errors and `onError`).
+
 ---
 
 ## Self-healing first: `retryOnFail` before you wire error paths
@@ -110,12 +129,12 @@ Webhook (responseMode: "responseNode")
 Three things make this work:
 
 1. **Fan-in to one error responder.** Many fallible nodes can route their `main[1]` to a single `Respond` node. Keeps the graph readable.
-2. **Validation failures (4xx) are checked *upstream*, not via error outputs.** A missing field isn't a node *crashing* — it's an expected outcome with a known response. Branch on it with IF/Switch (or the schema validator below) and return 400/401/403/404 directly. Error outputs are for *unexpected* failures (5xx).
-3. **`responseCode` defaults to 200 — even on error branches.** This is its own silent trap (see RESPONSE_SHAPES.md and **n8n-node-configuration** NODE_FAMILY_GOTCHAS.md): an error branch that returns 200 with an error body looks like success to the caller's HTTP client, so their error handling never fires. Set `responseCode` explicitly on every Respond node.
+2. **Validation failures (4xx) are checked *upstream*, not via error outputs.** A missing field isn't a node *crashing* — it's an expected outcome with a known response. Branch on it with IF/Switch (or the per-field validator below) and return 400/401/403/404 directly. Error outputs are for *unexpected* failures (5xx).
+3. **`options.responseCode` defaults to 200 — even on error branches.** This is its own silent trap (see RESPONSE_SHAPES.md and **n8n-node-configuration** NODE_FAMILY_GOTCHAS.md): an error branch that returns 200 with an error body looks like success to the caller's HTTP client, so their error handling never fires. Set `responseCode` explicitly on every Respond node.
 
-### Input validation: the Set-node schema validator
+### Input validation: conditions on the canvas
 
-For any endpoint doing structured input validation, run the check as an IIFE inside a single **Set** node rather than a chain of IF/Switch nodes per field. One node validates the whole payload, returns `{ valid, validationError, details, requiredSchema }`, and an IF branches on `valid` → your logic (200) or a 400 Respond that echoes the schema back so the caller can self-correct. It's also dramatically faster than a recursive validator in a Code node + sub-workflow. The full pattern, the constraint cookbook, and the expression-escaping gotchas live in **API_WORKFLOWS.md**.
+Put the checks in one **IF** node: one boolean condition per rule (`is true`), combinator `and`. True → your logic (200); false → a 400 Respond with a static `validation_error` body that echoes the expected schema, so the caller can self-correct. When the caller needs **per-field** messages (an LLM client, a public API), replace the IF with one **Code** node that loops over a schema list and returns `{ valid, validationError, details, requiredSchema }`, with the note `Why Code: IF considered — per-field messages need a loop over the schema`. Both patterns, the constraint cookbook and the escaping rules are in **API_WORKFLOWS.md**.
 
 ---
 
@@ -127,7 +146,7 @@ A 5xx with `text/plain "Internal Server Error"` is technically an error response
 
 | Cause | Status | `error` code | Where it's handled |
 |---|---|---|---|
-| Required field missing / wrong type | 400 | `validation_error` | Upstream check (schema validator / IF), not error output |
+| Required field missing / wrong type | 400 | `validation_error` | Upstream check (IF conditions / per-field validator), not error output |
 | Auth missing or invalid | 401 | `unauthorized` | Upstream check |
 | Authenticated but not allowed | 403 | `forbidden` | Upstream check |
 | Resource ID valid in request, absent in your data | 404 | `not_found` | Branch on the lookup *result*, not its error |
@@ -140,21 +159,17 @@ A 5xx with `text/plain "Internal Server Error"` is technically an error response
 
 So there are two distinct flows: **4xx is decided before the work** (IF/Switch + dedicated Respond), **5xx comes out of error outputs** ("we tried, it broke").
 
-**One Respond, expression-driven code.** When error paths differ only by *number and message* (same body shape, same headers), don't fan out to N Respond nodes through a Switch. The Respond node accepts expressions in both `Response Code` and body — compute the code inline:
+**Route by cause with a Switch; one static Respond per status.** Picking a status code from the error is a routing job. A Switch on the error message classifies it, and each output goes to a Respond with a fixed `options.responseCode` and a fixed body:
 
-```javascript
-// Response Code field on a single Respond to Webhook:
-{{ (() => {
-    const msg = $json.error?.message || $json.message || '';
-    if (msg.includes('INVALID_ID')) return 400;
-    if (/429|too many/i.test(msg)) return 429;
-    if (/timeout/i.test(msg))      return 504;
-    if (/upstream|llm|api/i.test(msg)) return 502;
-    return 500;
-})() }}
+```
+error outputs (main[1]) ─→ Switch "Classify error" (on $json.error.message)
+                             ├─ contains "INVALID_ID"     → Respond 400 validation_error
+                             ├─ contains "429"            → Respond 429 rate_limit_exceeded
+                             ├─ contains "timeout"        → Respond 504 upstream_timeout
+                             └─ fallback (extra output)   → Respond 500 internal_error
 ```
 
-Reserve Switch + multiple Responds for paths that diverge *structurally* (different headers, different body shapes, redirects). Same shape with a different number is one expression-driven Respond.
+Every status is visible on the canvas, and adding one is adding a rule. Set the Switch's `options.fallbackOutput` to `extra`, or an unmatched error is dropped and the caller hangs. A single Respond with a computed code is fine for exactly two outcomes, as one short ternary in its Response Code field. The Switch JSON is in **API_WORKFLOWS.md**.
 
 The default envelope is `{ "error": "<code>", "message": "<human text>" }` — the HTTP status already says success-vs-failure, so no `ok: false` flag. **Never leak internals** (stack traces, SQL, upstream bodies, tokens) into the response — log those privately, return a sanitized message. Correlation IDs, `retry_after`, validation `details`, and the full do-not-leak list are in **RESPONSE_SHAPES.md**.
 
@@ -177,7 +192,7 @@ Build it as a separate workflow starting with an **Error Trigger** node. n8n inv
 Minimal version — **capture → notify**:
 
 ```
-Error Trigger → Set (build alert from execution + error) → Slack/email (post to #incidents)
+Error Trigger → Slack/email (post to #incidents; the alert text is built with expressions in the message field)
 ```
 
 A good alert includes the workflow name, a link to the editor and a link to the failed execution, the failed node name, and the **real** error message (not "Workflow failed"). Field expressions and the optional "fetch the failing input via the n8n node" upgrade are in **ERROR_WORKFLOWS.md**.
@@ -210,11 +225,11 @@ What the MCP **can** do: build the error workflow, set `onError`/`retryOnFail` o
 | `onError` set but error output unwired | Error silently discarded; run shows as **succeeded** | Wire `sourceIndex: 1` to a real handler, or revert `onError` to `stopWorkflow` so it's loud |
 | Error output wired but `onError` not set | Slot never fires; handler unreachable; workflow halts on failure | Set `onError: "continueErrorOutput"` |
 | Webhook → process → respond, no error branch | Caller gets a timeout or n8n's generic 500 | Wire every fallible node's error output to a Respond |
-| Error branch returns 200 with an `{error}` body | Caller's client reads success; their error handling never fires | Set `responseCode` to 4xx/5xx explicitly on error Responds |
+| Error branch returns 200 with an `{error}` body | Caller's client reads success; their error handling never fires | Set `options.responseCode` to 4xx/5xx explicitly on error Responds |
 | One 500 `internal_error` for everything | Caller can't tell their bad input from your outage | Map cause → status (4xx caller, 5xx you) |
 | Catching errors in a Code node and returning them as data | Downstream processes error-shaped data and continues | Let it throw; use `onError: "continueErrorOutput"` + wired path |
 | Network node with no `retryOnFail` | Every transient 429/blip surfaces as a 5xx; alerts fire on noise | `retryOnFail: true, maxTries: 3, waitBetweenTries: 5000` |
-| Switch → N Responds differing only by status code | 5 nodes for what's one Respond | Compute the code inline in one expression-driven Respond |
+| A function body in a Respond's Response Code or body | the routing is hidden in a field, and a runtime error turns into a silent `null` | Switch on the cause → one static Respond per status |
 | Unattended workflow with no error workflow | A genuine failure goes nowhere | Build an Error Trigger workflow + assign it in the UI |
 | Error workflow notifies the same channel the workflows monitor | Channel down → error workflow also fails → error vanishes | Use a different channel + a Data Table fallback |
 | Leaking `$json.error` (stack/SQL/tokens) into the response | Exposes internals to callers/attackers | Log privately, return a sanitized message |
@@ -226,7 +241,7 @@ What the MCP **can** do: build the error workflow, set `onError`/`retryOnFail` o
 | File | Read when |
 |---|---|
 | **NODE_ERROR_OUTPUTS.md** | Wiring a per-node error output on individual fallible nodes |
-| **API_WORKFLOWS.md** | Building/reviewing a webhook → Respond workflow, including the schema validator |
+| **API_WORKFLOWS.md** | Building/reviewing a webhook → Respond workflow, including input validation (IF conditions, per-field Code validator) |
 | **RESPONSE_SHAPES.md** | Defining response body conventions, status codes, and what not to leak |
 | **ERROR_WORKFLOWS.md** | Setting up the workflow-level catch-all for unattended workflows |
 
@@ -237,7 +252,7 @@ What the MCP **can** do: build the error workflow, set `onError`/`retryOnFail` o
 - **n8n-workflow-patterns** — the webhook/API and scheduled patterns are where error handling lives. Use it for the overall shape; use this skill to harden it.
 - **n8n-node-configuration** — `onError`/`retryOnFail` are node config; NODE_FAMILY_GOTCHAS.md covers the Webhook/Respond response-code traps in depth.
 - **n8n-validation-expert** — the half-wired error output (one of the two steps missing) is a connection/config audit item, not a validation error. This skill is the fix.
-- **n8n-expression-syntax** — the expression-driven `Response Code` and the alert-message expressions rely on correct `{{ }}` syntax and `$json.error` access.
+- **n8n-expression-syntax** — the Switch conditions on `$json.error.message` and the alert-message expressions rely on correct `{{ }}` syntax and `$json.error` access.
 - **n8n-code-javascript / n8n-code-python** — if you catch errors *inside* a Code node, decide deliberately: re-throw to use the error output, or handle and continue. Don't return error-shaped data and pretend it succeeded.
 - **n8n-code-tool** — an agent's Code Tool surfaces thrown errors back to the LLM, which then retries; that's a different error contract from workflow nodes.
 - **n8n-binary-and-data** — file/binary operations are fallible too; wire their error outputs like any network node.
@@ -249,10 +264,10 @@ What the MCP **can** do: build the error workflow, set `onError`/`retryOnFail` o
 For an **API / webhook** workflow:
 
 - [ ] Webhook trigger uses `responseMode: "responseNode"`
-- [ ] Input validated upstream → 4xx Respond (schema validator or IF)
+- [ ] Input validated upstream → 4xx Respond (IF conditions, or the per-field Code validator)
 - [ ] Every fallible node has `onError: "continueErrorOutput"` **and** `main[1]` wired
 - [ ] Network nodes have `retryOnFail: true, maxTries: 3, waitBetweenTries: 5000`
-- [ ] Error path ends at a Respond with an **explicit** 4xx/5xx `responseCode`
+- [ ] Error path ends at a Respond with an **explicit** 4xx/5xx `options.responseCode` (a top-level `responseCode` is ignored)
 - [ ] Status code matches cause (4xx caller, 5xx you)
 - [ ] Error body is `{ error, message }` — no stack traces, SQL, or tokens
 - [ ] Verified with `n8n_get_workflow`: both `onError` and `main[1]` present on each fallible node

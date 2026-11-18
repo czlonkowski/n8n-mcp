@@ -40,6 +40,11 @@ search_nodes({
 
 **Tips**:
 - Common searches: webhook, http, database, email, slack, google, ai
+- **Data-shaping phrases find the core node** (n8n-mcp 2.97.0+): a query that is only a phrase like "group by",
+  "deduplicate", "flatten array", "rename fields", "compare lists", "join two lists", "sort items" or "format date"
+  lists Summarize, Remove Duplicates, Split Out, Edit Fields, Compare Datasets, Merge, Sort or Date & Time first.
+  Question words ("how to …") are ignored. Add a service name ("hubspot deduplicate contacts") and results rank as usual.
+  Search for the job before deciding a Code node is needed.
 - `OR` mode (default): matches any word
 - `AND` mode: requires all words
 - `FUZZY` mode: typo-tolerant (finds "slak" → Slack)
@@ -76,9 +81,15 @@ get_node({
 
 **Returns**:
 - Available operations and resources
-- Essential properties (10-20 most common)
+- Essential properties (10-20 most common), resolved for the node's current typeVersion
+- The settings inside `options` collections and fixedCollections (n8n-mcp 2.97.0+): name + one line, with the
+  nested field names, the allowed values, and when the setting applies (`Only when operation=formatDate.`). This is
+  where pagination, batching, raw body, Merge combine settings and similar Code-replacing options show up. A list cut
+  at 25 settings says so; use `search_properties` or `detail: "full"` for the rest.
 - Metadata (isAITool, isTrigger, hasCredentials)
 - Real examples from templates (if includeExamples: true)
+
+Option-heavy nodes are larger since 2.97.0 (HTTP Request ~5.5 KB, Merge ~5 KB, Webhook ~4.6 KB); most nodes are unchanged.
 
 ### Minimal Detail
 

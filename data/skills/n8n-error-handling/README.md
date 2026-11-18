@@ -64,7 +64,7 @@ Main skill content — loaded when the skill activates.
 - The two-step per-node error output and the failure-mode table
 - `retryOnFail` self-healing before wiring error paths
 - The canonical webhook/API shape (respond on every path)
-- Cause → status code mapping; one expression-driven Respond
+- Cause → status code mapping; a Switch with one static Respond per status
 - Workflow-level error workflows and the recursion trap
 - What the community MCP can't do (the error-workflow UI setting)
 - Anti-patterns table, integration with other skills, quick-reference checklist
@@ -81,7 +81,7 @@ The two-step setup on a single node, in depth.
 The webhook → Respond pattern under failure.
 - Wiring every fallible node to one responder
 - 4xx upstream vs 5xx from error outputs
-- The Set-node schema validator (JSON) and the regex-escaping gotcha
+- Input validation as IF conditions, the per-field Code validator exception, and the regex-escaping rules
 - Differentiating 5xx with an expression; don't-leak-internals wiring
 - Correlation IDs, the async/202 pattern, verification steps
 
@@ -122,8 +122,8 @@ The workflow-level catch-all.
 
 ### Set the status code on an error Respond (don't leave it 200)
 ```json
-{ "responseCode": 502,
-  "responseBody": "={{ JSON.stringify({ error: 'upstream_error', message: 'External service failed' }) }}" }
+{ "responseBody": "={{ { error: 'upstream_error', message: 'External service failed' } }}",
+  "options": { "responseCode": 502 } }
 ```
 
 ### `onError` values
@@ -141,7 +141,7 @@ The workflow-level catch-all.
 
 **n8n-validation-expert**: a half-wired error output is a connection/config audit item, not a validation error — this skill is the fix.
 
-**n8n-expression-syntax**: the expression-driven `Response Code` and alert messages depend on correct `{{ }}` and `$json.error` access.
+**n8n-expression-syntax**: the Switch conditions on `$json.error.message` and the alert messages depend on correct `{{ }}` and `$json.error` access.
 
 **n8n-code-javascript / n8n-code-python**: if you catch errors inside a Code node, decide deliberately — re-throw to use the error output, or handle and continue; don't return error-shaped data as success.
 

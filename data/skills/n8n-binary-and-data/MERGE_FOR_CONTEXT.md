@@ -56,7 +56,7 @@ The source already feeds the transform branch. You add the bypass connection and
 }
 ```
 
-The exact parameter names (`mode`, `combineBy`, `combineByPosition`, and how `numberOfInputs` is expressed) have shifted across Merge node versions — confirm the current shape with `get_node` on `nodes-base.merge` for the user's version before committing the structure. The principle is stable; the field names move.
+The exact parameter names (`mode`, `combineBy`, `combineByPosition`, and the input count, `numberInputs` on Merge v3.x) have shifted across Merge node versions — confirm the current shape with `get_node` on `nodes-base.merge` for the user's version before committing the structure. The principle is stable; the field names move.
 
 Two wiring details that bite (both detailed in **n8n-node-configuration**'s Merge section):
 

@@ -248,21 +248,11 @@ const value = $json.field;
 
 ## When to Use Code Node
 
-**Use Code node when:**
-- ✅ Complex transformations requiring multiple steps
-- ✅ Custom calculations or business logic
-- ✅ Recursive operations
-- ✅ API response parsing with complex structure
-- ✅ Multi-step conditionals
-- ✅ Data aggregation across items
-
-**Consider other nodes when:**
-- ❌ Simple field mapping → Use **Set** node
-- ❌ Basic filtering → Use **Filter** node
-- ❌ Simple conditionals → Use **IF** or **Switch** node
-- ❌ HTTP requests only → Use **HTTP Request** node
-
-**Code node excels at**: Complex logic that would require chaining many simple nodes
+Code is the last rung: the service's own node, then a native node for the job, then a short expression inside it, then Code.
+Code is right only for a closed list: loops or recursion no node expresses, state across runs, parsing no node handles,
+an allowlisted library, heavy all-items work (thousands of items, stated or measured), or one short node (~15 lines)
+replacing 4+ glue nodes. Filtering, routing, totals, top-N, dedupe, joins, dates, file formats and API paging have native
+nodes. A Code node that stays carries the note `Why Code: <native node considered> — <reason>`. See SKILL.md → "When to Use Code Node".
 
 ---
 
@@ -298,7 +288,7 @@ const value = $json.field;
 - Batch processing → $input.all() + map/filter
 - Single item → $input.first()
 - Aggregation → reduce()
-- HTTP requests → this.helpers.httpRequest()
+- HTTP requests → the HTTP Request node; this.helpers.httpRequest() only inside Code logic
 - Date handling → DateTime (Luxon)
 
 ### Error Prevention
@@ -345,6 +335,6 @@ Each evaluation tests skill activation, correct guidance, and reference to appro
 
 ## Author
 
-Conceived by Romuald Członkowski - [www.aiadvisors.pl/en](https://www.aiadvisors.pl/en)
+Conceived by Romuald Członkowski - [aiadvisors.pl/en](https://aiadvisors.pl/en)
 
 Part of the n8n-skills collection.

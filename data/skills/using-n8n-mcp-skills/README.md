@@ -13,7 +13,7 @@ cross-cutting rules.
 1. **Route first** — recognize which skill owns your task before the first MCP call
 2. **Three non-negotiables** — invoke the matching skill before any n8n action; validate AND verify connections before activating; secrets only via the credential system
 3. **Lean on skills + live tools, not training data** — n8n drifts faster than the model cutoff
-4. **Strong defaults** — Code node is a last resort; a Set node feeding ≤1 consumer is an antipattern; per-item iteration is automatic
+4. **Strong defaults** — native node first, Code last (a job-to-node table, a closed list of Code exceptions, and a `Why Code:` note on every Code / HTTP Request node that stays); a Set that only re-maps fields for the next node is the antipattern; per-item iteration is automatic
 5. **The n8n-mcp tool surface** — a one-line summary of every tool, including the SHORT-vs-LONG node-type-form trap and the absence of an `execute_workflow` tool
 
 ---

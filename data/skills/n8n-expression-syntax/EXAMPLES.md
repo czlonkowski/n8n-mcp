@@ -365,6 +365,9 @@ Contact: {{$json['user data']['phone number']}}
 
 **Code Node**: Transform webhook data
 
+> This only shows the syntax difference inside a Code node. In a real workflow the same transform is one Edit Fields
+> field: `{{ $json.body.items.map(item => item.toUpperCase()) }}` — no Code node needed.
+
 **Input** (from Webhook node):
 ```json
 {

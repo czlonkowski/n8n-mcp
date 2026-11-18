@@ -36,7 +36,7 @@ When you need per-item iteration, let the caller's `mode: each` do it rather tha
 - The contract reads as "give me one item, I act on it", which is also exactly the agent-tool contract.
 - You avoid the classic SplitInBatches gotchas (see **n8n-code-javascript**) inside a workflow that's supposed to be a clean function.
 
-Reach for an internal loop only when iteration is genuinely part of the body's own job (e.g. paginating an API until exhausted), not when it's just "do this body once per input".
+Reach for an internal loop only when iteration is genuinely part of the body's own job, not when it's just "do this body once per input". Paging an API is usually not one: HTTP Request's pagination option does it in one node.
 
 ---
 

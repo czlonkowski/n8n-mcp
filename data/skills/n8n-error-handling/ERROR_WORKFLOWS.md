@@ -45,10 +45,10 @@ Note what's **not** there: the payload carries the error message and the failed 
 For most workflows, this is enough:
 
 ```
-Error Trigger → Set (build alert message) → Slack / email (post to #incidents)
+Error Trigger → Slack / email (post to #incidents)
 ```
 
-Three nodes. Fast, hard to get wrong, and it turns silence into a message. Build it with `n8n_create_workflow` (or the partial-update ops), then assign it in the UI (see "Assigning it" below).
+Two nodes: the alert text is built with expressions right in the message field (below), so no Set is needed. Fast, hard to get wrong, and it turns silence into a message. Build it with `n8n_create_workflow` (or the partial-update ops), then assign it in the UI (see "Assigning it" below).
 
 ---
 

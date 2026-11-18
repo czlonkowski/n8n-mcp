@@ -195,7 +195,7 @@ Most common trigger - 813 searches!
   "responseMode": "onReceived",
   "authentication": "headerAuth",
   "options": {
-    "responseCode": 200,
+    "responseCode": { "values": { "responseCode": 200 } },
     "responseData": "{\n  \"success\": true\n}"
   }
 }
@@ -210,7 +210,7 @@ Most common trigger - 813 searches!
   "httpMethod": "POST",
   "responseMode": "lastNode",  // Return data from last node
   "options": {
-    "responseCode": 201,
+    "responseCode": { "values": { "responseCode": 201 } },
     "responseHeaders": {
       "entries": [
         {
@@ -619,8 +619,7 @@ Same `id isNotEmpty` trick — a delete without conditions throws `At least one 
 - `deleteRows` is the operation value, not `delete`. Using `delete` will import but fail at execution with "unknown operation".
 - Race condition in buffer/flush patterns: rows added between `Get` and `deleteRows` will be wiped without being read. For at-least-once semantics, delete by specific row ids returned from `Get` instead of by a broad filter.
 - **Zero-match halts the chain.** When `get`, `deleteRows`, `update`, or `upsert` matches 0 rows, the node emits 0 output items and n8n stops the downstream branch silently — no error, just nothing happens. This bites cleanup steps in idempotent test/setup workflows where the table starts empty. Fix: set node-level `"alwaysOutputData": true` (sibling of `parameters`/`type`, NOT inside `parameters`) on any DT node that may legitimately match nothing. The node will then emit a single empty item and the chain continues.
-- **DT operations execute once per input item.** A `Get` node fed 3 input items will run 3 separate queries and concatenate the results — usually not what you want. Insert a "collapse" Code node (`return [{ json: {} }];`) between any multi-item-emitting node and a downstream DT op that should run exactly once.
-- DT nodes do not natively offer a "run once for all items" mode like the Code node — the collapse-node pattern is currently the only clean workaround.
+- **DT operations execute once per input item.** A `Get` node fed 3 input items will run 3 separate queries and concatenate the results — usually not what you want. Set the node-level `"executeOnce": true` (sibling of `parameters`) on a DT op that should run exactly once; it runs on the first input item only. No "collapse" Code node is needed.
 
 ---
 
@@ -706,6 +705,10 @@ Most used transformation - 68% of workflows!
 ### Code (nodes-base.code)
 
 JavaScript execution - 42% of workflows
+
+> The two examples below only show the Code node's config shape. Both jobs are Edit Fields expressions in a real
+> workflow (`{{ $json.name.toUpperCase() }}`). A new Code node has to pass the gate in `n8n-code-javascript` and carries
+> `"notes": "Why Code: <native node considered> — <reason>"`. Native transform configs: [NATIVE_NODES.md](NATIVE_NODES.md).
 
 #### Simple Transformation
 

@@ -166,20 +166,16 @@ Schedule Trigger → [Fetch Data] → [Process] → [Deliver] → [Log/Notify]
    WHERE date = CURRENT_DATE - INTERVAL '1 day'
    GROUP BY date
 
-3. Code (calculate metrics)
-   - Total revenue
-   - Order count
-   - Average order value
-   - Comparison to previous day
+3. Email (send to team@company.com)
+   Subject: Daily Sales Report - {{ $json.date }}
+   Body: HTML built with expressions, e.g. average order value {{ ($json.total / $json.orders).toFixed(2) }}
 
-4. Set (format email body)
-   Subject: Daily Sales Report - {{$json.date}}
-   Body: Formatted HTML with metrics
-
-5. Email (send to team@company.com)
-
-6. Slack (post summary to #sales)
+4. Slack (post summary to #sales)
 ```
+
+The query already returns the totals, so no transform node is needed. For a day-over-day comparison, return both days
+from the same SQL (or Summarize over two days' rows) rather than computing it in Code.
+
 
 ### 2. Data Synchronization
 **Flow**: Schedule → Fetch from source → Transform → Write to target
@@ -188,17 +184,15 @@ Schedule Trigger → [Fetch Data] → [Process] → [Deliver] → [Log/Notify]
 ```
 1. Schedule (every hour)
 
-2. Set (store last sync time)
-   SELECT MAX(synced_at) FROM sync_log
+2. Postgres (get last sync time)
+   SELECT MAX(synced_at) AS last_sync FROM sync_log
 
 3. HTTP Request (fetch new CRM contacts since last sync)
    GET /api/contacts?updated_since={{$json.last_sync}}
 
 4. IF (check if new records exist)
 
-5. Set (transform CRM schema to warehouse schema)
-
-6. Postgres (warehouse - INSERT new contacts)
+5. Postgres (warehouse - INSERT new contacts; map CRM fields to warehouse columns in the node's column slots)
 
 7. Postgres (UPDATE sync_log SET synced_at = NOW())
 
@@ -248,10 +242,10 @@ Schedule Trigger → [Fetch Data] → [Process] → [Deliver] → [Log/Notify]
 
 3. IF (records exist)
 
-4. Code (export to JSON for archive)
+4. Convert To File (operation toJson: all rows into one archive file)
 
 5. Google Drive (upload archive file)
-   - Filename: logs_archive_{{$now.format('YYYY-MM-DD')}}.json
+   - Filename: logs_archive_{{ $now.format('yyyy-MM-dd') }}.json
 
 6. Postgres (DELETE archived records)
    DELETE FROM logs
@@ -273,19 +267,15 @@ Schedule Trigger → [Fetch Data] → [Process] → [Deliver] → [Log/Notify]
    AND created_at > NOW() - INTERVAL '7 days'
    LIMIT 100
 
-3. Split In Batches (10 contacts per batch)
+3. Loop Over Items (10 contacts per batch)
 
-4. HTTP Request (call Clearbit enrichment API)
-   - For each contact domain
-   - Rate limit: wait 1 second between batches
+4. Clearbit (Company → Enrich; domain = {{ $json.email.extractDomain() }})
 
-5. Set (map API response to database schema)
+5. Postgres (UPDATE contacts with company data; map the Clearbit fields in the column slots)
 
-6. Postgres (UPDATE contacts with company data)
+6. Wait (1 second - rate limiting)
 
-7. Wait (1 second - rate limiting)
-
-8. Loop (back to step 4 until all batches processed)
+7. Loop (back to step 4 until all batches processed)
 
 9. Email (summary: "Enriched X contacts")
 ```
@@ -297,13 +287,13 @@ Schedule Trigger → [Fetch Data] → [Process] → [Deliver] → [Log/Notify]
 ```
 1. Schedule (daily at 2 AM)
 
-2. Code (execute pg_dump)
-   const { exec } = require('child_process');
-   exec('pg_dump -h db.example.com mydb > backup.sql')
+2. Execute Command (pg_dump -h db.example.com mydb | gzip > /backups/backup.sql.gz)
+   - Self-hosted only, and blocked by default: the instance must re-enable the node (see n8n-self-hosting SECURITY.md).
+     A Code node can't do this either: child_process is not available in the sandbox.
+   - Often better outside n8n: a cron job or the database's own backup tool, with n8n only checking the result.
 
-3. Code (compress backup)
-   const zlib = require('zlib');
-   // Compress backup.sql to backup.sql.gz
+3. Read/Write Files from Disk (read /backups/backup.sql.gz as binary)
+   - For a file that isn't compressed yet, the Compression node gzips it.
 
 4. AWS S3 (upload compressed backup)
    - Bucket: backups
@@ -404,10 +394,9 @@ Schedule → Fetch → Process → Deliver
 **Error**:
 ```
 Error Trigger (for main workflow)
-  → Set (extract error details)
-  → Slack (#ops-team: "❌ Scheduled job failed")
-  → Email (admin alert)
-  → Postgres (log error for analysis)
+  ├─→ Slack (#ops-team: "❌ Scheduled job failed"; details from the trigger payload with expressions)
+  ├─→ Email (admin alert)
+  └─→ Postgres (log error for analysis)
 ```
 
 ### Pattern 2: Retry with Backoff
@@ -425,12 +414,11 @@ Schedule → HTTP Request (continueOnFail: true)
 
 ### Pattern 3: Partial Failure Handling
 ```
-Schedule → Split In Batches
-  → Process (continueOnFail: true)
-  → Code (track successes and failures)
-  → Report:
-    "✅ Processed: 95/100"
-    "❌ Failed: 5/100"
+Schedule → Process (onError: continueErrorOutput)
+  ├─ success output → Summarize (count) ─┐
+  └─ error output   → Summarize (count) ─┴→ Merge (combine by position) → Report:
+       "✅ Processed: 95/100"
+       "❌ Failed: 5/100"
 ```
 
 ---
@@ -510,11 +498,8 @@ Schedule
 ### Pattern 2: Metrics Collection
 ```
 Schedule → [Execute]
-  → Code (calculate metrics)
-    - Duration
-    - Records processed
-    - Success rate
-  → HTTP Request (send to monitoring system)
+  → Summarize (records processed, successes)
+  → HTTP Request (send to monitoring system; duration = {{ $now.diffTo($('Record start').item.json.started_at, 'seconds') }})
     - Datadog, Prometheus, etc.
 ```
 
@@ -523,7 +508,7 @@ Daily/weekly execution summaries:
 
 ```
 Schedule (daily at 6 PM) → Query execution logs
-  → Code (aggregate today's executions)
+  → Summarize (count executions, split by status)
   → Email (summary report)
     "Today's Workflow Executions:
      - 24/24 successful
@@ -546,11 +531,8 @@ Manual Trigger (for testing)
 ```
 
 ### 2. Test with Different Times
-```javascript
-// Code node - simulate different times
-const testTime = new Date('2024-01-15T09:00:00Z');
-return [{ json: { currentTime: testTime } }];
-```
+Pin a constant item instead of the trigger: an Edit Fields node with `currentTime` = `2024-01-15T09:00:00Z`, and
+downstream expressions read `$json.currentTime` instead of `$now` while testing.
 
 ### 3. Dry Run Mode
 ```
@@ -725,8 +707,8 @@ Use `search_templates({query: "schedule"})` to find more!
 **Change schedule based on conditions**:
 
 ```
-Schedule (check every hour) → Code (check if it's time to run)
-  → IF (business hours AND weekday)
+Schedule (check every hour)
+  → IF ({{ $now.weekday <= 5 && $now.hour >= 9 && $now.hour < 17 }})
     └─ Execute workflow
   → ELSE
     └─ Skip

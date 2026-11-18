@@ -61,7 +61,7 @@ Built-in modules need `N8N_RUNNERS_ALLOWED_BUILT_IN_MODULES` (or legacy `NODE_FU
 
 ## 1. this.helpers.httpRequest() - HTTP Requests
 
-Make HTTP requests directly from Code nodes without using HTTP Request node. The accessor is `this.helpers.httpRequest()` — the bare `$helpers` global is undefined in the task-runner sandbox and throws `ReferenceError: $helpers is not defined`. For non-trivial calls (pagination, retries, credentials) prefer the HTTP Request node.
+Call an API from inside Code logic, for example one lookup per step of a recursive algorithm. A plain API call, paging, retries or credentials belong in the HTTP Request node. The accessor is `this.helpers.httpRequest()` — the bare `$helpers` global is undefined in the task-runner sandbox and throws `ReferenceError: $helpers is not defined`. For non-trivial calls (pagination, retries, credentials) prefer the HTTP Request node.
 
 ### Basic Usage
 
@@ -468,6 +468,28 @@ return [{
 
 Query and transform JSON structures using JMESPath syntax.
 
+> **Consider an expression first.** `$jmespath` works the same inside `{{ }}`, so a query that only
+> feeds one field rarely needs a Code node. See **n8n-expression-syntax** → `$jmespath()`.
+
+### Rules that bite (verified on n8n 2.38)
+
+- **Argument order is `$jmespath(object, query)`**, the reverse of JMESPath's own docs
+  (`search(query, data)`). Reversed, or given a string/`undefined` as the object, it throws
+  `expected two arguments (Object, string) for this function`.
+- **String literals take single quotes** (`tier == 'premium'`), so wrap the query in a JS
+  **double-quoted** string. `"premium"` in double quotes inside the query is a *field name* and
+  silently returns `[]`.
+- **Numbers and booleans take backticks** (`` age >= `18` ``, `` inStock == `true` ``). A bare
+  `18` is a parse error.
+- Use `&&` `||` `!` `==`, not `and` / `or` / `=`.
+- **Over `$input.all()` items**, include the wrapper (`[?json.age >= \`18\`].json.name`) or map
+  first: `$jmespath($input.all().map(i => i.json), '[?age >= \`18\`].name')`.
+- **Parse errors throw in a Code node**, but the message comes out garbled by the task runner:
+  `Cannot assign to read only property 'name' of object 'Error: Invalid token (Number): "18"'`.
+  If you see that, check the query's literals first. (Inside `{{ }}` the same error silently
+  yields `null` instead.)
+- Missing path → `null`; filter with no match → `[]`.
+
 ### Basic Queries
 
 ```javascript
@@ -500,7 +522,7 @@ const emails = $jmespath(data, 'users[*].contact.email');
 const simplified = $jmespath(data, 'users[*].{name: name, email: contact.email}');
 
 // Conditional filtering
-const premium = $jmespath(data, 'users[?subscription.tier == `premium`]');
+const premium = $jmespath(data, "users[?subscription.tier == 'premium']");
 
 return [{json: {top5, emails, simplified, premium}}];
 ```
@@ -721,7 +743,7 @@ return [{
 
 ### crypto Module
 
-> **Gated**: `require('crypto')` only works if `N8N_RUNNERS_ALLOWED_BUILT_IN_MODULES` (or legacy `NODE_FUNCTION_ALLOW_BUILTIN`) includes `crypto` (or is `*`). On default installs it throws "Cannot find module 'crypto'". For hashing you control, prefer doing it before reaching the Code node, or — if you must — verify your instance's config first.
+> **Gated**: `require('crypto')` only works if `N8N_RUNNERS_ALLOWED_BUILT_IN_MODULES` (or legacy `NODE_FUNCTION_ALLOW_BUILTIN`) includes `crypto` (or is `*`). On default installs it throws "Cannot find module 'crypto'". For hashing, HMAC, signing or UUIDs use the **Crypto node** instead (typeVersion 2; HMAC and signing secrets come from a `crypto` credential) — no allowlist needed. Use `require('crypto')` only for what the Crypto node can't do, and only after confirming the instance allows it.
 
 ```javascript
 const crypto = require('crypto');
@@ -802,14 +824,14 @@ return [{
 **Workarounds**:
 - HTTP with auth → HTTP Request node with credential attached, or sub-workflow pattern
 - Secrets → arrive as data from an upstream HTTP Request / credential-aware node
-- Hashing/crypto → do it in a service the workflow calls, or get your instance config updated
+- Hashing/crypto → the Crypto node (hash, HMAC, sign, UUID), no allowlist needed
 
 ---
 
 ## Summary
 
 **Most Useful Built-ins**:
-1. **this.helpers.httpRequest()** - API calls without HTTP Request node (the bare `$helpers` global is undefined)
+1. **this.helpers.httpRequest()** - API calls inside Code logic; a plain call belongs in the HTTP Request node (the bare `$helpers` global is undefined)
 2. **DateTime** - Professional date/time handling
 3. **$jmespath()** - Complex JSON queries
 4. **Math, JSON, Object, Array** - Standard JavaScript utilities
@@ -817,9 +839,9 @@ return [{
 **Common Patterns**:
 - API calls: Use this.helpers.httpRequest() (or, preferably, the HTTP Request node)
 - Date operations: Use DateTime (Luxon)
-- Data filtering: Use $jmespath() or JavaScript .filter()
+- Data filtering: a Filter node before the Code node; inside Code, $jmespath() or .filter()
 - Persistent data: Use $getWorkflowStaticData()
-- Hashing: Use crypto module
+- Hashing: the Crypto node; `require('crypto')` only if allowlisted
 
 **See Also**:
 - [SKILL.md](SKILL.md) - Overview

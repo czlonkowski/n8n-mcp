@@ -10,7 +10,7 @@ export const n8nManageVariablesDoc: ToolDocumentation = {
     performance: 'Fast (100-500ms); get, create and partial updates also read the variable list',
     tips: [
       'Workflows read variables as {{ $vars.KEY }} - they are read-only at runtime',
-      "Keys are unique per scope: global (the default) or one project. Pass projectId to scope a variable to a project, 'global' to target globals only",
+      "Keys are unique per scope: global (the default) or one project. Pass projectId to scope a variable to a project, 'global' to target globals only. A project variable is visible only to workflows in that project",
       'Values are strings of up to 1000 characters, readable by every instance user (global variables) or every project member (project variables) - store secrets in credentials instead',
       'Variables need a license with the Variables feature (not the free Community edition) and an API key with variable:* scopes; otherwise every action returns 403. Operators hide the tool with DISABLE_ENTERPRISE_TOOLS=true',
       'update needs only the fields that change; the tool fills in the rest from the current variable',

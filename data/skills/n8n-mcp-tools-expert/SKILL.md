@@ -19,12 +19,13 @@ n8n-mcp provides tools organized into categories:
 4. **Template Library** - Search and deploy 2,700+ real workflows
 5. **Data Tables** - Manage n8n data tables, rows and columns (`n8n_manage_datatable`)
 6. **Workflow Folders** - Folder CRUD + workflow placement (`n8n_manage_folders`)
-7. **Credential Management** - Full credential CRUD + schema discovery (`n8n_manage_credentials`)
-8. **Security & Audit** - Instance security auditing with custom deep scan (`n8n_audit_instance`)
-9. **Documentation & Guides** - Tool docs, AI agent guide, Code node guides
-10. **Agents** - Create, configure, validate, run and publish persisted n8n Agents (`n8n_manage_agents`, requires `N8N_MCP_ACCESS_TOKEN`)
-11. **Node Resource Resolution** - Resolve live dropdown/resource-locator values with a real credential (`n8n_explore_node_resources`, requires `N8N_MCP_ACCESS_TOKEN`)
-12. **Instance Catalog** - List projects and tags (`n8n_list_catalog`)
+7. **Variables** - Instance variables read as `{{ $vars.KEY }}` (`n8n_manage_variables`, needs a license that includes Variables)
+8. **Credential Management** - Full credential CRUD + schema discovery (`n8n_manage_credentials`)
+9. **Security & Audit** - Instance security auditing with custom deep scan (`n8n_audit_instance`)
+10. **Documentation & Guides** - Tool docs, AI agent guide, Code node guides
+11. **Agents** - Create, configure, validate, run and publish persisted n8n Agents (`n8n_manage_agents`, requires `N8N_MCP_ACCESS_TOKEN`)
+12. **Node Resource Resolution** - Resolve live dropdown/resource-locator values with a real credential (`n8n_explore_node_resources`, requires `N8N_MCP_ACCESS_TOKEN`)
+13. **Instance Catalog** - List projects and tags (`n8n_list_catalog`)
 
 ---
 
@@ -43,6 +44,7 @@ n8n-mcp provides tools organized into categories:
 | `n8n_deploy_template` | Deploy template to n8n instance | 200-500ms |
 | `n8n_manage_datatable` | Managing data tables and rows | 50-500ms |
 | `n8n_manage_folders` | Folder CRUD + organizing workflows | 100-500ms |
+| `n8n_manage_variables` | Instance variables (`$vars`) | 100-500ms |
 | `n8n_manage_credentials` | Credential CRUD + schema discovery | 50-500ms |
 | `n8n_audit_instance` | Security audit (built-in + custom scan) | 500-5000ms |
 | `n8n_autofix_workflow` | Auto-fix validation errors | 200-1500ms |
@@ -234,6 +236,7 @@ See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for:
 - n8n_deploy_template
 - n8n_workflow_versions
 - n8n_manage_folders (folder CRUD + workflow placement)
+- n8n_manage_variables (instance variables read as $vars)
 - n8n_manage_credentials (credential CRUD + schema discovery)
 - n8n_audit_instance (security auditing)
 
@@ -315,6 +318,14 @@ See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for all actions, list filters/counts,
 
 ---
 
+## Variables
+
+`n8n_manage_variables` manages the instance variables that workflows read as `{{ $vars.KEY }}` (actions `list`/`get`/`create`/`update`/`delete`). Variables need an n8n **license that includes Variables** (not the free Community edition, and not every paid plan); without it every action returns 403, and operators can hide the tool with `DISABLE_ENTERPRISE_TOOLS=true`. A variable is global (default) or scoped to one project; keys are unique per scope, so the same key can exist globally and in a project. A project variable is visible only to workflows in that project. Three things to internalize: workflows can only **read** variables (no node can change them), values are visible to everyone in their scope (secrets belong in credentials), and `update` with `value: ""` is ignored — pass `clearValue: true` to empty a value.
+
+See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for all actions, scopes and error codes.
+
+---
+
 ## Credential Management
 
 `n8n_manage_credentials` is the unified credential tool: actions `list`, `get`, `create`, `update`, `delete`, `getSchema`. It never returns secrets — `get`/`create`/`update` strip the `data` field. Use `getSchema` before `create` to discover required fields. The optional `includeUsage: true` flag (on `list`/`get`) reverse-scans workflows and attaches `usedIn: [{id, name, active}]` + `usageCount` — use it before deleting or rotating a credential to see what breaks (it triggers a full client-side scan, caps at 5000 workflows, excludes archived, and degrades to a `usageScanError` field on failure).
@@ -343,7 +354,7 @@ See [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md) for the two scanning approaches, exam
 
 ## Self-Help Tools
 
-- `tools_documentation()` — overview of all tools; `tools_documentation({topic, depth: "full"})` for a specific tool. Code node guides via topics `javascript_code_node_guide` / `python_code_node_guide`.
+- `tools_documentation()` — overview of all tools (from n8n-mcp 2.97.0 it opens with the native-first node-selection steps); `tools_documentation({topic, depth: "full"})` for a specific tool. `expression_helpers` (2.97.0+) lists the helper methods for `{{ }}` (`.pluck()`, `.sum()`, `.unique()`, `.diffTo()`, `$ifEmpty()`): check it before writing a Code node for a one-line transformation. Code node guides via topics `javascript_code_node_guide` / `python_code_node_guide`.
 - **AI agent guide** — `tools_documentation({topic: "ai_agents_guide", depth: "full"})` (no standalone tool); returns architecture, connections, tools, validation, best practices.
 - `n8n_health_check()` — quick check; `n8n_health_check({mode: "diagnostic"})` returns status, env vars, tool status, API connectivity. Both modes also return an **`officialMcp`** block — `{configured, endpoint, reachable, toolCount, agentTools}` — the preflight for everything gated on `N8N_MCP_ACCESS_TOKEN`: the agent tools, `n8n_test_workflow`'s routed methods, native version history, the data-table column actions. Read it once before reaching for any of them, rather than discovering the gap through a `NOT_CONFIGURED` envelope mid-task.
 
@@ -357,7 +368,7 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for examples.
 - search_nodes, get_node
 - validate_node, validate_workflow
 - search_templates, get_template
-- tools_documentation (includes the ai_agents_guide topic)
+- tools_documentation (includes the ai_agents_guide and, from 2.97.0, expression_helpers topics)
 
 **Requires n8n API** (N8N_API_URL + N8N_API_KEY):
 - n8n_create_workflow
@@ -372,6 +383,7 @@ See [OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md) for examples.
 - n8n_autofix_workflow
 - n8n_manage_datatable
 - n8n_manage_folders (folder CRUD: n8n 2.19+, registered Community tier and up; workflow placement via parentFolderId/moveToFolder: n8n 2.32+)
+- n8n_manage_variables (an n8n license that includes Variables; API key with variable:* scopes)
 - n8n_manage_credentials
 - n8n_audit_instance
 - n8n_list_catalog (works without the token; needs it only for the team-project fallback)
@@ -405,6 +417,7 @@ If API tools unavailable, use templates and validation-only workflows.
 | validate_node (full) | <100ms | Medium |
 | validate_workflow | 100-500ms | Medium |
 | n8n_manage_folders | 100-500ms | Small |
+| n8n_manage_variables | 100-500ms | Small |
 | n8n_manage_credentials | 50-500ms | Small-Medium |
 | n8n_audit_instance | 500-5000ms | Large |
 | n8n_create_workflow | 100-500ms | Medium |
@@ -452,9 +465,10 @@ If API tools unavailable, use templates and validation-only workflows.
 8. Workflows are built **iteratively** (56s avg between edits)
 9. **Data tables** managed with `n8n_manage_datatable` (CRUD + filtering)
 10. **Folders** managed with `n8n_manage_folders`; workflow placement is write-only (verify via folder counts, not the workflow)
-11. **Credentials** managed with `n8n_manage_credentials` (CRUD + schema discovery)
-12. **Security audits** via `n8n_audit_instance` (built-in + custom deep scan)
-13. **AI agent guide** available via `tools_documentation({topic: "ai_agents_guide", depth: "full"})`
+11. **Variables** managed with `n8n_manage_variables` (needs a license that includes Variables); workflows read them as `{{ $vars.KEY }}` and cannot change them
+12. **Credentials** managed with `n8n_manage_credentials` (CRUD + schema discovery)
+13. **Security audits** via `n8n_audit_instance` (built-in + custom deep scan)
+14. **AI agent guide** available via `tools_documentation({topic: "ai_agents_guide", depth: "full"})`
 
 **Common Workflow**:
 1. search_nodes → find node

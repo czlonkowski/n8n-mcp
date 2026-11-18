@@ -20,6 +20,12 @@ above avoids the full-stack teardown and is equally safe for data — either wor
 
 - **Queue mode:** `pull` + `up -d` updates main and workers together — keep them on the **same
   version** (a mixed-version cluster misbehaves).
+- **External task runners:** the `n8nio/runners` sidecar(s) must move to exactly the same
+  version. Drive both images from `N8N_IMAGE_TAG` so one bump updates both. If you mounted a
+  custom `n8n-task-runners.json`, diff it against the new image's default first
+  (`docker run --rm --entrypoint cat n8nio/runners:<new-tag> /etc/n8n-task-runners.json`). A
+  stale copy can silently drop env vars that a newer launcher passes to the runners. See
+  `TASK_RUNNERS.md`.
 - On restart, containers get `N8N_GRACEFUL_SHUTDOWN_TIMEOUT` (default 30 s) to finish in-flight
   executions before being killed — raise it if long-running workflows keep getting cut off
   mid-update. (The old `QUEUE_WORKER_TIMEOUT` is deprecated in favor of this.)

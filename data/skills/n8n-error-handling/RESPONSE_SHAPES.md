@@ -82,14 +82,14 @@ This is the single most common API error-handling bug, and it's worth its own se
 
 **Every `Respond to Webhook` node defaults `responseCode` to 200** — including the ones you wired to error paths. An error branch that returns 200 with `{ "error": "..." }` looks like success to the caller's HTTP client, so their error handling (which keys off the status code) **never fires**. They process your error body as if it were data.
 
-So: set `responseCode` **explicitly** on every Respond node — not just the success one. (This trap is also documented in **n8n-node-configuration** NODE_FAMILY_GOTCHAS.md, "Webhook / Respond to Webhook".) A workflow can have many Respond nodes, one per response shape; n8n returns whichever fires first.
+So: set `options.responseCode` **explicitly** on every Respond node — not just the success one. It lives under `options`; a top-level `responseCode` is ignored, and the node still returns 200. (This trap is also documented in **n8n-node-configuration** NODE_FAMILY_GOTCHAS.md, "Webhook / Respond to Webhook".) A workflow can have many Respond nodes, one per response shape; n8n returns whichever fires first.
 
 ```json
-{ "responseCode": 502,
-  "responseBody": "={{ JSON.stringify({ error: 'upstream_error', message: 'External service failed' }) }}" }
+{ "responseBody": "={{ { error: 'upstream_error', message: 'External service failed' } }}",
+  "options": { "responseCode": 502 } }
 ```
 
-For paths that differ only by number, set it with an expression instead of fanning out to N nodes — see **API_WORKFLOWS.md**, "5xx: differentiate the body".
+To pick the status by cause, route with a Switch to one static Respond per status — see **API_WORKFLOWS.md**, "5xx: route by cause".
 
 ---
 
@@ -138,7 +138,7 @@ Adding a code is fine; renaming an existing one breaks callers.
 
 ## Validation error details (400)
 
-For `validation_error`, include per-field detail so the caller can fix the request without guessing. The Set-node schema validator (API_WORKFLOWS.md) produces this directly:
+For `validation_error`, include per-field detail so the caller can fix the request without guessing. The per-field Code validator (API_WORKFLOWS.md → "Exception: per-field messages") produces this directly:
 
 ```json
 {
@@ -192,9 +192,8 @@ Success:
   "name": "Respond Success",
   "parameters": {
     "respondWith": "json",
-    "responseCode": 200,
-    "responseBody": "={{ JSON.stringify($json) }}",
-    "options": { "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] } }
+    "responseBody": "={{ $json }}",
+    "options": { "responseCode": 200, "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] } }
   }
 }
 ```
@@ -207,9 +206,8 @@ Error:
   "name": "Respond Error",
   "parameters": {
     "respondWith": "json",
-    "responseCode": 502,
-    "responseBody": "={{ JSON.stringify({ error: 'upstream_error', message: 'External service failed' }) }}",
-    "options": { "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] } }
+    "responseBody": "={{ { error: 'upstream_error', message: 'External service failed' } }}",
+    "options": { "responseCode": 502, "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "application/json" }] } }
   }
 }
 ```

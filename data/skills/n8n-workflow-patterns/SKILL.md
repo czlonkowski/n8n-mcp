@@ -95,13 +95,18 @@ All patterns share these building blocks:
 - **HTTP Request** - REST APIs
 - **Database nodes** - Postgres, MySQL, MongoDB
 - **Service nodes** - Slack, Google Sheets, etc.
-- **Code** - Custom JavaScript/Python
+- **Extract From File** - CSV / XLSX / PDF from a downloaded or uploaded file
 
-### 3. Transformation
-- **Set** - Map/transform fields
-- **Code** - Complex logic
-- **IF/Switch** - Conditional routing
-- **Merge** - Combine data streams
+### 3. Transformation (native first)
+- **Filter / IF / Switch** - Drop items, route
+- **Edit Fields (Set)** - Named steps: constant items, payload objects, error and return items
+- **Summarize / Aggregate / Split Out** - Group and total, collect into an array, explode an array
+- **Merge / Compare Datasets** - Join two lists, diff them for a sync
+- **Remove Duplicates / Sort / Limit** - Dedupe (also across runs), top-N
+- **Date & Time, XML, HTML, Crypto** - Dates, markup, hashes and signatures
+- **Code** - Only the closed list (loops or recursion no node expresses, state across runs, parsing no node handles), with a `Why Code:` note
+
+The job-to-node table in `using-n8n-mcp-skills` maps jobs to these nodes; configs are in `n8n-node-configuration` → NATIVE_NODES.md. Reading a filtered slice of a nested API response for **one field**? A single `{{ $jmespath($json, "…") }}` in that field does it without extra nodes (quoting rules in n8n-expression-syntax).
 
 ### 4. Outputs
 - **HTTP Request** - Call APIs
@@ -131,7 +136,7 @@ When building ANY workflow, follow this checklist:
 - [ ] Create workflow with appropriate trigger
 - [ ] Add data source nodes
 - [ ] Configure authentication/credentials
-- [ ] Add transformation nodes (Set, Code, IF)
+- [ ] Add transformation nodes (native first: Filter, IF, Summarize, Merge…; Code only with a `Why Code:` note)
 - [ ] Add output/action nodes
 - [ ] Configure error handling
 
@@ -221,7 +226,7 @@ A SplitInBatches loop re-runs its whole body once per iteration — ~0.8 ms/iter
 
 - Pick the **largest batch your real constraint allows** (API page size, rate limit, memory). Bigger batches = fewer iterations = less overhead; the body still sees every item.
 - `batchSize: 1` is the expensive extreme — one full engine pass per item. Use it only when you must act on a single item at a time (nested-loop control, or an API that takes exactly one id).
-- If you're looping only to "go over the items" with no external constraint, you usually don't need the loop — a single All Items Code node processes the whole set far cheaper.
+- If you're looping only to "go over the items" with no external constraint, you don't need the loop: connect the source to the consumer. Per-item execution handles it, and native transform nodes process all items in one call.
 
 ### Cross-Iteration Data
 
@@ -245,7 +250,7 @@ Define Categories (N items)
 
 ### API Pagination
 
-For APIs without multi-ID filtering, use `id_from` + date windowing for efficient pagination:
+Paging through one endpoint is HTTP Request's pagination option, not a loop (page-number, offset, cursor and next-URL APIs, with a page cap — see `n8n-node-configuration` → NATIVE_NODES.md). The loop below is for sweeps the option can't express, such as an API without multi-ID filtering that you walk with `id_from` + date windows, each window its own query:
 
 ```
 Schedule → Set Date Window → Fetch Page → Process
@@ -273,8 +278,8 @@ if (looksLikeRequest) {
 
 When a workflow processes **thousands of items** with little I/O, its speed is set by how many times n8n crosses a per-item / per-iteration boundary — each crossing sets up an execution context and copies the items. Four architecture choices dominate:
 
-1. **Prefer fewer, fatter All-Items nodes over long transform chains.** Every node→node hop re-copies all items (~0.05 ms/item per hop), so six chained Code/Set nodes cost ~7× one All-Items Code node doing the same steps. Consolidate the hot path.
-2. **Use Code "Run Once for All Items," not "Each Item"** — ~0.02 ms/item vs ~0.6 ms/item (≈25–30×). A chain of *Each-Item* Code nodes is the worst case; the per-item tax multiplies by node count.
+1. **Consolidating a hot chain into one Code node is an exception, not a default.** Every node→node hop re-copies all items, so on a measured hot path — thousands of items per run, transform work rather than I/O dominating — one All-Items Code node can beat a long chain. That is the closed list's "heavy all-items work" case: record it in the node's `Why Code:` note. Below that, native nodes win on readability.
+2. **If Code stays, use "Run Once for All Items," not "Each Item."** Each Item pays a full sandbox per item; a chain of *Each-Item* Code nodes is the worst case, because the per-item tax multiplies by node count.
 3. **Maximize batchSize** in SplitInBatches loops (see the Batch Processing pattern above) — iterations are the cost.
 4. **Don't micro-optimize expressions** — complexity is free; node and iteration count are what you pay for.
 
@@ -287,9 +292,9 @@ When a workflow processes **thousands of items** with little I/O, its speed is s
 ### Google Sheets
 
 - **NEVER use `append`** on sheets with formula columns — it breaks formulas. Use Google Sheets API `values.update` (PUT) via HTTP Request node with a `googleApi` credential
-- **Write numbers, not strings** for formula-dependent columns — string "4.98" breaks `ADD()` formulas. Use `parseFloat()` in a Code node
-- **Per-item execution trap**: Google Sheets nodes execute once per input item. If you need a single bulk write, aggregate items into one in a Code node first
-- **UNFORMATTED_VALUE returns numbers**, not text like "N/A" — filter explicitly in Code nodes
+- **Write numbers, not strings** for formula-dependent columns — string "4.98" breaks `ADD()` formulas. Convert in the column's expression: `{{ $json.price.toNumber() }}` or `{{ parseFloat($json.price) }}`
+- **Per-item execution trap**: Google Sheets nodes execute once per input item. If you need a single bulk write, collect the rows into one item with an Aggregate node first
+- **UNFORMATTED_VALUE returns numbers**, not text like "N/A" — filter explicitly with a Filter node
 
 ### Google Drive
 
@@ -365,6 +370,7 @@ These skills work together with Workflow Patterns:
 - Use `tools_documentation({topic: "ai_agents_guide", depth: "full"})` for AI pattern guidance
 - Manage data tables with `n8n_manage_datatable`
 - Organize workflows into folders with `n8n_manage_folders`
+- Keep environment-specific values in variables with `n8n_manage_variables` (needs a license that includes Variables; workflows read them as `{{ $vars.KEY }}`)
 
 **n8n Expression Syntax** - Use to:
 - Write expressions in transformation nodes
@@ -416,15 +422,14 @@ Common workflow patterns:
 ### Example 1: Simple Webhook → Slack
 ```
 1. Webhook (path: "form-submit", POST)
-2. Set (map form fields)
-3. Slack (post message to #notifications)
+2. Slack (post message to #notifications; the text maps $json.body fields with expressions)
 ```
 
 ### Example 2: Scheduled Report
 ```
 1. Schedule (daily at 9 AM)
 2. HTTP Request (fetch analytics)
-3. Code (aggregate data)
+3. Summarize (totals per group)
 4. Email (send formatted report)
 5. Error Trigger → Slack (notify on failure)
 ```
@@ -452,12 +457,11 @@ Common workflow patterns:
 ### Example 5: API Integration
 ```
 1. Manual Trigger (for testing)
-2. HTTP Request (GET /api/users)
-3. Split In Batches (process 100 at a time)
-4. Set (transform user data)
-5. Postgres (upsert users)
-6. Loop (back to step 3 until done)
+2. HTTP Request (GET /api/users; pagination option if the API pages)
+3. Postgres (upsert users; map the fields in the node's column slots)
 ```
+
+No loop and no Set: Postgres processes every item, and the column slots take the mapping expressions.
 
 ---
 

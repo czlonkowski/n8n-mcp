@@ -1,375 +1,74 @@
 # n8n Code Python Skill
 
-Expert guidance for writing Python code in n8n Code nodes.
+Guidance for writing **native Python** in n8n Code nodes (`language: "pythonNative"`, n8n 2.x).
 
 ---
 
-## ⚠️ Important: JavaScript First
+## Why this skill exists
 
-**Use JavaScript for 95% of use cases.**
+n8n 2.0 removed the Pyodide-based "Python (Beta)" and replaced it with native Python running in a
+task runner. A large share of the Python n8n code in circulation (templates, forum answers, older
+docs, model training data) targets the old runtime and fails on the new one:
 
-Python in n8n has **NO external libraries** (no requests, pandas, numpy).
+- `_input`, `_json`, `_node`, `_now`, `_today`, `_jmespath` → `NameError` (only `_items` / `_item` exist)
+- `item.json.field` → `AttributeError` (dict access only)
+- `import json` → `Security violations detected` (every import is blocked unless the instance allowlists it; n8n Cloud allows none)
+- `class Foo:` → `__build_class__ not found`; `type()`, `getattr()`, `hasattr()` → `NameError`
 
-**When to use Python**:
-- You have complex Python-specific logic
-- You need Python's standard library features
-- You're more comfortable with Python than JavaScript
-
-**When to use JavaScript** (recommended):
-- HTTP requests (this.helpers.httpRequest available)
-- Date/time operations (Luxon library included)
-- Most data transformations
-- When in doubt
+The skill teaches the runtime as it actually behaves. Every rule and pattern was verified by
+execution on n8n 2.38.5, and the skill keeps pushing agents toward JavaScript, expressions, and
+native nodes whenever the user hasn't explicitly asked for Python.
 
 ---
 
-## What This Skill Teaches
+## Skill activation
 
-### Core Concepts
+- The user explicitly wants a Python Code node
+- Migrating legacy Pyodide Python (`_input.all()`, `_json`, `_node[...]`)
+- A Python Code node fails with `NameError`, `Security violations detected`, `Import of standard library module … is disallowed`, `A 'json' property isn't a dictionary`, or `Python runner unavailable`
 
-1. **Critical Limitation**: No external libraries
-2. **Data Access**: `_input.all()`, `_input.first()`, `_input.item`
-3. **Webhook Gotcha**: Data is under `_json["body"]`
-4. **Return Format**: Must return `[{"json": {...}}]`
-5. **Standard Library**: json, datetime, re, base64, hashlib, etc.
-
-### Top 5 Error Prevention
-
-This skill emphasizes **error prevention**:
-
-1. **ModuleNotFoundError** (trying to import external libraries)
-2. **Empty code / missing return**
-3. **KeyError** (dictionary access without .get())
-4. **IndexError** (list access without bounds checking)
-5. **Incorrect return format**
-
-These 5 errors are the most common in Python Code nodes.
-
----
-
-## Skill Activation
-
-This skill activates when you:
-- Write Python in Code nodes
-- Ask about Python limitations
-- Need to know available standard library
-- Troubleshoot Python Code node errors
-- Work with Python data structures
+**Not** for the AI-agent Custom Code Tool (`toolCode`) — that's **n8n-code-tool**.
 
 **Example queries**:
-- "Can I use pandas in Python Code node?"
-- "How do I access webhook data in Python?"
-- "What Python libraries are available?"
-- "Write Python code to process JSON"
-- "Why is requests module not found?"
+- "Write a Python Code node that groups these items by country."
+- "My Python Code node says name '_input' is not defined."
+- "Why can't I import json in the Python Code node?"
 
 ---
 
-## File Structure
+## File structure
 
 ### SKILL.md
-**Quick start** and overview
-- When to use Python vs JavaScript
-- Critical limitation (no external libraries)
-- Mode selection (All Items vs Each Item)
-- Data access overview
-- Return format requirements
-- Standard library overview
-
-### DATA_ACCESS.md
-**Complete data access patterns**
-- `_input.all()` - Process all items
-- `_input.first()` - Get first item
-- `_input.item` - Current item (Each Item mode)
-- `_node["Name"]` - Reference other nodes
-- Webhook body structure (critical gotcha!)
-- Pattern selection guide
-
-### STANDARD_LIBRARY.md
-**Available Python modules**
-- json - JSON parsing
-- datetime - Date/time operations
-- re - Regular expressions
-- base64 - Encoding/decoding
-- hashlib - Hashing
-- urllib.parse - URL operations
-- math, random, statistics
-- What's NOT available (requests, pandas, numpy)
-- Workarounds for missing libraries
+JavaScript-first rule; `_items` / `_item` and dict-only access; legacy→native migration table;
+imports blocked by default (Cloud vs self-hosted allowlist); sandbox limits (denied builtins, no
+classes, no dunders, `nonlocal` instead of `global`); verified return shapes per mode and output
+value conversion; how runtime vs static vs return-shape errors behave with `onError`; performance;
+checklist.
 
 ### COMMON_PATTERNS.md
-**10 production-tested patterns**
-1. Multi-source data aggregation
-2. Regex-based filtering
-3. Markdown to structured data
-4. JSON object comparison
-5. CRM data transformation
-6. Release notes processing
-7. Array transformation
-8. Dictionary lookup
-9. Top N filtering
-10. String aggregation
-
-### ERROR_PATTERNS.md
-**Top 5 errors with solutions**
-1. ModuleNotFoundError (external libraries)
-2. Empty code / missing return
-3. KeyError (dictionary access)
-4. IndexError (list access)
-5. Incorrect return format
-- Error prevention checklist
-- Quick fix reference
-- Testing patterns
+12 import-free patterns, each run verbatim on a live instance with the observed output: filter
+and reshape, totals, group by, dedupe, top N, flatten nested arrays, validate and flag, drop items
+in each-item mode, text report, safe nested access, running totals with `nonlocal`, ISO timestamps
+without `datetime`.
 
 ---
 
-## Integration with Other Skills
+## Related skills
 
-This skill works with:
-
-### n8n Expression Syntax
-- Python uses code syntax, not {{}} expressions
-- Data access patterns differ ($ vs _)
-
-### n8n MCP Tools Expert
-- Use MCP tools to validate Code node configurations
-- Check node setup with `get_node`
-
-### n8n Workflow Patterns
-- Code nodes fit into larger workflow patterns
-- Often used after HTTP Request or Webhook nodes
-
-### n8n Code JavaScript
-- Compare Python vs JavaScript approaches
-- Understand when to use which language
-- JavaScript recommended for 95% of cases
-
-### n8n Node Configuration
-- Configure Code node mode (All Items vs Each Item)
-- Set up proper connections
-
----
-
-## Success Metrics
-
-After using this skill, you should be able to:
-
-- [ ] **Know the limitation**: Python has NO external libraries
-- [ ] **Choose language**: JavaScript for 95% of cases, Python when needed
-- [ ] **Access data**: Use `_input.all()`, `_input.first()`, `_input.item`
-- [ ] **Handle webhooks**: Access data via `_json["body"]`
-- [ ] **Return properly**: Always return `[{"json": {...}}]`
-- [ ] **Avoid KeyError**: Use `.get()` for dictionary access
-- [ ] **Use standard library**: Know what's available (json, datetime, re, etc.)
-- [ ] **Prevent errors**: Avoid top 5 common errors
-- [ ] **Choose alternatives**: Use n8n nodes when libraries needed
-- [ ] **Write production code**: Use proven patterns
-
----
-
-## Quick Reference
-
-### Data Access
-```python
-all_items = _input.all()
-first_item = _input.first()
-current_item = _input.item  # Each Item mode only
-other_node = _node["NodeName"]
-```
-
-### Webhook Data
-```python
-webhook = _input.first()["json"]
-body = webhook.get("body", {})
-name = body.get("name")
-```
-
-### Safe Dictionary Access
-```python
-# ✅ Use .get() with defaults
-value = data.get("field", "default")
-
-# ❌ Risky - may raise KeyError
-value = data["field"]
-```
-
-### Return Format
-```python
-# ✅ Correct format
-return [{"json": {"result": "success"}}]
-
-# ❌ Wrong - plain dict
-return {"result": "success"}
-```
-
-### Standard Library
-```python
-# ✅ Available
-import json
-import datetime
-import re
-import base64
-import hashlib
-
-# ❌ NOT available
-import requests  # ModuleNotFoundError!
-import pandas    # ModuleNotFoundError!
-import numpy     # ModuleNotFoundError!
-```
-
----
-
-## Common Use Cases
-
-### Use Case 1: Process Webhook Data
-```python
-webhook = _input.first()["json"]
-body = webhook.get("body", {})
-
-return [{
-    "json": {
-        "name": body.get("name"),
-        "email": body.get("email"),
-        "processed": True
-    }
-}]
-```
-
-### Use Case 2: Filter and Transform
-```python
-all_items = _input.all()
-
-active = [
-    {"json": {**item["json"], "filtered": True}}
-    for item in all_items
-    if item["json"].get("status") == "active"
-]
-
-return active
-```
-
-### Use Case 3: Aggregate Statistics
-```python
-import statistics
-
-all_items = _input.all()
-amounts = [item["json"].get("amount", 0) for item in all_items]
-
-return [{
-    "json": {
-        "total": sum(amounts),
-        "average": statistics.mean(amounts) if amounts else 0,
-        "count": len(amounts)
-    }
-}]
-```
-
-### Use Case 4: Parse JSON String
-```python
-import json
-
-data = _input.first()["json"]["body"]
-json_string = data.get("payload", "{}")
-
-try:
-    parsed = json.loads(json_string)
-    return [{"json": parsed}]
-except json.JSONDecodeError:
-    return [{"json": {"error": "Invalid JSON"}}]
-```
-
----
-
-## Limitations and Workarounds
-
-### Limitation 1: No HTTP Requests Library
-**Problem**: No `requests` library
-**Workaround**: Use HTTP Request node or JavaScript
-
-### Limitation 2: No Data Analysis Library
-**Problem**: No `pandas` or `numpy`
-**Workaround**: Use list comprehensions and standard library
-
-### Limitation 3: No Database Drivers
-**Problem**: No `psycopg2`, `pymongo`, etc.
-**Workaround**: Use n8n database nodes (Postgres, MySQL, MongoDB)
-
-### Limitation 4: No Web Scraping
-**Problem**: No `beautifulsoup4` or `selenium`
-**Workaround**: Use HTML Extract node
-
----
-
-## Best Practices
-
-1. **Use JavaScript for most cases** (95% recommendation)
-2. **Use .get() for dictionaries** (avoid KeyError)
-3. **Check lengths before indexing** (avoid IndexError)
-4. **Always return proper format**: `[{"json": {...}}]`
-5. **Access webhook data via ["body"]**
-6. **Use standard library only** (no external imports)
-7. **Handle empty input** (check `if items:`)
-8. **Test both modes** (All Items and Each Item)
-
----
-
-## When Python is the Right Choice
-
-Use Python when:
-- Complex text processing (re module)
-- Mathematical calculations (math, statistics)
-- Date/time manipulation (datetime)
-- Cryptographic operations (hashlib)
-- You have existing Python logic to reuse
-- Team is more comfortable with Python
-
-Use JavaScript instead when:
-- Making HTTP requests
-- Working with dates (Luxon included)
-- Most data transformations
-- When in doubt
-
----
-
-## Learning Path
-
-**Beginner**:
-1. Read SKILL.md - Understand the limitation
-2. Try DATA_ACCESS.md examples - Learn `_input` patterns
-3. Practice safe dictionary access with `.get()`
-
-**Intermediate**:
-4. Study STANDARD_LIBRARY.md - Know what's available
-5. Try COMMON_PATTERNS.md examples - Use proven patterns
-6. Learn ERROR_PATTERNS.md - Avoid common mistakes
-
-**Advanced**:
-7. Combine multiple patterns
-8. Use standard library effectively
-9. Know when to switch to JavaScript
-10. Write production-ready code
-
----
-
-## Support
-
-**Questions?**
-- Check ERROR_PATTERNS.md for common issues
-- Review COMMON_PATTERNS.md for examples
-- Consider using JavaScript instead
-
-**Related Skills**:
-- n8n Code JavaScript - Alternative (recommended for 95% of cases)
-- n8n Expression Syntax - For {{}} expressions in other nodes
-- n8n Workflow Patterns - Bigger picture workflow design
+- **n8n-code-javascript** — the default for Code nodes
+- **n8n-expression-syntax** — `$jmespath`, Luxon, and the transform gatekeeper
+- **n8n-code-tool** — Python in the AI-agent Custom Code Tool
+- **n8n-error-handling** — error outputs and the `continueRegularOutput` passthrough trap
+- **n8n-self-hosting** — enabling the Python task runner (`TASK_RUNNERS.md`)
 
 ---
 
 ## Version
 
-**Version**: 1.0.0
-**Status**: Production Ready
-**Compatibility**: n8n Code node (Python mode)
+**Version**: 2.0.0 — rewritten for native Python (n8n 2.x); replaces the Pyodide-era 1.x content
+(STANDARD_LIBRARY.md, DATA_ACCESS.md and ERROR_PATTERNS.md were removed because they described a
+runtime that no longer exists).
+**Compatibility**: n8n ≥ 2.0 Code node, `language: "pythonNative"`.
 
 ---
 
@@ -378,9 +77,5 @@ Use JavaScript instead when:
 Part of the n8n-skills project.
 
 **Conceived by Romuald Członkowski**
-- Website: [www.aiadvisors.pl/en](https://www.aiadvisors.pl/en)
+- Website: [aiadvisors.pl/en](https://aiadvisors.pl/en)
 - Part of [n8n-mcp project](https://github.com/czlonkowski/n8n-mcp)
-
----
-
-**Remember**: JavaScript is recommended for 95% of use cases. Use Python only when you specifically need Python's standard library features.

@@ -184,6 +184,9 @@ tools_documentation({
   depth: "full"
 })
 
+// Expression helper methods (n8n-mcp 2.97.0+) — check before writing a Code node for a one-liner
+tools_documentation({topic: "expression_helpers", depth: "full"})
+
 // Code node guides
 tools_documentation({topic: "javascript_code_node_guide", depth: "full"})
 tools_documentation({topic: "python_code_node_guide", depth: "full"})

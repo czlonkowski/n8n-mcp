@@ -1169,6 +1169,59 @@ Without `transferToFolderId`, the folder's workflows are moved to the project ro
 
 ---
 
+## n8n_manage_variables (VARIABLES)
+
+**Use when**: Setting up environment-specific values (base URLs, channel names, thresholds) that workflows read as `{{ $vars.KEY }}`, so the same workflow JSON runs on staging and production; checking which variables exist before deploying a workflow that uses them.
+
+Variables need an n8n license with the **Variables** feature (not the free Community edition, and not every paid plan) and an API key with `variable:*` scopes. Without them every action returns 403. A 403 is not retryable: tell the user, and do not write `$vars` expressions for that instance. Operators can remove the tool with `DISABLE_ENTERPRISE_TOOLS=true`.
+
+### 5 Actions
+
+`list`, `get`, `create`, `update`, `delete`. A variable is **global** (the default) or belongs to **one project**. Keys are unique per scope, so `API_URL` can exist once globally and once in each project. On `create` and `update`, `projectId: "global"` (or `null`) targets the global scope. On `list` and `get`, only `"global"` filters to globals: `null` there means no filter, so the call searches every scope the API key can see. A project variable is visible only to workflows in that project; workflows in other projects cannot read it, so create it in the project that runs the workflow, or globally if several projects need it.
+
+### Create
+
+```javascript
+n8n_manage_variables({action: "create", key: "API_BASE_URL", value: "https://api.example.com"})
+// Project-scoped: add projectId: "<project id>"  (find it with n8n_list_catalog)
+// → {id, key, value, type, project}   project = null for globals
+```
+
+Keys: letters, digits and underscores, not starting with a digit, max 50 characters. Values: strings up to 1000 characters.
+
+### List / Get
+
+```javascript
+n8n_manage_variables({action: "list"})                        // up to 250 per page, continue with cursor
+n8n_manage_variables({action: "list", projectId: "global"})   // globals only
+n8n_manage_variables({action: "list", state: "empty"})        // variables with an empty value
+n8n_manage_variables({action: "get", key: "API_BASE_URL"})    // or id: "..."
+```
+
+`get` by key fails instead of guessing when the key exists in several scopes; it returns the matches in `details.matches`. Pass `projectId` or the `id`.
+
+### Update / Delete
+
+```javascript
+n8n_manage_variables({action: "update", id: "abc123", value: "https://staging.example.com"})
+n8n_manage_variables({action: "update", id: "abc123", key: "API_URL"})        // rename
+n8n_manage_variables({action: "update", id: "abc123", projectId: "global"})   // make global
+n8n_manage_variables({action: "update", id: "abc123", clearValue: true})      // empty the value
+n8n_manage_variables({action: "delete", id: "abc123"})
+```
+
+Pass only the fields that change; the tool fills in the rest from the current variable.
+
+**Gotchas**:
+- Workflows can read variables but never change them — no Set or Code node can write `$vars`
+- Values are readable by every user in their scope and appear in expressions — keep secrets in credentials
+- `value: ""` on update is ignored (some MCP clients send empty strings for every unset field); use `clearValue: true`
+- Renaming a key or deleting a variable breaks every `{{ $vars.KEY }}` that uses it — search the workflows first
+- Partial updates are not conditional: when several clients edit one variable at once, pass both `key` and `value`
+- 400 "already exists" = the key is taken in that scope (update the existing one); "Variables limit reached" = the license caps the count; `INCOMPLETE_SEARCH` = a key search across all scopes hit the 10,000-variable cap (pass `projectId` or the `id`)
+
+---
+
 ## Workflow Lifecycle
 
 **Standard pattern**:
@@ -1274,6 +1327,7 @@ update → update → update → ... (56s avg between edits)
 - `n8n_executions` - Manage executions
 - `n8n_evaluations` - Evaluation test runs: reads (n8n 2.30+), run/cancel (n8n 2.32+)
 - `n8n_manage_datatable` - Data table and row management
+- `n8n_manage_variables` - Instance variables (`$vars`; needs a license that includes Variables)
 - `n8n_manage_credentials` - Credential CRUD + schema discovery
 - `n8n_audit_instance` - Security audit (built-in + custom scan)
 - `n8n_delete_workflow` - Permanently delete workflows
