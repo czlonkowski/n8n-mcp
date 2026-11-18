@@ -91,7 +91,7 @@ Read instance variables set in the n8n UI or with `n8n_manage_variables`:
 {{$vars.SLACK_CHANNEL}}
 ```
 
-Values are always strings and read-only at runtime. A missing variable resolves to `undefined` without an error (`{{$vars.API_BASE_URL}}/users` becomes `undefined/users`), so confirm the key with `n8n_manage_variables` (`list`) before using it. Variables need an n8n license that includes them (not the free Community edition). They are visible to every user in their scope, so keep secrets in credentials.
+Values are always strings and read-only at runtime. A missing variable resolves to `undefined` without an error (`{{$vars.API_BASE_URL}}/users` becomes `undefined/users`), so confirm the key with `n8n_manage_variables` (`list`) before using it. Variables need an n8n license that includes them (not the free Community edition). A project variable is visible only to workflows in that project. Variables are visible to every user in their scope, so keep secrets in credentials.
 
 ---
 

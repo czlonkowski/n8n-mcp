@@ -1177,7 +1177,7 @@ Variables need an n8n license with the **Variables** feature (not the free Commu
 
 ### 5 Actions
 
-`list`, `get`, `create`, `update`, `delete`. A variable is **global** (the default) or belongs to **one project**. Keys are unique per scope, so `API_URL` can exist once globally and once in each project. `projectId: "global"` (or `null`) targets the global scope.
+`list`, `get`, `create`, `update`, `delete`. A variable is **global** (the default) or belongs to **one project**. Keys are unique per scope, so `API_URL` can exist once globally and once in each project. `projectId: "global"` (or `null`) targets the global scope. A project variable is visible only to workflows in that project; workflows in other projects cannot read it, so create it in the project that runs the workflow, or globally if several projects need it.
 
 ### Create
 
