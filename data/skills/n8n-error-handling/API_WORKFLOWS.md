@@ -111,7 +111,7 @@ Every rule is visible on the canvas, and adding one is adding a condition.
       "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
       "conditions": [
         { "leftValue": "={{ typeof $json.body.name === 'string' && $json.body.name.length > 0 }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } },
-        { "leftValue": "={{ /^\\S+@\\S+\\.\\S+$/.test($json.body.email ?? '') }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } },
+        { "leftValue": "={{ typeof $json.body.email === 'string' && /^\\S+@\\S+\\.\\S+$/.test($json.body.email) }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } },
         { "leftValue": "={{ ['starter', 'pro', 'enterprise'].includes($json.body.plan) }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } },
         { "leftValue": "={{ Number.isInteger($json.body.seat_count) && $json.body.seat_count >= 1 && $json.body.seat_count <= 500 }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
       ],
@@ -122,7 +122,7 @@ Every rule is visible on the canvas, and adding one is adding a condition.
 }
 ```
 
-Write each rule as a boolean expression tested with `is true`, not as a typed comparison (`number` ≥ 1). The input is
+Check the type before a regex: `.test()` converts its argument to a string, so `["a@b.c"]` would pass. Write each rule as a boolean expression tested with `is true`, not as a typed comparison (`number` ≥ 1). The input is
 untrusted: with strict type validation, a typed comparison on a value of the wrong type (`"seat_count": "five"`) makes
 the node throw instead of returning false, and the caller gets a 500 instead of a 400.
 
@@ -160,7 +160,7 @@ const FIELDS = [
   { name: 'plan', type: 'string', required: true, enum: ['starter', 'pro', 'enterprise'], description: 'Subscription plan' },
   { name: 'seat_count', type: 'integer', required: true, minimum: 1, maximum: 500, description: 'Number of licensed seats' },
 ];
-const details = {};
+const details = Object.create(null); // no prototype, so a "__proto__" field is recorded too
 for (const f of FIELDS) {
   const v = body[f.name];
   if (v === undefined) { if (f.required) details[f.name] = `Missing required field "${f.name}"`; continue; }
@@ -203,7 +203,7 @@ Unknown fields are reported, which is what `additionalProperties: false` in the 
 | Need | IF rule (boolean expression) | `FIELDS` entry (Code exception) |
 |---|---|---|
 | Required, non-empty string | `typeof $json.body.name === 'string' && $json.body.name.length > 0` | `type: 'string', required: true, minLength: 1` |
-| Pattern | `/^\S+@\S+\.\S+$/.test($json.body.email ?? '')` | `pattern: '^\\S+@\\S+\\.\\S+$'` |
+| Pattern | `typeof $json.body.email === 'string' && /^\S+@\S+\.\S+$/.test($json.body.email)` | `pattern: '^\\S+@\\S+\\.\\S+$'` |
 | Enum | `['a', 'b'].includes($json.body.plan)` | `enum: ['a', 'b']` |
 | Integer in range | `Number.isInteger($json.body.n) && $json.body.n >= 1 && $json.body.n <= 500` | `type: 'integer', minimum: 1, maximum: 500` |
 | Array with items | `Array.isArray($json.body.tags) && $json.body.tags.length > 0` | add an `array` branch to the type check |
