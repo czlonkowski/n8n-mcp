@@ -13,7 +13,7 @@
  * Everything this test creates is named "[TEST] ..." and is removed in
  * afterAll, even when an assertion above it fails. Never calls `publish` or
  * `call` — this only exercises the draft-agent lifecycle (create, mutate,
- * validate, list versions, delete).
+ * validate, list versions, delete — or archive on n8n 2.49+).
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { handleManageAgents } from '@/mcp/handlers-agents';
@@ -39,7 +39,11 @@ describe.skipIf(!enabled)('official MCP: agent lifecycle (live)', () => {
         // Cleanup is verified by the post-delete search below, not by this
         // call's own `success` field - a delete that reports success but
         // doesn't actually remove the agent would otherwise pass silently.
-        await handleManageAgents({ action: 'delete', args: { agentId } });
+        // n8n 2.49+ has archive_agent instead of delete_agent.
+        const deleted = await handleManageAgents({ action: 'delete', args: { agentId } });
+        if (!deleted.success && deleted.code === 'OFFICIAL_MCP_TOOL_UNAVAILABLE') {
+          await handleManageAgents({ action: 'archive', args: { agentId } });
+        }
       } catch {
         // ignore - the post-condition search below is the real check
       }

@@ -172,8 +172,11 @@ export async function handleManageAgents(args: unknown, context?: InstanceContex
     }
     const tool = resolveOfficialTool(spec, caps.toolNames);
     if (!tool) {
+      const replacement = spec.replacedBy && resolveOfficialTool(AGENT_ACTION_MAP[spec.replacedBy.action], caps.toolNames)
+        ? `; this n8n version replaced it with action "${spec.replacedBy.action}": ${spec.replacedBy.difference}`
+        : '';
       return officialFailure(
-        new OfficialMcpError('OFFICIAL_MCP_TOOL_UNAVAILABLE', `No tool for action "${action}" on this instance (looked for ${spec.tools.join(', ')})`),
+        new OfficialMcpError('OFFICIAL_MCP_TOOL_UNAVAILABLE', `No tool for action "${action}" on this instance (looked for ${spec.tools.join(', ')})${replacement}`),
         action
       );
     }

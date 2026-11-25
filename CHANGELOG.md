@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.104.0] - 2026-11-25
+
+### Changed
+
+- **Updated n8n to 2.49.6.** n8n-nodes-base, @n8n/n8n-nodes-langchain and n8n-core → 2.49.6, n8n-workflow → 2.49.4 (from 2.46.x; n8n 2.49.6 is the npm `stable` release, 2.50.1 is `beta`). Rebuilt the node database: 3,815 nodes (842 core: 708 from n8n-nodes-base, 134 from @n8n/n8n-nodes-langchain; 2,973 community, 2,505 verified). `node_versions` has 746 rows (674 before). The community node refresh saved 131 node rows from 62 npm packages and removed 1 row its package no longer declares. 2,951 of 2,973 community nodes have an AI summary; 14 come from packages without a README. The database is 81.9 MiB.
+- **Public API contract checked against 2.49.6.** No request or response changes on the endpoints n8n-mcp calls, and no workflow settings drift. Every operation now documents a 429 response with `Retry-After` and `X-RateLimit-*` headers (rate limits are configurable with the new `/settings/rate-limits`); n8n-mcp already maps 429 to `RATE_LIMIT_ERROR` with the retry delay. New routes not used by n8n-mcp: `/agents` (create, list, get, delete) and two promotion routes.
+
+### Added
+
+- **`n8n_manage_agents` action `archive`.** n8n 2.49 replaced the instance MCP tool `delete_agent` with `archive_agent`: an archived agent is unpublished and hidden, and can be restored in n8n. The `archive` action calls it. `delete` still calls `delete_agent` on older instances; on an instance that has only `archive_agent`, its `OFFICIAL_MCP_TOOL_UNAVAILABLE` error now names the `archive` action. `DISABLED_TOOL_OPERATIONS` treats `archive` as a write operation, and a rule that disables `n8n_manage_agents:delete` now also disables `archive`, so existing policies keep blocking agent removal on n8n 2.49.
+
 ## [2.103.2] - 2026-11-18
 
 ### Fixed

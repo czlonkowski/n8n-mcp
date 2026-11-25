@@ -19,6 +19,7 @@ export type AgentAction =
   | 'revert'
   | 'versions'
   | 'delete'
+  | 'archive'
   | 'discover_assets'
   | 'verify_mcp_server'
   | 'update_integration';
@@ -47,6 +48,13 @@ export interface AgentActionSpec {
    * the MCP token's user.
    */
   defaultsToPersonalProject?: boolean;
+  /**
+   * The action n8n replaced this one with. When the instance lacks every
+   * tool in `tools` but has the replacement's, the unavailable error names
+   * the replacement and how it differs (n8n 2.49 dropped delete_agent for
+   * archive_agent).
+   */
+  replacedBy?: { action: AgentAction; difference: string };
 }
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -72,7 +80,8 @@ export const AGENT_ACTION_MAP: Record<AgentAction, AgentActionSpec> = {
   unpublish: { tools: ['unpublish_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
   revert: { tools: ['revert_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
   versions: { tools: ['list_agent_versions'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true },
-  delete: { tools: ['delete_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },
+  delete: { tools: ['delete_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false, replacedBy: { action: 'archive', difference: 'it hides the agent and can be undone in n8n, so it is not a permanent delete' } },
+  archive: { tools: ['archive_agent'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: true },
   discover_assets: { tools: ['discover_agent_assets'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true, defaultsToPersonalProject: true },
   verify_mcp_server: { tools: ['verify_agent_mcp_server'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: false, idempotent: true, defaultsToPersonalProject: true },
   update_integration: { tools: ['update_agent_integration'], defaultTimeoutMs: DEFAULT_TIMEOUT_MS, destructive: true, idempotent: false },

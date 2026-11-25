@@ -140,6 +140,21 @@ describe('getDisabledOperations', () => {
     expect(all.size).toBe(2);
     expect(all.get('n8n_workflow_versions')).toEqual(new Set(['delete', 'prune']));
   });
+
+  // n8n 2.49 replaced delete_agent with archive_agent: a policy written
+  // before then must keep blocking agent removal.
+  it('disables agent archive whenever agent delete is disabled', () => {
+    process.env.DISABLED_TOOL_OPERATIONS = 'n8n_manage_agents:Delete';
+    expect(isOperationDisabled('n8n_manage_agents', 'archive')).toBe(true);
+    expect(isOperationDisabled('n8n_manage_agents', 'delete')).toBe(true);
+    expect(isOperationDisabled('n8n_manage_agents', 'publish')).toBe(false);
+  });
+
+  it('leaves agent delete enabled when only archive is disabled', () => {
+    process.env.DISABLED_TOOL_OPERATIONS = 'n8n_manage_agents:archive';
+    expect(isOperationDisabled('n8n_manage_agents', 'archive')).toBe(true);
+    expect(isOperationDisabled('n8n_manage_agents', 'delete')).toBe(false);
+  });
 });
 
 describe('virtual operations (enum union destructive set)', () => {

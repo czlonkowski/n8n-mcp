@@ -70,7 +70,7 @@ export class OfficialMcpError extends Error {
 
 export const AGENT_TOOL_NAMES = [
   'search_agents', 'get_agent', 'create_agent', 'mutate_agent', 'validate_agent', 'call_agent',
-  'publish_agent', 'unpublish_agent', 'revert_agent', 'list_agent_versions', 'delete_agent',
+  'publish_agent', 'unpublish_agent', 'revert_agent', 'list_agent_versions', 'delete_agent', 'archive_agent',
   'discover_agent_assets', 'verify_agent_mcp_server', 'update_agent_integration', 'get_agent_builder_reference',
 ] as const;
 

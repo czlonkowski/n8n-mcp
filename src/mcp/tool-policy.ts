@@ -21,10 +21,25 @@ import {
   DESTRUCTIVE_TOOL_OPERATIONS,
   ENTERPRISE_TOOLS,
 } from './tools-n8n-manager';
+import { AGENT_ACTIONS, AGENT_ACTION_MAP } from './agents-action-map';
 
 const MAX_ENV_LENGTH = 10000;
 const MAX_DISABLED_TOOLS = 200;
 const MAX_OPERATION_ENTRIES = 50;
+
+/**
+ * Operations that are disabled whenever another one is. When n8n replaces an
+ * operation (2.49 replaced the agent tool delete_agent with archive_agent), a
+ * policy written before the replacement must keep blocking it.
+ */
+const IMPLIED_DISABLED_OPERATIONS: Record<string, Record<string, string[]>> = {
+  n8n_manage_agents: Object.fromEntries(
+    AGENT_ACTIONS.flatMap(a => {
+      const replacement = AGENT_ACTION_MAP[a].replacedBy?.action;
+      return replacement ? [[a, [replacement]]] : [];
+    })
+  ),
+};
 
 let disabledToolsCache: { env: string; value: Set<string> } | null = null;
 let disabledOperationsCache: { env: string; value: Map<string, Set<string>> } | null = null;
@@ -175,7 +190,11 @@ export function getDisabledToolOperations(): Map<string, Set<string>> {
     if (ops.length === 0) continue;
 
     const existing = result.get(toolName) ?? new Set<string>();
-    ops.forEach(op => existing.add(op));
+    const implied = IMPLIED_DISABLED_OPERATIONS[toolName] ?? {};
+    ops.forEach(op => {
+      existing.add(op);
+      implied[op]?.forEach(extra => existing.add(extra));
+    });
     result.set(toolName, existing);
   }
 
