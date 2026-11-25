@@ -110,6 +110,26 @@ describe('handleManageAgents', () => {
     const client = fakeClient(['search_workflows']); access.getOfficialMcpClient.mockReturnValue(client);
     expect(await handleManageAgents({ action: 'search', args: {} })).toMatchObject({ success: false, code: 'OFFICIAL_MCP_TOOL_UNAVAILABLE' });
   });
+  // n8n 2.49 replaced delete_agent with archive_agent.
+  it('points delete at archive on an instance that only has archive_agent', async () => {
+    const client = fakeClient(['search_agents', 'archive_agent']); access.getOfficialMcpClient.mockReturnValue(client);
+    const r = await handleManageAgents({ action: 'delete', args: { agentId: 'a' } });
+    expect(r).toMatchObject({ success: false, action: 'delete', code: 'OFFICIAL_MCP_TOOL_UNAVAILABLE' });
+    expect(r.error).toContain('action "archive"');
+    expect(client.callTool).not.toHaveBeenCalled();
+  });
+  it('does not mention archive when the instance has neither tool', async () => {
+    const client = fakeClient(['search_agents']); access.getOfficialMcpClient.mockReturnValue(client);
+    const r = await handleManageAgents({ action: 'delete', args: { agentId: 'a' } });
+    expect(r).toMatchObject({ success: false, code: 'OFFICIAL_MCP_TOOL_UNAVAILABLE' });
+    expect(r.error).not.toContain('archive');
+  });
+  it('routes archive to archive_agent', async () => {
+    const client = fakeClient(['archive_agent'], { archive_agent: { ok: true, archived: true, agentId: 'a' } });
+    access.getOfficialMcpClient.mockReturnValue(client);
+    expect(await handleManageAgents({ action: 'archive', args: { agentId: 'a' } })).toMatchObject({ success: true, action: 'archive', officialTool: 'archive_agent' });
+    expect(client.callTool).toHaveBeenCalledWith('archive_agent', { agentId: 'a' }, expect.anything());
+  });
   it('adds the credential-type hint for missing:["credential"] by looking up get_agent, not args.credential', async () => {
     // Matches docs/local/official-agent-tools-2026-08-27/spike-log-3-azure-incompatible.json:
     // validate_agent answers a "missing credential" outcome with ok:true, valid:false

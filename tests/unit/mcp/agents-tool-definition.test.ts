@@ -20,7 +20,7 @@ describe('n8n_manage_agents tool definition', () => {
     // Every write action, not just the publish/delete pair: create and mutate
     // persist a draft, and call runs the agent's real tools.
     expect([...DESTRUCTIVE_TOOL_OPERATIONS['n8n_manage_agents']].sort())
-      .toEqual(['call', 'create', 'delete', 'mutate', 'publish', 'revert', 'unpublish', 'update_integration']);
+      .toEqual(['archive', 'call', 'create', 'delete', 'mutate', 'publish', 'revert', 'unpublish', 'update_integration']);
   });
   it('advertises integer bounds on the two other official-MCP tools', () => {
     const explore = n8nManagementTools.find(t => t.name === 'n8n_explore_node_resources')!;

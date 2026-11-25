@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/n8n-mcp.svg)](https://www.npmjs.com/package/n8n-mcp)
 [![codecov](https://codecov.io/gh/czlonkowski/n8n-mcp/graph/badge.svg?token=YOUR_TOKEN)](https://codecov.io/gh/czlonkowski/n8n-mcp)
 [![Tests](https://img.shields.io/badge/tests-6524%20passing-brightgreen.svg)](https://github.com/czlonkowski/n8n-mcp/actions)
-[![n8n version](https://img.shields.io/badge/n8n-2.46.7-orange.svg)](https://github.com/n8n-io/n8n)
+[![n8n version](https://img.shields.io/badge/n8n-2.49.6-orange.svg)](https://github.com/n8n-io/n8n)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fczlonkowski%2Fn8n--mcp-green.svg)](https://github.com/czlonkowski/n8n-mcp/pkgs/container/n8n-mcp)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16495/badge)](https://www.bestpractices.dev/projects/16495)
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/n8n-mcp?referralCode=n8n-mcp)
@@ -19,7 +19,7 @@ n8n-MCP is an open-source MCP server that lets Claude, ChatGPT, Cursor, and othe
 - **Validate and fix before going live** - `validate_node`, `validate_workflow`, and `n8n_validate_workflow` report unknown nodes, invalid node versions, missing required fields, and broken connections or expressions. `n8n_autofix_workflow` repairs the common ones.
 - **Test** - `n8n_test_workflow` runs a workflow through its webhook, form, or chat trigger, or, through n8n's built-in MCP server, with pinned data when it has no such trigger.
 - **Manage the instance** - create, update, and delete credentials, work with data tables, folders and variables, and run a security audit (`n8n_audit_instance`).
-- **Build new workflows** - bundled knowledge of 3,501 nodes and 2,352 templates, so the assistant configures real nodes instead of guessing.
+- **Build new workflows** - bundled knowledge of 3,815 nodes and 2,352 templates, so the assistant configures real nodes instead of guessing.
 - **Work across several n8n instances** - on the [hosted service](https://www.n8n-mcp.com/docs/multi-instance), register production, staging, and client instances once and name the target on each call. Self-hosted HTTP mode can serve several instances with [per-request instance headers](./docs/HTTP_DEPLOYMENT.md#per-request-instance-headers-multi-tenant).
 
 ## n8n-MCP and n8n's Built-In MCP Server
@@ -46,7 +46,7 @@ n8n ships its own instance-level MCP server, and it covers a lot: building and e
 
 The documentation and validation tools work without an n8n connection, against a bundled database:
 
-- **3,501 n8n nodes** - 842 core nodes + 2,659 community nodes (2,228 verified)
+- **3,815 n8n nodes** - 842 core nodes + 2,973 community nodes (2,505 verified)
 - **Node properties** - 99% coverage with detailed schemas
 - **Node operations** - 66.5% coverage of available actions
 - **Documentation** - 86% coverage from official n8n docs (including AI nodes)
@@ -471,7 +471,7 @@ DISABLED_TOOLS=n8n_create_workflow,n8n_update_full_workflow,n8n_update_partial_w
 For tools that bundle read and write operations under one name, block only the destructive operations while keeping `list` and `get`. Use this instead of a full `DISABLED_TOOLS` entry where the tool's read operations are acceptable — the `n8n_manage_datatable` and `n8n_test_workflow` entries below are the alternative to removing those tools entirely as above. The example names every write operation of every tool that has one:
 
 ```bash
-DISABLED_TOOL_OPERATIONS=n8n_executions:delete;n8n_test_workflow:auto,trigger,pinned,direct,expose;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_manage_variables:create,update,delete;n8n_workflow_versions:delete,rollback,prune,expose;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,update_integration;n8n_manage_datatable:createTable,updateTable,deleteTable,insertRows,updateRows,upsertRows,deleteRows,addColumn,deleteColumn,renameColumn
+DISABLED_TOOL_OPERATIONS=n8n_executions:delete;n8n_test_workflow:auto,trigger,pinned,direct,expose;n8n_evaluations:run,cancel;n8n_manage_folders:create,rename,move,delete;n8n_manage_variables:create,update,delete;n8n_workflow_versions:delete,rollback,prune,expose;n8n_manage_agents:create,mutate,call,publish,unpublish,revert,delete,archive,update_integration;n8n_manage_datatable:createTable,updateTable,deleteTable,insertRows,updateRows,upsertRows,deleteRows,addColumn,deleteColumn,renameColumn
 ```
 
 Two details are easy to miss when writing your own list. For `n8n_test_workflow`, all four of `auto`, `trigger`, `pinned` and `direct` run the workflow (an omitted or blank `method` counts as `auto`), leaving only the read-only `prepare`. And `expose` is not a value of any operation parameter: it is the `exposeToMcp` consent write of `n8n_test_workflow` and `n8n_workflow_versions`, which enables a workflow's "Available in MCP" setting. Omitting `expose` leaves that write reachable.
