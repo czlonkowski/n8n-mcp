@@ -150,6 +150,14 @@ describe('getDisabledOperations', () => {
     expect(isOperationDisabled('n8n_manage_agents', 'publish')).toBe(false);
   });
 
+  it('parses operation and tool names that match Object.prototype members', () => {
+    process.env.DISABLED_TOOL_OPERATIONS = 'n8n_manage_agents:constructor,__proto__,toString;constructor:delete;n8n_executions:delete';
+    expect(() => getDisabledToolOperations()).not.toThrow();
+    expect(isOperationDisabled('n8n_manage_agents', 'constructor')).toBe(true);
+    expect(isOperationDisabled('n8n_manage_agents', 'archive')).toBe(false);
+    expect(isOperationDisabled('n8n_executions', 'delete')).toBe(true);
+  });
+
   it('leaves agent delete enabled when only archive is disabled', () => {
     process.env.DISABLED_TOOL_OPERATIONS = 'n8n_manage_agents:archive';
     expect(isOperationDisabled('n8n_manage_agents', 'archive')).toBe(true);

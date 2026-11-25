@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`n8n_manage_agents` action `archive`.** n8n 2.49 replaced the instance MCP tool `delete_agent` with `archive_agent`: an archived agent is unpublished and hidden, and can be restored in n8n. The `archive` action calls it. `delete` still calls `delete_agent` on older instances; on an instance that has only `archive_agent`, its `OFFICIAL_MCP_TOOL_UNAVAILABLE` error now names the `archive` action. `DISABLED_TOOL_OPERATIONS` treats `archive` as a write operation, and a rule that disables `n8n_manage_agents:delete` now also disables `archive`, so existing policies keep blocking agent removal on n8n 2.49.
 
+### Fixed
+
+- **`DISABLED_TOOL_OPERATIONS` entries named after `Object.prototype` members no longer break policy parsing.** A tool name such as `constructor` passed the tool-name check and then failed with a TypeError, which stopped tool listing and dispatch for every tool. Tool-name lookups now read only the policy tables' own entries, so such an entry is reported as an unknown tool.
+
 ## [2.103.2] - 2026-11-18
 
 ### Fixed

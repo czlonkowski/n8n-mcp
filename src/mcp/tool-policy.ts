@@ -32,14 +32,23 @@ const MAX_OPERATION_ENTRIES = 50;
  * operation (2.49 replaced the agent tool delete_agent with archive_agent), a
  * policy written before the replacement must keep blocking it.
  */
-const IMPLIED_DISABLED_OPERATIONS: Record<string, Record<string, string[]>> = {
-  n8n_manage_agents: Object.fromEntries(
-    AGENT_ACTIONS.flatMap(a => {
+const IMPLIED_DISABLED_OPERATIONS = new Map<string, Map<string, string[]>>([
+  ['n8n_manage_agents', new Map(
+    AGENT_ACTIONS.flatMap((a): Array<[string, string[]]> => {
       const replacement = AGENT_ACTION_MAP[a].replacedBy?.action;
       return replacement ? [[a, [replacement]]] : [];
     })
-  ),
-};
+  )],
+]);
+
+/**
+ * Reads `record[key]` only when `key` is the record's own property. Tool names
+ * in DISABLED_TOOL_OPERATIONS come from the environment, and a name such as
+ * "constructor" would otherwise resolve to a member of Object.prototype.
+ */
+function ownValue<T>(record: Record<string, T>, key: string): T | undefined {
+  return Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+}
 
 let disabledToolsCache: { env: string; value: Set<string> } | null = null;
 let disabledOperationsCache: { env: string; value: Map<string, Set<string>> } | null = null;
@@ -132,14 +141,14 @@ export function isToolDisabled(toolName: string): boolean {
  * call a tool read-only while a write path was still reachable.
  */
 export function getValidOperations(toolName: string): Set<string> {
-  const paramName = TOOL_OPERATION_PARAM[toolName];
+  const paramName = ownValue(TOOL_OPERATION_PARAM, toolName);
   const valid = new Set<string>();
   if (!paramName) return valid;
 
   const tool = n8nManagementTools.find(t => t.name === toolName);
   const enumValues: unknown[] = (tool?.inputSchema as any)?.properties?.[paramName]?.enum ?? [];
   for (const value of enumValues) valid.add(String(value).toLowerCase());
-  for (const value of DESTRUCTIVE_TOOL_OPERATIONS[toolName] ?? []) valid.add(value.toLowerCase());
+  for (const value of ownValue(DESTRUCTIVE_TOOL_OPERATIONS, toolName) ?? []) valid.add(value.toLowerCase());
   return valid;
 }
 
@@ -190,10 +199,12 @@ export function getDisabledToolOperations(): Map<string, Set<string>> {
     if (ops.length === 0) continue;
 
     const existing = result.get(toolName) ?? new Set<string>();
-    const implied = IMPLIED_DISABLED_OPERATIONS[toolName] ?? {};
+    // Maps, not object literals: operation names come from the environment,
+    // and a name such as "constructor" would resolve to an inherited property.
+    const implied = IMPLIED_DISABLED_OPERATIONS.get(toolName);
     ops.forEach(op => {
       existing.add(op);
-      implied[op]?.forEach(extra => existing.add(extra));
+      implied?.get(op)?.forEach(extra => existing.add(extra));
     });
     result.set(toolName, existing);
   }
@@ -202,11 +213,11 @@ export function getDisabledToolOperations(): Map<string, Set<string>> {
   // `n8n_execution:delete` (wrong tool) or `n8n_executions:remove` (wrong op)
   // is visible rather than silently leaving an operation enabled.
   for (const [toolName, ops] of result) {
-    if (!TOOL_OPERATION_PARAM[toolName]) {
+    const paramName = ownValue(TOOL_OPERATION_PARAM, toolName);
+    if (!paramName) {
       logger.warn(`DISABLED_TOOL_OPERATIONS: unknown tool '${toolName}' — no per-operation filtering applied. Eligible tools: ${Object.keys(TOOL_OPERATION_PARAM).join(', ')}`);
       continue;
     }
-    const paramName = TOOL_OPERATION_PARAM[toolName];
     const validOps = getValidOperations(toolName);
     for (const op of ops) {
       if (validOps.size > 0 && !validOps.has(op)) {
