@@ -1,6 +1,6 @@
 {
   "name": "n8n-mcp",
-  "version": "2.104.0",
+  "version": "2.104.1",
   "description": "MCP server that lets AI assistants operate n8n: debug, edit, validate, test and build workflows on any n8n instance",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -149,7 +149,7 @@
   ],
   "devDependencies": {
     "@faker-js/faker": "^9.9.0",
-    "@secretlint/secretlint-rule-preset-recommend": "9.3.4",
+    "@secretlint/secretlint-rule-preset-recommend": "13.1.0",
     "@testing-library/jest-dom": "^6.6.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.3",
@@ -159,15 +159,15 @@
     "@vitest/coverage-v8": "^3.2.6",
     "@vitest/runner": "^3.2.6",
     "@vitest/ui": "^3.2.6",
-    "axios": "^1.21.0",
+    "axios": "^1.21.1",
     "axios-mock-adapter": "^2.1.0",
-    "fast-check": "^4.10.2",
+    "fast-check": "^4.11.0",
     "fishery": "^2.3.1",
     "husky": "9.1.7",
     "js-yaml": "^4.3.2",
     "msw": "^2.10.4",
     "nodemon": "^3.1.14",
-    "secretlint": "9.3.4",
+    "secretlint": "13.1.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
     "vitest": "^3.2.6"
@@ -186,15 +186,15 @@
     "n8n-nodes-base": "2.49.6",
     "n8n-workflow": "2.49.4",
     "openai": "^4.77.0",
-    "sql.js": "^1.13.0",
+    "sql.js": "^1.17.0",
     "tslib": "^2.9.1",
     "undici": "^6.29.0",
     "uuid": "^11.1.1",
     "zod": "3.25.76"
   },
   "optionalDependencies": {
-    "@rollup/rollup-darwin-arm64": "^4.50.0",
-    "@rollup/rollup-linux-x64-gnu": "^4.50.0",
+    "@rollup/rollup-darwin-arm64": "^4.68.8",
+    "@rollup/rollup-linux-x64-gnu": "^4.68.8",
     "better-sqlite3": "^11.10.0"
   },
   "overrides": {

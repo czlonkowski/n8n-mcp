@@ -27,18 +27,18 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@axe-core/playwright": "4.13.0",
-    "@playwright/test": "1.64.1",
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.65.1",
     "@testing-library/react": "16.3.3",
-    "@testing-library/user-event": "14.6.8",
+    "@testing-library/user-event": "14.6.13",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.2",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitejs/plugin-react": "^6.3.0",
+    "@vitest/coverage-v8": "5.1.2",
     "jsdom": "26.1.0",
     "typescript": "^6.0.3",
-    "vite": "^8.3.5",
+    "vite": "^8.4.0",
     "vite-plugin-singlefile": "^2.3.4",
-    "vitest": "4.1.11"
+    "vitest": "5.1.2"
   }
 }
