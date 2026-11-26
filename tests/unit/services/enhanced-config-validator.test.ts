@@ -1589,8 +1589,8 @@ describe('EnhancedConfigValidator - Integration Tests', () => {
     mockResourceService = { findSimilarResources: vi.fn().mockReturnValue([]) };
     mockOperationService = { findSimilarOperations: vi.fn().mockReturnValue([]) };
 
-    vi.mocked(ResourceSimilarityService).mockImplementation(() => mockResourceService);
-    vi.mocked(OperationSimilarityService).mockImplementation(() => mockOperationService);
+    vi.mocked(ResourceSimilarityService).mockImplementation(function () { return mockResourceService; });
+    vi.mocked(OperationSimilarityService).mockImplementation(function () { return mockOperationService; });
 
     EnhancedConfigValidator.initializeSimilarityServices(mockRepository);
   });
@@ -1741,12 +1741,12 @@ describe('EnhancedConfigValidator - Operation and Resource Validation', () => {
     repository = testDb.nodeRepository;
 
     // Configure mocked similarity services to return empty arrays by default
-    vi.mocked(ResourceSimilarityService).mockImplementation(() => ({
+    vi.mocked(ResourceSimilarityService).mockImplementation(function () { return ({
       findSimilarResources: vi.fn().mockReturnValue([])
-    }) as any);
-    vi.mocked(OperationSimilarityService).mockImplementation(() => ({
+    }) as any; });
+    vi.mocked(OperationSimilarityService).mockImplementation(function () { return ({
       findSimilarOperations: vi.fn().mockReturnValue([])
-    }) as any);
+    }) as any; });
 
     EnhancedConfigValidator.initializeSimilarityServices(repository);
 

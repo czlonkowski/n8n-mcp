@@ -25,22 +25,22 @@ vi.mock('../../../src/utils/logger', () => ({
 vi.mock('dotenv');
 
 vi.mock('../../../src/mcp/server', () => ({
-  N8NDocumentationMCPServer: vi.fn().mockImplementation(() => ({
+  N8NDocumentationMCPServer: vi.fn().mockImplementation(function () { return ({
     connect: vi.fn().mockResolvedValue(undefined),
-  })),
+  }); }),
 }));
 
 // Transport mock: if the gate allows the request through, respond 200.
 // Tests use this as the "gate passed, transport reached" signal.
 vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
-  StreamableHTTPServerTransport: vi.fn().mockImplementation(() => ({
+  StreamableHTTPServerTransport: vi.fn().mockImplementation(function () { return ({
     handleRequest: vi.fn().mockImplementation(async (_req: any, res: any) => {
       if (!res.headersSent) {
         res.status(200).json({ jsonrpc: '2.0', result: { success: true }, id: 1 });
       }
     }),
     close: vi.fn().mockResolvedValue(undefined),
-  })),
+  }); }),
 }));
 
 // Use vi.hoisted so the mock consoleManager exists at import-time, avoiding
@@ -52,7 +52,7 @@ const { mockConsoleManager } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../src/utils/console-manager', () => ({
-  ConsoleManager: vi.fn(() => mockConsoleManager),
+  ConsoleManager: vi.fn(function () { return mockConsoleManager; }),
 }));
 
 vi.mock('../../../src/utils/url-detector', () => ({

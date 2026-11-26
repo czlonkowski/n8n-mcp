@@ -26,9 +26,9 @@ vi.mock('dotenv');
 
 // Implementation passed to vi.fn() directly, so vi.clearAllMocks() cannot strip it.
 vi.mock('../../../src/mcp/server', () => ({
-  N8NDocumentationMCPServer: vi.fn(() => ({
+  N8NDocumentationMCPServer: vi.fn(function () { return ({
     connect: async () => undefined,
-  })),
+  }); }),
 }));
 
 // Transport mock: reaching it means the guard let the request through.
@@ -43,11 +43,11 @@ const { transportHandleRequest, TransportMock, applyTransportMocks } = vi.hoiste
         res.status(200).json({ jsonrpc: '2.0', result: { reachedTransport: true }, id: 1 });
       }
     });
-    TransportMock.mockImplementation((opts: any) => ({
+    TransportMock.mockImplementation(function (opts: any) { return ({
       sessionId: opts?.sessionIdGenerator?.(),
       handleRequest: transportHandleRequest,
       close: vi.fn().mockResolvedValue(undefined),
-    }));
+    }); });
   };
   applyTransportMocks();
   return { transportHandleRequest, TransportMock, applyTransportMocks };
@@ -78,7 +78,7 @@ const { mockConsoleManager } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../src/utils/console-manager', () => ({
-  ConsoleManager: vi.fn(() => mockConsoleManager),
+  ConsoleManager: vi.fn(function () { return mockConsoleManager; }),
 }));
 
 vi.mock('../../../src/utils/url-detector', () => ({

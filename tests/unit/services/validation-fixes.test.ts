@@ -10,12 +10,12 @@ import { DatabaseAdapter, PreparedStatement, RunResult } from '../../../src/data
 
 // Mock logger to prevent console output
 vi.mock('@/utils/logger', () => ({
-  Logger: vi.fn().mockImplementation(() => ({
+  Logger: vi.fn().mockImplementation(function () { return ({
     error: vi.fn(),
     warn: vi.fn(),
     info: vi.fn(),
     debug: vi.fn()
-  }))
+  }); })
 }));
 
 // Create a complete mock for DatabaseAdapter

@@ -17,14 +17,8 @@ export default mergeConfig(
       include: ['tests/integration/**/*.test.ts'],
       // Integration tests might need more time
       testTimeout: 30000,
-      // Specific pool options for integration tests
-      poolOptions: {
-        threads: {
-          // Run integration tests sequentially by default
-          singleThread: true,
-          maxThreads: 1
-        }
-      },
+      // Run integration test files one at a time
+      maxWorkers: 1,
       // Disable coverage for integration tests or set lower thresholds
       coverage: {
         enabled: false

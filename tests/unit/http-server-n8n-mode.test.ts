@@ -15,13 +15,13 @@ vi.mock('../../src/utils/logger', () => ({
 vi.mock('dotenv');
 
 vi.mock('../../src/mcp/server', () => ({
-  N8NDocumentationMCPServer: vi.fn().mockImplementation(() => ({
+  N8NDocumentationMCPServer: vi.fn().mockImplementation(function () { return ({
     connect: vi.fn().mockResolvedValue(undefined)
-  }))
+  }); })
 }));
 
 vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
-  StreamableHTTPServerTransport: vi.fn().mockImplementation(() => ({
+  StreamableHTTPServerTransport: vi.fn().mockImplementation(function () { return ({
     handleRequest: vi.fn().mockImplementation(async (req: any, res: any) => {
       // Simulate successful MCP response
       if (process.env.N8N_MODE === 'true') {
@@ -34,7 +34,7 @@ vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
       });
     }),
     close: vi.fn().mockResolvedValue(undefined)
-  }))
+  }); })
 }));
 
 // Create a mock console manager instance
@@ -45,7 +45,7 @@ const mockConsoleManager = {
 };
 
 vi.mock('../../src/utils/console-manager', () => ({
-  ConsoleManager: vi.fn(() => mockConsoleManager)
+  ConsoleManager: vi.fn(function () { return mockConsoleManager; })
 }));
 
 vi.mock('../../src/utils/url-detector', () => ({

@@ -201,7 +201,7 @@ describe('MSW Setup Verification', () => {
       });
     });
 
-    it('should wait for specific requests', async () => {
+    it('should wait for specific requests', { timeout: 10000 }, async () => {
       // Since the global server is already handling these endpoints,
       // we'll just make the requests and verify they succeed
       const responses = await Promise.all([
@@ -214,7 +214,7 @@ describe('MSW Setup Verification', () => {
       expect(responses[0].config.url).toContain('/api/v1/workflows');
       expect(responses[1].status).toBe(200);
       expect(responses[1].config.url).toContain('/api/v1/executions');
-    }, { timeout: 10000 }); // Increase timeout for this specific test
+    }); // Increase timeout for this specific test
 
     it('should work with scoped handlers', async () => {
       // First add the scoped handler

@@ -294,7 +294,7 @@ describe('WebhookHandler', () => {
 
       // Mock getN8nApiConfig to return null
       const { getN8nApiConfig } = await import('../../../../src/config/n8n-api');
-      vi.mocked(getN8nApiConfig).mockReturnValue(null as any);
+      vi.mocked(getN8nApiConfig).mockReturnValueOnce(null as any);
 
       const input = {
         workflowId: 'workflow-123',

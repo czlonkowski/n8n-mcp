@@ -336,7 +336,7 @@ describe('Database Connection Management', () => {
       expect(fs.existsSync(dbPath)).toBe(false);
     });
 
-    it('should handle connection timeout simulation', async () => {
+    it('should handle connection timeout simulation', { timeout: 5000 }, async () => {
       testDb = new TestDatabase({ mode: 'file', name: 'test-timeout.db' });
       const db = await testDb.initialize();
 
@@ -359,7 +359,7 @@ describe('Database Connection Management', () => {
         db.exec('ROLLBACK');
         conn2.close();
       }
-    }, { timeout: 5000 }); // Add explicit timeout
+    }); // Add explicit timeout
   });
 
   describe('Database Configuration', () => {

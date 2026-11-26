@@ -19,12 +19,12 @@ vi.mock('@/utils/logger', () => ({
     debug: vi.fn(),
     warn: vi.fn(),
   },
-  Logger: vi.fn().mockImplementation(() => ({
+  Logger: vi.fn().mockImplementation(function () { return ({
     info: vi.fn(),
     error: vi.fn(),
     debug: vi.fn(),
     warn: vi.fn(),
-  })),
+  }); }),
   LogLevel: {
     ERROR: 0,
     WARN: 1,
@@ -73,7 +73,7 @@ describe('Evaluation Handlers (n8n_evaluations)', () => {
       maxRetries: 3,
     });
 
-    vi.mocked(N8nApiClient).mockImplementation(() => mockApiClient);
+    vi.mocked(N8nApiClient).mockImplementation(function () { return mockApiClient; });
 
     handlers = await import('@/mcp/handlers-n8n-manager');
   });

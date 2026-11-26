@@ -16,12 +16,12 @@ import { InstanceContext } from '../../../src/types/instance-context';
 
 // Mock the N8nApiClient
 vi.mock('../../../src/clients/n8n-api-client', () => ({
-  N8nApiClient: vi.fn().mockImplementation((config) => ({
+  N8nApiClient: vi.fn().mockImplementation(function (config) { return ({
     config,
     getWorkflows: vi.fn().mockResolvedValue([]),
     getWorkflow: vi.fn().mockResolvedValue({}),
     isConnected: vi.fn().mockReturnValue(true)
-  }))
+  }); })
 }));
 
 // Mock logger to reduce noise in tests
@@ -34,7 +34,7 @@ vi.mock('../../../src/utils/logger', () => {
   };
 
   return {
-    Logger: vi.fn().mockImplementation(() => mockLogger),
+    Logger: vi.fn().mockImplementation(function () { return mockLogger; }),
     logger: mockLogger
   };
 });

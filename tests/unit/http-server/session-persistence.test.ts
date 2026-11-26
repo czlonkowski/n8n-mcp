@@ -10,12 +10,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 // `[SECURITY] <event>` prefix, so spying on logger.info lets us verify which
 // security events fire during restore.
 vi.mock('../../../src/utils/logger', () => ({
-  Logger: vi.fn().mockImplementation(() => ({
+  Logger: vi.fn().mockImplementation(function () { return ({
     debug: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn()
-  })),
+  }); }),
   logger: {
     debug: vi.fn(),
     info: vi.fn(),

@@ -3,7 +3,7 @@ import http from 'http';
 import zlib from 'zlib';
 
 vi.mock('../../../src/utils/logger', () => ({
-  Logger: vi.fn().mockImplementation(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() })),
+  Logger: vi.fn().mockImplementation(function () { return ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }); }),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 

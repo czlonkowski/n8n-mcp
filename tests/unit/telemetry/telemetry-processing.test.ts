@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, afterEach, beforeAll, afterAll, type MockInstance } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach, beforeAll, afterAll, type MockInstance, type Mock } from 'vitest';
 import { TelemetryBatchProcessor } from '../../../src/telemetry/batch-processor';
 import { TelemetryEvent, WorkflowTelemetry, WorkflowMutationRecord, TELEMETRY_CONFIG } from '../../../src/telemetry/telemetry-types';
 import { TelemetryError, TelemetryErrorType } from '../../../src/telemetry/telemetry-error';
@@ -20,7 +20,7 @@ describe('TelemetryBatchProcessor', () => {
   const TEST_OPERATION_TIMEOUT = 100;
   let batchProcessor: TelemetryBatchProcessor;
   let mockSupabase: IngestClient;
-  let mockIsEnabled: ReturnType<typeof vi.fn>;
+  let mockIsEnabled: Mock<() => boolean>;
   let mockProcessExit: MockInstance;
 
   const createMockSupabaseResponse = (error: any = null) => ({

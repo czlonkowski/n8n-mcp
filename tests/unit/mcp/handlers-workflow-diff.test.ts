@@ -105,7 +105,7 @@ describe('handlers-workflow-diff', () => {
     vi.mocked(getN8nApiClient).mockReturnValue(mockApiClient);
 
     // Mock WorkflowDiffEngine constructor
-    vi.mocked(WorkflowDiffEngine).mockImplementation(() => mockDiffEngine);
+    vi.mocked(WorkflowDiffEngine).mockImplementation(function () { return mockDiffEngine; });
 
     // Set up default environment
     process.env.DEBUG_MCP = 'false';

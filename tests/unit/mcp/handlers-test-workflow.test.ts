@@ -44,10 +44,10 @@ vi.mock('@/services/n8n-api-client');
 vi.mock('@/services/workflow-validator');
 vi.mock('@/database/node-repository');
 vi.mock('@/services/workflow-versioning-service', () => ({
-  WorkflowVersioningService: vi.fn().mockImplementation(() => ({
+  WorkflowVersioningService: vi.fn().mockImplementation(function () { return ({
     createBackup: vi.fn().mockResolvedValue({ versionId: 'v1', versionNumber: 1, pruned: 0 }),
     getVersions: vi.fn().mockResolvedValue([]),
-  })),
+  }); }),
 }));
 vi.mock('@/config/n8n-api', async (orig) => ({
   ...(await orig<any>()),
@@ -55,7 +55,7 @@ vi.mock('@/config/n8n-api', async (orig) => ({
 }));
 vi.mock('@/utils/logger', () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },
-  Logger: vi.fn().mockImplementation(() => ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() })),
+  Logger: vi.fn().mockImplementation(function () { return ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() }); }),
   LogLevel: { ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 },
 }));
 vi.mock('@/telemetry/telemetry-manager', () => ({
@@ -164,9 +164,9 @@ describe('n8n_test_workflow method routing', () => {
       updateWorkflow: vi.fn().mockResolvedValue({ id: 'w' }),
       healthCheck: vi.fn(),
     };
-    vi.mocked(N8nApiClient).mockImplementation(() => mockApiClient);
-    vi.mocked(WorkflowValidator).mockImplementation(() => ({ validateWorkflow: vi.fn() }) as any);
-    vi.mocked(NodeRepository).mockImplementation(() => ({}) as any);
+    vi.mocked(N8nApiClient).mockImplementation(function () { return mockApiClient; });
+    vi.mocked(WorkflowValidator).mockImplementation(function () { return ({ validateWorkflow: vi.fn() }) as any; });
+    vi.mocked(NodeRepository).mockImplementation(function () { return ({}) as any; });
 
     registryMock.ensureRegistryInitialized.mockResolvedValue(undefined);
     registryMock.getRegisteredTypes.mockReturnValue(['webhook', 'form', 'chat']);
@@ -685,7 +685,7 @@ describe('n8n_test_workflow over the wire', () => {
       updateWorkflow: vi.fn().mockResolvedValue({ id: 'w' }),
       healthCheck: vi.fn(),
     };
-    vi.mocked(N8nApiClient).mockImplementation(() => mockApiClient);
+    vi.mocked(N8nApiClient).mockImplementation(function () { return mockApiClient; });
     handlers = await import('@/mcp/handlers-n8n-manager');
     resetDefaultApiClient(handlers);
   });

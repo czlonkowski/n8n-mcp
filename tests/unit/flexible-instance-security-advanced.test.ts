@@ -5,7 +5,7 @@
  * and comprehensive testing of security-related code paths
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi, Mock } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, Mock, type MockedFunction } from 'vitest';
 import { InstanceContext, validateInstanceContext } from '../../src/types/instance-context';
 import { getN8nApiClient } from '../../src/mcp/handlers-n8n-manager';
 import { getN8nApiConfigFromContext } from '../../src/config/n8n-api';
@@ -19,7 +19,7 @@ vi.mock('../../src/config/n8n-api');
 vi.mock('../../src/utils/logger');
 
 describe('Advanced Security and Error Handling Tests', () => {
-  let mockN8nApiClient: Mock;
+  let mockN8nApiClient: MockedFunction<typeof N8nApiClient>;
   let mockGetN8nApiConfigFromContext: Mock;
   let mockLogger: any; // Logger mock has complex type
 

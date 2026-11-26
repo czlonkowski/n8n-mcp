@@ -32,7 +32,7 @@ vi.mock('@/config/n8n-api', async (orig) => ({
 }));
 vi.mock('@/utils/logger', () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },
-  Logger: vi.fn().mockImplementation(() => ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() })),
+  Logger: vi.fn().mockImplementation(function () { return ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() }); }),
   LogLevel: { ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 },
 }));
 vi.mock('@/mcp/handlers-official-tools', async (orig) => {
@@ -78,7 +78,7 @@ describe('n8n_manage_datatable column actions', () => {
     vi.clearAllMocks();
     officialMock.override = async () => ({ success: true, action: 'manage_datatable', data: { success: true, message: 'ok' } });
     officialMock.projects = choices([{ id: 'p1', name: 'Personal', type: 'personal' }]);
-    vi.mocked(N8nApiClient).mockImplementation(() => ({ healthCheck: vi.fn() }) as any);
+    vi.mocked(N8nApiClient).mockImplementation(function () { return ({ healthCheck: vi.fn() }) as any; });
     handlers = await import('@/mcp/handlers-n8n-manager');
     resetDefaultApiClient(handlers);
   });
@@ -260,7 +260,7 @@ describe('n8n_manage_datatable column actions over the wire', () => {
     vi.clearAllMocks();
     officialMock.override = null;
     officialMock.projects = null;
-    vi.mocked(N8nApiClient).mockImplementation(() => ({ healthCheck: vi.fn() }) as any);
+    vi.mocked(N8nApiClient).mockImplementation(function () { return ({ healthCheck: vi.fn() }) as any; });
     handlers = await import('@/mcp/handlers-n8n-manager');
     resetDefaultApiClient(handlers);
   });

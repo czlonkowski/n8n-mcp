@@ -156,9 +156,8 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.15.30",
     "@types/ws": "^8.18.2",
-    "@vitest/coverage-v8": "^3.2.6",
-    "@vitest/runner": "^3.2.6",
-    "@vitest/ui": "^3.2.6",
+    "@vitest/coverage-v8": "^5.1.2",
+    "@vitest/ui": "^5.1.2",
     "axios": "^1.21.1",
     "axios-mock-adapter": "^2.1.0",
     "fast-check": "^4.11.0",
@@ -170,7 +169,8 @@
     "secretlint": "13.1.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.6"
+    "vite": "^8.4.0",
+    "vitest": "^5.1.2"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

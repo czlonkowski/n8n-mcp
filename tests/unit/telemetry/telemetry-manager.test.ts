@@ -52,7 +52,7 @@ describe('TelemetryManager', () => {
         insert: vi.fn().mockResolvedValue({ error: null, status: 201 })
       })
     };
-    vi.mocked(IngestClient).mockImplementation(() => mockSupabaseClient);
+    vi.mocked(IngestClient).mockImplementation(function () { return mockSupabaseClient; });
 
     // Mock EventTracker
     mockEventTracker = {
@@ -84,7 +84,7 @@ describe('TelemetryManager', () => {
         performanceMetrics: {}
       })
     };
-    vi.mocked(TelemetryEventTracker).mockImplementation(() => mockEventTracker);
+    vi.mocked(TelemetryEventTracker).mockImplementation(function () { return mockEventTracker; });
 
     // Mock BatchProcessor
     mockBatchProcessor = {
@@ -104,7 +104,7 @@ describe('TelemetryManager', () => {
       }),
       resetMetrics: vi.fn()
     };
-    vi.mocked(TelemetryBatchProcessor).mockImplementation(() => mockBatchProcessor);
+    vi.mocked(TelemetryBatchProcessor).mockImplementation(function () { return mockBatchProcessor; });
 
     vi.clearAllMocks();
   });
@@ -199,7 +199,7 @@ describe('TelemetryManager', () => {
     });
 
     it('should handle initialization errors', () => {
-      vi.mocked(IngestClient).mockImplementation(() => {
+      vi.mocked(IngestClient).mockImplementation(function () {
         throw new Error('Ingest client initialization failed');
       });
 
@@ -355,7 +355,7 @@ describe('TelemetryManager', () => {
 
     it('should not flush without an ingest client', async () => {
       // Simulate initialization failure
-      vi.mocked(IngestClient).mockImplementation(() => {
+      vi.mocked(IngestClient).mockImplementation(function () {
         throw new Error('Init failed');
       });
 
@@ -543,7 +543,7 @@ describe('TelemetryManager', () => {
 
     it('should reflect initialization failure', () => {
       // Simulate initialization failure
-      vi.mocked(IngestClient).mockImplementation(() => {
+      vi.mocked(IngestClient).mockImplementation(function () {
         throw new Error('Init failed');
       });
 
@@ -563,7 +563,7 @@ describe('TelemetryManager', () => {
     });
 
     it('should aggregate initialization errors', () => {
-      vi.mocked(IngestClient).mockImplementation(() => {
+      vi.mocked(IngestClient).mockImplementation(function () {
         throw new Error('Ingest client connection failed');
       });
 
@@ -628,7 +628,7 @@ describe('TelemetryManager', () => {
 
     it('should prevent operations when not initialized', async () => {
       // Simulate initialization failure
-      vi.mocked(IngestClient).mockImplementation(() => {
+      vi.mocked(IngestClient).mockImplementation(function () {
         throw new Error('Init failed');
       });
 
