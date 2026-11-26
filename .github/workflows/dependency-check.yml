@@ -9,12 +9,14 @@ on:
     branches: [main]
     paths:
       - 'package.json'
+      - 'package.runtime.json'
       - 'package-lock.json'
       - '.github/workflows/dependency-check.yml'
   pull_request:
     branches: [main]
     paths:
       - 'package.json'
+      - 'package.runtime.json'
       - 'package-lock.json'
       - '.github/workflows/dependency-check.yml'
   # Allow manual trigger for debugging
@@ -49,7 +51,24 @@ jobs:
           npm run build
 
       - name: Pack package for testing
-        run: npm pack
+        # Pack with package.runtime.json as the manifest, the way release.yml builds the
+        # published package, so this check sees the dependencies npm users actually get.
+        # Packing the root package.json hid a runtime dependency missing from
+        # package.runtime.json (zod, #1232).
+        run: |
+          PACK_DIR=$(mktemp -d)
+          cp -r dist data $PACK_DIR/
+          node -e "
+          const pkg = require('./package.runtime.json');
+          const root = require('./package.json');
+          pkg.name = 'n8n-mcp';
+          pkg.main = root.main;
+          pkg.bin = root.bin;
+          pkg.files = ['dist/**/*', 'data/**/*'];
+          delete pkg.private;
+          require('fs').writeFileSync(process.argv[1] + '/package.json', JSON.stringify(pkg, null, 2));
+          " "$PACK_DIR"
+          (cd "$PACK_DIR" && npm pack --pack-destination "$GITHUB_WORKSPACE")
 
       - name: Create fresh install test directory
         run: |
