@@ -1196,7 +1196,7 @@ export class SingleSessionHTTPServer {
       const allowedOrigin = process.env.CORS_ORIGIN || '*';
       res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
       res.setHeader('Access-Control-Allow-Methods', 'POST, GET, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Mcp-Session-Id');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Mcp-Session-Id, MCP-Protocol-Version');
       res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
       res.setHeader('Access-Control-Max-Age', '86400');
       

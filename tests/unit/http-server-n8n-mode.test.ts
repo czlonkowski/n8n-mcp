@@ -603,6 +603,8 @@ describe('HTTP Server n8n Mode', () => {
             expect(headerMap.has('Access-Control-Allow-Methods')).toBe(true);
             expect(headerMap.has('Access-Control-Allow-Headers')).toBe(true);
             expect(headerMap.get('Access-Control-Allow-Methods')).toBe('POST, GET, DELETE, OPTIONS');
+            // Clients on 2025-06-18 or newer send MCP-Protocol-Version on every request after initialize.
+            expect(headerMap.get('Access-Control-Allow-Headers')).toContain('MCP-Protocol-Version');
             break;
           }
         }

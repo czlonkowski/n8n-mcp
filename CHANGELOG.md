@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The initialize response now includes the server icons and website URL declared on the server.
   - The client's info and capabilities are recorded by the SDK again, so `getClientCapabilities()` reflects the client. Elicitation depends on it.
   - The deprecated fixed HTTP server (`USE_FIXED_HTTP=true`) applies the same rule. The N8N_MODE `GET /mcp` info endpoint reports the latest revision.
+  - Both HTTP servers now list `MCP-Protocol-Version` in `Access-Control-Allow-Headers`. Clients on 2025-06-18 or newer send that header on every request after initialize, so a browser client on another origin failed the CORS preflight.
   - The `test:protocol-negotiation` script is removed; unit tests cover negotiation.
 
 ## [2.104.1] - 2026-11-26

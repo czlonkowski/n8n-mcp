@@ -183,7 +183,7 @@ export async function startFixedHTTPServer() {
     const allowedOrigin = process.env.CORS_ORIGIN || '*';
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, MCP-Protocol-Version');
     res.setHeader('Access-Control-Max-Age', '86400');
     
     if (req.method === 'OPTIONS') {
