@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 import { TemplateSanitizer } from '../utils/template-sanitizer';
 import * as zlib from 'zlib';
 import { resolveTemplateNodeTypes } from '../utils/template-node-resolver';
+import { MAX_INFLATED_BYTES } from '../database/compressed-column';
 
 export interface StoredTemplate {
   id: number;
@@ -251,7 +252,7 @@ export class TemplateRepository {
     if (row.workflow_json_compressed && !row.workflow_json) {
       try {
         const compressed = Buffer.from(row.workflow_json_compressed, 'base64');
-        const decompressed = zlib.gunzipSync(compressed);
+        const decompressed = zlib.gunzipSync(compressed, { maxOutputLength: MAX_INFLATED_BYTES });
         row.workflow_json = decompressed.toString();
       } catch (error) {
         logger.error(`Failed to decompress workflow for template ${templateId}:`, error);
@@ -269,7 +270,7 @@ export class TemplateRepository {
     if (template.workflow_json_compressed && !template.workflow_json) {
       try {
         const compressed = Buffer.from(template.workflow_json_compressed, 'base64');
-        const decompressed = zlib.gunzipSync(compressed);
+        const decompressed = zlib.gunzipSync(compressed, { maxOutputLength: MAX_INFLATED_BYTES });
         template.workflow_json = decompressed.toString();
       } catch (error) {
         logger.error(`Failed to decompress workflow for template ${template.id}:`, error);

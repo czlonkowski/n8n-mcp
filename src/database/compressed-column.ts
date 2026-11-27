@@ -21,6 +21,13 @@ const GZIP_BASE64_PREFIX = 'H4sI';
  */
 export const COMPRESSION_MIN_LENGTH = 1024;
 
+/**
+ * Upper bound on the size of any single column once inflated. The largest value in the shipped
+ * data/nodes.db is 349,167 bytes (a template's workflow JSON), so 32 MiB leaves about 96x headroom
+ * while stopping a small gzip stream from expanding into an arbitrarily large buffer.
+ */
+export const MAX_INFLATED_BYTES = 32 * 1024 * 1024;
+
 /** True when a stored value carries the gzip base64 prefix, i.e. it was written compressed. */
 export function isCompressedColumn(value: unknown): value is string {
   return typeof value === 'string' && value.startsWith(GZIP_BASE64_PREFIX);
@@ -40,7 +47,7 @@ function inflate(value: string): string | null {
     const bytes = Buffer.from(value, 'base64');
     // With `info` the sync call returns the output and the engine; @types/node only declares
     // the Buffer-returning shape.
-    const { buffer, engine } = zlib.gunzipSync(bytes, { info: true }) as unknown as {
+    const { buffer, engine } = zlib.gunzipSync(bytes, { info: true, maxOutputLength: MAX_INFLATED_BYTES }) as unknown as {
       buffer: Buffer;
       engine: { bytesWritten: number };
     };

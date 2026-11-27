@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { gzipSync } from 'zlib';
+import { MAX_INFLATED_BYTES } from '../../../src/database/compressed-column';
 import { TemplateRepository, StoredTemplate } from '../../../src/templates/template-repository';
 import { DatabaseAdapter, PreparedStatement, RunResult } from '../../../src/database/database-adapter';
 import { TemplateWorkflow, TemplateDetail } from '../../../src/templates/template-fetcher';
@@ -220,6 +222,18 @@ describe('TemplateRepository - Core Functionality', () => {
       expect(result).toEqual(mockTemplate);
     });
     
+    it('should return null when the compressed workflow inflates past MAX_INFLATED_BYTES', () => {
+      const bomb = gzipSync(Buffer.alloc(MAX_INFLATED_BYTES + 1, 0x61)).toString('base64');
+      mockAdapter._setMockData('template:123', {
+        id: 123,
+        name: 'Oversized',
+        workflow_json: '',
+        workflow_json_compressed: bomb
+      });
+
+      expect(repository.getTemplate(123)).toBeNull();
+    });
+
     it('should return null for non-existent template', () => {
       const result = repository.getTemplate(999);
       expect(result).toBeNull();

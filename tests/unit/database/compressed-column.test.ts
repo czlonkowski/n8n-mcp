@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { gzipSync } from 'zlib';
 import {
   COMPRESSION_MIN_LENGTH,
+  MAX_INFLATED_BYTES,
   compressColumnJson,
   compressColumnText,
   decompressColumnJson,
@@ -75,6 +76,23 @@ describe('compressed-column', () => {
       const long = text.repeat(Math.ceil(COMPRESSION_MIN_LENGTH / text.length) + 1);
       expect(decompressColumnText(long)).toBe(long);
       expect(decompressColumnText(compressColumnText(long))).toBe(long);
+    });
+  });
+
+  describe('inflated size limit', () => {
+    it('returns the stored value when it would inflate past MAX_INFLATED_BYTES', () => {
+      // A few tens of KB of gzip that expands to one byte more than the limit.
+      const bomb = gzipSync(Buffer.alloc(MAX_INFLATED_BYTES + 1, 0x61)).toString('base64');
+      expect(isCompressedColumn(bomb)).toBe(true);
+      expect(bomb.length).toBeLessThan(MAX_INFLATED_BYTES / 100);
+      expect(decompressColumnText(bomb)).toBe(bomb);
+      expect(decompressColumnJson(bomb, [])).toEqual([]);
+    });
+
+    it('still inflates a value of exactly MAX_INFLATED_BYTES', () => {
+      const text = 'a'.repeat(MAX_INFLATED_BYTES);
+      const stored = gzipSync(text).toString('base64');
+      expect(decompressColumnText(stored)).toBe(text);
     });
   });
 
