@@ -3,12 +3,11 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-  InitializeRequestSchema,
   ListResourcesRequestSchema,
   ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import type { InitializeRequest, InitializeResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolDefinition } from '../types';
 import type { McpToolResponse } from '../types/n8n-api';
 import { existsSync, readFileSync, promises as fs } from 'fs';
@@ -57,11 +56,6 @@ import { matchSearchIntent, normalizeIntentQuery, type SearchIntent } from '../s
 import { parseTypeVersion } from '../utils/typeversion';
 import { SERVER_INSTRUCTIONS } from './native-first';
 import { ToolValidation, Validator, ValidationError } from '../utils/validation-schemas';
-import {
-  negotiateProtocolVersion,
-  logProtocolNegotiation,
-  STANDARD_PROTOCOL_VERSION
-} from '../utils/protocol-version';
 import { BreakingChangeDetector, VersionUpgradeAnalysis } from '../services/breaking-change-detector';
 import { normalizeNodeVersion } from '../parsers/node-parser';
 import { InstanceContext } from '../types/instance-context';
@@ -230,7 +224,6 @@ export class N8NDocumentationMCPServer {
   private templateService: TemplateService | null = null;
   private initialized: Promise<void>;
   private cache = new SimpleCache();
-  private clientInfo: any = null;
   private sessionInstanceContext?: InstanceContext;
   private requireRequestContext = false;
   private previousTool: string | null = null;
@@ -755,59 +748,43 @@ export class N8NDocumentationMCPServer {
     return cache;
   }
 
-  private setupHandlers(): void {
-    // Handle initialization
-    this.server.setRequestHandler(InitializeRequestSchema, async (request) => {
-      const clientVersion = request.params.protocolVersion;
-      const clientCapabilities = request.params.capabilities;
-      const clientInfo = request.params.clientInfo;
-      
-      logger.info('MCP Initialize request received', {
-        clientVersion,
-        clientCapabilities,
-        clientInfo
-      });
+  /**
+   * The SDK's own initialize handler negotiates the protocol revision and records
+   * the client's info and capabilities, which getClientVersion() and
+   * getClientCapabilities() (and with them elicitation) depend on. Wrap it rather
+   * than replacing it, so the session-start telemetry and logs still run on every
+   * initialize request, including clients that never send notifications/initialized.
+   *
+   * `_oninitialize` is private SDK API: the SDK registers its handler as
+   * `request => this._oninitialize(request)`, so an instance override takes effect.
+   * tests/unit/mcp/initialize-negotiation.test.ts fails if a later SDK drops it.
+   */
+  private wrapSdkInitialize(): void {
+    const sdkServer = this.server as unknown as {
+      _oninitialize?: (request: InitializeRequest) => Promise<InitializeResult>;
+    };
+    const sdkInitialize = sdkServer._oninitialize?.bind(this.server);
+    if (!sdkInitialize) {
+      logger.warn('MCP SDK initialize handler not found; session-start telemetry is not recorded');
+      return;
+    }
 
-      // Track session start
+    sdkServer._oninitialize = async (request) => {
+      const { protocolVersion: clientVersion, capabilities: clientCapabilities, clientInfo } = request.params;
+      logger.info('MCP Initialize request received', { clientVersion, clientCapabilities, clientInfo });
       telemetry.trackSessionStart();
 
-      // Store client info for later use
-      this.clientInfo = clientInfo;
-      
-      // Negotiate protocol version based on client information
-      const negotiationResult = negotiateProtocolVersion(
-        clientVersion,
-        clientInfo,
-        undefined, // no user agent in MCP protocol
-        undefined  // no headers in MCP protocol
-      );
-      
-      logProtocolNegotiation(negotiationResult, logger, 'MCP_INITIALIZE');
-      
-      // Warn if there's a version mismatch (for debugging)
-      if (clientVersion && clientVersion !== negotiationResult.version) {
-        logger.warn(`Protocol version negotiated: client requested ${clientVersion}, server will use ${negotiationResult.version}`, {
-          reasoning: negotiationResult.reasoning
-        });
+      const result = await sdkInitialize(request);
+      if (clientVersion !== result.protocolVersion) {
+        logger.warn(`Protocol version negotiated: client requested ${clientVersion}, server will use ${result.protocolVersion}`);
       }
-      
-      const response = {
-        protocolVersion: negotiationResult.version,
-        capabilities: {
-          tools: {},
-          resources: {},
-        },
-        serverInfo: {
-          name: 'n8n-documentation-mcp',
-          version: PROJECT_VERSION,
-        },
-        // This handler replaces the SDK's, so the Server option alone is not sent
-        instructions: SERVER_INSTRUCTIONS,
-      };
-      
-      logger.info('MCP Initialize response', { response });
-      return response;
-    });
+      logger.info('MCP Initialize response', { protocolVersion: result.protocolVersion });
+      return result;
+    };
+  }
+
+  private setupHandlers(): void {
+    this.wrapSdkInitialize();
 
     // Handle tool listing
     this.server.setRequestHandler(ListToolsRequestSchema, async (request) => {
@@ -865,9 +842,8 @@ export class N8NDocumentationMCPServer {
       }
       
       // Check if client is n8n (from initialization)
-      const clientInfo = this.clientInfo;
-      const isN8nClient = clientInfo?.name?.includes('n8n') || 
-                         clientInfo?.name?.includes('langchain');
+      const clientName = this.server.getClientVersion()?.name;
+      const isN8nClient = clientName?.includes('n8n') || clientName?.includes('langchain');
       
       if (isN8nClient) {
         logger.info('Detected n8n client, using n8n-friendly tool descriptions');

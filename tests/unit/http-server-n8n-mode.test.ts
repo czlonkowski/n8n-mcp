@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi, MockedFunction } from 'vitest';
 import type { Request, Response, NextFunction } from 'express';
 import { SingleSessionHTTPServer } from '../../src/http-server-single-session';
+import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 
 // Mock dependencies
 vi.mock('../../src/utils/logger', () => ({
@@ -274,7 +275,7 @@ describe('HTTP Server n8n Mode', () => {
 
       // When N8N_MODE is true, should return protocol version and server info
       expect(res.json).toHaveBeenCalledWith({
-        protocolVersion: '2024-11-05',
+        protocolVersion: LATEST_PROTOCOL_VERSION,
         serverInfo: {
           name: 'n8n-mcp',
           version: '2.8.1',
@@ -558,7 +559,7 @@ describe('HTTP Server n8n Mode', () => {
         // Only exactly 'true' should enable n8n mode
         if (value === 'true') {
           expect(res.json).toHaveBeenCalledWith({
-            protocolVersion: '2024-11-05',
+            protocolVersion: LATEST_PROTOCOL_VERSION,
             serverInfo: {
               name: 'n8n-mcp',
               version: '2.8.1',

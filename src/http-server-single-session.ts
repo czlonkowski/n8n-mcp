@@ -20,11 +20,7 @@ import { PROJECT_VERSION } from './utils/version';
 import { v4 as uuidv4 } from 'uuid';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import {
-  negotiateProtocolVersion,
-  logProtocolNegotiation,
-  STANDARD_PROTOCOL_VERSION
-} from './utils/protocol-version';
+import { LATEST_PROTOCOL_VERSION } from './utils/protocol-version';
 import { InstanceContext, pickInstanceContextFields, validateInstanceContext } from './types/instance-context';
 import { runWithRequestContext } from './utils/request-context';
 import { SessionState } from './types/session-state';
@@ -33,9 +29,6 @@ import { closeSharedDatabase } from './database/shared-database';
 import { clearOfficialMcpClientCache } from './mcp/official-mcp-access';
 
 dotenv.config();
-
-// Protocol version constant - will be negotiated per client
-const DEFAULT_PROTOCOL_VERSION = STANDARD_PROTOCOL_VERSION;
 
 // Type-safe headers interface for multi-tenant support
 interface MultiTenantHeaders {
@@ -1360,18 +1353,9 @@ export class SingleSessionHTTPServer {
 
       // In n8n mode, return protocol version and server info
       if (process.env.N8N_MODE === 'true') {
-        // Negotiate protocol version for n8n mode
-        const negotiationResult = negotiateProtocolVersion(
-          undefined, // no client version in GET request
-          undefined, // no client info
-          req.get('user-agent'),
-          req.headers
-        );
-        
-        logProtocolNegotiation(negotiationResult, logger, 'N8N_MODE_GET');
-        
+        // A GET carries no requested revision, so report the latest the SDK supports
         res.json({
-          protocolVersion: negotiationResult.version,
+          protocolVersion: LATEST_PROTOCOL_VERSION,
           serverInfo: {
             name: 'n8n-mcp',
             version: PROJECT_VERSION,

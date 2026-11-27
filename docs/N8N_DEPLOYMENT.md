@@ -75,7 +75,7 @@ curl http://localhost:3001/health
 
 # Check MCP protocol endpoint (this is the endpoint n8n connects to)
 curl http://localhost:3001/mcp
-# Should return: {"protocolVersion":"2024-11-05"} for n8n compatibility
+# In N8N_MODE, returns the latest protocol revision the server supports, e.g. {"protocolVersion":"2025-11-25", ...}
 ```
 
 ## Environment Variables Reference
@@ -564,7 +564,7 @@ You are an n8n workflow expert. Use the MCP tools to:
 - **Check**: Verify image date with `docker inspect ghcr.io/czlonkowski/n8n-mcp:latest | grep Created`
 
 **"Protocol version mismatch"**
-- n8n-MCP automatically uses version 2024-11-05 for n8n compatibility
+- n8n-MCP answers with the revision the client requests when it supports it, otherwise with the latest one
 - Update to latest n8n-MCP version if issues persist
 - Verify `/mcp` endpoint returns correct version
 
