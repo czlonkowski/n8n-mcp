@@ -1,0 +1,26 @@
+# Render Blueprint — n8n-mcp (Docker HTTP MCP server)
+# Docs: https://render.com/docs/blueprint-spec
+# Upstream: https://github.com/czlonkowski/n8n-mcp — builds from ./Dockerfile (stdio vs HTTP is env-driven).
+#
+# AUTH_TOKEN is required for MCP_MODE=http (see docker-entrypoint.sh). Using generateValue so Render always
+# creates a secret—avoids empty-token deploy failures if a manual sync: false prompt was skipped.
+# After deploy: copy AUTH_TOKEN from the service Environment tab for your MCP client.
+# Optional later in Dashboard: N8N_API_URL, N8N_API_KEY (n8n management tools only), CORS_ORIGIN, BASE_URL, etc.
+
+services:
+  - type: web
+    name: n8n-mcp
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MCP_MODE
+        value: http
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "1"
+      - key: AUTH_TOKEN
+        generateValue: true
