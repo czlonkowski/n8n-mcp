@@ -173,7 +173,7 @@
     "vitest": "^5.1.2"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@n8n/n8n-nodes-langchain": "2.49.6",
     "acorn": "^8.16.0",
     "dotenv": "^16.5.0",

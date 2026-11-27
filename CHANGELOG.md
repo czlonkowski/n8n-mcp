@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Dependency updates (Dependabot, folded into one release).**
+  - MCP SDK: @modelcontextprotocol/sdk 1.30.0 → 1.32.2, the latest v1.x release. Server-side changes are type fixes and opt-in options left off; the supported protocol revisions are unchanged. The Dockerfile builder stage and the dependency-check workflow pin the same version.
   - Runtime: sql.js 1.13 → 1.17 (the database fallback when better-sqlite3 cannot load), plus transitive patch and minor updates from the production group, including hono, jose and follow-redirects.
   - Docker images: base image node 22.23.4-alpine → 22.23.5-alpine.
   - Development: axios 1.21.1, fast-check 4.11.0, secretlint and its recommended preset 9.3.4 → 13.1.0, rollup platform binaries 4.68.8.

@@ -84,7 +84,7 @@ jobs:
           echo "Zod version: $ZOD_VERSION"
           echo ""
 
-          # Check MCP SDK version - must be exactly 1.30.0
+          # Check MCP SDK version - must be exactly 1.32.2
           if [[ "$SDK_VERSION" == "not found" ]]; then
             echo "❌ FAILED: Could not determine MCP SDK version!"
             echo "   The dependency may not have been installed correctly."
@@ -96,9 +96,9 @@ jobs:
           # explicit edit here rather than something that rides along unnoticed.
           # tests/unit/sdk-pin-consistency.test.ts fails if this drifts from
           # package.json, so the deliberate edit cannot be a forgotten one.
-          if [[ "$SDK_VERSION" != "1.30.0" ]]; then
+          if [[ "$SDK_VERSION" != "1.32.2" ]]; then
             echo "❌ FAILED: MCP SDK version mismatch!"
-            echo "   Expected: 1.30.0"
+            echo "   Expected: 1.32.2"
             echo "   Got: $SDK_VERSION"
             echo ""
             echo "This can cause runtime errors. See issues #440, #444, #446, #447, #450"
