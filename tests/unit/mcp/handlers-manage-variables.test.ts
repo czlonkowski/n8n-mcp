@@ -8,7 +8,7 @@ vi.mock('@/config/n8n-api', () => ({
 }));
 vi.mock('@/utils/logger', () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },
-  Logger: vi.fn().mockImplementation(() => ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() })),
+  Logger: vi.fn().mockImplementation(function () { return ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() }); }),
   LogLevel: { ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 },
 }));
 
@@ -47,7 +47,7 @@ describe('Variable Handlers (n8n_manage_variables)', () => {
       timeout: 30000,
       maxRetries: 3,
     });
-    vi.mocked(N8nApiClient).mockImplementation(() => mockApiClient);
+    vi.mocked(N8nApiClient).mockImplementation(function () { return mockApiClient; });
     handlers = await import('@/mcp/handlers-n8n-manager');
   });
 

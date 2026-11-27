@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.104.1] - 2026-11-26
+
+### Changed
+
+- **Dependency updates (Dependabot, folded into one release).**
+  - MCP SDK: @modelcontextprotocol/sdk 1.30.0 → 1.32.2, the latest v1.x release. Server-side changes are type fixes and opt-in options left off; the supported protocol revisions are unchanged. The Dockerfile builder stage and the dependency-check workflow pin the same version.
+  - Runtime: sql.js 1.13 → 1.17 (the database fallback when better-sqlite3 cannot load), plus transitive patch and minor updates from the production group, including hono, jose and follow-redirects.
+  - Docker images: base image node 22.23.4-alpine → 22.23.5-alpine.
+  - Development: axios 1.21.1, fast-check 4.11.0, secretlint and its recommended preset 9.3.4 → 13.1.0, rollup platform binaries 4.68.8.
+  - Test runner: vitest, @vitest/coverage-v8 and @vitest/ui 3.2.6 → 5.1.2, with vite 8.4.0 added as the peer dependency vitest 5 requires. @vitest/runner is removed; vitest 5 bundles it and the package is deprecated. Test changes:
+    - Mocks that code under test calls with `new` now use `function` implementations, since vitest 4 no longer lets arrow functions act as constructors.
+    - Test options moved from the third argument to the second.
+    - The `getN8nApiConfig` overrides in the trigger handler tests are now one-shot, because `vi.clearAllMocks()` no longer resets implementations.
+    - The pool settings in both vitest configs use `maxWorkers`.
+    - `.claude/` worktrees are excluded from test discovery.
+  - ui-apps: vitest and @vitest/coverage-v8 4.1.11 → 5.1.2, @playwright/test 1.65.1, @axe-core/playwright 4.14.0, @vitejs/plugin-react 6.3.0, vite 8.4.0.
+  - CI: actions/setup-node v7.1.0, actions/github-script v9.0.0, ossf/scorecard-action v2.6.0, github/gh-aw-actions/setup v1.3.1.
+- **Updates not taken:**
+  - TypeScript 7: it removes `moduleResolution: node10` and `baseUrl`, which the build uses.
+  - @modelcontextprotocol/ext-apps 2: it requires the v2 MCP SDK packages.
+
 ## [2.104.0] - 2026-11-25
 
 ### Changed

@@ -49,7 +49,7 @@ vi.mock('@/services/workflow-versioning-service', async (orig) => ({
   ...(await orig<any>()),
   // vi.fn(impl), not .mockImplementation(): clearAllMocks() in beforeEach
   // strips a mockImplementation but keeps the constructor argument.
-  WorkflowVersioningService: vi.fn(() => versioningMock),
+  WorkflowVersioningService: vi.fn(function () { return versioningMock; }),
 }));
 vi.mock('@/config/n8n-api', async (orig) => ({
   ...(await orig<any>()),
@@ -57,7 +57,7 @@ vi.mock('@/config/n8n-api', async (orig) => ({
 }));
 vi.mock('@/utils/logger', () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },
-  Logger: vi.fn().mockImplementation(() => ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() })),
+  Logger: vi.fn().mockImplementation(function () { return ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() }); }),
   LogLevel: { ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 },
 }));
 vi.mock('@/telemetry/telemetry-manager', () => ({
@@ -140,8 +140,8 @@ describe('n8n_workflow_versions source routing', () => {
       updateWorkflow: vi.fn().mockResolvedValue({ id: 'w' }),
       healthCheck: vi.fn(),
     };
-    vi.mocked(N8nApiClient).mockImplementation(() => mockApiClient);
-    vi.mocked(NodeRepository).mockImplementation(() => ({}) as any);
+    vi.mocked(N8nApiClient).mockImplementation(function () { return mockApiClient; });
+    vi.mocked(NodeRepository).mockImplementation(function () { return ({}) as any; });
     repository = {};
 
     handlers = await import('@/mcp/handlers-n8n-manager');
@@ -482,7 +482,7 @@ describe('n8n_workflow_versions over the wire', () => {
       updateWorkflow: vi.fn().mockResolvedValue({ id: 'w' }),
       healthCheck: vi.fn(),
     };
-    vi.mocked(N8nApiClient).mockImplementation(() => mockApiClient);
+    vi.mocked(N8nApiClient).mockImplementation(function () { return mockApiClient; });
     repository = {};
     handlers = await import('@/mcp/handlers-n8n-manager');
     resetDefaultApiClient(handlers);

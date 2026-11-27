@@ -19,7 +19,7 @@ describe('NodeParser - Output Extraction', () => {
       extractOperations: vi.fn().mockReturnValue([])
     };
     
-    (PropertyExtractor as any).mockImplementation(() => mockPropertyExtractor);
+    (PropertyExtractor as any).mockImplementation(function () { return mockPropertyExtractor; });
     
     parser = new NodeParser();
   });

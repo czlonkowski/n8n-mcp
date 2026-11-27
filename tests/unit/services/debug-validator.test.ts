@@ -14,12 +14,12 @@ vi.mock('@/services/expression-validator', () => ({
   }
 }));
 vi.mock('@/utils/logger', () => ({
-  Logger: vi.fn().mockImplementation(() => ({
+  Logger: vi.fn().mockImplementation(function () { return ({
     error: vi.fn(),
     warn: vi.fn(),
     info: vi.fn(),
     debug: vi.fn()
-  }))
+  }); })
 }));
 
 describe('Debug Validator Tests', () => {

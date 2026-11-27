@@ -4,7 +4,7 @@
  * This test file focuses specifically on cache behavior, TTL, eviction, and dispose callbacks
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi, Mock } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, Mock, type MockedFunction } from 'vitest';
 import { LRUCache } from 'lru-cache';
 import { createCacheKey } from '../../../src/utils/cache-utils';
 import { getN8nApiClient } from '../../../src/mcp/handlers-n8n-manager';
@@ -26,7 +26,7 @@ vi.mock('../../../src/types/instance-context', async () => {
 });
 
 describe('LRU Cache Behavior Tests', () => {
-  let mockN8nApiClient: Mock;
+  let mockN8nApiClient: MockedFunction<typeof N8nApiClient>;
   let mockGetN8nApiConfigFromContext: Mock;
   let mockLogger: any; // Logger mock has complex type
   let mockValidateInstanceContext: Mock;

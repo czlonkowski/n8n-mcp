@@ -16,10 +16,10 @@ vi.mock('@/services/n8n-api-client');
 vi.mock('@/services/workflow-validator');
 vi.mock('@/database/node-repository');
 vi.mock('@/services/workflow-versioning-service', () => ({
-  WorkflowVersioningService: vi.fn().mockImplementation(() => ({
+  WorkflowVersioningService: vi.fn().mockImplementation(function () { return ({
     createBackup: vi.fn().mockResolvedValue({ versionId: 'v1', versionNumber: 1, pruned: 0 }),
     getVersions: vi.fn().mockResolvedValue([]),
-  })),
+  }); }),
 }));
 vi.mock('@/config/n8n-api', () => ({
   getN8nApiConfig: vi.fn()
@@ -36,12 +36,12 @@ vi.mock('@/utils/logger', () => ({
     debug: vi.fn(),
     warn: vi.fn(),
   },
-  Logger: vi.fn().mockImplementation(() => ({
+  Logger: vi.fn().mockImplementation(function () { return ({
     info: vi.fn(),
     error: vi.fn(),
     debug: vi.fn(),
     warn: vi.fn(),
-  })),
+  }); }),
   LogLevel: {
     ERROR: 0,
     WARN: 1,
@@ -126,13 +126,13 @@ describe('health check officialMcp block', () => {
     vi.mocked(n8nValidation.getWebhookUrl).mockReturnValue(null);
 
     // Mock the N8nApiClient constructor
-    vi.mocked(N8nApiClient).mockImplementation(() => mockApiClient);
+    vi.mocked(N8nApiClient).mockImplementation(function () { return mockApiClient; });
 
     // Mock WorkflowValidator constructor
-    vi.mocked(WorkflowValidator).mockImplementation(() => mockValidator);
+    vi.mocked(WorkflowValidator).mockImplementation(function () { return mockValidator; });
 
     // Mock NodeRepository constructor
-    vi.mocked(NodeRepository).mockImplementation(() => mockRepository);
+    vi.mocked(NodeRepository).mockImplementation(function () { return mockRepository; });
 
     // Import handlers module after setting up mocks
     handlers = await import('@/mcp/handlers-n8n-manager');

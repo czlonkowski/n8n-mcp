@@ -11,11 +11,11 @@ import { logger } from '@/utils/logger';
 
 // Mock the fetcher
 vi.mock('@/community/community-node-fetcher', () => ({
-  CommunityNodeFetcher: vi.fn().mockImplementation(() => ({
+  CommunityNodeFetcher: vi.fn().mockImplementation(function () { return ({
     fetchVerifiedNodes: vi.fn(),
     fetchNpmPackages: vi.fn(),
     fetchPackageJson: vi.fn(),
-  })),
+  }); }),
 }));
 
 // Mock logger
@@ -118,7 +118,7 @@ describe('CommunityNodeService', () => {
     };
 
     // Override CommunityNodeFetcher to return our mock
-    (CommunityNodeFetcher as any).mockImplementation(() => mockFetcher);
+    (CommunityNodeFetcher as any).mockImplementation(function () { return mockFetcher; });
 
     service = new CommunityNodeService(mockRepository as NodeRepository, 'production');
   });

@@ -30,12 +30,12 @@ class MockDatabaseAdapter implements DatabaseAdapter {
 class MockPreparedStatement implements PreparedStatement {
   run = vi.fn((...params: any[]): RunResult => ({ changes: 1, lastInsertRowid: 1 }));
   get = vi.fn();
-  all = vi.fn(() => []);
+  all = vi.fn((..._params: any[]): any[] => []);
   iterate = vi.fn();
   pluck = vi.fn(() => this);
   expand = vi.fn(() => this);
   raw = vi.fn(() => this);
-  columns = vi.fn(() => []);
+  columns = vi.fn((..._params: any[]): any[] => []);
   bind = vi.fn(() => this);
 
   constructor(private sql: string, private mockNodes: Map<string, any>) {

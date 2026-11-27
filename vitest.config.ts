@@ -4,8 +4,9 @@ import path from 'path';
 export default defineConfig({
   test: {
     globals: true,
-    // UI has its own DOM and browser configuration.
-    exclude: [...configDefaults.exclude, 'ui-apps/**'],
+    // UI has its own DOM and browser configuration. Agent worktrees under
+    // .claude/ hold stale copies of the test suite.
+    exclude: [...configDefaults.exclude, 'ui-apps/**', '.claude/**'],
     environment: 'node',
     // Only include global-setup.ts, remove msw-setup.ts from global setup
     setupFiles: ['./tests/setup/global-setup.ts'],
@@ -27,12 +28,7 @@ export default defineConfig({
     },
     // Test execution settings
     pool: 'threads',
-    poolOptions: {
-      threads: {
-        maxThreads: parseInt(process.env.TEST_MAX_WORKERS || '4', 10),
-        minThreads: 1
-      }
-    },
+    maxWorkers: parseInt(process.env.TEST_MAX_WORKERS || '4', 10),
     // No retries - flaky tests should be fixed, not masked
     retry: 0,
     // Test reporter - reduce reporters in CI to prevent hanging
@@ -63,8 +59,7 @@ export default defineConfig({
         branches: 70,
         statements: 75
       },
-      // Add coverage-specific settings to prevent hanging
-      all: false, // Don't collect coverage for untested files
+      // Coverage is collected only for files a test loads (no coverage.include).
       skipFull: true // Skip files with 100% coverage
     },
     // Test isolation

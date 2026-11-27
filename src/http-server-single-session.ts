@@ -70,7 +70,7 @@ const STREAMABLE_HTTP_KEEP_ALIVE_MS = 15_000;
 // means a method added inside a namespace we already serve keeps reaching the
 // SDK instead of being rejected as unknown while the surface drifts.
 // Namespaces cover every request and notification defined by
-// @modelcontextprotocol/sdk 1.30.0; tests/unit/http-server/method-not-found.test.ts
+// @modelcontextprotocol/sdk 1.32.2; tests/unit/http-server/method-not-found.test.ts
 // fails if a later SDK introduces one outside them.
 //
 // The cost of that choice: an unregistered method inside an accepted namespace

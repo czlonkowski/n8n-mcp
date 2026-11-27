@@ -23,7 +23,7 @@ vi.mock('uuid', () => ({
 const mockTransports: { [key: string]: any } = {};
 
 vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
-  StreamableHTTPServerTransport: vi.fn().mockImplementation((options: any) => {
+  StreamableHTTPServerTransport: vi.fn().mockImplementation(function (options: any) {
     const mockTransport = {
       handleRequest: vi.fn().mockImplementation(async (req: any, res: any, body?: any) => {
         // For initialize requests, set the session ID header
@@ -79,9 +79,9 @@ vi.mock('@modelcontextprotocol/sdk/server/sse.js', () => {
 });
 
 vi.mock('../../src/mcp/server', () => ({
-  N8NDocumentationMCPServer: vi.fn().mockImplementation(() => ({
+  N8NDocumentationMCPServer: vi.fn().mockImplementation(function () { return ({
     connect: vi.fn().mockResolvedValue(undefined)
-  }))
+  }); })
 }));
 
 // handleRequest SSRF-validates instance-context URLs with real DNS resolution;
@@ -100,7 +100,7 @@ const mockConsoleManager = {
 };
 
 vi.mock('../../src/utils/console-manager', () => ({
-  ConsoleManager: vi.fn(() => mockConsoleManager)
+  ConsoleManager: vi.fn(function () { return mockConsoleManager; })
 }));
 
 vi.mock('../../src/utils/url-detector', () => ({
@@ -440,13 +440,13 @@ describe('HTTP Server Session Management', () => {
       // Like wrapOperation above, the module mocks' implementations do not
       // survive earlier tests — re-set them so initialize can complete.
       const { N8NDocumentationMCPServer } = await import('../../src/mcp/server');
-      (N8NDocumentationMCPServer as any).mockImplementation(() => ({
+      (N8NDocumentationMCPServer as any).mockImplementation(function () { return ({
         connect: vi.fn().mockResolvedValue(undefined)
-      }));
+      }); });
       const { StreamableHTTPServerTransport } = await import(
         '@modelcontextprotocol/sdk/server/streamableHttp.js'
       );
-      (StreamableHTTPServerTransport as any).mockImplementation((options: any) => {
+      (StreamableHTTPServerTransport as any).mockImplementation(function (options: any) {
         const mockTransport: any = {
           handleRequest: vi.fn().mockImplementation(async (_req: any, res2: any, body?: any) => {
             res2.status(200).json({ jsonrpc: '2.0', result: { success: true }, id: body?.id || 1 });
@@ -528,13 +528,13 @@ describe('HTTP Server Session Management', () => {
         vi.mocked(v4).mockImplementation((() => `uuid-${++uuidCounter}`) as any);
         mockConsoleManager.wrapOperation.mockImplementation(async (fn: () => Promise<any>) => fn());
         const { N8NDocumentationMCPServer } = await import('../../src/mcp/server');
-        (N8NDocumentationMCPServer as any).mockImplementation(() => ({
+        (N8NDocumentationMCPServer as any).mockImplementation(function () { return ({
           connect: vi.fn().mockResolvedValue(undefined)
-        }));
+        }); });
         const { StreamableHTTPServerTransport } = await import(
           '@modelcontextprotocol/sdk/server/streamableHttp.js'
         );
-        (StreamableHTTPServerTransport as any).mockImplementation((options: any) => {
+        (StreamableHTTPServerTransport as any).mockImplementation(function (options: any) {
           const mockTransport: any = {
             handleRequest: vi.fn().mockImplementation(async (_req: any, res2: any, body?: any) => {
               res2.status(200).json({ jsonrpc: '2.0', result: { success: true }, id: body?.id || 1 });

@@ -25,10 +25,10 @@ vi.mock('@/services/n8n-api-client');
 vi.mock('@/services/workflow-validator');
 vi.mock('@/database/node-repository');
 vi.mock('@/services/workflow-versioning-service', () => ({
-  WorkflowVersioningService: vi.fn().mockImplementation(() => ({
+  WorkflowVersioningService: vi.fn().mockImplementation(function () { return ({
     createBackup: vi.fn().mockResolvedValue({ versionId: 'v1', versionNumber: 1, pruned: 0 }),
     getVersions: vi.fn().mockResolvedValue([]),
-  })),
+  }); }),
 }));
 vi.mock('@/config/n8n-api', () => ({
   getN8nApiConfig: vi.fn(),
@@ -58,12 +58,12 @@ vi.mock('@/utils/logger', () => ({
     debug: vi.fn(),
     warn: vi.fn(),
   },
-  Logger: vi.fn().mockImplementation(() => ({
+  Logger: vi.fn().mockImplementation(function () { return ({
     info: vi.fn(),
     error: vi.fn(),
     debug: vi.fn(),
     warn: vi.fn(),
-  })),
+  }); }),
   LogLevel: {
     ERROR: 0,
     WARN: 1,
@@ -211,13 +211,13 @@ describe('handlers-n8n-manager', () => {
     vi.mocked(n8nValidation.getWebhookUrl).mockReturnValue(null);
 
     // Mock the N8nApiClient constructor
-    vi.mocked(N8nApiClient).mockImplementation(() => mockApiClient);
+    vi.mocked(N8nApiClient).mockImplementation(function () { return mockApiClient; });
 
     // Mock WorkflowValidator constructor
-    vi.mocked(WorkflowValidator).mockImplementation(() => mockValidator);
+    vi.mocked(WorkflowValidator).mockImplementation(function () { return mockValidator; });
 
     // Mock NodeRepository constructor
-    vi.mocked(NodeRepository).mockImplementation(() => mockRepository);
+    vi.mocked(NodeRepository).mockImplementation(function () { return mockRepository; });
 
     // Import handlers module after setting up mocks
     handlers = await import('@/mcp/handlers-n8n-manager');
@@ -2320,7 +2320,7 @@ describe('handlers-n8n-manager', () => {
     async function mockHistory(versions: unknown[]) {
       const { WorkflowVersioningService } = await import('@/services/workflow-versioning-service');
       const getVersionHistory = vi.fn().mockResolvedValue(versions);
-      vi.mocked(WorkflowVersioningService).mockImplementation(() => ({ getVersionHistory }) as any);
+      vi.mocked(WorkflowVersioningService).mockImplementation(function () { return ({ getVersionHistory }) as any; });
       return getVersionHistory;
     }
 
@@ -2361,7 +2361,7 @@ describe('handlers-n8n-manager', () => {
     async function mockRestore(result: Record<string, unknown>) {
       const { WorkflowVersioningService } = await import('@/services/workflow-versioning-service');
       const restoreVersion = vi.fn().mockResolvedValue(result);
-      vi.mocked(WorkflowVersioningService).mockImplementation(() => ({ restoreVersion }) as any);
+      vi.mocked(WorkflowVersioningService).mockImplementation(function () { return ({ restoreVersion }) as any; });
       return { WorkflowVersioningService, restoreVersion };
     }
 
@@ -2627,15 +2627,15 @@ describe('handlers-n8n-manager', () => {
         )
       );
       mockValidator.validateWorkflow.mockResolvedValue({ errors: [], warnings: [] });
-      vi.mocked(WorkflowAutoFixer).mockImplementation(() => ({
+      vi.mocked(WorkflowAutoFixer).mockImplementation(function () { return ({
         generateFixes: vi.fn().mockResolvedValue({
           fixes: [{ nodeId: 'node1', nodeName: 'Start', field: 'typeVersion', type: 'typeversion-correction', description: 'Upgrade typeVersion', confidence: 'high' }],
           operations: [{ type: 'updateNode', nodeId: 'node1', updates: { typeVersion: 1 } }],
           summary: 'Applied 1 fix',
           stats: { totalFixes: 1 },
         }),
-      }) as any);
-      vi.mocked(WorkflowDiffEngine).mockImplementation(() => ({
+      }) as any; });
+      vi.mocked(WorkflowDiffEngine).mockImplementation(function () { return ({
         applyDiff: vi.fn().mockResolvedValue({
           success: true,
           workflow: testWorkflow,
@@ -2643,7 +2643,7 @@ describe('handlers-n8n-manager', () => {
           message: 'ok',
           errors: [],
         }),
-      }) as any);
+      }) as any; });
 
       const result = await handlers.handleAutofixWorkflow(
         { id: 'test-workflow-id', applyFixes: true },

@@ -20,7 +20,7 @@ vi.mock('uuid', () => ({
 const mockTransports: { [key: string]: any } = {};
 
 vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
-  StreamableHTTPServerTransport: vi.fn().mockImplementation((options: any) => {
+  StreamableHTTPServerTransport: vi.fn().mockImplementation(function (options: any) {
     const mockTransport = {
       handleRequest: vi.fn().mockImplementation(async (req: any, res: any, body?: any) => {
         if (body && body.method === 'initialize') {
@@ -53,15 +53,15 @@ vi.mock('@modelcontextprotocol/sdk/server/sse.js', () => ({
 }));
 
 vi.mock('../../../src/mcp/server', () => ({
-  N8NDocumentationMCPServer: vi.fn().mockImplementation(() => ({
+  N8NDocumentationMCPServer: vi.fn().mockImplementation(function () { return ({
     connect: vi.fn().mockResolvedValue(undefined),
-  })),
+  }); }),
 }));
 
 vi.mock('../../../src/utils/console-manager', () => ({
-  ConsoleManager: vi.fn(() => ({
+  ConsoleManager: vi.fn(function () { return ({
     wrapOperation: vi.fn().mockImplementation(async (fn: () => Promise<any>) => fn()),
-  })),
+  }); }),
 }));
 
 vi.mock('../../../src/utils/url-detector', () => ({

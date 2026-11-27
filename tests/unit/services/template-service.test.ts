@@ -18,10 +18,10 @@ vi.mock('../../../src/templates/template-repository');
 
 // Mock template fetcher - only imported when needed
 vi.mock('../../../src/templates/template-fetcher', () => ({
-  TemplateFetcher: vi.fn().mockImplementation(() => ({
+  TemplateFetcher: vi.fn().mockImplementation(function () { return ({
     fetchTemplates: vi.fn(),
     fetchAllTemplateDetails: vi.fn()
-  }))
+  }); })
 }));
 
 describe('TemplateService', () => {
@@ -88,7 +88,7 @@ describe('TemplateService', () => {
     } as any;
 
     // Mock the constructor
-    (TemplateRepository as any).mockImplementation(() => mockRepository);
+    (TemplateRepository as any).mockImplementation(function () { return mockRepository; });
     
     service = new TemplateService(mockDb);
   });
@@ -437,7 +437,7 @@ describe('TemplateService', () => {
 
       // Mock dynamic import
       vi.doMock('../../../src/templates/template-fetcher', () => ({
-        TemplateFetcher: vi.fn(() => mockFetcher)
+        TemplateFetcher: vi.fn(function () { return mockFetcher; })
       }));
 
       mockRepository.clearTemplates = vi.fn();
@@ -468,7 +468,7 @@ describe('TemplateService', () => {
 
       // Mock dynamic import
       vi.doMock('../../../src/templates/template-fetcher', () => ({
-        TemplateFetcher: vi.fn(() => mockFetcher)
+        TemplateFetcher: vi.fn(function () { return mockFetcher; })
       }));
 
       mockRepository.getExistingTemplateIds = vi.fn().mockReturnValue(new Set([1, 2]));
@@ -496,7 +496,7 @@ describe('TemplateService', () => {
 
       // Mock dynamic import
       vi.doMock('../../../src/templates/template-fetcher', () => ({
-        TemplateFetcher: vi.fn(() => mockFetcher)
+        TemplateFetcher: vi.fn(function () { return mockFetcher; })
       }));
 
       mockRepository.getExistingTemplateIds = vi.fn().mockReturnValue(new Set([1, 2]));

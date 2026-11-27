@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach, type Mock } from 'vitest';
 import { TelemetryEventTracker } from '../../../src/telemetry/event-tracker';
 import { TelemetryEvent, WorkflowTelemetry } from '../../../src/telemetry/telemetry-types';
 import { TelemetryError, TelemetryErrorType } from '../../../src/telemetry/telemetry-error';
@@ -21,8 +21,8 @@ vi.mock('path');
 
 describe('TelemetryEventTracker', () => {
   let eventTracker: TelemetryEventTracker;
-  let mockGetUserId: ReturnType<typeof vi.fn>;
-  let mockIsEnabled: ReturnType<typeof vi.fn>;
+  let mockGetUserId: Mock<() => string>;
+  let mockIsEnabled: Mock<() => boolean>;
 
   beforeEach(() => {
     mockGetUserId = vi.fn().mockReturnValue('test-user-123');

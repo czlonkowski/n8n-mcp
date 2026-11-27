@@ -37,7 +37,7 @@ describe('EarlyErrorLogger onControl wiring (server-driven disable)', () => {
         insert: vi.fn().mockResolvedValue({ error: null, status: 201 })
       })
     };
-    vi.mocked(IngestClient).mockImplementation(() => mockIngestClient);
+    vi.mocked(IngestClient).mockImplementation(function () { return mockIngestClient; });
   });
 
   function capturedOnControl(): (signal: { kind: string; status: number }) => void {

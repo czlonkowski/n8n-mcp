@@ -154,19 +154,19 @@ describe('MCP Session Management', { timeout: 15000 }, () => {
   });
 
   describe('Multiple Sessions', () => {
-    it('should handle multiple concurrent sessions', async () => {
+    it('should handle multiple concurrent sessions', { skip: true }, async () => {
       // Skip this test for now - it has concurrency issues
       // TODO: Fix concurrent session handling in MCP server
       console.log('Skipping concurrent sessions test - known timeout issue');
       expect(true).toBe(true);
-    }, { skip: true });
+    });
 
-    it('should isolate session state', async () => {
+    it('should isolate session state', { skip: true }, async () => {
       // Skip this test for now - it has concurrency issues
       // TODO: Fix session isolation in MCP server
       console.log('Skipping session isolation test - known timeout issue');
       expect(true).toBe(true);
-    }, { skip: true });
+    });
 
     it('should handle sequential sessions without interference', async () => {
       // Create first session
