@@ -23,11 +23,7 @@ import dotenv from 'dotenv';
 import { readFileSync } from 'fs';
 import { getStartupBaseUrl, formatEndpointUrls, detectBaseUrl } from './utils/url-detector';
 import { SERVER_INSTRUCTIONS } from './mcp/native-first';
-import { 
-  negotiateProtocolVersion, 
-  logProtocolNegotiation,
-  N8N_PROTOCOL_VERSION 
-} from './utils/protocol-version';
+import { negotiateProtocolVersion } from './utils/protocol-version';
 
 dotenv.config();
 
@@ -187,7 +183,7 @@ export async function startFixedHTTPServer() {
     const allowedOrigin = process.env.CORS_ORIGIN || '*';
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, MCP-Protocol-Version');
     res.setHeader('Access-Control-Max-Age', '86400');
     
     if (req.method === 'OPTIONS') {
@@ -433,20 +429,10 @@ export async function startFixedHTTPServer() {
           
           switch (jsonRpcRequest.method) {
             case 'initialize':
-              // Negotiate protocol version for this client/request
-              const negotiationResult = negotiateProtocolVersion(
-                jsonRpcRequest.params?.protocolVersion,
-                jsonRpcRequest.params?.clientInfo,
-                req.get('user-agent'),
-                req.headers
-              );
-              
-              logProtocolNegotiation(negotiationResult, logger, 'HTTP_SERVER_INITIALIZE');
-              
               response = {
                 jsonrpc: '2.0',
                 result: {
-                  protocolVersion: negotiationResult.version,
+                  protocolVersion: negotiateProtocolVersion(jsonRpcRequest.params?.protocolVersion),
                   capabilities: {
                     tools: {},
                     resources: {}

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.104.2] - 2026-11-27
+
+### Fixed
+
+- **MCP protocol revision negotiation (#1020).** A client offering 2025-06-18 or 2025-11-25 was answered with 2025-03-26, and n8n clients were always answered with 2024-11-05. The server replaced the SDK's initialize handler with its own, which used a hand-maintained revision list. The SDK now negotiates: a client gets the revision it requests when the SDK supports it (2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07), otherwise the latest one.
+  - n8n clients are no longer pinned to 2024-11-05. n8n's MCP Client nodes accept 2025-11-25, and older clients that request an older revision still get it. The n8n-specific tool descriptions are unchanged.
+  - The initialize response now includes the server icons and website URL declared on the server.
+  - The client's info and capabilities are recorded by the SDK again, so `getClientCapabilities()` reflects the client. Elicitation depends on it.
+  - The deprecated fixed HTTP server (`USE_FIXED_HTTP=true`) applies the same rule. The N8N_MODE `GET /mcp` info endpoint reports the latest revision.
+  - Both HTTP servers now list `MCP-Protocol-Version` in `Access-Control-Allow-Headers`. Clients on 2025-06-18 or newer send that header on every request after initialize, so a browser client on another origin failed the CORS preflight.
+  - The `test:protocol-negotiation` script is removed; unit tests cover negotiation.
+
 ## [2.104.1] - 2026-11-26
 
 ### Changed

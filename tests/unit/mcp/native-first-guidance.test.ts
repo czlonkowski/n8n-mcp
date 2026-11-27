@@ -101,8 +101,8 @@ describe.skipIf(!fs.existsSync(sourceDbPath))('initialize instructions', () => {
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('reach a client through the custom initialize handler', async () => {
-    // server.ts replaces the SDK's initialize handler, so this is the path real clients take
+  it('reach a client through the initialize handshake', async () => {
+    // The SDK's initialize handler sends the instructions given to the Server constructor
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await (server as any).server.connect(serverTransport);
     const client = new Client({ name: 'instructions-test', version: '1.0.0' });
